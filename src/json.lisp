@@ -21,6 +21,16 @@
   "Return a JSON array containing ELEMENTS."
   (coerce elements 'vector))
 
+(-> json-object-copy (json-object) json-object)
+(defun json-object-copy (object)
+  "Return a detached shallow copy of JSON OBJECT."
+  (let ((copy (make-hash-table :test (hash-table-test object)
+                               :size (max 1 (hash-table-count object)))))
+    (maphash (lambda (key value)
+               (setf (gethash key copy) value))
+             object)
+    copy))
+
 (-> json-get (json-object string &optional t) t)
 (defun json-get (object key &optional default)
   "Return KEY from JSON OBJECT, or DEFAULT when the key is absent."
