@@ -149,6 +149,16 @@ The initial provider supports Codex subscription access through the
 user's ChatGPT authentication without bundling or launching the Codex
 CLI.
 
+A second provider supports Grok subscription access through the user's
+xAI authentication without bundling or launching Grok Build. It speaks
+the standard streaming Responses dialect of the Grok CLI chat proxy,
+obtains renewable credentials through the RFC 8628 device authorization
+grant against the xAI OAuth issuer, and may import one bounded access
+token from an existing Grok Build =auth.json= without ever spending that
+installation's rotating refresh token. The configured model selects the
+serving provider; switching between model families replaces the provider
+while conversations persist in one provider-independent item shape.
+
 Autolith owns:
 
 - System instructions.

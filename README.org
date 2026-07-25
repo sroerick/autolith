@@ -22,7 +22,8 @@ Sandboxing is no substitute for human oversight
 Autolith, or AL, is a small terminal agent that runs inside a Common Lisp
 image. It owns its model loop, tools, conversations, authentication, live
 mutation, checkpoints, and recovery. It talks directly to the ChatGPT Codex
-subscription service and does not launch or bundle the Codex CLI.
+and Grok subscription services and does not launch or bundle the Codex CLI
+or Grok Build.
 
 The supported target is Linux x86-64 on SBCL. Autolith is dogfoodable, but it
 is not a security sandbox: model-generated Lisp runs with the user's privileges,
@@ -83,6 +84,11 @@ Authenticate and start a conversation:
 autolith --auth
 autolith
 #+END_SRC
+
+=autolith --auth= signs into the provider serving the configured model, and
+=autolith --auth grok= or =autolith --auth chatgpt= selects one explicitly.
+Inside a session, =/model= switches between the GPT and Grok model families
+and =/auth= authenticates the active provider.
 
 If a development checkout has no current fast startup image, the launcher asks
 whether to run its bootstrap. Use =autolith --from-source= to deliberately load
