@@ -243,6 +243,15 @@ its protocol-level close operation."
 (defgeneric credential-source-save (source credentials)
   (:documentation "Atomically save CREDENTIALS to writable SOURCE."))
 
+(-> credential-source-label (credential-source) string)
+(defgeneric credential-source-label (source)
+  (:documentation "Return the short user-visible name of SOURCE's issuer."))
+
+(defmethod credential-source-label ((source codex-bootstrap-credential-source))
+  "Name the Codex bootstrap source in user-visible failures."
+  (declare (ignore source))
+  "Codex")
+
 (-> read-portable-form (pathname) t)
 (defun read-portable-form (pathname)
   "Read one portable form from PATHNAME with reader evaluation disabled."
@@ -353,8 +362,8 @@ its protocol-level close operation."
    (bootstrap-source
     :initarg :bootstrap-source
     :reader credential-manager-bootstrap-source
-    :type codex-bootstrap-credential-source
-    :documentation "The optional read-only Codex bootstrap source.")
+    :type credential-source
+    :documentation "The optional read-only bootstrap source.")
    (refresh-lock
     :initform (make-lock "Autolith OAuth refresh")
     :reader credential-manager-refresh-lock
@@ -366,10 +375,44 @@ its protocol-level close operation."
     :documentation "The account identity pinned for this manager's lifetime."))
   (:documentation "Credential paths and refresh policy without retained tokens."))
 
-(-> credential-manager-create (configuration) credential-manager)
+(defclass chatgpt-credential-manager (credential-manager)
+  ()
+  (:documentation "The ChatGPT OAuth credential manager behind the Codex provider."))
+
+(-> credential-manager-provider-label (credential-manager) string)
+(defgeneric credential-manager-provider-label (manager)
+  (:documentation "Return the short user-visible name of MANAGER's account service."))
+
+(defmethod credential-manager-provider-label
+    ((manager chatgpt-credential-manager))
+  "Name the ChatGPT account service in user-visible failures."
+  (declare (ignore manager))
+  "ChatGPT")
+
+(-> credential-manager-login-hint (credential-manager) string)
+(defgeneric credential-manager-login-hint (manager)
+  (:documentation "Return the imperative login instruction for MANAGER's service."))
+
+(defmethod credential-manager-login-hint ((manager chatgpt-credential-manager))
+  "Point ChatGPT credential failures at the default login command."
+  (declare (ignore manager))
+  "run autolith --auth")
+
+(-> credential-manager-refresh-exchange
+    (credential-manager oauth-credentials string)
+    (values oauth-credentials boolean))
+(defgeneric credential-manager-refresh-exchange (manager credentials refresh-token)
+  (:documentation
+   "Exchange REFRESH-TOKEN for rotated CREDENTIALS at MANAGER's OAuth service.
+
+The first value is the account-continuous refreshed credentials. The second
+value is true when the caller must publish them to the primary store, and
+false when a sibling process already published an equivalent rotation."))
+
+(-> credential-manager-create (configuration) chatgpt-credential-manager)
 (defun credential-manager-create (configuration)
-  "Create a credential manager using CONFIGURATION's private and bootstrap paths."
-  (make-instance 'credential-manager
+  "Create the ChatGPT credential manager for CONFIGURATION's private paths."
+  (make-instance 'chatgpt-credential-manager
                  :primary-source (make-instance
                                   'autolith-credential-source
                                   :pathname (configuration-auth-path configuration))
@@ -388,7 +431,9 @@ its protocol-level close operation."
                (not allow-change)
                (not (string= expected actual)))
       (error 'authentication-error
-             :message "The ChatGPT credential account changed during this Autolith session."))
+             :message
+             (format nil "The ~A credential account changed during this Autolith session."
+                     (credential-manager-provider-label manager))))
     (setf (credential-manager-account-id manager) actual)
     credentials))
 
@@ -399,7 +444,11 @@ its protocol-level close operation."
   "Copy BOOTSTRAP's bounded access token once into Autolith's private store."
   (when (credentials-needs-refresh-p bootstrap :window 0)
     (error 'credentials-unavailable
-           :message "The Codex bootstrap access token expired; run autolith --auth."
+           :message
+           (format nil "The ~A bootstrap access token expired; ~A."
+                   (credential-source-label
+                    (credential-manager-bootstrap-source manager))
+                   (credential-manager-login-hint manager))
            :searched-paths
            (list (credential-source-pathname
                   (credential-manager-bootstrap-source manager)))))
@@ -435,7 +484,9 @@ its protocol-level close operation."
              (credential-manager-import-bootstrap manager bootstrap)
              (error 'credentials-unavailable
                     :message
-                    "No ChatGPT OAuth credentials are available; run autolith --auth."
+                    (format nil "No ~A OAuth credentials are available; ~A."
+                            (credential-manager-provider-label manager)
+                            (credential-manager-login-hint manager))
                     :searched-paths
                     (list (credential-source-pathname
                            (credential-manager-primary-source manager))
@@ -533,7 +584,10 @@ its protocol-level close operation."
       (when (equal (oauth-credentials-source-path credentials)
                    bootstrap-pathname)
         (error 'token-refresh-failed
-               :message "Codex bootstrap credentials are never refreshed by Autolith."
+               :message
+               (format nil "~A bootstrap credentials are never refreshed by Autolith."
+                       (credential-source-label
+                        (credential-manager-bootstrap-source manager)))
                :status nil
                :response nil))
       (when (and latest
@@ -543,59 +597,70 @@ its protocol-level close operation."
         (return-from credential-manager-refresh credentials))
       (unless (non-empty-string-p refresh-token)
         (error 'token-refresh-failed
-               :message "These credentials cannot refresh; run autolith --auth."
+               :message (format nil "These credentials cannot refresh; ~A."
+                                (credential-manager-login-hint manager))
                :status nil
                :response nil))
-      (handler-case
-          (let* ((request (json-object
-                           "client_id" *openai-oauth-client-id*
-                           "grant_type" "refresh_token"
-                           "refresh_token" refresh-token))
-                 (body (dexador:post
-                        *openai-oauth-token-endpoint*
-                        :headers '(("Content-Type" . "application/json")
-                                   ("Accept" . "application/json"))
-                        :content (json-encode request)
-                        :force-string t
-                        :connect-timeout 30
-                        :read-timeout 60))
-                 (refreshed
-                   (oauth-refresh-response-credentials
-                    manager credentials body)))
-            (credential-manager-accept-account manager refreshed)
-            (credential-source-save primary-source refreshed))
-        (http-request-failed (condition)
-          (let* ((body (response-body condition))
-                 (raw-code (oauth-error-code body))
-                 (code
-                   (and
-                    raw-code
-                    (let ((secrets
-                            (oauth-credentials-secret-values credentials)))
-                      (redact-exact-string-values
-                       raw-code
-                       secrets
-                       (safe-redaction-marker
-                        "[OAUTH CREDENTIAL REDACTED]"
-                        secrets)))))
-                 (newer-primary
-                   (and (string= (or code "") "refresh_token_reused")
-                        (credential-source-load primary-source))))
-            (if (and newer-primary
-                     (not (string= (oauth-credentials-access-token newer-primary)
-                                   (oauth-credentials-access-token credentials))))
-                (credential-manager-accept-account manager newer-primary)
-                (error 'token-refresh-failed
-                       :message (format nil "OAuth token refresh failed~@[ (~A)~]." code)
-                       :status (response-status condition)
-                       :response code))))
-        (authentication-error (condition)
-          (error condition))
-        (error ()
-          (error 'token-refresh-failed
-                 :message "OAuth token refresh could not be completed."
-                 :status nil
-                 :response nil))))))
+      (multiple-value-bind (refreshed publish-p)
+          (credential-manager-refresh-exchange manager credentials refresh-token)
+        (credential-manager-accept-account manager refreshed)
+        (if publish-p
+            (credential-source-save primary-source refreshed)
+            refreshed)))))
+
+(defmethod credential-manager-refresh-exchange
+    ((manager chatgpt-credential-manager)
+     (credentials oauth-credentials)
+     (refresh-token string))
+  "Rotate REFRESH-TOKEN at OpenAI, recovering when a sibling already rotated it."
+  (handler-case
+      (let* ((request (json-object
+                       "client_id" *openai-oauth-client-id*
+                       "grant_type" "refresh_token"
+                       "refresh_token" refresh-token))
+             (body (dexador:post
+                    *openai-oauth-token-endpoint*
+                    :headers '(("Content-Type" . "application/json")
+                               ("Accept" . "application/json"))
+                    :content (json-encode request)
+                    :force-string t
+                    :connect-timeout 30
+                    :read-timeout 60)))
+        (values (oauth-refresh-response-credentials manager credentials body)
+                t))
+    (http-request-failed (condition)
+      (let* ((body (response-body condition))
+             (raw-code (oauth-error-code body))
+             (code
+               (and
+                raw-code
+                (let ((secrets
+                        (oauth-credentials-secret-values credentials)))
+                  (redact-exact-string-values
+                   raw-code
+                   secrets
+                   (safe-redaction-marker
+                    "[OAUTH CREDENTIAL REDACTED]"
+                    secrets)))))
+             (newer-primary
+               (and (string= (or code "") "refresh_token_reused")
+                    (credential-source-load
+                     (credential-manager-primary-source manager)))))
+        (if (and newer-primary
+                 (not (string= (oauth-credentials-access-token newer-primary)
+                               (oauth-credentials-access-token credentials))))
+            (values newer-primary nil)
+            (error 'token-refresh-failed
+                   :message (format nil "OAuth token refresh failed~@[ (~A)~]." code)
+                   :status (response-status condition)
+                   :response code))))
+    (authentication-error (condition)
+      (error condition))
+    (error ()
+      (error 'token-refresh-failed
+             :message "OAuth token refresh could not be completed."
+             :status nil
+             :response nil))))
 
 (-> credential-manager-credentials
     (credential-manager &key (:force-refresh boolean))
