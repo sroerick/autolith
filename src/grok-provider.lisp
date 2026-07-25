@@ -32,6 +32,12 @@
   (declare (ignore reasoning-summaries-p))
   (grok-provider-create configuration))
 
+(defmethod provider-device-authentication-client
+    ((provider grok-subscription-provider))
+  "Return the Grok device authentication client."
+  (declare (ignore provider))
+  (grok-device-authentication-client-create))
+
 (-> grok-provider-create (configuration) grok-subscription-provider)
 (defun grok-provider-create (configuration)
   "Create the direct Grok subscription provider for CONFIGURATION."

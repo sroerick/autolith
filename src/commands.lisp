@@ -472,7 +472,7 @@
 
 (-> application--model-items (application) list)
 (defun application--model-items (application)
-  "Return picker items for the supported 5.6 model family."
+  "Return picker items for the supported models."
   (let ((current (configuration-model
                   (application-configuration application))))
     (loop for model in *supported-models*
@@ -794,18 +794,21 @@ when ITEMS is empty, and returns NIL when the picker is cancelled."
   "Run Autolith-owned device authentication outside raw terminal mode."
   (let* ((ui (application-ui application))
          (provider (application-provider application)))
-    (unless (typep provider 'codex-subscription-provider)
+    (unless (typep provider 'subscription-provider)
       (error 'authentication-error
-             :message "The active provider does not support ChatGPT device login."))
+             :message "The active provider does not support device login."))
     (terminal-ui-stop ui)
     (unwind-protect
          (device-authentication-login
-          (device-authentication-client-create)
+          (provider-device-authentication-client provider)
           (provider-credential-manager provider)
           :stream *standard-output*
           :open-browser-p t)
       (terminal-ui-start ui))
-    (application-present application "ChatGPT authentication was saved by Autolith."))
+    (application-present
+     application
+     (format nil "~A authentication was saved by Autolith."
+             (provider-account-label provider))))
   nil)
 
 (-> application-checkpoint (application) null)
@@ -1092,8 +1095,8 @@ when ITEMS is empty, and returns NIL when the picker is cancelled."
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
      :argument nil
-     :description "authenticate Autolith with ChatGPT"
-     :tip "starts direct ChatGPT authentication when credentials need attention."
+     :description "authenticate Autolith with the active provider"
+     :tip "starts direct provider authentication when credentials need attention."
      :busy-behavior :hold
      :terminal-behavior :exclusive)
     (application invocation)

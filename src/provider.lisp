@@ -249,6 +249,19 @@
   (declare (ignore provider))
   ':codex)
 
+(-> provider-device-authentication-client
+    (subscription-provider)
+    device-authentication-client)
+(defgeneric provider-device-authentication-client (provider)
+  (:documentation
+   "Return a fresh device authentication client for PROVIDER's account service."))
+
+(defmethod provider-device-authentication-client
+    ((provider codex-subscription-provider))
+  "Return the ChatGPT device authentication client."
+  (declare (ignore provider))
+  (device-authentication-client-create))
+
 (-> provider-family-create
     (keyword configuration &key (:reasoning-summaries-p boolean))
     subscription-provider)

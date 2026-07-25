@@ -442,20 +442,52 @@
   "Usage: autolith [--from-source] [--immutable]
        autolith [--from-source] [--immutable] [-i FILE | --image FILE]...
        autolith [--from-source] [--immutable] resume [ID]
-       autolith --auth
+       autolith --auth [chatgpt | grok]
        autolith --version
        autolith --recovery [--generation ID | --list]")
 
-(-> main-authenticate (configuration) null)
-(defun main-authenticate (configuration)
+(-> main--auth-family (configuration (option string)) keyword)
+(defun main--auth-family (configuration selection)
+  "Return the provider family requested by the --auth SELECTION argument.
+
+Without a SELECTION the configured model chooses the family."
+  (cond
+    ((null selection)
+     (model-family (configuration-model configuration)))
+    ((string-equal selection "grok")
+     ':grok)
+    ((member selection '("chatgpt" "codex" "openai") :test #'string-equal)
+     ':codex)
+    (t
+     (error 'configuration-error
+            :message (format nil "Unknown --auth provider ~S. The choices are chatgpt and grok."
+                             selection)))))
+
+(-> main--auth-selection (list) (option string))
+(defun main--auth-selection (arguments)
+  "Return the optional provider name following --auth in ARGUMENTS."
+  (let ((position (position "--auth" arguments :test #'string=)))
+    (when position
+      (let ((candidate (nth (1+ position) arguments)))
+        (and (non-empty-string-p candidate)
+             (not (uiop:string-prefix-p "-" candidate))
+             candidate)))))
+
+(-> main-authenticate (configuration (option string)) null)
+(defun main-authenticate (configuration selection)
   "Run Autolith-owned device authentication without starting the conversation UI."
   (configuration-ensure-directories configuration)
-  (device-authentication-login
-   (device-authentication-client-create)
-   (credential-manager-create configuration)
-   :stream *standard-output*
-   :open-browser-p t)
-  (format t "~&ChatGPT authentication was saved by Autolith.~%")
+  (let ((provider
+          (provider-family-create
+           (main--auth-family configuration selection)
+           configuration)))
+    (device-authentication-login
+     (provider-device-authentication-client provider)
+     (provider-credential-manager provider)
+     :stream *standard-output*
+     :open-browser-p t)
+    (format t "~&~A authentication was saved by Autolith.~%"
+            (provider-account-label provider)))
   nil)
 
 (-> main--resume-selection (list) (values boolean (option string)))
@@ -544,7 +576,8 @@
             (resume-id (second resume-selection)))
        (cond
          ((member "--auth" arguments :test #'string=)
-          (main-authenticate configuration))
+          (main-authenticate configuration
+                             (main--auth-selection arguments)))
          (t
           (setf *active-application*
                 (if (typep *active-application* 'application)
