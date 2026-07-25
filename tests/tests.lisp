@@ -143,6 +143,7 @@
     (test-crash-capsule-correlation)
     (run-recovery-tests)
     (run-device-authentication-tests)
+    (run-grok-device-authentication-tests)
     (run-agent-tests)
     (test-task-agent-native-reader)
     (test-task-agent-discovery-precedence)
