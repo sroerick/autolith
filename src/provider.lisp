@@ -113,7 +113,7 @@
   ()
   (:documentation "The abstract interface between an agent and a model service."))
 
-(defclass codex-subscription-provider (model-provider)
+(defclass subscription-provider (model-provider)
   ((configuration
     :initarg :configuration
     :reader provider-configuration
@@ -128,8 +128,12 @@
     :initarg :session-id
     :reader provider-session-id
     :type non-empty-string
-    :documentation "The stable provider session identifier.")
-   (reasoning-summaries-p
+    :documentation "The stable provider session identifier."))
+  (:documentation
+   "A direct OAuth subscription client streaming Responses service turns."))
+
+(defclass codex-subscription-provider (subscription-provider)
+  ((reasoning-summaries-p
     :initarg :reasoning-summaries-p
     :initform nil
     :accessor provider-reasoning-summaries-p
@@ -141,6 +145,31 @@
     :type list
     :documentation "The most recent portable rate limit snapshot from response headers."))
   (:documentation "A direct ChatGPT subscription client for the Codex Responses service."))
+
+(-> provider-account-label (subscription-provider) string)
+(defgeneric provider-account-label (provider)
+  (:documentation "Return the short user-visible name of PROVIDER's account service."))
+
+(defmethod provider-account-label ((provider codex-subscription-provider))
+  "Name the ChatGPT account service in user-visible failures."
+  (declare (ignore provider))
+  "ChatGPT")
+
+(-> provider-note-response-headers (subscription-provider t) t)
+(defgeneric provider-note-response-headers (provider headers)
+  (:documentation
+   "Record portable metadata carried by sanitized response HEADERS."))
+
+(defmethod provider-note-response-headers
+    ((provider subscription-provider) (headers t))
+  "Ignore response headers for providers without portable metadata."
+  (declare (ignore provider headers))
+  nil)
+
+(defmethod provider-note-response-headers
+    ((provider codex-subscription-provider) (headers t))
+  "Record the subscription rate limit snapshot from Codex HEADERS."
+  (provider-record-rate-limits provider headers))
 
 (defparameter *provider-stream-retry-delays*
     '(1 2 4 8 16)
@@ -372,17 +401,27 @@ at reference commit 5c19155c."
        (json-object "type" "web_search"
                     "external_web_access" false)))))
 
+(-> provider-request-object
+    (subscription-provider conversation vector
+     &key (:goal-context (option string))
+          (:compaction-p boolean))
+    (values json-object (option context-delivery)))
+(defgeneric provider-request-object
+    (provider conversation tool-namespaces &key goal-context compaction-p)
+  (:documentation
+   "Build PROVIDER's complete stateless streaming request for CONVERSATION.
+
+The second value is the context delivery that the transport consumes only
+after a completed response, when one participates in the request."))
+
 ;; No service_tier field is ever sent. Omitting it selects the provider's
 ;; standard processing path; sending "priority" selects the fast path that
 ;; drains subscription rate limits much faster (Codex reference commit
 ;; 5c19155c filters its explicit "default" sentinel out of requests too).
-(-> provider-request-object
-    (codex-subscription-provider conversation vector
-     &key (:goal-context (option string))
-          (:compaction-p boolean))
-    (values json-object (option context-delivery)))
-(defun provider-request-object
-    (provider conversation tool-namespaces
+(defmethod provider-request-object
+    ((provider codex-subscription-provider)
+     (conversation conversation)
+     (tool-namespaces vector)
      &key goal-context compaction-p)
   "Build the complete stateless Sol Responses Lite request for CONVERSATION.
 
@@ -693,7 +732,7 @@ delivery that the transport consumes only after a completed response."
   (not (null (member status *provider-retryable-http-statuses* :test #'=))))
 
 (-> provider-signal-http-failure
-    (codex-subscription-provider http-request-failed)
+    (subscription-provider http-request-failed)
     null)
 (defun provider-signal-http-failure (provider condition)
   "Record CONDITION headers and signal a typed provider or authentication error."
@@ -708,10 +747,11 @@ delivery that the transport consumes only after a completed response."
                      (provider--sanitize-wire-string content)))
                 (error ()
                   nil))))
-    (provider-record-rate-limits provider headers)
+    (provider-note-response-headers provider headers)
     (if (= status 401)
         (error 'provider-unauthorized
-               :message "The provider rejected the current ChatGPT credentials."
+               :message (format nil "The provider rejected the current ~A credentials."
+                                (provider-account-label provider))
                :status status
                :request-id (response-header headers "x-request-id")
                :response nil)
@@ -729,6 +769,17 @@ delivery that the transport consumes only after a completed response."
   "Remove transient server item identifiers from replayable provider ITEM."
   (remhash "id" item)
   item)
+
+(-> provider-normalize-output-item (model-provider json-object) json-object)
+(defgeneric provider-normalize-output-item (provider item)
+  (:documentation
+   "Return completed ITEM normalized for persistence, replay, and dispatch."))
+
+(defmethod provider-normalize-output-item
+    ((provider model-provider) (item hash-table))
+  "Remove transient server item identifiers from replayable ITEM."
+  (declare (ignore provider))
+  (normalize-response-item item))
 
 (-> function-call-item-p (json-object) boolean)
 (defun function-call-item-p (item)
@@ -941,9 +992,9 @@ delivery that the transport consumes only after a completed response."
             (provider--sanitize-wire-string data)
             :limit 2000))))
 
-(-> provider--consume-stream (stream t function) provider-result)
-(defun provider--consume-stream (stream headers event-callback)
-  "Consume STREAM into a provider result while invoking EVENT-CALLBACK."
+(-> provider--consume-stream (model-provider stream t function) provider-result)
+(defun provider--consume-stream (provider stream headers event-callback)
+  "Consume PROVIDER's STREAM into a provider result while invoking EVENT-CALLBACK."
   (let ((output-items nil)
         (response-id nil)
         (usage nil)
@@ -992,7 +1043,7 @@ delivery that the transport consumes only after a completed response."
                    ((string= (or type "") "response.output_item.done")
                     (let ((item (json-get event "item")))
                       (when (json-object-p item)
-                        (normalize-response-item item)
+                        (provider-normalize-output-item provider item)
                         (push item output-items)
                         (funcall event-callback
                                  (make-instance 'provider-item-event :item item)))))
@@ -1050,7 +1101,7 @@ delivery that the transport consumes only after a completed response."
    "Perform one normalized provider attempt, optionally forcing credential refresh."))
 
 (defmethod provider-attempt-turn
-    ((provider codex-subscription-provider)
+    ((provider subscription-provider)
      (conversation conversation)
      &key
        tool-namespaces
@@ -1086,7 +1137,7 @@ delivery that the transport consumes only after a completed response."
                :conversation conversation)
             (let ((headers
                     (provider--sanitize-wire-value raw-headers)))
-              (provider-record-rate-limits provider headers)
+              (provider-note-response-headers provider headers)
               (unless (= status 200)
                 (let* ((raw-body (provider--drain-error-body stream))
                        (body
@@ -1097,7 +1148,8 @@ delivery that the transport consumes only after a completed response."
                       (error
                        'provider-unauthorized
                        :message
-                       "The provider rejected the current ChatGPT credentials."
+                       (format nil "The provider rejected the current ~A credentials."
+                               (provider-account-label provider))
                        :status status
                        :request-id
                        (response-header headers "x-request-id")
@@ -1115,7 +1167,7 @@ delivery that the transport consumes only after a completed response."
               (let ((result
                       (unwind-protect
                            (provider--consume-stream
-                            stream headers event-callback)
+                            provider stream headers event-callback)
                         (provider--close-response-stream stream))))
                 (context-delivery-complete delivery)
                 result))))
@@ -1125,14 +1177,14 @@ delivery that the transport consumes only after a completed response."
           (provider-signal-http-failure provider condition))))))
 
 (defmethod provider-stream-turn
-    ((provider codex-subscription-provider)
+    ((provider subscription-provider)
      (conversation conversation)
      &key
        tool-namespaces
        event-callback
        goal-context
        compaction-p)
-  "Stream one Sol turn with bounded authentication and transport retries."
+  "Stream one subscription turn with bounded authentication and transport retries."
   (declare (type vector tool-namespaces)
            (type function event-callback))
   (labels ((attempt-with-authentication ()
@@ -1153,9 +1205,12 @@ delivery that the transport consumes only after a completed response."
                           (when (= attempt-number 3)
                             (error 'authentication-error
                                    :message
-                                   "ChatGPT rejected Autolith's credentials after a bounded refresh.")))))
+                                   (format nil "~A rejected Autolith's credentials after a bounded refresh."
+                                           (provider-account-label provider)))))))
              (error 'authentication-error
-                    :message "ChatGPT authentication retry ended unexpectedly.")))
+                    :message
+                    (format nil "~A authentication retry ended unexpectedly."
+                            (provider-account-label provider)))))
     (loop for retry-number from 0
           do (handler-case
                  (return-from provider-stream-turn
