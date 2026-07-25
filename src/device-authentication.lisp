@@ -217,7 +217,7 @@
   (call-with-secret-use
    (lambda ()
      (let ((authorization (device-authentication-request-code client)))
-       (device-authentication-display-code authorization stream)
+       (device-authentication-display-code client authorization stream)
        (when open-browser-p
          (handler-case
              (funcall (device-authentication-client-browser-function client)
@@ -269,9 +269,19 @@
                  :browser-function browser-function
                  :poll-timeout poll-timeout))
 
-(-> device-authentication-display-code (device-authorization stream) null)
-(defun device-authentication-display-code (authorization stream)
-  "Display AUTHORIZATION's public URL and code on STREAM, then flush it."
+(-> device-authentication-display-code
+    (device-authentication-client device-authorization stream)
+    null)
+(defgeneric device-authentication-display-code (client authorization stream)
+  (:documentation
+   "Display AUTHORIZATION's public URL and code on STREAM, then flush it."))
+
+(defmethod device-authentication-display-code
+    ((client device-authentication-client)
+     (authorization device-authorization)
+     (stream stream))
+  "Display the ChatGPT verification URL and one-time code."
+  (declare (ignore client))
   (format stream
           "~&Sign in with ChatGPT:~%  Open: ~A~%  Code: ~A~%~%The code expires in 15 minutes. Continue only if you started this login in Autolith.~%"
           (device-authorization-verification-url authorization)
