@@ -240,21 +240,55 @@
   (declare (ignore provider))
   nil)
 
-(-> provider-create
-    (configuration &key (:reasoning-summaries-p boolean))
-    codex-subscription-provider)
-(defun provider-create (configuration &key reasoning-summaries-p)
-  "Create the default direct subscription provider for CONFIGURATION."
+(-> provider-family (subscription-provider) keyword)
+(defgeneric provider-family (provider)
+  (:documentation "Return the model family keyword PROVIDER serves."))
+
+(defmethod provider-family ((provider codex-subscription-provider))
+  "The Codex provider serves the ChatGPT model family."
+  (declare (ignore provider))
+  ':codex)
+
+(-> provider-family-create
+    (keyword configuration &key (:reasoning-summaries-p boolean))
+    subscription-provider)
+(defgeneric provider-family-create (family configuration &key reasoning-summaries-p)
+  (:documentation
+   "Create the subscription provider serving FAMILY for CONFIGURATION."))
+
+(defmethod provider-family-create
+    ((family (eql ':codex))
+     (configuration configuration)
+     &key reasoning-summaries-p)
+  "Create the direct ChatGPT subscription provider."
   (make-instance 'codex-subscription-provider
                  :configuration configuration
                  :credential-manager (credential-manager-create configuration)
                  :session-id (make-identifier)
                  :reasoning-summaries-p reasoning-summaries-p))
 
+(-> provider-create
+    (configuration &key (:reasoning-summaries-p boolean))
+    subscription-provider)
+(defun provider-create (configuration &key reasoning-summaries-p)
+  "Create the direct subscription provider serving CONFIGURATION's model."
+  (provider-family-create
+   (model-family (configuration-model configuration))
+   configuration
+   :reasoning-summaries-p reasoning-summaries-p))
+
 (-> provider-with-configuration (model-provider configuration) model-provider)
 (defgeneric provider-with-configuration (provider configuration)
   (:documentation
    "Return PROVIDER reconfigured for CONFIGURATION while preserving session state."))
+
+(defmethod provider-with-configuration :around
+    ((provider subscription-provider) (configuration configuration))
+  "Create a fresh provider when CONFIGURATION selects another model family."
+  (if (eq (provider-family provider)
+          (model-family (configuration-model configuration)))
+      (call-next-method)
+      (provider-create configuration)))
 
 (defmethod provider-with-configuration
     ((provider codex-subscription-provider) (configuration configuration))

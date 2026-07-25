@@ -276,9 +276,53 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> grok-provider-test--selection () null)
+(defun grok-provider-test--selection ()
+  "Test provider construction and reconfiguration across model families."
+  (let* ((codex-configuration (test-configuration))
+         (root (test-configuration-root codex-configuration)))
+    (unwind-protect
+         (let* ((grok-configuration
+                  (configuration-with-model codex-configuration "grok-4.5"))
+                (codex-provider (provider-create codex-configuration))
+                (grok-provider (provider-create grok-configuration)))
+           (test-assert (typep codex-provider 'codex-subscription-provider)
+                        "GPT models select the Codex subscription provider")
+           (test-assert (typep grok-provider 'grok-subscription-provider)
+                        "Grok models select the Grok subscription provider")
+           (test-assert
+            (string= (configuration-provider-endpoint grok-configuration)
+                     *grok-responses-endpoint*)
+            "selecting a Grok model selects the Grok proxy endpoint")
+           (test-assert
+            (= (configuration-context-window grok-configuration) 500000)
+            "selecting a Grok model selects the Grok context window")
+           (test-assert
+            (typep (provider-with-configuration codex-provider
+                                                grok-configuration)
+                   'grok-subscription-provider)
+            "switching to a Grok model replaces the Codex provider")
+           (test-assert
+            (typep (provider-with-configuration grok-provider
+                                                codex-configuration)
+                   'codex-subscription-provider)
+            "switching to a GPT model replaces the Grok provider")
+           (let ((copied (provider-with-configuration grok-provider
+                                                      grok-configuration)))
+             (test-assert
+              (and (typep copied 'grok-subscription-provider)
+                   (string= (provider-session-id copied)
+                            (provider-session-id grok-provider))
+                   (eq (provider-credential-manager copied)
+                       (provider-credential-manager grok-provider)))
+              "same-family reconfiguration preserves session and credentials")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-grok-provider () null)
 (defun test-grok-provider ()
   "Test the Grok subscription provider without network access."
+  (grok-provider-test--selection)
   (grok-provider-test--wire-tools)
   (grok-provider-test--item-normalization)
   (let ((provider (grok-provider-create (grok-provider-test--configuration))))

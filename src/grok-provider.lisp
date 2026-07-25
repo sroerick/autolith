@@ -19,6 +19,19 @@
   (declare (ignore provider))
   "Grok")
 
+(defmethod provider-family ((provider grok-subscription-provider))
+  "The Grok provider serves the Grok model family."
+  (declare (ignore provider))
+  ':grok)
+
+(defmethod provider-family-create
+    ((family (eql ':grok))
+     (configuration configuration)
+     &key reasoning-summaries-p)
+  "Create the direct Grok subscription provider, which has no summary switch."
+  (declare (ignore reasoning-summaries-p))
+  (grok-provider-create configuration))
+
 (-> grok-provider-create (configuration) grok-subscription-provider)
 (defun grok-provider-create (configuration)
   "Create the direct Grok subscription provider for CONFIGURATION."

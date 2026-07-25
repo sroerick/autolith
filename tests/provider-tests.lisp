@@ -158,7 +158,8 @@
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "max")
             "the provider request maps Ultra reasoning to Max")
-           (dolist (model *supported-models*)
+           (dolist (model (remove ':grok *supported-models*
+                                  :key #'model-family))
              (dolist (effort *supported-reasoning-efforts*)
                (let* ((selected
                         (configuration-with-reasoning-effort
