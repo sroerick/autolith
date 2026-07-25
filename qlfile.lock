@@ -44,33 +44,33 @@
   :version "ql-2025-06-22"))
 ("cl-colorist" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/cl-colorist.git" :ref "91041f50af55fa82f7f099b7be222055624b20af")
-  :version "git-91041f50af55fa82f7f099b7be222055624b20af"))
+  :initargs (:remote-url "https://github.com/luciusmagn/cl-colorist.git" :ref "14e2fb14d3b93a5d5edf2b33ff547d32c4d89b24")
+  :version "git-14e2fb14d3b93a5d5edf2b33ff547d32c4d89b24"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/clinedi.git" :ref "5c1ccedba423cbe424214593345962b70fc0512c")
-  :version "git-5c1ccedba423cbe424214593345962b70fc0512c"))
+  :initargs (:remote-url "https://github.com/luciusmagn/clinedi.git" :ref "a14a51ea87d223155befcf7ec0fa5e86e13769ec")
+  :version "git-a14a51ea87d223155befcf7ec0fa5e86e13769ec"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "8c47a1dadb64eba1629742ef6b43789ed7d73b36")
-  :version "git-8c47a1dadb64eba1629742ef6b43789ed7d73b36"))
+  :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "2d71dcf944f1b9541c591d27494c345564920e13")
+  :version "git-2d71dcf944f1b9541c591d27494c345564920e13"))
 ("clifff" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/clifff.git" :ref "29c19b6bdb1d19e1ceb3ed5279eed5b81b0872d8")
-  :version "git-29c19b6bdb1d19e1ceb3ed5279eed5b81b0872d8"))
+  :initargs (:remote-url "https://github.com/luciusmagn/clifff.git" :ref "891221b465129a3b26706d68aa2c296eb4e0ae55")
+  :version "git-891221b465129a3b26706d68aa2c296eb4e0ae55"))
 ("colorlisp" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/colorlisp.git" :ref "6e1ee575bf57628fa864acd6f0a61209af9990b1")
-  :version "git-6e1ee575bf57628fa864acd6f0a61209af9990b1"))
+  :initargs (:remote-url "https://github.com/luciusmagn/colorlisp.git" :ref "0dd1c0336086123e9af766af59dbac5afb65fece")
+  :version "git-0dd1c0336086123e9af766af59dbac5afb65fece"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/mcparen.git" :ref "a0981df8ca0910fc0676e1b34b5507fbd54ac901")
-  :version "git-a0981df8ca0910fc0676e1b34b5507fbd54ac901"))
+  :initargs (:remote-url "https://github.com/luciusmagn/mcparen.git" :ref "0003d252dab953bd51155edd767b2874d5be8709")
+  :version "git-0003d252dab953bd51155edd767b2874d5be8709"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/sexp-store.git" :ref "a03ddb709eb43efdd2f1a98dd87aa4e7f444940c")
-  :version "git-a03ddb709eb43efdd2f1a98dd87aa4e7f444940c"))
+  :initargs (:remote-url "https://github.com/luciusmagn/sexp-store.git" :ref "7a5f777683cc7da73b5115e678e23d4b3bedbd20")
+  :version "git-7a5f777683cc7da73b5115e678e23d4b3bedbd20"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-workers.git" :ref "fff2bc4bbeb8eec93a963c5ad1f7af85bbf7a6a3")
-  :version "git-fff2bc4bbeb8eec93a963c5ad1f7af85bbf7a6a3"))
+  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-workers.git" :ref "85f80fbe2c317769a412b2ecbc6399ebf5ff8e26")
+  :version "git-85f80fbe2c317769a412b2ecbc6399ebf5ff8e26"))
