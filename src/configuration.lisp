@@ -22,6 +22,25 @@
 (defparameter *openai-oauth-client-id* "app_EMoamEEZ73f0CkXaXp7hrann"
   "The public OAuth client identifier used by Codex-compatible clients.")
 
+;; The subscription proxy serving Grok Build sessions, read from grok-build
+;; reference commit 47348d13 (crates/codegen/xai-grok-env).
+(defparameter *grok-responses-endpoint*
+  "https://cli-chat-proxy.grok.com/v1/responses"
+  "The current Grok subscription Responses endpoint.")
+
+(defparameter *grok-oauth-issuer* "https://auth.x.ai"
+  "The xAI OAuth issuer serving Grok subscription authentication.")
+
+(defparameter *grok-oauth-client-id* "b1a00492-073a-47ea-816f-4c329264a828"
+  "The public OAuth client identifier used by Grok Build compatible clients.")
+
+(defparameter *grok-oauth-scopes*
+  '("openid" "profile" "email" "offline_access"
+    "grok-cli:access" "api:access"
+    "conversations:read" "conversations:write"
+    "workspaces:read" "workspaces:write")
+  "The OAuth scopes requested for Grok subscription access.")
+
 (defparameter *supported-reasoning-efforts*
   '("none" "low" "medium" "high" "xhigh" "max" "ultra")
   "Reasoning effort names accepted by Autolith configuration.")
@@ -31,16 +50,26 @@
   "Hosted web search modes accepted by Autolith configuration.")
 
 (defparameter *supported-models*
-  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
-  "The 5.6 model family identifiers offered by the interactive model picker.")
+  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5")
+  "The model identifiers offered by the interactive model picker.")
 
-;; Window sizes read from the live Codex model catalog on 2026-07-19 and
+;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
 ;; confirmed in Codex reference commit 0fb559f0f6e231a88ac02ea002d3ecd248e2b515.
+;; The Grok window comes from default_models.json in grok-build reference
+;; commit 47348d13.
 (defparameter *model-context-windows*
   '(("gpt-5.6-sol"   . 272000)
     ("gpt-5.6-luna"  . 272000)
-    ("gpt-5.6-terra" . 272000))
+    ("gpt-5.6-terra" . 272000)
+    ("grok-4.5"      . 500000))
   "Provider context window sizes in tokens for known models.")
+
+(-> model-family (string) keyword)
+(defun model-family (model)
+  "Return the subscription service family serving MODEL, :codex or :grok."
+  (if (uiop:string-prefix-p "grok" model)
+      ':grok
+      ':codex))
 
 (defparameter *default-context-window* 272000
   "The conservative context window assumed for unknown models.")
@@ -65,6 +94,15 @@
    "autolith/"
    (environment-directory "XDG_CONFIG_HOME"
                           (merge-pathnames ".config/"
+                                           (user-homedir-pathname)))))
+
+(-> configuration--default-grok-bootstrap-path () pathname)
+(defun configuration--default-grok-bootstrap-path ()
+  "Return the default Grok Build auth.json bootstrap pathname."
+  (merge-pathnames
+   "auth.json"
+   (environment-directory "GROK_HOME"
+                          (merge-pathnames ".grok/"
                                            (user-homedir-pathname)))))
 
 
@@ -107,6 +145,12 @@
     :reader configuration-codex-auth-path
     :type pathname
     :documentation "The optional Codex OAuth bootstrap file.")
+   (grok-bootstrap-auth-path
+    :initarg :grok-bootstrap-auth-path
+    :initform (configuration--default-grok-bootstrap-path)
+    :reader configuration-grok-bootstrap-auth-path
+    :type pathname
+    :documentation "The optional Grok Build OAuth bootstrap file.")
    (model
     :initarg :model
     :reader configuration-model
@@ -147,6 +191,20 @@
     :type non-empty-string
     :documentation "The streaming Responses endpoint."))
   (:documentation "Immutable paths and model choices for one Autolith process."))
+
+(-> configuration--provider-endpoint-for (string) string)
+(defun configuration--provider-endpoint-for (model)
+  "Return MODEL's streaming Responses endpoint from the environment or defaults.
+
+AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint and
+AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint."
+  (ecase (model-family model)
+    (:codex
+     (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
+         *codex-responses-endpoint*))
+    (:grok
+     (or (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT")
+         *grok-responses-endpoint*))))
 
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
@@ -235,6 +293,8 @@
                    :state-root (merge-pathnames "autolith/" state-home)
                    :cache-root (merge-pathnames "autolith/" cache-home)
                    :codex-auth-path (merge-pathnames "auth.json" codex-home)
+                   :grok-bootstrap-auth-path
+                   (configuration--default-grok-bootstrap-path)
                    :model selected-model
                    :reasoning-effort selected-effort
                    :immutable-p immutable-p
@@ -243,8 +303,8 @@
                                     selected-model)
                    :compaction-threshold-percent
                    (configuration--compaction-threshold)
-                   :provider-endpoint (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
-                                          *codex-responses-endpoint*))))
+                   :provider-endpoint (configuration--provider-endpoint-for
+                                       selected-model))))
 
 (-> configuration--clone
     (configuration &key (:working-directory (option pathname))
@@ -271,6 +331,8 @@ Selecting a different model recomputes the context window for that model."
                  :state-root (configuration-state-root configuration)
                  :cache-root (configuration-cache-root configuration)
                  :codex-auth-path (configuration-codex-auth-path configuration)
+                 :grok-bootstrap-auth-path
+                 (configuration-grok-bootstrap-auth-path configuration)
                  :model (or model (configuration-model configuration))
                  :reasoning-effort (or reasoning-effort
                                        (configuration-reasoning-effort
@@ -289,7 +351,9 @@ Selecting a different model recomputes the context window for that model."
                  :compaction-threshold-percent
                  (configuration-compaction-threshold-percent configuration)
                  :provider-endpoint
-                 (configuration-provider-endpoint configuration)))
+                 (if model
+                     (configuration--provider-endpoint-for model)
+                     (configuration-provider-endpoint configuration))))
 
 (-> configuration--expanded-working-directory
     ((or pathname string))
@@ -461,8 +525,13 @@ Selecting a different model recomputes the context window for that model."
 
 (-> configuration-auth-path (configuration) pathname)
 (defun configuration-auth-path (configuration)
-  "Return Autolith's private OAuth credential pathname."
+  "Return Autolith's private ChatGPT OAuth credential pathname."
   (merge-pathnames "auth.sexp" (configuration-state-root configuration)))
+
+(-> configuration-grok-auth-path (configuration) pathname)
+(defun configuration-grok-auth-path (configuration)
+  "Return Autolith's private Grok OAuth credential pathname."
+  (merge-pathnames "grok-auth.sexp" (configuration-state-root configuration)))
 
 (-> configuration-journal-path (configuration) pathname)
 (defun configuration-journal-path (configuration)
@@ -475,6 +544,18 @@ Selecting a different model recomputes the context window for that model."
   (if (string= (configuration-reasoning-effort configuration) "ultra")
       "max"
       (configuration-reasoning-effort configuration)))
+
+(-> configuration-grok-wire-effort (configuration) string)
+(defun configuration-grok-wire-effort (configuration)
+  "Return the Grok provider effort, clamped to the low, medium, high scale."
+  (let ((effort (configuration-reasoning-effort configuration)))
+    (cond
+      ((member effort '("none" "low") :test #'string=)
+       "low")
+      ((string= effort "medium")
+       "medium")
+      (t
+       "high"))))
 
 (-> make-identifier () string)
 (defun make-identifier ()
