@@ -201,6 +201,8 @@ the transport consumes only after a completed response."
             (cons "Content-Type" "application/json")
             (cons "Accept" "text/event-stream")
             (cons "User-Agent" (provider-user-agent))
+            (cons "x-grok-client-version" *grok-client-protocol-version*)
+            (cons "x-grok-client-mode" "interactive")
             (cons "x-grok-client-identifier" "autolith")
             (cons "x-grok-session-id" (provider-session-id provider))
             (cons "x-grok-conv-id" (conversation-identifier conversation))
