@@ -114,6 +114,7 @@
     (test-conversation-compaction)
     (test-authentication-store)
     (test-authentication-bootstrap-and-refresh)
+    (test-grok-authentication)
     (test-provider-request)
     (test-provider-rate-limits)
     (test-provider-stream-decoding)

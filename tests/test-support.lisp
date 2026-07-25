@@ -102,6 +102,8 @@
                    :cache-root (merge-pathnames "cache/" root)
                    :config-root (merge-pathnames "config/" root)
                    :codex-auth-path (merge-pathnames "missing-auth.json" root)
+                   :grok-bootstrap-auth-path
+                   (merge-pathnames "missing-grok-auth.json" root)
                    :model *default-model*
                    :reasoning-effort *default-reasoning-effort*
                    :provider-endpoint *codex-responses-endpoint*)))
@@ -124,6 +126,8 @@
                    :cache-root (merge-pathnames "cache/" state-root)
                    :config-root (merge-pathnames "config/" state-root)
                    :codex-auth-path (merge-pathnames "missing-auth.json" state-root)
+                   :grok-bootstrap-auth-path
+                   (merge-pathnames "missing-grok-auth.json" state-root)
                    :model *default-model*
                    :reasoning-effort *default-reasoning-effort*
                    :provider-endpoint *codex-responses-endpoint*)))

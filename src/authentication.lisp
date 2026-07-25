@@ -209,6 +209,14 @@ its protocol-level close operation."
                        (json-object-p (aref organizations 0)))
               (json-get (aref organizations 0) "id")))))))
 
+(-> jwt-subject (string) (option string))
+(defun jwt-subject (token)
+  "Return TOKEN's unverified JWT subject claim, if present and non-empty."
+  (let ((payload (jwt-payload token)))
+    (when payload
+      (let ((subject (json-get payload "sub")))
+        (and (non-empty-string-p subject) subject)))))
+
 (-> credentials-needs-refresh-p (oauth-credentials &key (:window integer)) boolean)
 (defun credentials-needs-refresh-p (credentials &key (window 300))
   "Return true when CREDENTIALS expire within WINDOW seconds."
