@@ -16,10 +16,24 @@ concurrency:
 
 jobs:
   package:
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            runner: ubuntu-24.04
+            architecture: x86_64
+          - name: macOS arm64
+            runner: macos-14
+            architecture: arm64
     steps:
       - uses: actions/checkout@v5
+
+      - name: Verify runner architecture
+        run: test "$(uname -m)" = "${{ matrix.architecture }}"
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -43,9 +57,20 @@ jobs:
           export XDG_STATE_HOME="$temporary_home/state"
 
           status=0
-          timeout 600s ./result/bin/autolith </dev/null \
+          ./result/bin/autolith </dev/null \
             >"$temporary_home/stdout" \
-            2>"$temporary_home/stderr" || status=$?
+            2>"$temporary_home/stderr" &
+          autolith_process=$!
+          (
+            sleep 600
+            if kill -0 "$autolith_process" 2>/dev/null; then
+              kill "$autolith_process" || true
+            fi
+          ) &
+          watchdog_process=$!
+          wait "$autolith_process" || status=$?
+          kill "$watchdog_process" 2>/dev/null || true
+          wait "$watchdog_process" 2>/dev/null || true
 
           cat "$temporary_home/stderr"
           cat "$temporary_home/stdout"

@@ -8,14 +8,15 @@
 Supported dogfood targets:
 
 - Linux x86-64
-- macOS arm64 from a source checkout
+- macOS arm64
 - SBCL
 - Terminal interface
 - Single primary agent
 - No hostile-code sandboxing
 
-Nix and packaged binary releases remain Linux x86-64. Windows, BSD systems,
-and additional Linux architectures are later platform targets.
+Nix builds support Linux x86-64 and macOS arm64. Packaged binary releases
+remain Linux x86-64. Windows, BSD systems, and additional Linux
+architectures are later platform targets.
 
 * 1. Purpose
 

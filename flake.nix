@@ -15,9 +15,9 @@
 
   outputs = inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      # Autolith's runtime pins an x86_64 SBCL and the package asserts the
-      # host platform, so only x86_64-linux is supported.
-      systems = [ "x86_64-linux" ];
+      # Nix builds run on Linux x86-64 (the packaged release target) and on
+      # macOS arm64. nix/package.nix asserts the same platform set.
+      systems = [ "x86_64-linux" "aarch64-darwin" ];
 
       perSystem = { pkgs, ... }:
         let
@@ -56,7 +56,7 @@
             autolith --version >/dev/null
             test ! -e "$runtime_root/command"
 
-            export COLORLISP_NATIVE_LIBRARY="${autolith.colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter.so"
+            export COLORLISP_NATIVE_LIBRARY="${autolith.colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"
             "${autolith.runtime}/bin/sbcl" \
               --noinform \
               --no-sysinit \

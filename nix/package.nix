@@ -2,6 +2,10 @@
 
 let
   lib = pkgs.lib;
+  inherit (pkgs.stdenv.hostPlatform.extensions) sharedLibrary;
+  colorlispSharedLibraryFlag = if pkgs.stdenv.isDarwin
+    then "-dynamiclib"
+    else "-shared";
   expectedSbclVersion = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl.version");
   expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
 
@@ -56,14 +60,15 @@ let
     pname = "colorlisp-tree-sitter";
     version = "0.2.0";
     src = colorlispSource;
+    nativeBuildInputs = [ pkgs.findutils ];
     dontConfigure = true;
     buildPhase = ''
       runHook preBuild
-      cc -shared -fPIC -O2 -std=gnu11 -fvisibility=hidden \
+      cc ${colorlispSharedLibraryFlag} -fPIC -O2 -std=gnu11 -fvisibility=hidden \
         -I vendor/tree-sitter/include \
         -I vendor/tree-sitter/src \
         $(find vendor/grammars -mindepth 1 -maxdepth 1 -type d -printf '-I %p ') \
-        -o libcolorlisp-tree-sitter.so \
+        -o libcolorlisp-tree-sitter${sharedLibrary} \
         native/colorlisp-tree-sitter.c \
         vendor/tree-sitter/src/lib.c \
         $(find vendor/grammars -type f -name parser.c -print | sort) \
@@ -72,8 +77,8 @@ let
     '';
     installPhase = ''
       runHook preInstall
-      install -Dm755 libcolorlisp-tree-sitter.so \
-        "$out/lib/libcolorlisp-tree-sitter.so"
+      install -Dm755 libcolorlisp-tree-sitter${sharedLibrary} \
+        "$out/lib/libcolorlisp-tree-sitter${sharedLibrary}"
       runHook postInstall
     '';
   };
@@ -143,7 +148,10 @@ let
     src = clExecSandboxSource;
   };
 
-  sandboxHelper = pkgs.stdenv.mkDerivation {
+  # The helper wraps Linux bubblewrap, seccomp, and network namespaces, so
+  # only Linux builds it. Elsewhere the Lisp side loads the library's
+  # portable fallback; see script/build-sandbox.lisp.
+  sandboxHelper = if pkgs.stdenv.isLinux then pkgs.stdenv.mkDerivation {
     pname = "cl-exec-sandbox-helper";
     version = "0.1.0";
     src = clExecSandboxSource;
@@ -160,7 +168,7 @@ let
         "$out/libexec/cl-exec-sandbox-helper"
       runHook postInstall
     '';
-  };
+  } else null;
 
   fffLibrary = pkgs.rustPlatform.buildRustPackage {
     pname = "fff-c";
@@ -179,8 +187,8 @@ let
     installPhase = ''
       runHook preInstall
       install -Dm755 \
-        "$(find target -type f -name libfff_c.so -print -quit)" \
-        "$out/lib/libfff_c.so"
+        "$(find target -type f -name 'libfff_c${sharedLibrary}' -print -quit)" \
+        "$out/lib/libfff_c${sharedLibrary}"
       runHook postInstall
     '';
   };
@@ -294,28 +302,34 @@ let
     test -f "$out/src/code/list.lisp"
   '';
 
+  # Sandboxing uses Bubblewrap and the private helper on Linux; other
+  # platforms fall back to the portable unsandboxed path in cl-exec-sandbox.
+  sandboxEnvironment = lib.optionalString pkgs.stdenv.isLinux ''
+    export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
+    export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
+  '';
+
 in
-assert pkgs.stdenv.hostPlatform.isx86_64;
+assert with pkgs.stdenv.hostPlatform;
+  (isLinux && isx86_64) || (isDarwin && isAarch64);
 assert pkgs.sbcl.version == expectedSbclVersion;
 pkgs.writeShellApplication {
   name = "autolith";
   runtimeInputs = [
     pkgs.bash
-    pkgs.bubblewrap
     pkgs.coreutils
     pkgs.git
     pkgs.gnugrep
     runtime
-  ];
+  ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
   text = ''
     home="''${HOME:-/home/user}"
     data_home="''${XDG_DATA_HOME:-$home/.local/share}"
     export AUTOLITH_SBCL="${runtime}/bin/sbcl"
     export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
-    export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter.so"
-    export AUTOLITH_FFF_LIBRARY="${fffLibrary}/lib/libfff_c.so"
-    export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
-    export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
+    export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"
+    export AUTOLITH_FFF_LIBRARY="${fffLibrary}/lib/libfff_c${sharedLibrary}"
+    ${sandboxEnvironment}
 
     # The packaged source repository is root-owned in /nix/store. Permit Git
     # provenance reads without weakening safe.directory globally.
@@ -379,7 +393,7 @@ pkgs.writeShellApplication {
     homepage = "https://github.com/luciusmagn/autolith";
     license = lib.licenses.mit;
     mainProgram = "autolith";
-    platforms = [ "x86_64-linux" ];
+    platforms = [ "x86_64-linux" "aarch64-darwin" ];
   };
 
   passthru = {
