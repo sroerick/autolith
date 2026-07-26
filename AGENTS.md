@@ -11,8 +11,9 @@ Do not silently simplify the specification. Do not leave TODOs, FIXMEs,
 stubs, placeholders, or knowingly partial implementations. If a requirement
 is genuinely too broad or conflicts with another requirement, stop and ask.
 
-The initial target is Linux x86-64 on SBCL with a terminal interface, one
-primary agent, and no claim of hostile-code sandboxing.
+Supported source-development targets are Linux x86-64 and macOS arm64 on SBCL
+with a terminal interface, one primary agent, and no claim of hostile-code
+sandboxing. Nix and packaged binary releases remain Linux x86-64.
 
 ## Upstream Reference Checkouts
 
@@ -233,6 +234,11 @@ Materialize the locked project dependencies with:
 ```sh
 ./script/bootstrap
 ```
+
+On macOS arm64, install a host SBCL, Quicklisp under `~/quicklisp`, Rust with
+Cargo, the Xcode command-line tools, CMake, `pkg-config`, and OpenSSL before
+running bootstrap. Bootstrap builds and records the exact pinned SBCL under the
+Autolith data root; it does not replace the Homebrew host SBCL.
 
 Rebuild only the installed pristine recovery image with:
 

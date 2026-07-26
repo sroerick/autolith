@@ -144,6 +144,16 @@ Composes the default registry from one focused registration function per
 namespace. This keeps a schema or tool-set change local instead of requiring a
 replacement of the complete registry definition in the live image.
 
+** =workspace-tools.lisp= and =seatbelt.lisp=
+
+Own the workspace filesystem and command surfaces plus host command-sandbox
+dispatch. Restricted Linux commands run through =cl-exec-sandbox= and
+Bubblewrap. Restricted macOS commands translate the same workspace policy into
+a Seatbelt profile and run through the system =sandbox-exec= launcher. Seatbelt
+enforces read-only host access, writable workspace and temporary roots,
+protected repository metadata, and network denial, but it does not add Linux
+process namespaces, =no_new_privs=, or seccomp.
+
 ** =search-tools.lisp= and =search-worker.lisp=
 
 =search-tools.lisp= owns the pinned native-library identity, tool classes, and
@@ -273,8 +283,8 @@ boundaries.
 
 ** =generations.lisp=
 
-Owns compatible manifests and the Linux SBCL coordinator-and-saver checkpoint
-backend. An unpublished core must boot and identify its exact generation and
+Owns compatible manifests and the Linux and macOS SBCL coordinator-and-saver
+fork checkpoint backend. An unpublished core must boot and identify its exact
 tracked source commit together with its private image commit and mutation-history
 Git commit before its core, manifest, and selection become visible. Checkpoint
 preparation commits pending reconstructible mutations and writes a complete
@@ -306,6 +316,11 @@ source provenance and boot-probe each temporary image. The launcher repeats the
 versioned probes before use. An interactive missing-image path offers to run the
 bootstrap in place, while declining or a non-interactive launch uses source.
 =--from-source= bypasses the image probe and prompt entirely.
+
+On Linux, the runtime adapter may install the official pinned binary. On macOS
+arm64, it builds the pin from source with a host SBCL when no matching runtime
+exists. Packaged releases and their update launcher remain Linux x86-64 only.
+
 The selected packaged-release launcher gives the active application validated
 release provenance. An accepted cached update restores the terminal and crosses
 back through a dedicated non-recovery status. Only then does that outer launcher

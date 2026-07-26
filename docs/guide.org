@@ -4,7 +4,8 @@
 
 * What works
 
-Autolith is an initial dogfoodable Common Lisp agent for Linux and SBCL. It:
+Autolith is a dogfoodable Common Lisp agent for Linux x86-64 and macOS arm64
+on SBCL. It:
 
 - talks directly to the ChatGPT Codex subscription Responses service;
 - defaults to =gpt-5.6-sol= with user-visible reasoning effort =ultra=;
@@ -28,7 +29,9 @@ file boundaries are summarized in [[file:architecture.org][the architecture note
 
 * Requirements and setup
 
-The supported target is Linux x86-64 with Git, OpenSSL, and Bubblewrap.
+Source checkouts support Linux x86-64 and macOS arm64 on SBCL. Nix and
+binary releases remain Linux x86-64 and require Git, OpenSSL, and Bubblewrap.
+Native macOS operation currently requires a source checkout.
 
 ** Nix package
 
@@ -91,15 +94,28 @@ metadata compatibility record after the host checksum becomes available. See
 
 ** Source checkout
 
-Source development additionally needs Quicklisp, =curl=, GNU =tar=,
-=sha256sum=, Rust with Cargo, a C compiler, CMake, and =pkg-config=. The tracked
-=sbcl.version= pins SBCL 2.6.4. The setup command uses a matching
-=AUTOLITH_SBCL= when explicitly configured, locates a matching system runtime,
-or downloads the official Linux x86-64 binary and checks its pinned SHA-256
-identity before installing it under the Autolith data root. Setup also downloads
-the official matching SBCL source archive, verifies its separately pinned
-SHA-256 identity, and publishes the extracted tree without write bits beside
-the runtime. The launcher and development commands remember that selection.
+Source development needs Quicklisp, =curl=, =tar=, a SHA-256 utility, Rust
+with Cargo, a C compiler, CMake, and =pkg-config=. The tracked =sbcl.version=
+pins SBCL 2.6.4. On Linux, setup uses a matching =AUTOLITH_SBCL=, locates a
+matching system runtime, or installs the hash-verified official Linux x86-64
+binary. On macOS arm64, setup uses a matching runtime or builds the exact
+pinned runtime from source with a host SBCL. It installs that private runtime
+under the Autolith data root without replacing the system Lisp.
+
+Setup also downloads the official matching SBCL source archive, verifies its
+separately pinned SHA-256 identity, and publishes the extracted tree without
+write bits beside the runtime. The launcher and development commands remember
+that selection.
+
+For a fresh macOS development machine, install the host build dependencies and
+Quicklisp first:
+
+#+BEGIN_SRC sh
+brew install sbcl rust cmake pkg-config openssl@3
+curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
+sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
+  --eval '(quicklisp-quickstart:install)' --quit
+#+END_SRC
 
 Dependencies are pinned by =qlfile= and =qlfile.lock=. With Quicklisp already
 installed at =~/quicklisp=, run:
@@ -110,8 +126,9 @@ installed at =~/quicklisp=, run:
 #+END_SRC
 
 =script/bootstrap= installs the pinned runtime when needed, installs Qlot through
-Quicklisp, materializes the locked project dependencies under the ignored
-=.qlot/= directory, builds the private command sandbox helper and fff library,
+Quicklisp, and materializes the locked project dependencies under the ignored
+=.qlot/= directory. It builds the private command sandbox helper on Linux,
+skips that Linux-only helper on macOS, builds the platform-native fff library,
 builds a small pristine recovery core under
 =${XDG_DATA_HOME:-~/.local/share}/autolith/recovery/=, and builds a preloaded
 active image under the adjacent =active/= directory. Both cores and their
@@ -636,6 +653,13 @@ let commands run with full user privileges for the session, list exact saved
 approvals, or clear them. Corrupt permission state is ignored with a warning and
 all unknown commands continue to ask.
 
+On Linux, the command backend additionally uses process and mount namespaces,
+=no_new_privs=, and seccomp through Bubblewrap. On macOS, it uses
+=/usr/bin/sandbox-exec= with a generated Seatbelt profile. Seatbelt enforces the
+documented filesystem and network policy but does not provide Linux process
+namespaces, =no_new_privs=, or seccomp. Both are accidental-damage boundaries,
+not hostile-code sandboxes.
+
 These tools run in the active process but never modify the Lisp heap, so the
 model does not need =self.eval= to look around. The stable launcher and recovery
 artifacts stay read-only through the filesystem tools and ordinary command
@@ -661,7 +685,7 @@ repair have no invented timing.
 
 Bootstrap builds fff revision
 =44a5b259570730a4236ecbf06673d43ef7b2263e= from its locked Rust source and
-publishes =libfff_c.so= under
+publishes =libfff_c.so= on Linux or =libfff_c.dylib= on macOS under
 =${XDG_DATA_HOME:-~/.local/share}/autolith/native/fff/=. The library is loaded
 through its C ABI inside Autolith and is never installed on =PATH= or into the
 system library directories. Its watched content index and LMDB search metadata

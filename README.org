@@ -25,9 +25,10 @@ mutation, checkpoints, and recovery. It talks directly to the ChatGPT Codex
 and Grok subscription services and does not launch or bundle the Codex CLI
 or Grok Build.
 
-The supported target is Linux x86-64 on SBCL. Autolith is dogfoodable, but it
-is not a security sandbox: model-generated Lisp runs with the user's privileges,
-and the user can grant commands full access for a session.
+Autolith supports Linux x86-64 and native macOS arm64 source checkouts on
+SBCL. Nix and binary releases remain Linux x86-64. Autolith is dogfoodable,
+but it is not a security sandbox: model-generated Lisp runs with the user's
+privileges, and the user can grant commands full access for a session.
 
 * Highlights
 
@@ -55,8 +56,8 @@ and the user can grant commands full access for a session.
 
 * Install and start
 
-Nix is the recommended installation path. It pins the complete runtime and
-keeps it separate from the host system.
+On Linux x86-64, Nix is the recommended installation path. It pins the
+complete runtime and keeps it separate from the host system.
 
 #+BEGIN_SRC sh
 nix run github:luciusmagn/autolith
@@ -77,6 +78,23 @@ checkout. Autolith checks published releases periodically and asks before
 installing a newer release. The check runs in the background and never installs
 anything unattended. A prior cached result may place an update notice below the
 next startup banner. Run =autolith --update= to check and update explicitly.
+
+Native macOS arm64 currently runs from a source checkout. Install the host
+toolchain and Quicklisp, then let bootstrap build and install the exact pinned
+SBCL, native libraries, recovery core, and active core:
+
+#+BEGIN_SRC sh
+brew install sbcl rust cmake pkg-config openssl@3
+curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
+sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
+  --eval '(quicklisp-quickstart:install)' --quit
+./script/bootstrap
+./script/check
+./bin/autolith
+#+END_SRC
+
+The macOS command sandbox uses the system Seatbelt launcher. See
+[[file:docs/guide.org][the guide]] for the platform boundary and source setup details.
 
 Authenticate and start a conversation:
 
@@ -139,8 +157,9 @@ canonical replay artifacts are restored from the separate private Git history.
 * Development
 
 Source development additionally needs Quicklisp, Rust with Cargo, a C compiler,
-CMake, and =pkg-config=. Materialize the locked environment and baseline images
-with =./script/bootstrap=.
+CMake, =pkg-config=, and a host SBCL when the pinned runtime must be built from
+source. Materialize the locked environment and baseline images with
+=./script/bootstrap=.
 
 Run the complete check after every change:
 

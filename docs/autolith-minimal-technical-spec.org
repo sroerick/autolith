@@ -5,16 +5,17 @@
 
 * Status
 
-Initial implementation target:
+Supported dogfood targets:
 
 - Linux x86-64
+- macOS arm64 from a source checkout
 - SBCL
 - Terminal interface
 - Single primary agent
 - No hostile-code sandboxing
 
-macOS is the next platform target, followed by Windows, BSD systems, and
-additional Linux architectures.
+Nix and packaged binary releases remain Linux x86-64. Windows, BSD systems,
+and additional Linux architectures are later platform targets.
 
 * 1. Purpose
 
@@ -361,10 +362,13 @@ approval is defined by exact command text and canonical working directory. The
 user may save that exact approval or choose a session-wide mode through
 =/permissions=.
 
-Ordinary approvals run the command in a Linux process sandbox with an isolated
+Ordinary approvals run the command in a host command sandbox with an isolated
 network, a read-only host filesystem, writable workspace and temporary roots,
-protected repository metadata, process namespaces, =no_new_privs=, and seccomp.
-The user may explicitly grant full user privileges for the current session.
+and protected repository metadata. On Linux, Bubblewrap additionally supplies
+process namespaces, =no_new_privs=, and seccomp. On macOS, the system Seatbelt
+launcher enforces the filesystem and network policy but does not provide those
+Linux process controls. The user may explicitly grant full user privileges for
+the current session.
 Malformed persistent permission data fails closed.
 
 This command boundary limits accidental damage from external programs. It does
@@ -1057,9 +1061,10 @@ The manifest identifies at least:
 Core files are not assumed to be portable across SBCL builds,
 operating systems, or architectures.
 
-** 9.1 Linux Checkpointing
+** 9.1 Linux and macOS Checkpointing
 
-On Linux, Autolith creates a checkpoint without stopping the active agent:
+On Linux and macOS, Autolith creates a checkpoint without stopping the active
+agent:
 
 1. Briefly block live mutation.
 2. Check and privately commit pending reconstructible mutations.
@@ -1088,7 +1093,7 @@ Platforms without a validated fork-and-dump path may initially create a
 checkpoint through a controlled restart.
 
 This limitation must remain behind a checkpoint backend and must not
-affect the Linux design.
+affect the validated Linux and macOS design.
 
 ** 9.3 Rollback
 
@@ -1148,7 +1153,8 @@ Autolith should include or locate:
 - The exact source corresponding to the pinned SBCL runtime.
 - A local, pinned Quicklisp distribution or equivalent dependency set.
 - Required Lisp source dependencies.
-- Bubblewrap and a private =cl-exec-sandbox= helper on Linux.
+- Bubblewrap and a private =cl-exec-sandbox= helper on Linux, or the system
+  =sandbox-exec= launcher on macOS.
 - A documented set of useful external binaries.
 
 Available Lisp systems and external commands are exposed to the agent
@@ -1157,10 +1163,11 @@ through a capability registry.
 Ordinary filesystem, process, networking, and build operations should
 prefer Common Lisp, ASDF, and UIOP.
 
-On the initial Linux x86-64 target, setup may install a hash-verified pinned
-SBCL binary beneath the data root when no compatible runtime is available. The
-launcher and development commands use the recorded executable without changing
-the user's system Lisp installation.
+On Linux x86-64, setup may install a hash-verified pinned SBCL binary beneath
+the data root when no compatible runtime is available. On macOS arm64, setup
+uses a matching runtime or builds the pinned runtime from source with a host
+SBCL. The launcher and development commands use the private recorded executable
+without changing the user's system Lisp installation.
 
 The matching SBCL source is a reference and reconstruction input for
 implementation-aware inspection. Live implementation mutation changes only a
@@ -1309,7 +1316,7 @@ The first dogfoodable version is complete when it can:
 4. Execute =lisp.*= operations in named, heap-isolated SBCL REPL processes.
 5. Inspect and redefine a live function through =self.*=.
 6. Persist that definition as a private image commit and replay script.
-7. Create a Linux checkpoint without stopping the active agent.
+7. Create a Linux or macOS checkpoint without stopping the active agent.
 8. Recover from an intentionally broken agent loop.
 9. Boot a retained generation through =autolith --recovery=.
 10. Rebuild a working image from the tracked source and pinned
