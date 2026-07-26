@@ -2276,13 +2276,21 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
          (list (terminal-span ':status-dim " · git ")
                (terminal-span ':status-branch branch)))))))
 
+(-> application--worked-seconds (application) (option (integer 0)))
+(defun application--worked-seconds (application)
+  "Return the active conversation's accumulated working seconds, when bound."
+  (and (slot-boundp application 'conversation)
+       (conversation-working-seconds
+        (application-conversation application))))
+
 (-> application-set-activity (application (option string)) terminal-ui)
 (defun application-set-activity (application status)
   "Set APPLICATION's live STATUS and snapshot its contextual details once."
   (terminal-ui-set-status
    (application-ui application)
    status
-   :details (and status (application--status-details application))))
+   :details (and status (application--status-details application))
+   :worked-seconds (and status (application--worked-seconds application))))
 
 (-> application-thinking-label () string)
 (defun application-thinking-label ()

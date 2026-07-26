@@ -1185,6 +1185,12 @@ It should show:
 The interface should remain responsive during tool execution and model
 streaming.
 
+Each conversation accumulates its working time from durable record
+timestamps, counting gaps between records except the idle gap immediately
+before a user message, and reconstructs the total exactly on resume. While a
+turn is active, the status row right-aligns the conversation's total worked
+time beside the running activity clock and drops it first on narrow rows.
+
 While a turn is active, Enter steers its next tool boundary and Tab queues a
 later follow-up. Pending inputs are previewed in the live region, and an empty
 Tab recalls the newest follow-up for editing. While idle, Tab submits like Enter.

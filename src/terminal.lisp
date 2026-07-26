@@ -175,6 +175,12 @@
     :accessor terminal-ui-status-progress-at
     :type (option real)
     :documentation "The monotonic time of the newest progress within the activity phase.")
+   (status-worked-seconds
+    :initform nil
+    :accessor terminal-ui-status-worked-seconds
+    :type (option (integer 0))
+    :documentation
+    "The conversation's accumulated working seconds when the activity began.")
    (agent-activities
     :initform nil
     :accessor terminal-ui-agent-activities

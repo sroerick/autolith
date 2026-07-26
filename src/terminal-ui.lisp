@@ -757,9 +757,23 @@
                 (terminal-ui--duration-text idle))
         (terminal-ui--duration-text elapsed))))
 
+(-> terminal-ui--worked-spans-at (terminal-ui real) list)
+(defun terminal-ui--worked-spans-at (ui now)
+  "Return UI's total worked time spans at monotonic NOW, when tracked."
+  (let ((worked-seconds (terminal-ui-status-worked-seconds ui)))
+    (when worked-seconds
+      (let ((elapsed (terminal-ui--status-times-at ui now)))
+        (list (terminal-span ':status-dim "worked ")
+              (terminal-span ':status-plain
+                             (terminal-ui--duration-text
+                              (+ worked-seconds elapsed))))))))
+
 (-> terminal-ui--status-row-at (terminal-ui real integer) list)
 (defun terminal-ui--status-row-at (ui now row-width)
-  "Return UI's clipped status spans padded across ROW-WIDTH cells."
+  "Return UI's clipped status spans padded across ROW-WIDTH cells.
+
+Total worked time is right-aligned when it fits beside the activity
+content; a narrow row drops it before any activity detail."
   (let* ((content
            (append
             (terminal-ui--status-spinner-spans-at ui now)
@@ -768,14 +782,24 @@
                                  (terminal-ui--status-text-at ui now)))
             (terminal-ui-status-details ui)))
          (clipped (terminal--clip-spans content row-width))
+         (left-width (terminal--spans-width clipped))
+         (worked (terminal-ui--worked-spans-at ui now))
+         (gap (- row-width left-width (terminal--spans-width worked)))
          (padding (and (terminal-styled-p (terminal-ui-terminal ui))
-                       (- row-width (terminal--spans-width clipped)))))
-    (if (and padding (plusp padding))
-        (append clipped
-                (list (terminal-span ':status-plain
-                                     (make-string padding
-                                                  :initial-element #\Space))))
-        clipped)))
+                       (- row-width left-width))))
+    (cond
+      ((and worked (>= gap 2))
+       (append clipped
+               (list (terminal-span ':status-plain
+                                    (make-string gap :initial-element #\Space)))
+               worked))
+      ((and padding (plusp padding))
+       (append clipped
+               (list (terminal-span ':status-plain
+                                    (make-string padding
+                                                 :initial-element #\Space)))))
+      (t
+       clipped))))
 
 (-> terminal-ui--rows-content
     (terminal list &key (:cursor-row integer) (:cursor-offset integer))
@@ -1232,10 +1256,15 @@ when no resize needs to be applied."
   ui)
 
 (-> terminal-ui-set-status
-    (terminal-ui (option string) &key (:details terminal-styled-text))
+    (terminal-ui (option string)
+     &key (:details terminal-styled-text)
+          (:worked-seconds (option (integer 0))))
     terminal-ui)
-(defun terminal-ui-set-status (ui status &key details)
-  "Begin or clear UI's timed one-row STATUS activity phase with DETAILS."
+(defun terminal-ui-set-status (ui status &key details worked-seconds)
+  "Begin or clear UI's timed one-row STATUS activity phase with DETAILS.
+
+WORKED-SECONDS carries the conversation's accumulated working time at the
+start of the activity; the live paint adds the running elapsed seconds."
   (unless (terminal-styled-text-p details)
     (error 'terminal-error
            :message "Terminal status details must contain styled spans."
@@ -1250,13 +1279,15 @@ when no resize needs to be applied."
            (setf (terminal-ui-status ui) safe-status
                  (terminal-ui-status-details ui) details
                  (terminal-ui-status-started-at ui) now
-                 (terminal-ui-status-progress-at ui) now)
+                 (terminal-ui-status-progress-at ui) now
+                 (terminal-ui-status-worked-seconds ui) worked-seconds)
            (terminal-ui--paint-live ui now)))
         ((terminal-ui-status ui)
          (setf (terminal-ui-status ui) nil
                (terminal-ui-status-details ui) nil
                (terminal-ui-status-started-at ui) nil
                (terminal-ui-status-progress-at ui) nil
+               (terminal-ui-status-worked-seconds ui) nil
                (terminal-ui-status-rendered-signature ui) nil)
          (terminal-ui--paint-live ui)))))
   ui)

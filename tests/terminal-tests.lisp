@@ -1559,6 +1559,7 @@
   (test-terminal-input-decoding)
   (test-terminal-live-region-layout)
   (test-terminal-status-bar)
+  (test-terminal-status-worked-time)
   (test-terminal-narrow-live-region)
   (test-terminal-bounded-editor-repaint)
   (test-terminal-preview-rows)
@@ -1572,3 +1573,55 @@
   (test-terminal-styling-primitives)
   (test-terminal-non-tty-fallback)
   t)
+
+(-> test-terminal-status-worked-time () null)
+(defun test-terminal-status-worked-time ()
+  "Test the right-aligned total worked time on the status row."
+  (let* ((columns 96)
+         (terminal (make-instance 'recording-terminal
+                                  :columns columns
+                                  :styled-p t))
+         (ui (terminal-ui-create :terminal terminal)))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-status
+       active-ui
+       "working"
+       :details (list (terminal-span ':status-model "model"))
+       :worked-seconds 3723)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content
+           active-ui
+           (terminal-ui-status-started-at active-ui))
+        (declare (ignore display cursor))
+        (let ((status-row
+                (second (uiop:split-string text :separator '(#\Newline)))))
+          (test-assert (= (text-cell-width status-row) columns)
+                       "a worked status row spans the full terminal width")
+          (test-assert (search "worked 1:02:03" status-row)
+                       "the status row shows accumulated plus elapsed work")
+          (test-assert
+           (let ((start (search "worked 1:02:03" status-row)))
+             (and start
+                  (= (+ start (length "worked 1:02:03"))
+                     (length status-row))))
+           "total worked time is right-aligned on the status row")))
+      (terminal-ui-set-status active-ui nil)
+      (test-assert (null (terminal-ui-status-worked-seconds active-ui))
+                   "clearing the status clears the worked baseline")))
+  (let* ((columns 24)
+         (terminal (make-instance 'recording-terminal
+                                  :columns columns
+                                  :styled-p t))
+         (ui (terminal-ui-create :terminal terminal)))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-status active-ui "working" :worked-seconds 3723)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content
+           active-ui
+           (terminal-ui-status-started-at active-ui))
+        (declare (ignore display cursor))
+        (let ((status-row
+                (second (uiop:split-string text :separator '(#\Newline)))))
+          (test-assert (not (search "worked" status-row))
+                       "a narrow status row drops the worked segment first")))))
+  nil)
