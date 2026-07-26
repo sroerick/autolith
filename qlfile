@@ -14,6 +14,6 @@ git clinedi https://github.com/luciusmagn/clinedi.git :ref 95ec422da1fa8285c98ff
 git cl-exec-sandbox https://github.com/luciusmagn/cl-exec-sandbox.git :ref 4ebe975e6de1451dbe6c773c64bac17dca062cd9
 git clifff https://github.com/luciusmagn/clifff.git :ref 8bf3ebb0985108593cad105d31639cedbe9e5373
 git colorlisp https://github.com/luciusmagn/colorlisp.git :ref 05a3313d52e2a2c643219a750dd5045df56c1cd7
-git mcparen https://github.com/luciusmagn/mcparen.git :ref 4ece0bba48188f34fe808da87d6a115ff51992dd
+git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b7978748c3d453bc3287
 git sexp-store https://github.com/luciusmagn/sexp-store.git :ref 0a586df98c295ca6d2fcd47e33bc5f478075f470
 git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref e43fc87daaca01183606c2e0b4150605d01677e7

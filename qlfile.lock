@@ -64,8 +64,8 @@
   :version "git-05a3313d52e2a2c643219a750dd5045df56c1cd7"))
 ("mcparen" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/mcparen.git" :ref "4ece0bba48188f34fe808da87d6a115ff51992dd")
-  :version "git-4ece0bba48188f34fe808da87d6a115ff51992dd"))
+  :initargs (:remote-url "https://github.com/luciusmagn/mcparen.git" :ref "58ba29a8dd8d06417452b7978748c3d453bc3287")
+  :version "git-58ba29a8dd8d06417452b7978748c3d453bc3287"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/sexp-store.git" :ref "0a586df98c295ca6d2fcd47e33bc5f478075f470")

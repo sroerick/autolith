@@ -1165,7 +1165,8 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                       (realp value)
                       (eq value t)
                       (eq value yason:true)
-                      (eq value yason:false))
+                      (eq value yason:false)
+                      (eq value (mcparen:json-null-value)))
                   nil)
                  (t
                   (mcp-tools--server-error
@@ -1176,6 +1177,28 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                            (mcp-server-runtime-name runtime)))))))
       (visit schema 0)))
   schema)
+
+(-> mcp-tools--copy-schema (json-object) json-object)
+(defun mcp-tools--copy-schema (schema)
+  "Return a detached copy of validated MCP input SCHEMA."
+  (labels ((copy-value (value)
+             "Return a detached copy of one JSON VALUE."
+             (cond
+               ((hash-table-p value)
+                (let ((copy (json-object)))
+                  (maphash
+                   (lambda (key child)
+                     (setf (gethash (copy-seq key) copy)
+                           (copy-value child)))
+                   value)
+                  copy))
+               ((stringp value)
+                (copy-seq value))
+               ((vectorp value)
+                (map 'vector #'copy-value value))
+               (t
+                value))))
+    (copy-value schema)))
 
 (-> mcp-tools--provider-schema
     (mcp-server-runtime t)
@@ -1202,7 +1225,7 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
        (format nil "MCP server ~A advertised an oversized input schema."
                (mcp-server-runtime-name runtime))))
     (let* ((copy
-             (json-decode encoded))
+             (mcp-tools--copy-schema schema))
            (type
              (json-get copy "type"))
            (object-type-p
