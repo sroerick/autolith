@@ -46,13 +46,19 @@
   "Permit isolated indexed workspace searches inside child agents."
   t)
 
+(defparameter *fff-library-file-name*
+  #+darwin "libfff_c.dylib"
+  #-darwin "libfff_c.so"
+  "The platform file name of the private fff search library.")
+
 (-> search--library-path (configuration) (values pathname boolean))
 (defun search--library-path (configuration)
   "Return the fff library path and whether it is an explicit override."
   (let ((override (uiop:getenv "AUTOLITH_FFF_LIBRARY")))
     (if (non-empty-string-p override)
         (values (pathname override) t)
-        (values (merge-pathnames "native/fff/libfff_c.so"
+        (values (merge-pathnames (format nil "native/fff/~A"
+                                         *fff-library-file-name*)
                                  (configuration-data-root configuration))
                 nil))))
 

@@ -2,8 +2,14 @@
 
 ;;;; -- Terminal Methods --
 
-(defparameter *linux-terminal-window-size-request* #x5413
-  "The Linux TIOCGWINSZ ioctl request on supported x86-64 systems.")
+(defparameter *terminal-window-size-request*
+  #+linux #x5413
+  #+darwin #x40087468
+  #-(or linux darwin) #x5413
+  "The platform TIOCGWINSZ ioctl request for reading terminal dimensions.")
+
+#-(or linux darwin)
+(warn "Autolith has no validated TIOCGWINSZ value for this platform; terminal size will fall back to tput.")
 
 (-> terminal-file-descriptor-size
     (integer)
@@ -13,7 +19,7 @@
   (handler-case
       (sb-alien:with-alien ((size (array sb-alien:unsigned-short 4)))
         (sb-posix:ioctl file-descriptor
-                        *linux-terminal-window-size-request*
+                        *terminal-window-size-request*
                         (sb-alien:addr (sb-alien:deref size 0)))
         (let ((rows (sb-alien:deref size 0))
               (columns (sb-alien:deref size 1)))

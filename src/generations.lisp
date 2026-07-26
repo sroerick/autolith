@@ -551,9 +551,9 @@
     :documentation "The active registry whose ephemeral runtimes must be stopped."))
   (:documentation "The platform boundary for non-stopping live-image checkpoints."))
 
-(defclass linux-sbcl-checkpoint-backend (checkpoint-backend)
+(defclass fork-sbcl-checkpoint-backend (checkpoint-backend)
   ()
-  (:documentation "A Linux SBCL checkpoint implemented with coordinator and saver forks."))
+  (:documentation "An SBCL checkpoint implemented with coordinator and saver forks."))
 
 (defvar *checkpoint-thread-quiescer* nil
   "A dynamic callback running checkpoint work without ephemeral application threads.")
@@ -575,14 +575,15 @@
     checkpoint-backend)
 (defun checkpoint-backend-create (configuration worker &key tool-registry)
   "Return the checkpoint backend supported by this runtime."
-  (if (and (member :linux *features*)
-           (member :sbcl *features*))
-      (make-instance 'linux-sbcl-checkpoint-backend
+  (if (and (member :sbcl *features*)
+           (or (member :linux *features*)
+               (member :darwin *features*)))
+      (make-instance 'fork-sbcl-checkpoint-backend
                      :configuration configuration
                      :worker worker
                      :tool-registry tool-registry)
       (error 'checkpoint-error
-             :message "Non-stopping checkpoints currently require SBCL on Linux."
+             :message "Non-stopping checkpoints currently require SBCL on Linux or macOS."
              :stage ':backend
              :pathname nil)))
 
@@ -754,7 +755,7 @@
     (setf *checkpoint-in-progress-p* nil))
   nil)
 
-(defmethod checkpoint-create ((backend linux-sbcl-checkpoint-backend))
+(defmethod checkpoint-create ((backend fork-sbcl-checkpoint-backend))
   "Fork a coordinator while briefly excluding live mutations, then resume the parent."
   (when *checkpoint-thread-quiescer*
     (let ((quiescer *checkpoint-thread-quiescer*))

@@ -37,6 +37,18 @@
    :output output
    :error-output (if ignore-error-status nil ':output)))
 
+(-> release-script-tests--pty-command (string string) list)
+(defun release-script-tests--pty-command (command answer)
+  "Return a platform PTY command running shell COMMAND and submitting ANSWER."
+  (if (member :darwin *features*)
+      (list "env"
+            (format nil "AUTOLITH_TEST_PTY_COMMAND=~A" command)
+            (format nil "AUTOLITH_TEST_PTY_ANSWER=~A" answer)
+            "/usr/bin/expect"
+            "-c"
+            "set timeout 30; spawn -noecho /bin/sh -c \"$env(AUTOLITH_TEST_PTY_COMMAND)\"; expect -exact {[Y/n]}; send -- \"$env(AUTOLITH_TEST_PTY_ANSWER)\\r\"; expect eof; catch wait result; exit [lindex $result 3]")
+      (list "script" "-q" "-e" "-c" command "/dev/null")))
+
 (-> release-script-tests--chmod (string pathname) null)
 (defun release-script-tests--chmod (mode pathname)
   "Apply numeric or symbolic MODE to PATHNAME."
@@ -60,6 +72,67 @@
   "Return a curl substitute serving files from the test fixture root."
   (format nil
           "#!/bin/sh~%set -eu~%output=~%write_out=~%url=~%while [ \"$#\" -gt 0 ]; do~%  case $1 in~%    --output) output=$2; shift 2 ;;~%    --write-out) write_out=$2; shift 2 ;;~%    --retry|--proto|--max-time) shift 2 ;;~%    --*) shift ;;~%    *) url=$1; shift ;;~%  esac~%done~%case $url in~%  */latest)~%    [ -n \"$write_out\" ]~%    printf \"%s\" \"https://example.invalid/releases/${AUTOLITH_TEST_LATEST_TAG:-v0.11.0}\"~%    exit 0~%    ;;~%esac~%cp \"$AUTOLITH_TEST_RELEASE_FIXTURE/${url##*/}\" \"$output\"~%"))
+
+(-> release-script-tests--install-linux-host-tools (pathname) pathname)
+(defun release-script-tests--install-linux-host-tools (directory)
+  "Install fixture commands reporting and satisfying the binary release target."
+  (let* ((directory (uiop:ensure-directory-pathname directory))
+         (uname (merge-pathnames "uname" directory))
+         (bwrap (merge-pathnames "bwrap" directory))
+         (chmod (merge-pathnames "chmod" directory))
+         (move (merge-pathnames "mv" directory)))
+    (release-script-tests--write-file
+     uname
+     "#!/bin/sh
+case ${1:-} in
+  -s) printf 'Linux\\n' ;;
+  -m) printf 'x86_64\\n' ;;
+  *) exit 64 ;;
+esac
+")
+    (release-script-tests--write-file bwrap "#!/bin/sh
+exit 0
+")
+    (release-script-tests--write-file chmod "#!/bin/sh
+recursive=
+if [ \"${1:-}\" = -R ]; then
+  recursive=-R
+  shift
+fi
+mode=$1
+shift
+if [ \"${1:-}\" = -- ]; then
+  shift
+fi
+if [ -n \"$recursive\" ]; then
+  exec /bin/chmod \"$recursive\" \"$mode\" \"$@\"
+else
+  exec /bin/chmod \"$mode\" \"$@\"
+fi
+")
+    (release-script-tests--write-file move "#!/bin/sh
+force=
+no_target=false
+case ${1:-} in
+  -Tf|-fT) force=-f; no_target=true; shift ;;
+  -f) force=-f; shift ;;
+  -T) no_target=true; shift ;;
+esac
+if [ \"${1:-}\" = -- ]; then
+  shift
+fi
+if [ \"$no_target\" = true ]; then
+  /bin/rm -f \"$2\"
+fi
+if [ -n \"$force\" ]; then
+  exec /bin/mv -f \"$@\"
+else
+  exec /bin/mv \"$@\"
+fi
+")
+    (dolist (pathname (list uname bwrap chmod move))
+      (release-script-tests--chmod "755" pathname))
+    directory))
 
 (-> release-script-tests--readlink (pathname) string)
 (defun release-script-tests--readlink (pathname)
@@ -250,7 +323,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
              (output
                (with-input-from-string (input (format nil "y~%"))
                  (uiop:run-program
-                  (list "script" "-q" "-e" "-c" command "/dev/null")
+                  (release-script-tests--pty-command command "y")
                   :input input
                   :output :string
                   :error-output ':output
@@ -276,7 +349,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
              (output
                (with-input-from-string (input (format nil "n~%"))
                  (uiop:run-program
-                  (list "script" "-q" "-e" "-c" command "/dev/null")
+                  (release-script-tests--pty-command command "n")
                   :input input
                   :output :string
                   :error-output ':output
@@ -300,7 +373,14 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
             root))
          (launcher
            (merge-pathnames "bin/autolith" release-root))
-         (environment '("AUTOLITH_NO_UPDATE_CHECK=1")))
+         (host-bin (merge-pathnames "linux-host-bin/" root))
+         (path (format nil "~A:~A"
+                       (string-right-trim "/" (namestring host-bin))
+                       (or (uiop:getenv "PATH") "")))
+         (environment
+           (list "AUTOLITH_NO_UPDATE_CHECK=1"
+                 (format nil "PATH=~A" path))))
+    (release-script-tests--install-linux-host-tools host-bin)
     (release-script-tests--make-release source-root release-root)
     (let ((output
             (release-script-tests--run
@@ -315,10 +395,12 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                         (string-right-trim
                          "/"
                          (namestring
-                          (merge-pathnames "libexec/autolith/" release-root))))
+                          (truename
+                           (merge-pathnames "libexec/autolith/" release-root)))))
                 (format nil "runtime=~A"
                         (namestring
-                         (merge-pathnames "runtime/bin/sbcl" release-root)))))
+                         (truename
+                          (merge-pathnames "runtime/bin/sbcl" release-root))))))
         (test-assert (find line
                            (uiop:split-string output
                                               :separator '(#\Newline #\Return))
@@ -380,6 +462,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
     (release-script-tests--make-release source-root release-root)
     (uiop:ensure-all-directories-exist
      (list fixture-root fixture-source fixture-bin fixture-release))
+    (release-script-tests--install-linux-host-tools fixture-bin)
     (release-script-tests--run
      (list "cp" "-a" (format nil "~A." (namestring release-root))
            (namestring fixture-release))
@@ -501,6 +584,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
     (release-script-tests--make-release source-root release-root)
     (uiop:ensure-all-directories-exist
      (list bin-directory data-home state-home fixture-bin))
+    (release-script-tests--install-linux-host-tools fixture-bin)
     (uiop:run-program
      (list "ln" "-s" (format nil "releases/~A" tag)
            (namestring (merge-pathnames "current" install-root))))
@@ -587,12 +671,16 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
       (test-assert
        (and (search "INNER_KIND=release" events)
             (search (format nil "INNER_ROOT=~A"
-                            (string-right-trim "/" (namestring release-root)))
+                            (string-right-trim
+                             "/"
+                             (namestring (truename release-root))))
                     events))
        "only the selected packaged topology receives release provenance")
       (test-assert
        (and (search (format nil "INSTALL_ROOT=~A"
-                            (string-right-trim "/" (namestring install-root)))
+                            (string-right-trim
+                             "/"
+                             (namestring (truename install-root))))
                     events)
             (search (format nil "INSTALL_ARGS=without-command-link,~A" next-tag)
                     events))

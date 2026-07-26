@@ -545,7 +545,7 @@ is retained whenever the configured maximum can contain the fixed metadata."
                      (:full-access
                       (external-sandbox-policy))))
                  (result
-                   (run-sandboxed
+                   (command-sandbox-run
                     "/bin/sh"
                     (list "-c" command)
                     :policy policy

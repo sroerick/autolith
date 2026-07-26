@@ -93,6 +93,10 @@
                  (uiop:temporary-directory))))
          (source-root (asdf:system-source-directory :autolith)))
     (uiop:ensure-all-directories-exist (list root))
+    ;; Canonicalize ROOT so tests compare paths on the same terms as the
+    ;; truename-resolved working directory, even when the platform temporary
+    ;; directory is a symlink (macOS maps /var to /private/var).
+    (setf root (uiop:ensure-directory-pathname (truename root)))
     (make-instance 'configuration
                    :source-root source-root
                    :working-directory source-root

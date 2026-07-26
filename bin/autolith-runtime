@@ -70,10 +70,10 @@ runtime_record()
   local temporary
 
   mkdir -p -- "$runtime_root"
-  chmod 700 -- "$runtime_root"
+  chmod 700 "$runtime_root"
   temporary=$runtime_root/.command.$$
   printf '%s\n' "$command" > "$temporary"
-  chmod 444 -- "$temporary"
+  chmod 444 "$temporary"
   mv -f -- "$temporary" "$runtime_command_path"
 }
 
@@ -105,7 +105,7 @@ source_install()
   done
 
   mkdir -p -- "$runtime_root"
-  chmod 700 -- "$runtime_root"
+  chmod 700 "$runtime_root"
   temporary_directory=$(mktemp -d "$runtime_root/.source.XXXXXX")
   archive=$temporary_directory/sbcl-$expected_version-source.tar.bz2
   distribution=$temporary_directory/sbcl-$expected_version
@@ -139,7 +139,7 @@ source_install()
   fi
   identity=$runtime_root/.source.identity.$$
   printf '%s %s\n' "$expected_version" "$source_archive_sha256" > "$identity"
-  chmod 444 -- "$identity"
+  chmod 444 "$identity"
   mv -f -- "$identity" "$source_identity_path"
   rm -rf -- "$temporary_directory"
   temporary_directory=
@@ -164,7 +164,7 @@ runtime_install()
   done
 
   mkdir -p -- "$runtime_root"
-  chmod 700 -- "$runtime_root"
+  chmod 700 "$runtime_root"
   temporary_directory=$(mktemp -d "$runtime_root/.install.XXXXXX")
   archive_name=sbcl-$expected_version-x86-64-linux-binary.tar.bz2
   archive=$temporary_directory/$archive_name
@@ -278,4 +278,4 @@ if source_available; then
 else
   unset AUTOLITH_SBCL_SOURCE_ROOT
 fi
-exec "$sbcl_command" --script "$script_path" "${script_arguments[@]}"
+exec "$sbcl_command" --script "$script_path" ${script_arguments[@]+"${script_arguments[@]}"}

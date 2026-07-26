@@ -296,18 +296,25 @@
                      (task-find-agent-definition definitions "reviewer")
                      (task-find-agent-definition definitions "librarian"))
                 "one blocked role does not suppress unrelated definitions")
-               (test-assert
-                (and (null (task-find-agent-definition definitions "dupe"))
-                     dupe-diagnostic
-                     (eq (task-agent-definition-error-source dupe-diagnostic)
-                         :project)
-                     (eq (task-agent-definition-error-field dupe-diagnostic)
-                         :name)
-                     (search "same normalized role name"
-                             (princ-to-string
-                              (task-agent-definition-error-cause
-                               dupe-diagnostic))))
-                "case-normalized duplicate filenames fail closed before parsing"))))
+               (when
+                   (= 2
+                      (count-if
+                       (lambda (pathname)
+                         (string-equal (or (pathname-name pathname) "")
+                                       "dupe"))
+                       (uiop:directory-files project-directory)))
+                 (test-assert
+                  (and (null (task-find-agent-definition definitions "dupe"))
+                       dupe-diagnostic
+                       (eq (task-agent-definition-error-source dupe-diagnostic)
+                           :project)
+                       (eq (task-agent-definition-error-field dupe-diagnostic)
+                           :name)
+                       (search "same normalized role name"
+                               (princ-to-string
+                                (task-agent-definition-error-cause
+                                 dupe-diagnostic))))
+                  "case-normalized duplicate filenames fail closed before parsing")))))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
   nil)

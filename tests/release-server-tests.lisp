@@ -222,9 +222,7 @@
                      (make-identifier))
              (uiop:temporary-directory))))
          (source-a (merge-pathnames "source-a/" root))
-         (source-b (merge-pathnames "source-b/" root))
-         (archive-a (merge-pathnames "identity-a.tar" root))
-         (archive-b (merge-pathnames "identity-b.tar" root)))
+         (source-b (merge-pathnames "source-b/" root)))
     (unwind-protect
          (progn
            (release-server-tests--write-file
@@ -233,42 +231,29 @@
            (release-server-tests--write-file
             (merge-pathnames "fixture.txt" source-b)
             "deterministic release identity")
-           (release-archive--run
-            (list "touch" "-d" "@1"
-                  (namestring (merge-pathnames "fixture.txt" source-a))))
-           (release-archive--run
-            (list "touch" "-d" "@2"
-                  (namestring (merge-pathnames "fixture.txt" source-b))))
+           (sb-posix:utime
+            (namestring (merge-pathnames "fixture.txt" source-a))
+            1 1)
+           (sb-posix:utime
+            (namestring (merge-pathnames "fixture.txt" source-b))
+            2 2)
            (release-archive--create-source-identity
             source-a "v0.16.0" "1700000000")
            (release-archive--create-source-identity
             source-b "v0.16.0" "1700000000")
-           (dolist (entry (list (list source-a archive-a)
-                                (list source-b archive-b)))
-             (release-archive--run
-              (list "tar" "--sort=name" "--mtime=@0"
-                    "--owner=0" "--group=0" "--numeric-owner"
-                    "-cf" (namestring (second entry)) ".git")
-              :directory (first entry)))
-           (let ((checksum-a
-                   (first
-                    (uiop:split-string
-                     (release-archive--run
-                      (list "sha256sum" (namestring archive-a))
-                      :output ':string
-                      :error-output ':output)
-                     :separator '(#\Space #\Tab))))
-                 (checksum-b
-                   (first
-                    (uiop:split-string
-                     (release-archive--run
-                      (list "sha256sum" (namestring archive-b))
-                      :output ':string
-                      :error-output ':output)
-                     :separator '(#\Space #\Tab)))))
+           (multiple-value-bind (output error-output status)
+               (uiop:run-program
+                (list "diff" "-r"
+                      (namestring (merge-pathnames ".git/" source-a))
+                      (namestring (merge-pathnames ".git/" source-b)))
+                :output ':string
+                :error-output ':string
+                :ignore-error-status t)
              (test-assert
-              (string= checksum-a checksum-b)
-              "packaged source identities ignore source stat metadata"))
+              (eql status 0)
+              (format nil
+                      "packaged source identities ignore source stat metadata:~%~A~A"
+                      output error-output)))
            (test-assert
             (and (not (probe-file (merge-pathnames ".git/hooks/" source-a)))
                  (not (probe-file (merge-pathnames ".git/logs/" source-a))))

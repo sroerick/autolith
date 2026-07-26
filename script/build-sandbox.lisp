@@ -1,5 +1,10 @@
 (require :asdf)
 
+;;; The cl-exec-sandbox helper wraps Linux bubblewrap, seccomp, and network
+;;; namespaces, so only Linux builds it. Other platforms load the library's
+;;; portable fallback, which runs unsandboxed policies directly and signals
+;;; sandbox-unavailable for sandboxed policies.
+#+linux
 (let ((installed-helper (uiop:getenv "CL_EXEC_SANDBOX_HELPER")))
   (unless (and installed-helper (probe-file installed-helper))
     (let* ((system-root (asdf:system-source-directory :cl-exec-sandbox))
@@ -9,3 +14,6 @@
       (uiop:run-program (list "/usr/bin/env" "bash" (namestring builder))
                         :output :interactive
                         :error-output :interactive))))
+
+#-linux
+(format t "~&Skipping the Linux-only cl-exec-sandbox helper on this platform.~%")

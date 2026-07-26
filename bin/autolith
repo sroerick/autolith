@@ -231,25 +231,25 @@ trap finish_launcher EXIT HUP INT TERM
 
 if [[ "$recovery_requested" == true ]]; then
   restore_terminal
-  run_recovery "${remaining_arguments[@]}"
+  run_recovery ${remaining_arguments[@]+"${remaining_arguments[@]}"}
   exit $?
 fi
 
 crash_pointer_directory="$state_home/autolith/crash-pointers"
 mkdir -p -- "$crash_pointer_directory"
-chmod 700 -- "$crash_pointer_directory"
+chmod 700 "$crash_pointer_directory"
 crash_pointer="$crash_pointer_directory/launcher-$$.path"
 rm -f -- "$crash_pointer"
 export AUTOLITH_CRASH_POINTER="$crash_pointer"
 
 recovery_session_pointer_directory="$state_home/autolith/recovery-session-pointers"
 mkdir -p -- "$recovery_session_pointer_directory"
-chmod 700 -- "$recovery_session_pointer_directory"
+chmod 700 "$recovery_session_pointer_directory"
 recovery_session_pointer="$recovery_session_pointer_directory/launcher-$$.sexp"
 rm -f -- "$recovery_session_pointer"
 export AUTOLITH_RECOVERY_SESSION_POINTER="$recovery_session_pointer"
 
-if run_active "${remaining_arguments[@]}"; then
+if run_active ${remaining_arguments[@]+"${remaining_arguments[@]}"}; then
   exit 0
 else
   status=$?
@@ -277,10 +277,10 @@ if [[ "$status" -ne 64 && "$status" -ne 76 &&
   if [[ -n "$capsule" ]]; then
     recovery_arguments+=("--capsule" "$capsule")
   fi
-  for argument in "${remaining_arguments[@]}"; do
+  for argument in ${remaining_arguments[@]+"${remaining_arguments[@]}"}; do
     recovery_arguments+=("--original-argument" "$argument")
   done
-  recovery_arguments+=("--" "${remaining_arguments[@]}")
+  recovery_arguments+=("--" ${remaining_arguments[@]+"${remaining_arguments[@]}"})
   run_recovery "${recovery_arguments[@]}"
   exit $?
 fi

@@ -109,7 +109,7 @@
             :detach-function (lambda () nil)))
          (backend
            (make-instance
-            'linux-sbcl-checkpoint-backend
+            'fork-sbcl-checkpoint-backend
             :configuration configuration
             :worker nil
             :tool-registry registry)))
@@ -192,7 +192,7 @@
             :format-arguments nil))
          (backend
            (make-instance
-            'linux-sbcl-checkpoint-backend
+            'fork-sbcl-checkpoint-backend
             :configuration configuration
             :worker nil
             :tool-registry registry)))
@@ -292,7 +292,7 @@
             :name "Autolith active provider secret test"))
          (backend
            (make-instance
-            'linux-sbcl-checkpoint-backend
+            'fork-sbcl-checkpoint-backend
             :configuration configuration
             :worker nil
             :tool-registry nil)))

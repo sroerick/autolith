@@ -54,7 +54,8 @@
          (library
            (if (non-empty-string-p configured-library)
                (pathname configured-library)
-               (merge-pathnames "native/fff/libfff_c.so"
+               (merge-pathnames (format nil "native/fff/~A"
+                                        *fff-library-file-name*)
                                 (configuration-data-root
                                  default-configuration))))
          (previous-library (uiop:getenv "AUTOLITH_FFF_LIBRARY"))

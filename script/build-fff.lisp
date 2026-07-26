@@ -20,7 +20,9 @@
          (merge-pathnames (format nil "autolith/build/fff/~A/" commit)
                           cache-home))
        (install-root (merge-pathnames "autolith/native/fff/" data-home))
-       (library (merge-pathnames "libfff_c.so" install-root))
+       (library-name #+darwin "libfff_c.dylib"
+                     #-darwin "libfff_c.so")
+       (library (merge-pathnames library-name install-root))
        (manifest (merge-pathnames "manifest.sexp" install-root)))
   (labels ((run (command &key directory)
              "Run one build COMMAND, preserving its output."
@@ -92,7 +94,9 @@
           (finish-output)
           (run (list "cargo" "build" "--locked" "--release" "-p" "fff-c")
                :directory checkout)
-          (let ((built (merge-pathnames "target/release/libfff_c.so" checkout)))
+          (let ((built (merge-pathnames
+                        (format nil "target/release/~A" library-name)
+                        checkout)))
             (unless (probe-file built)
               (error "fff did not produce ~A." built))
             (ensure-directories-exist library)
