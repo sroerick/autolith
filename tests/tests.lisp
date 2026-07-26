@@ -97,6 +97,7 @@
     (test-later-malformed-state)
     (test-later-reset-selection)
     (test-request-local-context)
+    (test-interpreter-discipline)
     (test-skills)
     (test-skill-load-tool)
     (test-mcp-configuration)
