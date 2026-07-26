@@ -467,6 +467,12 @@ Selecting a different model recomputes the context window for that model."
   "Return the user-authored Lisp initialization pathname."
   (merge-pathnames "init.lisp" (configuration-config-root configuration)))
 
+(-> configuration-directory-scopes-path (configuration) pathname)
+(defun configuration-directory-scopes-path (configuration)
+  "Return the user-owned directory-scope trust manifest pathname."
+  (merge-pathnames "directory-scopes.sexp"
+                   (configuration-config-root configuration)))
+
 (-> configuration-memory-path (configuration) pathname)
 (defun configuration-memory-path (configuration)
   "Return the append-only persistent memory pathname."

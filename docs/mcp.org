@@ -31,6 +31,43 @@ It contains exactly one bounded form. Reading uses a fresh readtable with
 data is rejected. The path may be a regular file or a symbolic link that
 resolves to a regular file, which permits declarative configuration managers.
 
+A user-owned trust manifest can enable inherited MCP files for selected
+directory trees:
+
+#+begin_example
+${XDG_CONFIG_HOME:-~/.config}/autolith/directory-scopes.sexp
+#+end_example
+
+#+begin_src lisp
+(:version 1
+ :directories
+ ("~/braiins/"))
+#+end_src
+
+Each listed directory must already exist. When the workspace is that directory
+or any descendant, Autolith also reads:
+
+#+begin_example
+<trusted-directory>/.autolith/mcp.sexp
+#+end_example
+
+Only exact anchors listed in the trust manifest contribute files. A nested
+repository cannot activate its own MCP configuration merely by adding an
+=.autolith/mcp.sexp=. To trust a nested anchor separately, add its exact path to
+the manifest. Matching anchors apply from outermost to nearest; a nearer file
+replaces a same-name server from an outer file. Directory definitions override
+the global native file, while executable initialization and live runtime
+registrations retain higher precedence.
+
+A trusted anchor may also provide =.autolith/init.lisp=. Directory initialization
+files load from outermost to nearest, followed by the global
+=~/.config/autolith/init.lisp=. They execute as full-power Common Lisp in the
+=AUTOLITH= package and can register MCP servers directly. Extension registrations
+are replaced when the workspace changes, but arbitrary definitions and side
+effects remain until explicitly reversed or the process restarts.
+
+The global and inherited MCP files use the same form:
+
 #+begin_src lisp
 (:version 1
  :servers
@@ -169,8 +206,10 @@ Autolith also exposes these built-in helpers when MCP is configured:
 - =mcp.get-prompt= resolves one prompt with optional string arguments.
 
 =/mcp= shows connection state. =/mcp refresh= refreshes discovery without
-rereading configuration. =/mcp reload= rereads =mcp.sexp= and =init.lisp=,
-closes the prior MCP runtimes, and installs a fresh complete tool registry.
+rereading configuration. =/mcp reload= rereads the global file, active inherited
+files, and =init.lisp=, closes the prior MCP runtimes, and installs a fresh
+complete tool registry. =/cwd= performs the same configuration replacement for
+the destination workspace before committing the directory change.
 
 A =notifications/tools/list_changed= notification marks discovery stale.
 Autolith refreshes that server before the next provider request.
@@ -196,10 +235,17 @@ the same native property list accepted inside =mcp.sexp=:
 #+end_src
 
 Registrations use explicit precedence from lowest to highest: tracked
-definitions, =mcp.sexp=, =init.lisp=, then live runtime registrations. A
-higher-precedence registration with the same case-sensitive name shadows the
-lower layer. Reloading user initialization replaces its prior registrations
-atomically; a load failure restores the previous registry.
+definitions, the global =mcp.sexp=, active directory-scoped =mcp.sexp= files,
+=init.lisp=, then live runtime registrations. A higher-precedence registration
+with the same case-sensitive name shadows the lower layer. Reloading executable
+initialization replaces its prior registrations atomically; a load failure
+restores the previous registry. Arbitrary Lisp mutations are not reversible and
+may outlive their directory scope.
+
+Initialization files remain source and are loaded against the current Autolith
+release, so they do not need a separate rebuild. Direct dependencies on internal
+functions may need revision after a release, and complete redefinitions continue
+to shadow updated tracked definitions until removed or changed.
 
 * Secrets, Context, and Checkpoints
 

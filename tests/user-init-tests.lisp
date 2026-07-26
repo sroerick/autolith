@@ -5,6 +5,9 @@
 (defvar *user-init-test-value* nil
   "The value installed by the isolated user initialization fixture.")
 
+(defvar *directory-user-init-test-log* nil
+  "The load evidence installed by trusted directory initialization fixtures.")
+
 (-> test-user-init () null)
 (defun test-user-init ()
   "Test user initialization discovery, package binding, and typed failure."
@@ -149,5 +152,78 @@
         (fmakunbound 'user-init-tests--command))
       (when (fboundp 'user-init-tests--contributor)
         (fmakunbound 'user-init-tests--contributor))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-directory-user-init () null)
+(defun test-directory-user-init ()
+  "Test trusted executable inheritance and sticky full-power mutations."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (anchor (merge-pathnames "trusted/" root))
+         (workspace (merge-pathnames "project/" anchor))
+         (configuration nil)
+         (directory-init (configuration-directory-init-path anchor))
+         (global-init (configuration-user-init-path base-configuration))
+         (context-registrations (context--registry-snapshot))
+         (command-registrations (application-command--registry-snapshot))
+         (mcp-registrations (mcp--registry-snapshot)))
+    (ensure-directories-exist workspace)
+    (setf configuration
+          (configuration-with-working-directory base-configuration workspace))
+    (test-directory-configuration--write-manifest
+     configuration
+     (list (namestring anchor)))
+    (unwind-protect
+         (progn
+           (test-mcp-configuration--write
+            directory-init
+            "(progn
+               (push (list :directory *user-init-pathname*
+                           (configuration-working-directory
+                            *user-init-configuration*))
+                     *directory-user-init-test-log*)
+               (defun directory-user-init-tests--definition () :loaded)
+               (register-context-contributor
+                \"directory-user-init-test\"
+                'context-tests--next-request))")
+           (test-mcp-configuration--write
+            global-init
+            "(push (list :global *user-init-pathname*)
+                   *directory-user-init-test-log*)")
+           (setf *directory-user-init-test-log* nil)
+           (test-assert
+            (equal (user-init-load configuration) global-init)
+            "global init remains the final executable configuration layer")
+           (test-assert
+            (and (eq (first (first *directory-user-init-test-log*)) :global)
+                 (eq (first (second *directory-user-init-test-log*)) :directory)
+                 (equal (second (second *directory-user-init-test-log*))
+                        directory-init)
+                 (equal (third (second *directory-user-init-test-log*))
+                        (truename workspace)))
+            "trusted directory init receives its path and target configuration")
+           (test-assert
+            (eq (directory-user-init-tests--definition) :loaded)
+            "trusted directory init may redefine the live Lisp image")
+           (delete-file global-init)
+           (user-init-load base-configuration)
+           (test-assert
+            (null
+             (find "directory-user-init-test"
+                   (context-contributor-registrations)
+                   :test #'string=
+                   :key (lambda (registration)
+                          (getf registration :identifier))))
+            "leaving a trusted scope removes its extension registrations")
+           (test-assert
+            (eq (directory-user-init-tests--definition) :loaded)
+            "arbitrary directory init mutations remain sticky until reversed"))
+      (setf *directory-user-init-test-log* nil)
+      (context--registry-restore context-registrations)
+      (application-command--registry-restore command-registrations)
+      (mcp--registry-restore mcp-registrations)
+      (when (fboundp 'directory-user-init-tests--definition)
+        (fmakunbound 'directory-user-init-tests--definition))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

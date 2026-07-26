@@ -547,10 +547,31 @@ The optional
 =${XDG_CONFIG_HOME:-~/.config}/autolith/mcp.sexp= contains exactly one
 versioned native S-expression. Reading binds =*read-eval*= to =nil=, validates
 the complete bounded tree, and rejects unknown keys, duplicate server names,
-trailing forms, and malformed values. The user initialization file may register
-the same native server definitions programmatically. Registration precedence is
-tracked definitions, native configuration, user initialization, then live
-runtime registration.
+trailing forms, and malformed values.
+
+Directory-scoped MCP configuration is explicitly trusted through the optional
+=${XDG_CONFIG_HOME:-~/.config}/autolith/directory-scopes.sexp= manifest. Each
+listed existing canonical directory may contribute =.autolith/mcp.sexp= to
+workspaces at or beneath that directory. Matching trusted anchors apply from
+outermost to nearest, and an unlisted descendant cannot activate its own file.
+The files use the same bounded native MCP grammar as the global file. Changing
+workspace, resuming startup, and =/mcp reload= replace the active inherited MCP
+layer atomically; a malformed file or required-server failure preserves the
+previous runtime.
+
+Each trusted anchor may also contribute =.autolith/init.lisp=. Matching files
+load from outermost to nearest before the global user initialization file. They
+execute in the =AUTOLITH= package with full user privileges and may inspect or
+modify the live Lisp image. Registrations made through Autolith's extension
+interfaces are replaced transactionally when the workspace changes. Arbitrary
+Lisp side effects are intentionally full-power and remain until explicitly
+reversed or the process restarts; they cannot generally be rolled back when a
+scope is left or a later form fails.
+
+The user initialization file may register the same native server definitions
+programmatically. Registration precedence is tracked definitions, global native
+configuration, directory-scoped native configuration, user initialization,
+then live runtime registration.
 
 Each server selects a standard I/O or Streamable HTTP transport, required or
 optional startup behavior, bounded startup and tool deadlines, an approval
@@ -918,11 +939,20 @@ A load failure is a structured startup error identifying the file and original
 condition. The file is separate from legacy mutation overlays and private image
 commits, so mutation rollback never discards user policy.
 
-The user initialization file may register request-local context contributors,
-interactive commands, and MCP servers through the same live registration
-interfaces used by tracked code and self-modifications. Reload replaces the
-file's prior registrations atomically, and a failure restores the previous
-registries.
+The user initialization file and trusted directory initialization files may
+register request-local context contributors, interactive commands, and MCP
+servers through the same live registration interfaces used by tracked code and
+self-modifications. Reload replaces their prior registrations atomically, and a
+failure restores the previous registries. This transactional guarantee does not
+extend to arbitrary Lisp side effects performed by full-power initialization.
+
+Executable initialization remains source outside release images. Every startup
+and retained-generation reconnect loads the current applicable files after the
+tracked system and selected private image commit, so an Autolith release does
+not require rebuilding them. Code that depends on undocumented internal symbols
+may nevertheless require source changes after a release, and a complete
+redefinition continues to shadow the release's tracked definition until the
+initialization file changes or no longer loads.
 
 ** 8.3 Mutation Journal
 

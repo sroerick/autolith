@@ -70,7 +70,7 @@
   "The MCP call policies accepted by native configuration.")
 
 (defparameter *mcp-configuration-native-keywords*
-  '(:version :servers
+  '(:version :servers :directories
     :name :transport :required-p :startup-timeout-seconds
     :tool-timeout-seconds :approval :trusted-read-only-tools :child-tools
     :type :stdio :command :arguments :directory :workspace :environment
@@ -81,8 +81,9 @@
 (defparameter *mcp-registration-source-precedence*
   '((:tracked . 0)
     (:config . 1)
-    (:user . 2)
-    (:runtime . 3))
+    (:directory . 2)
+    (:user . 3)
+    (:runtime . 4))
   "The explicit low-to-high precedence of MCP registration sources.")
 
 (define-condition mcp-configuration-error (configuration-error)
@@ -238,7 +239,7 @@
     :initarg :source
     :reader mcp-server-registration-source
     :type keyword
-    :documentation "The tracked, config, user, or runtime registration layer."))
+    :documentation "The tracked, config, directory, user, or runtime registration layer."))
   (:documentation "One source-attributed layer in the MCP server registry."))
 
 
@@ -1055,14 +1056,17 @@ control characters are rejected even when the native reader accepted them."
        :pathname pathname
        :cause cause))))
 
-(-> mcp-configuration--source-present-p (pathname) boolean)
-(defun mcp-configuration--source-present-p (pathname)
-  "Return true when PATHNAME resolves to a regular file."
+(-> mcp-configuration--source-present-p
+    (pathname &key (:description string))
+    boolean)
+(defun mcp-configuration--source-present-p
+    (pathname &key (description "native MCP configuration"))
+  "Return true when PATHNAME resolves to a regular file named by DESCRIPTION."
   (handler-case
       (let ((status (sb-posix:stat (namestring pathname))))
         (unless (sb-posix:s-isreg (sb-posix:stat-mode status))
           (mcp-configuration--error
-           "The native MCP configuration must be a regular file."
+           (format nil "The ~A must be a regular file." description)
            :pathname pathname))
         t)
     (sb-posix:syscall-error (condition)
@@ -1071,7 +1075,7 @@ control characters are rejected even when the native reader accepted them."
               (progn
                 (sb-posix:lstat (namestring pathname))
                 (mcp-configuration--error
-                 "The native MCP configuration link has no regular target."
+                 (format nil "The ~A link has no regular target." description)
                  :pathname pathname
                  :cause condition))
             (sb-posix:syscall-error (link-condition)
@@ -1080,14 +1084,15 @@ control characters are rejected even when the native reader accepted them."
                   nil
                   (mcp-configuration--error
                    (format nil
-                           "Could not inspect native MCP configuration at ~A: ~A"
+                           "Could not inspect ~A at ~A: ~A"
+                           description
                            pathname
                            link-condition)
                    :pathname pathname
                    :cause link-condition))))
           (mcp-configuration--error
-           (format nil "Could not inspect native MCP configuration at ~A: ~A"
-                   pathname condition)
+           (format nil "Could not inspect ~A at ~A: ~A"
+                   description pathname condition)
            :pathname pathname
            :cause condition)))))
 
@@ -1230,54 +1235,58 @@ control characters are rejected even when the native reader accepted them."
                 :cause cause)))
         (delete-package reader-package)))))
 
+(-> mcp-configuration-read-path (pathname) list)
+(defun mcp-configuration-read-path (pathname)
+  "Read and validate native MCP server definitions from PATHNAME."
+  (unless (mcp-configuration--source-present-p pathname)
+    (return-from mcp-configuration-read-path nil))
+  (let ((form (mcp-configuration--read-form pathname)))
+    (mcp-configuration--validate-plist
+     form '(:version :servers) :pathname pathname)
+    (unless (eql
+             (mcp-configuration--property
+              form :version :required-p t :pathname pathname)
+             *mcp-configuration-version*)
+      (mcp-configuration--error
+       (format nil "MCP configuration must use version ~D."
+               *mcp-configuration-version*)
+       :pathname pathname
+       :field :version))
+    (let ((servers
+            (mcp-configuration--property
+             form :servers :required-p t :pathname pathname)))
+      (unless (mcp-configuration--proper-list-p servers)
+        (mcp-configuration--error
+         "MCP :SERVERS must be a proper list."
+         :pathname pathname
+         :field :servers))
+      (when (> (length servers) *mcp-configuration-maximum-servers*)
+        (mcp-configuration--error
+         (format nil "MCP :SERVERS exceeds the limit of ~D."
+                 *mcp-configuration-maximum-servers*)
+         :pathname pathname
+         :field :servers))
+      (let ((definitions
+              (mapcar
+               (lambda (server)
+                 (mcp-configuration--server server :pathname pathname))
+               servers))
+            (seen (make-hash-table :test #'equal)))
+        (dolist (definition definitions)
+          (let ((name (mcp-server-configuration-name definition)))
+            (when (gethash name seen)
+              (mcp-configuration--error
+               (format nil "Duplicate MCP server name ~S." name)
+               :pathname pathname
+               :server-name name
+               :field :name))
+            (setf (gethash name seen) t)))
+        definitions))))
+
 (-> mcp-configuration-read (configuration) list)
 (defun mcp-configuration-read (configuration)
-  "Read and validate CONFIGURATION's native MCP server definitions."
-  (let ((pathname (configuration-mcp-path configuration)))
-    (unless (mcp-configuration--source-present-p pathname)
-      (return-from mcp-configuration-read nil))
-    (let ((form (mcp-configuration--read-form pathname)))
-      (mcp-configuration--validate-plist
-       form '(:version :servers) :pathname pathname)
-      (unless (eql
-               (mcp-configuration--property
-                form :version :required-p t :pathname pathname)
-               *mcp-configuration-version*)
-        (mcp-configuration--error
-         (format nil "MCP configuration must use version ~D."
-                 *mcp-configuration-version*)
-         :pathname pathname
-         :field :version))
-      (let ((servers
-              (mcp-configuration--property
-               form :servers :required-p t :pathname pathname)))
-        (unless (mcp-configuration--proper-list-p servers)
-          (mcp-configuration--error
-           "MCP :SERVERS must be a proper list."
-           :pathname pathname
-           :field :servers))
-        (when (> (length servers) *mcp-configuration-maximum-servers*)
-          (mcp-configuration--error
-           (format nil "MCP :SERVERS exceeds the limit of ~D."
-                   *mcp-configuration-maximum-servers*)
-           :pathname pathname
-           :field :servers))
-        (let ((definitions
-                (mapcar
-                 (lambda (server)
-                   (mcp-configuration--server server :pathname pathname))
-                 servers))
-              (seen (make-hash-table :test #'equal)))
-          (dolist (definition definitions)
-            (let ((name (mcp-server-configuration-name definition)))
-              (when (gethash name seen)
-                (mcp-configuration--error
-                 (format nil "Duplicate MCP server name ~S." name)
-                 :pathname pathname
-                 :server-name name
-                 :field :name))
-              (setf (gethash name seen) t)))
-          definitions)))))
+  "Read CONFIGURATION's global native MCP server definitions."
+  (mcp-configuration-read-path (configuration-mcp-path configuration)))
 
 
 ;;;; -- Layered Server Registry --
@@ -1483,26 +1492,3 @@ their prior layer without destroying shadowed lower layers."
                     *mcp-server-registrations*
                     :key #'mcp-server-registration-source))))
   nil)
-
-(-> mcp-configuration-load (configuration) list)
-(defun mcp-configuration-load (configuration)
-  "Atomically replace :CONFIG registrations from CONFIGURATION's mcp.sexp."
-  (with-extension-registry-transaction
-    (let ((definitions (mcp-configuration-read configuration)))
-      (with-lock-held (*mcp-server-registry-lock*)
-        (let ((candidate
-                (remove :config
-                        *mcp-server-registrations*
-                        :key #'mcp-server-registration-source)))
-          (dolist (definition definitions)
-            (setf candidate
-                  (append
-                   candidate
-                   (list
-                    (make-instance
-                     'mcp-server-registration
-                     :configuration definition
-                     :source :config)))))
-          (mcp--validate-registration-list candidate)
-          (setf *mcp-server-registrations* candidate))))
-    (mcp-server-registrations)))

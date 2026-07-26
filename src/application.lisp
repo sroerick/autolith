@@ -406,6 +406,28 @@
           (ignore-errors
             (tool-registry-close-runtime-state registry)))))))
 
+(-> application--extension-registry-snapshot () list)
+(defun application--extension-registry-snapshot ()
+  "Return exact MCP, context, and command registration snapshots."
+  (list :mcp (mcp--registry-snapshot)
+        :context (context--registry-snapshot)
+        :command (application-command--registry-snapshot)))
+
+(-> application--extension-registry-restore (list) null)
+(defun application--extension-registry-restore (snapshot)
+  "Restore exact extension registrations from SNAPSHOT."
+  (mcp--registry-restore (getf snapshot :mcp))
+  (context--registry-restore (getf snapshot :context))
+  (application-command--registry-restore (getf snapshot :command))
+  nil)
+
+(-> application--load-extension-configuration (configuration) null)
+(defun application--load-extension-configuration (configuration)
+  "Load native MCP and executable user configuration for CONFIGURATION."
+  (mcp-configuration-load configuration)
+  (user-init-load configuration)
+  nil)
+
 (-> application--discard-connection-resources
     ((option application) (option tool-registry) t)
     list)
@@ -1156,100 +1178,103 @@ newly acquired lease."
          (committed-p nil)
          (failure nil)
          (failure-stage ':tools)
-         (rollback-failures nil))
-    (handler-case
-        (multiple-value-setq (provider registry agent)
-          (application--prepare-runtime-replacement
-           application configuration previous-conversation))
-      (error (condition)
+         (rollback-failures nil)
+         (extension-registry-snapshot nil))
+    (with-extension-registry-transaction
+      (setf extension-registry-snapshot
+            (application--extension-registry-snapshot))
+      (unwind-protect
+           (handler-case
+               (progn
+                 (setf retirement-started-p t
+                       failure-stage ':tools)
+                 (application-disconnect-task-presentation application)
+                 (setf presentation-disconnected-p t)
+                 (multiple-value-bind (completed retirement-failure)
+                     (tool-registry-quiesce-runtime-state previous-registry)
+                   (setf quiesced-tools completed)
+                   (when retirement-failure
+                     (error retirement-failure)))
+                 (setf failure-stage ':workers)
+                 (lisp-worker-manager-change-working-directory
+                  manager configuration)
+                 (setf workers-moved-p t
+                       failure-stage ':process)
+                 (uiop:chdir directory)
+                 (setf process-moved-p t
+                       *default-pathname-defaults* directory)
+                 (setf failure-stage ':tools)
+                 (application--load-extension-configuration configuration)
+                 (multiple-value-setq (provider registry agent)
+                   (application--prepare-runtime-replacement
+                    application configuration previous-conversation))
+                 (setf failure-stage ':application
+                       application-swapped-p t)
+                 (setf (application-configuration application) configuration
+                       (application-provider application) provider
+                       (application-tool-registry application) registry
+                       (application-agent application) agent)
+                 (application-connect-task-presentation application)
+                 (context-runtime-reset)
+                 (setf committed-p t))
+             (serious-condition (condition)
+               (setf failure condition)))
+        (unless committed-p
+          (handler-case
+              (application--extension-registry-restore
+               extension-registry-snapshot)
+            (serious-condition (condition)
+              (push condition rollback-failures)))
+          (when application-swapped-p
+            (handler-case
+                (application-disconnect-task-presentation application)
+              (serious-condition (condition)
+                (push condition rollback-failures)))
+            (setf (application-configuration application)
+                  previous-configuration
+                  (application-conversation application)
+                  previous-conversation
+                  (application-provider application)
+                  previous-provider
+                  (application-tool-registry application)
+                  previous-registry
+                  (application-agent application)
+                  previous-agent))
+          (when process-moved-p
+            (handler-case
+                (progn
+                  (uiop:chdir previous-process-directory)
+                  (setf *default-pathname-defaults* previous-defaults))
+              (serious-condition (condition)
+                (push condition rollback-failures))))
+          (when workers-moved-p
+            (handler-case
+                (lisp-worker-manager-change-working-directory
+                 manager previous-configuration)
+              (serious-condition (condition)
+                (push condition rollback-failures))))
+          (when registry
+            (handler-case
+                (tool-registry-close-runtime-state registry)
+              (serious-condition (condition)
+                (push condition rollback-failures))))
+          (when retirement-started-p
+            (setf rollback-failures
+                  (nconc
+                   rollback-failures
+                   (application--restore-retired-tool-registry
+                    application
+                    previous-registry
+                    quiesced-tools
+                    :reconnect-p presentation-disconnected-p))))))
+      (when failure
         (application--working-directory-failure
          :requested-path location
          :previous-directory previous-directory
-         :stage ':tools
-         :cause condition
-         :rollback-cause nil)))
-    (unwind-protect
-         (handler-case
-             (progn
-               (setf retirement-started-p t
-                     failure-stage ':tools)
-               (application-disconnect-task-presentation application)
-               (setf presentation-disconnected-p t)
-               (multiple-value-bind (completed retirement-failure)
-                   (tool-registry-quiesce-runtime-state previous-registry)
-                 (setf quiesced-tools completed)
-                 (when retirement-failure
-                   (error retirement-failure)))
-               (setf failure-stage ':workers)
-               (lisp-worker-manager-change-working-directory
-                manager configuration)
-               (setf workers-moved-p t
-                     failure-stage ':process)
-               (uiop:chdir directory)
-               (setf process-moved-p t
-                     *default-pathname-defaults* directory
-                     failure-stage ':application)
-               (setf application-swapped-p t)
-               (setf (application-configuration application) configuration
-                     (application-provider application) provider
-                     (application-tool-registry application) registry
-                     (application-agent application) agent)
-               (application-connect-task-presentation application)
-               (context-runtime-reset)
-               (setf committed-p t))
-           (serious-condition (condition)
-             (setf failure condition)))
-      (unless committed-p
-        (when application-swapped-p
-          (handler-case
-              (application-disconnect-task-presentation application)
-            (serious-condition (condition)
-              (push condition rollback-failures)))
-          (setf (application-configuration application)
-                previous-configuration
-                (application-conversation application)
-                previous-conversation
-                (application-provider application)
-                previous-provider
-                (application-tool-registry application)
-                previous-registry
-                (application-agent application)
-                previous-agent))
-        (when process-moved-p
-          (handler-case
-              (progn
-                (uiop:chdir previous-process-directory)
-                (setf *default-pathname-defaults* previous-defaults))
-            (serious-condition (condition)
-              (push condition rollback-failures))))
-        (when workers-moved-p
-          (handler-case
-              (lisp-worker-manager-change-working-directory
-               manager previous-configuration)
-            (serious-condition (condition)
-              (push condition rollback-failures))))
-        (when registry
-          (handler-case
-              (tool-registry-close-runtime-state registry)
-            (serious-condition (condition)
-              (push condition rollback-failures))))
-        (when retirement-started-p
-          (setf rollback-failures
-                (nconc
-                 rollback-failures
-                 (application--restore-retired-tool-registry
-                  application
-                  previous-registry
-                  quiesced-tools
-                  :reconnect-p presentation-disconnected-p))))))
-    (when failure
-      (application--working-directory-failure
-       :requested-path location
-       :previous-directory previous-directory
-       :stage failure-stage
-       :cause failure
-       :rollback-cause (nreverse rollback-failures)))
-    directory))
+         :stage failure-stage
+         :cause failure
+         :rollback-cause (nreverse rollback-failures)))
+      directory)))
 
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease))

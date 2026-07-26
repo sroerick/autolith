@@ -2741,10 +2741,48 @@
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (workspace (merge-pathnames "workspace with spaces/" root))
+         (old-workspace (merge-pathnames "old workspace/" root))
+         (observation-path
+           (merge-pathnames "directory-init-observation.sexp" workspace))
+         (old-observation-path
+           (merge-pathnames "directory-init-observation.sexp" old-workspace))
+         (broken-workspace (merge-pathnames "broken workspace/" root))
          (previous-process-directory (uiop:getcwd))
          (previous-defaults *default-pathname-defaults*)
+         (extension-registry-snapshot
+           (application--extension-registry-snapshot))
          (pool nil))
     (ensure-directories-exist workspace)
+    (ensure-directories-exist old-workspace)
+    (ensure-directories-exist broken-workspace)
+    (ensure-directories-exist (configuration-directory-init-path workspace))
+    (with-open-file (stream (configuration-directory-init-path workspace)
+                            :direction :output
+                            :if-exists :supersede
+                            :if-does-not-exist :create
+                            :external-format :utf-8)
+      (let ((*print-readably* nil))
+        (write
+         '(with-open-file
+              (stream "directory-init-observation.sexp"
+                      :direction :output
+                      :if-exists :supersede
+                      :if-does-not-exist :create
+                      :external-format :utf-8)
+            (write
+             (list (namestring (truename (uiop:getcwd)))
+                   (namestring (truename *default-pathname-defaults*)))
+             :stream stream))
+         :stream stream)))
+    (test-directory-configuration--write-manifest
+     configuration
+     (list (namestring workspace)))
+    (test-directory-configuration--write-mcp
+     workspace
+     (list
+      (test-mcp-configuration--server-form
+       :name "workspace-scoped"
+       :approval :deny)))
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "working-directory"))
@@ -2770,7 +2808,9 @@
                  worker (lisp-worker-pool-start pool "workspace" "pristine"))
            (lisp-worker-request
             worker :eval '(:form "(defparameter *workspace-marker* 73)"))
-           (let ((selected (application-set-working-directory application workspace)))
+            (uiop:chdir old-workspace)
+            (setf *default-pathname-defaults* old-workspace)
+            (let ((selected (application-set-working-directory application workspace)))
              (test-assert (equal selected (truename workspace))
                           "workspace switching returns the selected directory")
              (test-assert
@@ -2783,6 +2823,23 @@
              (test-assert (equal *default-pathname-defaults* (truename workspace))
                           "workspace switching changes pathname defaults")
              (test-assert
+              (probe-file observation-path)
+              "directory initialization resolves relative files in the target workspace")
+             (test-assert
+              (not (probe-file old-observation-path))
+              "directory initialization does not resolve relative files in the old workspace")
+              (let ((observation
+                      (with-open-file (stream observation-path
+                                               :direction :input
+                                               :external-format :utf-8)
+                        (let ((*read-eval* nil))
+                          (read stream)))))
+                (test-assert
+                 (equal observation
+                        (list (namestring (truename workspace))
+                              (namestring (truename workspace))))
+                 "directory initialization observes the target process and pathname directories"))
+             (test-assert
               (equal (configuration-working-directory
                       (agent-configuration (application-agent application)))
                      (truename workspace))
@@ -2792,7 +2849,14 @@
                       (provider-configuration
                        (application-provider application)))
                      (truename workspace))
-              "workspace switching reconnects the provider with the new directory"))
+              "workspace switching reconnects the provider with the new directory")
+              (test-assert
+               (eq
+                (mcp-server-registration-source
+                 (test-directory-configuration--registration
+                  "workspace-scoped"))
+                :directory)
+               "workspace switching activates inherited MCP configuration"))
            (let ((worker-state
                    (lisp-worker-request
                     worker
@@ -2817,11 +2881,39 @@
               (eq (application-configuration application) active-configuration)
               "invalid workspace changes retain the active configuration")
              (test-assert (equal (uiop:getcwd) (truename workspace))
-                          "invalid workspace changes retain the process directory")))
+                          "invalid workspace changes retain the process directory")
+              (test-directory-configuration--write-manifest
+               configuration
+               (list (namestring workspace)
+                     (namestring broken-workspace)))
+              (test-mcp-configuration--write
+               (configuration-directory-mcp-path broken-workspace)
+               "(:version 99 :servers ())")
+              (test-assert
+               (handler-case
+                   (progn
+                     (application-set-working-directory
+                      application broken-workspace)
+                     nil)
+                 (working-directory-error (condition)
+                   (eq (working-directory-error-stage condition) ':tools)))
+               "malformed inherited MCP prevents a workspace switch")
+              (test-assert
+               (and
+                (eq (application-configuration application)
+                    active-configuration)
+                (equal (uiop:getcwd) (truename workspace))
+                (eq
+                 (mcp-server-registration-source
+                  (test-directory-configuration--registration
+                   "workspace-scoped"))
+                 :directory))
+               "failed inherited configuration restores the prior runtime")))
       (when pool
         (lisp-worker-pool-stop-all pool))
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
+      (application--extension-registry-restore extension-registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
