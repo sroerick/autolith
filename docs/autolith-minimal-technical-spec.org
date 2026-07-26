@@ -239,6 +239,15 @@ self-modification only when repeated Autolith-side friction or a stable
 improvement is evident, and to keep the ledger accurate. The reminder must not
 become a mutation quota.
 
+A separate built-in session contributor reminds the model periodically to
+review the recent conversation for Autolith-side friction worth a small
+self-modification. The reminder fires on a logical turn only after both a
+user-turn period and an accumulated working-time gate have passed since the
+last reminder, so rapid exchanges and short dedicated sessions never see it.
+It never accompanies compaction requests or immutable sessions, its advice
+lives only for the trigger turn, and its thresholds are reloadable policy
+values. This reminder must not become a mutation quota either.
+
 * 5. Tool Model
 
 Tools are registered internally. Configured external MCP tools join the same

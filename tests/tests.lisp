@@ -98,6 +98,7 @@
     (test-later-reset-selection)
     (test-request-local-context)
     (test-interpreter-discipline)
+    (test-self-review-reminder)
     (test-skills)
     (test-skill-load-tool)
     (test-mcp-configuration)
