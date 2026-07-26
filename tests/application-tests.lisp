@@ -2587,6 +2587,27 @@
                    (string= (getf (third items) :group) "other sessions")
                    (string= (getf (fourth items) :group) "other sessions"))
               "resume items identify their current and other session groups")
+             (test-assert
+              (every (lambda (item)
+                       (string= (getf item :tally) "1 turn"))
+                     items)
+              "resume items tally conversations without measured work by turns")
+             (let* ((item (first items))
+                    (description (getf item :description))
+                    (spans (getf item :description-spans))
+                    (time-span
+                      (find ':timestamp-time spans
+                            :key #'terminal-span-style
+                            :test #'eq)))
+               (test-assert
+                (and (terminal-styled-text-p spans)
+                     (string= description
+                              (terminal-ui--raw-spans-text spans)))
+                "resume styled descriptions preserve their plain text")
+               (test-assert
+                (and time-span
+                     (plusp (length (terminal-span-text time-span))))
+                "resume descriptions color the time independently"))
              (test-assert (search ", current"
                                   (getf (find "active" items
                                               :key (lambda (item)
@@ -2618,6 +2639,85 @@
                                     :empty-notice "none")
                                    (getf (first items) :name))
                           "enter picks the highlighted conversation")
+             (recording-terminal-reset terminal)
+             (setf (scripted-terminal-events terminal)
+                   (list '(:insert "d") :escape))
+             (test-assert (null (application--pick-conversation application))
+                          "escape cancels after refusing active deletion")
+             (test-assert
+              (and (probe-file (conversation-pathname active))
+                   (search "Cannot delete the active conversation."
+                           (recording-terminal-output terminal)))
+              "the resume picker refuses to delete its active conversation")
+             (let* ((failed
+                      (conversation-create
+                       configuration
+                       :identifier "cleanup-failure"))
+                    (failed-image-root
+                      (merge-pathnames
+                       "conversation-images/cleanup-failure/"
+                       (configuration-data-root configuration)))
+                    (unix-time
+                      (- (get-universal-time)
+                         *unix-epoch-universal-time*)))
+               (conversation-append-user-message failed "temporary")
+               (sb-posix:utime
+                (namestring (conversation-pathname failed))
+                (- unix-time 25)
+                (- unix-time 25))
+               (snapshot-write
+                (merge-pathnames "image.sexp" failed-image-root)
+                '(:image))
+               (recording-terminal-reset terminal)
+               (setf (scripted-terminal-events terminal)
+                     (list :history-next '(:insert "d") :submit :escape))
+               (let ((*conversation-delete-directory-tree-function*
+                       (lambda (root &key validate if-does-not-exist)
+                         (declare (ignore root validate if-does-not-exist))
+                         (error "simulated cleanup failure"))))
+                 (test-assert
+                  (null (application--pick-conversation application))
+                  "cleanup failure returns to browsing until escape"))
+               (test-assert
+                (and (not (probe-file (conversation-pathname failed)))
+                     (probe-file failed-image-root)
+                     (search "was deleted, but private artifacts remain"
+                             (recording-terminal-output terminal)))
+                "the resume picker reports cleanup failure after committed deletion"))
+             (setf (scripted-terminal-events terminal)
+                   (list :history-next
+                         '(:insert "d")
+                         :history-next
+                         :submit
+                         :escape))
+             (test-assert (null (application--pick-conversation application))
+                          "keeping a conversation returns to the browse picker")
+             (test-assert (probe-file (conversation-pathname current-older))
+                          "the keep confirmation preserves the conversation")
+             (let ((image-root
+                     (merge-pathnames "conversation-images/current-older/"
+                                      (configuration-data-root configuration)))
+                   (task-root
+                     (merge-pathnames "tasks/current-older/"
+                                      (configuration-data-root configuration))))
+               (snapshot-write (merge-pathnames "image.sexp" image-root)
+                               '(:image))
+               (snapshot-write (merge-pathnames "task/result.sexp" task-root)
+                               '(:task))
+               (recording-terminal-reset terminal)
+               (setf (scripted-terminal-events terminal)
+                     (list :history-next '(:insert "d") :submit :escape))
+               (test-assert (null (application--pick-conversation application))
+                            "deletion returns to browsing until escape")
+               (test-assert
+                (and (not (probe-file (conversation-pathname current-older)))
+                     (not (probe-file image-root))
+                     (not (probe-file task-root)))
+                "confirmed picker deletion removes the conversation and artifacts")
+               (test-assert
+                (search "Deleted conversation current-older."
+                        (recording-terminal-output terminal))
+                "confirmed picker deletion reports the removed conversation"))
              (terminal-ui-stop (application-ui application))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   (let ((application (application-tests--ui-application :columns 60)))

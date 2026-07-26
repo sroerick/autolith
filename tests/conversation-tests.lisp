@@ -1063,6 +1063,15 @@
                      (list :provider-item :seq 5 :time 1520
                            :wire-json reasoning-json)))
              (log-append pathname record))
+           (multiple-value-bind (working-seconds user-turn-count)
+               (conversation-activity-summary pathname)
+             (test-assert (= working-seconds 110)
+                          "activity summaries reproduce durable working time")
+             (test-assert (= user-turn-count 2)
+                          "activity summaries count durable user turns")
+             (test-assert (string= (application--conversation-tally pathname)
+                                   "01:50")
+                          "resume tallies prefer measured working time"))
            (let ((loaded (conversation-load-by-id configuration "worked")))
              (test-assert
               (= (conversation-working-seconds loaded) 110)
@@ -1078,5 +1087,92 @@
              (test-assert
               (= (conversation-working-seconds reloaded) 110)
               "replay reproduces the accumulated working seconds exactly")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-conversation-deletion () null)
+(defun test-conversation-deletion ()
+  "Test deletion ownership checks and private artifact cleanup."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "delete-me"))
+         (pathname (conversation-pathname conversation))
+         (image-root
+           (merge-pathnames "conversation-images/delete-me/"
+                            (configuration-data-root configuration)))
+         (task-root
+           (merge-pathnames "tasks/delete-me/"
+                            (configuration-data-root configuration)))
+         (lease nil))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "temporary")
+           (snapshot-write (merge-pathnames "image.sexp" image-root)
+                           '(:image))
+           (snapshot-write (merge-pathnames "task/result.sexp" task-root)
+                           '(:task))
+           (setf lease (conversation-lease-acquire configuration "delete-me"))
+           (test-assert
+            (handler-case
+                (progn
+                  (conversation-delete configuration "delete-me")
+                  nil)
+              (conversation-in-use ()
+                t))
+            "deletion refuses a conversation owned by another live lease")
+           (test-assert (probe-file pathname)
+                        "refused deletion preserves the conversation file")
+           (conversation-lease-release lease)
+           (setf lease nil)
+           (test-assert (equal (conversation-delete configuration "delete-me")
+                               pathname)
+                        "deletion returns the removed conversation pathname")
+           (test-assert (not (probe-file pathname))
+                        "deletion removes the conversation file")
+           (test-assert (not (probe-file image-root))
+                        "deletion removes private image artifacts")
+           (test-assert (not (probe-file task-root))
+                        "deletion removes child task artifacts")
+           (test-assert
+            (handler-case
+                (progn
+                  (conversation-delete configuration "delete-me")
+                  nil)
+              (conversation-error ()
+                t))
+            "deleting a missing conversation signals a conversation error")
+           (let* ((failed
+                    (conversation-create
+                     configuration
+                     :identifier "cleanup-failure"))
+                  (failed-pathname (conversation-pathname failed))
+                  (failed-image-root
+                    (merge-pathnames
+                     "conversation-images/cleanup-failure/"
+                     (configuration-data-root configuration)))
+                  (reported nil))
+             (conversation-append-user-message failed "temporary")
+             (snapshot-write
+              (merge-pathnames "image.sexp" failed-image-root)
+              '(:image))
+             (let ((*conversation-delete-directory-tree-function*
+                     (lambda (root &key validate if-does-not-exist)
+                       (declare (ignore root validate if-does-not-exist))
+                       (error "simulated cleanup failure"))))
+               (handler-case
+                   (conversation-delete configuration "cleanup-failure")
+                 (conversation-invariant-error (condition)
+                   (setf reported (format nil "~A" condition)))))
+             (test-assert
+              (and reported
+                   (search "was deleted, but private artifacts remain" reported))
+              "artifact cleanup failures report the committed deletion")
+             (test-assert (not (probe-file failed-pathname))
+                          "cleanup failure cannot leave a broken resumable conversation")
+             (test-assert (probe-file failed-image-root)
+                          "cleanup failure leaves undeleted artifacts recoverable")))
+      (when lease
+        (conversation-lease-release lease))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

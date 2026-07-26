@@ -115,6 +115,7 @@
     (test-conversation-model-selection)
     (test-conversation-compaction)
     (test-conversation-working-seconds)
+    (test-conversation-deletion)
     (test-authentication-store)
     (test-authentication-bootstrap-and-refresh)
     (test-grok-authentication)

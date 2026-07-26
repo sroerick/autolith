@@ -228,14 +228,22 @@
 
 ;;;; -- Interactive Pickers --
 
-(-> application--calendar-description (integer) string)
-(defun application--calendar-description (universal-time)
-  "Return UNIVERSAL-TIME as a compact local calendar description."
+(-> application--calendar-parts (integer) (values string string))
+(defun application--calendar-parts (universal-time)
+  "Return UNIVERSAL-TIME as separate local calendar date and time strings."
   (multiple-value-bind (second minute hour date month year)
       (decode-universal-time universal-time)
     (declare (ignore second))
-    (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D"
-            year month date hour minute)))
+    (values (format nil "~4,'0D-~2,'0D-~2,'0D" year month date)
+            (format nil "~2,'0D:~2,'0D" hour minute))))
+
+
+(-> application--calendar-description (integer) string)
+(defun application--calendar-description (universal-time)
+  "Return UNIVERSAL-TIME as a compact local calendar description."
+  (multiple-value-bind (date time)
+      (application--calendar-parts universal-time)
+    (format nil "~A ~A" date time)))
 
 (-> application--abbreviated-directory ((option string)) (option string))
 (defun application--abbreviated-directory (namestring)
@@ -292,6 +300,40 @@
          (error ()
            nil))))
 
+
+(-> application--conversation-description
+    (integer &key (:directory (option string)) (:current-p boolean)
+             (:preview (option string)))
+    (values string terminal-styled-text))
+(defun application--conversation-description
+    (universal-time &key directory current-p preview)
+  "Return plain and styled resume descriptions for one conversation."
+  (multiple-value-bind (date time)
+      (application--calendar-parts universal-time)
+    (let ((suffix
+            (format nil "~@[, ~A~]~:[~;, current~]~@[ · ~A~]"
+                    directory current-p preview)))
+      (values
+       (format nil "~A ~A~A" date time suffix)
+       (list (terminal-span ':plain (format nil "~A " date))
+             (terminal-span ':timestamp-time time)
+             (terminal-span ':plain suffix))))))
+
+
+(-> application--conversation-tally (pathname) string)
+(defun application--conversation-tally (pathname)
+  "Return a compact work-time or turn-count tally for PATHNAME."
+  (multiple-value-bind (working-seconds user-turn-count)
+      (conversation-activity-summary pathname)
+    (cond
+      ((plusp working-seconds)
+       (terminal-ui--duration-text working-seconds))
+      ((plusp user-turn-count)
+       (format nil "~D turn~:P" user-turn-count))
+      (t
+       "0 turns"))))
+
+
 (-> application--conversation-items (application) list)
 (defun application--conversation-items (application)
   "Return grouped picker items, newest first within each workspace section."
@@ -314,29 +356,26 @@
                (application--conversation-current-directory-p
                 directory
                 current-directory))
-             (item
-               (list :name (conversation-identifier-display identifier)
-                     :argument nil
-                     :group (if current-directory-p
-                                current-group
-                                "other sessions")
-                     :description
-                     (if current-directory-p
-                         (format nil "~A~:[~;, current~]~@[ · ~A~]"
-                                 (application--calendar-description
-                                  (or (file-write-date pathname) 0))
-                                 (string= identifier current-identifier)
-                                 (application--conversation-preview pathname))
-                         (format nil
-                                 "~A~@[, ~A~]~:[~;, current~]~@[ · ~A~]"
-                                 (application--calendar-description
-                                  (or (file-write-date pathname) 0))
-                                 (application--abbreviated-directory directory)
-                                 (string= identifier current-identifier)
-                                 (application--conversation-preview pathname))))))
-        (if current-directory-p
-            (push item current-items)
-            (push item other-items))))
+             (preview (application--conversation-preview pathname)))
+        (multiple-value-bind (description description-spans)
+            (application--conversation-description
+             (or (file-write-date pathname) 0)
+             :directory (and (not current-directory-p)
+                             (application--abbreviated-directory directory))
+             :current-p (string= identifier current-identifier)
+             :preview preview)
+          (let ((item
+                  (list :name (conversation-identifier-display identifier)
+                        :argument nil
+                        :group (if current-directory-p
+                                   current-group
+                                   "other sessions")
+                        :tally (application--conversation-tally pathname)
+                        :description description
+                        :description-spans description-spans)))
+            (if current-directory-p
+                (push item current-items)
+                (push item other-items))))))
     (append (nreverse current-items) (nreverse other-items))))
 
 (-> application--effort-items (application) list)
@@ -662,14 +701,17 @@ continuation budget restarts. A completed goal becomes active again."
 
 (-> application--pick-identifier
     (application &key (:title string) (:items list) (:usage string)
-                 (:empty-notice string))
+                 (:empty-notice string) (:hint (option string))
+                 (:on-event (option function)))
     (option string))
 (defun application--pick-identifier
-    (application &key (title "select") items (usage "") (empty-notice ""))
+    (application &key (title "select") items (usage "") (empty-notice "")
+                      hint on-event)
   "Pick one identifier from ITEMS interactively, or explain why none was picked.
 
 Signals a usage error on non-interactive terminals, presents EMPTY-NOTICE
-when ITEMS is empty, and returns NIL when the picker is cancelled."
+when ITEMS is empty, and returns NIL when the picker is cancelled. HINT and
+ON-EVENT are forwarded to TERMINAL-UI-SELECT."
   (block nil
     (let ((ui (application-ui application)))
       (unless (terminal-interactive-p (terminal-ui-terminal ui))
@@ -683,12 +725,146 @@ when ITEMS is empty, and returns NIL when the picker is cancelled."
                   ui
                   :title title
                   :items items
+                  :hint hint
+                  :on-event on-event
                   :resize-callback #'application-pending-terminal-size)))
         (let ((controller (application-input-controller application)))
           (if controller
               (application-input-controller-call-with-reader-paused
                controller #'pick)
               (pick)))))))
+
+
+(-> application--conversation-delete-confirm-items (list) list)
+(defun application--conversation-delete-confirm-items (item)
+  "Return the delete/keep confirmation items for ITEM."
+  (list
+   (list :name "delete"
+         :argument nil
+         :description (format nil "permanently delete ~A" (getf item :name)))
+   (list :name "keep"
+         :argument nil
+         :description "return to the conversation list")))
+
+
+(-> application--pick-conversation (application) (option string))
+(defun application--pick-conversation (application)
+  "Pick a saved conversation, with d-delete and a confirmation step."
+  (let* ((browse-title "resume conversation")
+         (browse-hint "enter selects, d deletes, esc cancels")
+         (confirm-hint "enter confirms, esc returns")
+         (mode ':browse)
+         (pending nil)
+         (browse-items (application--conversation-items application))
+         (current-display
+           (conversation-identifier-display
+            (conversation-identifier
+             (application-conversation application)))))
+    (labels ((refresh-items ()
+               "Reload browse items from disk."
+               (setf browse-items
+                     (application--conversation-items application)))
+
+             (selected-item (selector)
+               "Return SELECTOR's currently highlighted item, or NIL."
+               (let ((selection (selector-selection selector))
+                     (items (selector-items selector)))
+                 (and selection
+                      items
+                      (<= 0 selection (1- (length items)))
+                      (nth selection items))))
+
+             (insert-character-p (event character)
+               "Return true when EVENT inserts CHARACTER case-insensitively."
+               (and (listp event)
+                    (eq (first event) ':insert)
+                    (stringp (second event))
+                    (= (length (second event)) 1)
+                    (char-equal (char (second event) 0) character)))
+
+             (browse-action ()
+               "Return the picker action that restores the browse list."
+               (if browse-items
+                   (list ':replace browse-title browse-items browse-hint)
+                   (list ':cancel)))
+
+             (on-event (event selector)
+               "Handle delete confirmation inside the resume picker."
+               (ecase mode
+                 (:browse
+                  (cond
+                    ((insert-character-p event #\d)
+                     (let ((item (selected-item selector)))
+                       (cond
+                         ((null item)
+                          ':continue)
+                         ((string= (getf item :name) current-display)
+                          (application-present
+                           application
+                           "Cannot delete the active conversation.")
+                          ':continue)
+                         (t
+                          (setf mode ':confirm
+                                pending item)
+                          (list
+                           ':replace
+                           (format nil "delete ~A?" (getf item :name))
+                           (application--conversation-delete-confirm-items item)
+                           confirm-hint)))))
+                    (t
+                     nil)))
+                 (:confirm
+                  (cond
+                    ((eq event ':escape)
+                     (setf mode ':browse
+                           pending nil)
+                     (browse-action))
+                    ((member event '(:interrupt :end-of-input :stream-end)
+                             :test #'eq)
+                     (list ':cancel))
+                    ((eq event ':submit)
+                     (let ((choice (selected-item selector)))
+                       (cond
+                         ((and choice
+                               (string= (getf choice :name) "delete")
+                               pending)
+                          (handler-case
+                              (progn
+                                (conversation-delete
+                                 (application-configuration application)
+                                 (getf pending :name))
+                                (application-present
+                                 application
+                                 (format nil "Deleted conversation ~A."
+                                         (getf pending :name)))
+                                (refresh-items))
+                            (conversation-error (condition)
+                              (application-present
+                               application
+                               (format nil "~A" condition))
+                              (refresh-items)))
+                          (setf mode ':browse
+                                pending nil)
+                          (browse-action))
+                         (t
+                          (setf mode ':browse
+                                pending nil)
+                          (browse-action)))))
+                    ((and (listp event) (eq (first event) ':insert))
+                     (setf mode ':browse
+                           pending nil)
+                     (browse-action))
+                    (t
+                     nil))))))
+      (application--pick-identifier
+       application
+       :title browse-title
+       :items browse-items
+       :hint browse-hint
+       :on-event #'on-event
+       :usage "Usage: /resume ID"
+       :empty-notice "No saved conversations exist."))))
+
 
 (-> application--pick-reasoning-effort (application) (option string))
 (defun application--pick-reasoning-effort (application)
@@ -1035,17 +1211,11 @@ when ITEMS is empty, and returns NIL when the picker is cancelled."
      :busy-behavior :hold
      :terminal-behavior :exclusive-without-arguments)
     (application invocation)
-  (let* ((configuration (application-configuration application))
-         (startup-offer-p
-           (application-project-adaptation-offer-p application))
+  (let* ((startup-offer-p
+          (application-project-adaptation-offer-p application))
          (identifier
            (or (application-command-invocation-argument invocation)
-               (application--pick-identifier
-                application
-                :title "resume conversation"
-                :items (application--conversation-items application)
-                :usage "Usage: /resume ID"
-                :empty-notice "No saved conversations exist."))))
+               (application--pick-conversation application))))
     (setf (application-project-adaptation-offer-p application) nil)
     (when identifier
       (application-resume-conversation application identifier)

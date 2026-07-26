@@ -1247,6 +1247,52 @@
       (test-assert (= (search "first" (first texts))
                       (search "second" (second texts)))
                    "picker descriptions share one content-aware value column")))
+  (let ((selector (make-selector :visible-count 4 :arrangement ':vertical)))
+    (selector-set-items
+     selector
+     (list
+      (list :name "alpha"
+            :argument nil
+            :tally "2 turns"
+            :description "2026-07-26 14:30 · first"
+            :description-spans
+            (list (terminal-span ':plain "2026-07-26 ")
+                  (terminal-span ':timestamp-time "14:30")
+                  (terminal-span ':plain " · first")))
+      (list :name "beta"
+            :argument nil
+            :tally "1:02"
+            :description "2026-07-25 09:15 · second"
+            :description-spans
+            (list (terminal-span ':plain "2026-07-25 ")
+                  (terminal-span ':timestamp-time "09:15")
+                  (terminal-span ':plain " · second")))))
+    (let* ((rows (terminal-ui--choice-rows selector 70))
+           (texts (mapcar #'markdown-tests--row-text rows))
+           (first-time
+             (find "14:30" (first rows)
+                   :key #'terminal-span-text
+                   :test #'string=))
+           (second-date
+             (find "2026-07-25 " (second rows)
+                   :key #'terminal-span-text
+                   :test #'string=)))
+      (test-assert (= (search "2026-07-26" (first texts))
+                      (search "2026-07-25" (second texts)))
+                   "picker tallies preserve one aligned description column")
+      (test-assert (and first-time
+                        (eq (terminal-span-style first-time) ':timestamp-time))
+                   "picker descriptions preserve the timestamp time color")
+      (test-assert (and second-date
+                        (eq (terminal-span-style second-date) ':dim))
+                   "unselected picker dates retain the ordinary dim style")))
+  (test-assert
+   (not (terminal-completion-p
+         (list :name "broken"
+               :argument nil
+               :description "visible"
+               :description-spans (list (terminal-span ':plain "different")))))
+   "completion descriptions reject mismatched styled text")
   (let* ((items '((:name "alpha" :argument nil :description "first entry"
                    :group "current directory")
                   (:name "beta" :argument nil :description "second entry"
@@ -1293,7 +1339,70 @@
                                                 :title "pick one"
                                                 :items items)
                             "beta")
-                   "ordinary picker input retains the selected option")))
+                   "ordinary picker input retains the selected option")
+      (recording-terminal-reset terminal)
+      (setf (scripted-terminal-events terminal)
+            (list '(:insert "d") :submit))
+      (let ((mode ':browse))
+        (test-assert
+         (string=
+          (terminal-ui-select
+           active-ui
+           :title "browse"
+           :items items
+           :hint "d deletes"
+           :on-event
+           (lambda (event selector)
+             (declare (ignore selector))
+             (ecase mode
+               (:browse
+                (when (equal event '(:insert "d"))
+                  (setf mode ':confirm)
+                  (list ':replace
+                        "confirm"
+                        '((:name "delete"
+                           :argument nil
+                           :description "confirm deletion"))
+                        "enter confirms")))
+               (:confirm
+                (when (eq event ':submit)
+                  (list ':accept "deleted"))))))
+          "deleted")
+         "picker event hooks can replace and accept modal choices")
+        (let ((painted (recording-terminal-output terminal)))
+          (test-assert (and (search "d deletes" painted)
+                            (search "enter confirms" painted))
+                       "picker replacements repaint their contextual hints"))
+        (test-assert (null (terminal-ui-selector-hint active-ui))
+                     "picker cleanup clears its contextual hint"))
+      (setf (scripted-terminal-events terminal)
+            (list '(:insert "c") :submit))
+      (let ((mode ':browse)
+            (replacement-hint :unobserved))
+        (test-assert
+         (string=
+          (terminal-ui-select
+           active-ui
+           :title "browse"
+           :items items
+           :hint "temporary hint"
+           :on-event
+           (lambda (event selector)
+             (declare (ignore selector))
+             (ecase mode
+               (:browse
+                (when (equal event '(:insert "c"))
+                  (setf mode ':replaced)
+                  (list ':replace "cleared" items nil)))
+               (:replaced
+                (when (eq event ':submit)
+                  (setf replacement-hint
+                        (terminal-ui-selector-hint active-ui))
+                  (list ':accept "cleared"))))))
+          "cleared")
+         "picker replacements accept an explicit NIL hint")
+        (test-assert (null replacement-hint)
+                     "an explicit NIL replacement clears the previous hint"))))
   (let* ((terminal (make-instance 'scripted-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal)))
     (test-assert (null (terminal-ui-select
@@ -1408,6 +1517,10 @@
         (string= (terminal-style-sequence :syntax-function)
                  (format nil "~C[34m" *terminal-escape-character*)))
    "syntax styles use the terminal's base ANSI palette")
+  (test-assert
+   (string= (terminal-style-sequence :timestamp-time)
+            (format nil "~C[36m" *terminal-escape-character*))
+   "timestamp times use a distinct cyan terminal color")
   (let ((indexed-sequences
           (loop for style in '(:brand-gradient-1 :brand-gradient-2
                                :brand-gradient-3 :brand-gradient-4

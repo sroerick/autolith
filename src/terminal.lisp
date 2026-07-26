@@ -155,6 +155,11 @@
     :accessor terminal-ui-selector-title
     :type (option string)
     :documentation "The application-owned title for the active modal picker.")
+   (selector-hint
+    :initform nil
+    :accessor terminal-ui-selector-hint
+    :type (option string)
+    :documentation "Optional modal picker hint text after the title.")
    (status
     :initform nil
     :accessor terminal-ui-status

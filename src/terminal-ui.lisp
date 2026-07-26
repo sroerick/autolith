@@ -29,13 +29,29 @@
   (/ (get-internal-real-time)
      (coerce internal-time-units-per-second 'double-float)))
 
+(-> terminal-ui--raw-spans-text (list) string)
+(defun terminal-ui--raw-spans-text (spans)
+  "Return the unsanitized text represented by SPANS."
+  (with-output-to-string (stream)
+    (dolist (span spans)
+      (write-string (terminal-span-text span) stream))))
+
+
 (-> terminal-completion-p (t) boolean)
 (defun terminal-completion-p (value)
   "Return true when VALUE describes one interactive completion entry."
-  (and (listp value)
-       (non-empty-string-p (getf value :name))
-       (typep (getf value :argument) '(option string))
-       (stringp (getf value :description))))
+  (let ((description (and (listp value) (getf value :description)))
+        (description-spans (and (listp value)
+                                (getf value :description-spans))))
+    (and (listp value)
+         (non-empty-string-p (getf value :name))
+         (typep (getf value :argument) '(option string))
+         (stringp description)
+         (or (null description-spans)
+             (and (terminal-styled-text-p description-spans)
+                  (string= description
+                           (terminal-ui--raw-spans-text
+                            description-spans)))))))
 
 (-> terminal-agent-activity-p (t) boolean)
 (defun terminal-agent-activity-p (value)
@@ -381,9 +397,38 @@
         (format nil "~A ~A" (getf entry :name) argument)
         (getf entry :name))))
 
+(-> terminal-ui--choice-tally (list) string)
+(defun terminal-ui--choice-tally (entry)
+  "Return ENTRY's optional tally column text."
+  (let ((tally (getf entry :tally)))
+    (if (stringp tally)
+        tally
+        "")))
+
+
+(-> terminal-ui--choice-description-spans (list boolean integer) list)
+(defun terminal-ui--choice-description-spans (entry selected-p maximum-width)
+  "Return ENTRY's selection-aware description spans clipped to MAXIMUM-WIDTH."
+  (let ((default-style (if selected-p ':plain ':dim)))
+    (terminal--clip-spans
+     (loop for span in (or (getf entry :description-spans)
+                           (list (terminal-span ':plain
+                                                (getf entry :description))))
+           collect
+           (terminal-span
+            (if (eq (terminal-span-style span) ':plain)
+                default-style
+                (terminal-span-style span))
+            (terminal-span-text span)))
+     maximum-width)))
+
+
 (-> terminal-ui--choice-rows (selector integer) list)
 (defun terminal-ui--choice-rows (selector row-width)
-  "Return styled candidate rows and nonselectable group headings."
+  "Return styled candidate rows and nonselectable group headings.
+
+When any candidate carries a non-empty :TALLY string, rows render three
+columns: name, tally, and description."
   (multiple-value-bind (index-rows arrangement-widths)
       (selector-arrange selector
                         row-width
@@ -392,17 +437,32 @@
                           (text-cell-width
                            (terminal-completion-label entry))))
     (declare (ignore arrangement-widths))
-    (let* ((cell-rows
+    (let* ((tally-p
              (loop for entry in (selector-items selector)
-                   collect (list (terminal-completion-label entry)
-                                 (or (getf entry :description) ""))))
+                   thereis (plusp (length (terminal-ui--choice-tally entry)))))
+           (cell-rows
+             (loop for entry in (selector-items selector)
+                   collect
+                   (if tally-p
+                       (list (terminal-completion-label entry)
+                             (terminal-ui--choice-tally entry)
+                             (or (getf entry :description) ""))
+                       (list (terminal-completion-label entry)
+                             (or (getf entry :description) "")))))
            (column-widths
              (layout-column-widths cell-rows
                                    (max 0 (- row-width 2))
                                    :gap-width 2
-                                   :minimum-widths '(1 0)))
+                                   :minimum-widths
+                                   (if tally-p
+                                       '(1 0 0)
+                                       '(1 0))))
            (label-width (or (first column-widths) 0))
-           (description-width (or (second column-widths) 0)))
+           (tally-width (if tally-p (or (second column-widths) 0) 0))
+           (description-width
+             (if tally-p
+                 (or (third column-widths) 0)
+                 (or (second column-widths) 0))))
       (let ((previous-group nil))
         (loop for index-row in index-rows
               for index = (first index-row)
@@ -422,25 +482,36 @@
                         row-width))))
                    (list
                     (terminal--clip-spans
-                     (list (terminal-span (if selected-p
-                                              :brand
-                                              :dim)
-                                          (if selected-p
-                                              "▸ "
-                                              "  "))
-                           (terminal-span :user
-                                          (layout-fit-text
-                                           (terminal-completion-label entry)
-                                           label-width))
-                           (terminal-span ':plain
-                                          (if (plusp description-width)
-                                              "  "
-                                              ""))
-                           (terminal-span
-                            (if selected-p ':plain ':dim)
-                            (text-cell-prefix
-                             (or (getf entry :description) "")
-                             description-width)))
+                     (append
+                      (list (terminal-span (if selected-p
+                                               :brand
+                                               :dim)
+                                           (if selected-p
+                                               "▸ "
+                                               "  "))
+                            (terminal-span :user
+                                           (layout-fit-text
+                                            (terminal-completion-label entry)
+                                            label-width)))
+                      (when tally-p
+                        (list
+                         (terminal-span ':plain
+                                        (if (plusp tally-width)
+                                            "  "
+                                            ""))
+                         (terminal-span
+                          (if selected-p ':plain ':dim)
+                          (layout-fit-text
+                           (terminal-ui--choice-tally entry)
+                           tally-width))))
+                      (append
+                       (list
+                        (terminal-span ':plain
+                                       (if (plusp description-width)
+                                           "  "
+                                           "")))
+                       (terminal-ui--choice-description-spans
+                        entry selected-p description-width)))
                      row-width)))
                 (setf previous-group group)))))))
 
@@ -908,17 +979,21 @@ content; a narrow row drops it before any activity detail."
     (let ((selector (terminal-ui-selector ui)))
       (cond
         (selector
-         (let ((title-spans
-                 (terminal--clip-spans
-                  (list (terminal-span ':brand "∙ ")
-                        (terminal-span ':plain
-                                       (terminal-ui-selector-title ui))
-                        (terminal-span ':hint "  enter selects, esc cancels"))
-                  row-width)))
+         (let* ((hint
+                  (or (terminal-ui-selector-hint ui)
+                      "enter selects, esc cancels"))
+                (title-spans
+                  (terminal--clip-spans
+                   (list (terminal-span ':brand "∙ ")
+                         (terminal-span ':plain
+                                        (terminal-ui-selector-title ui))
+                         (terminal-span ':hint (format nil "  ~A" hint)))
+                   row-width)))
            (let ((cursor-row (length rows)))
              (setf rows
                    (append rows
-                           (list title-spans)
+                           (list title-spans
+                                 nil)
                            (terminal-ui--choice-rows
                             selector
                             row-width)
@@ -1075,9 +1150,12 @@ live unfinished line continuing that block, or removes it when NIL."
 
 (-> terminal-ui-select
     (terminal-ui &key (:title string) (:items list)
-                 (:resize-callback (option function)))
+                 (:hint (option string))
+                 (:resize-callback (option function))
+                 (:on-event (option function)))
     (option string))
-(defun terminal-ui-select (ui &key (title "select") items resize-callback)
+(defun terminal-ui-select
+    (ui &key (title "select") items hint resize-callback on-event)
   "Run a modal picker over ITEMS and return the selected name, or NIL on cancel.
 
 Items follow the completion entry shape. Up and Down move the selection. Tab
@@ -1086,44 +1164,89 @@ ordinary input dismisses the picker with the selected item. Escape, Ctrl-C, or
 end of input cancels. Returns NIL immediately when ITEMS is empty or the
 terminal is not interactive.
 
+HINT overrides the default \"enter selects, esc cancels\" suffix after TITLE.
+
+ON-EVENT, when provided, receives (EVENT SELECTOR) before default handling and
+may return:
+  NIL - fall through to ordinary selector handling
+  :CONTINUE - custom handling already applied; continue the modal loop
+  (:ACCEPT NAME) - accept NAME and close the picker
+  (:CANCEL) - cancel and close the picker
+  (:REPLACE TITLE ITEMS) - install a new title and item list, then continue
+  (:REPLACE TITLE ITEMS HINT) - same, and replace the hint, including with NIL
+
 RESIZE-CALLBACK is queried before each blocking read and immediately after the
 read returns. It returns positive pending rows and columns as a cons, or NIL
 when no resize needs to be applied."
   (block nil
-    (unless (and items
-                 (every #'terminal-completion-p items)
-                 (terminal-interactive-p (terminal-ui-terminal ui)))
-      (return nil))
-    (with-terminal-ui-locked (ui)
-      (setf (terminal-ui-selector ui)
-            (make-selector
-             :items items
-             :visible-count *terminal-ui-visible-completions*
-             :arrangement ':vertical)
-            (terminal-ui-selector-title ui) title))
-    (unwind-protect
-         (loop
-           (with-terminal-ui-locked (ui)
-             (unless (terminal-ui-refresh-size ui resize-callback)
-               (terminal-ui--repaint-live ui)))
-           (let ((event (terminal-read-event (terminal-ui-terminal ui))))
-             (with-terminal-ui-locked (ui)
-               (terminal-ui-refresh-size ui resize-callback)
-               (multiple-value-bind (action item)
-                   (selector-handle-event (terminal-ui-selector ui) event)
-                 (case action
-                   (:accept
-                    (return (getf item :name)))
-                   (:cancel
-                    (return nil))
-                   (:dismiss
-                    (return (getf item :name)))
-                   (t
-                    nil))))))
+    (labels ((install
+                 (next-title next-items
+                  &optional (next-hint nil next-hint-supplied-p))
+               "Install NEXT-TITLE, NEXT-ITEMS, and optional NEXT-HINT on UI."
+               (unless (and next-items
+                            (every #'terminal-completion-p next-items))
+                 (return nil))
+               (setf (terminal-ui-selector ui)
+                     (make-selector
+                      :items next-items
+                      :visible-count *terminal-ui-visible-completions*
+                      :arrangement ':vertical)
+                     (terminal-ui-selector-title ui) next-title)
+               (when next-hint-supplied-p
+                 (setf (terminal-ui-selector-hint ui) next-hint))
+               t))
+      (unless (and items
+                   (every #'terminal-completion-p items)
+                   (terminal-interactive-p (terminal-ui-terminal ui)))
+        (return nil))
       (with-terminal-ui-locked (ui)
-        (setf (terminal-ui-selector ui) nil
-              (terminal-ui-selector-title ui) nil)
-        (terminal-ui--repaint-live ui)))))
+        (setf (terminal-ui-selector-hint ui) hint)
+        (install title items))
+      (unwind-protect
+           (loop
+             (with-terminal-ui-locked (ui)
+               (unless (terminal-ui-refresh-size ui resize-callback)
+                 (terminal-ui--repaint-live ui)))
+             (let ((event (terminal-read-event (terminal-ui-terminal ui))))
+               (with-terminal-ui-locked (ui)
+                 (terminal-ui-refresh-size ui resize-callback)
+                 (let ((custom
+                         (and on-event
+                              (funcall on-event event
+                                       (terminal-ui-selector ui)))))
+                   (cond
+                     ((null custom)
+                      (multiple-value-bind (action item)
+                          (selector-handle-event
+                           (terminal-ui-selector ui) event)
+                        (case action
+                          (:accept
+                           (return (getf item :name)))
+                          (:cancel
+                           (return nil))
+                          (:dismiss
+                           (return (getf item :name)))
+                          (t
+                           nil))))
+                     ((eq custom ':continue)
+                      nil)
+                     ((and (consp custom) (eq (first custom) ':accept))
+                      (return (second custom)))
+                     ((and (consp custom) (eq (first custom) ':cancel))
+                      (return nil))
+                     ((and (consp custom) (eq (first custom) ':replace))
+                      (apply #'install (rest custom)))
+                     (t
+                      (error 'terminal-error
+                             :message
+                             "ON-EVENT returned an unsupported picker action."
+                             :operation ':select
+                             :cause nil)))))))
+        (with-terminal-ui-locked (ui)
+          (setf (terminal-ui-selector ui) nil
+                (terminal-ui-selector-title ui) nil
+                (terminal-ui-selector-hint ui) nil)
+          (terminal-ui--repaint-live ui))))))
 
 
 ;;;; -- Public UI Lifecycle and Events --

@@ -1327,3 +1327,110 @@ conversation files."
          :key (lambda (pathname)
                 (or (file-write-date pathname) 0)))
         nil)))
+
+
+(-> conversation-activity-summary (pathname)
+    (values (integer 0) (integer 0)))
+(defun conversation-activity-summary (pathname)
+  "Return working seconds and user-turn count from PATHNAME without full load.
+
+Only durable activity timestamps and user-message roles are scanned, so the
+resume picker can show a tally without rebuilding provider projections."
+  (let ((working-seconds 0)
+        (user-turn-count 0)
+        (last-activity-at nil)
+        (header-seen-p nil))
+    (handler-case
+        (conversation--map-records
+         pathname
+         (lambda (record)
+           (cond
+             ((not header-seen-p)
+              (setf header-seen-p t))
+             (t
+              (let ((time (and (consp record) (getf (rest record) :time)))
+                    (user-message-p
+                      (and (consp record)
+                           (eq (first record) ':message)
+                           (eq (getf (rest record) :role) ':user))))
+                (when (typep time 'timestamp)
+                  (when (and last-activity-at
+                             (not user-message-p)
+                             (> time last-activity-at))
+                    (incf working-seconds (- time last-activity-at)))
+                  (setf last-activity-at
+                        (max (or last-activity-at 0) time)))
+                (when user-message-p
+                  (incf user-turn-count)))))))
+      (error ()
+        nil))
+    (values working-seconds user-turn-count)))
+
+
+(defparameter *conversation-delete-directory-tree-function*
+  #'uiop:delete-directory-tree
+  "Function used to remove private artifact trees after conversation deletion.")
+
+
+(-> conversation-delete (configuration string) pathname)
+(defun conversation-delete (configuration identifier)
+  "Delete IDENTIFIER's conversation file and private artifacts.
+
+Returns the removed conversation pathname. Signals CONVERSATION-ERROR when the
+file is missing, IDENTIFIER is invalid, or another process owns the
+conversation."
+  (let* ((normalized
+           (conversation-identifier-migration-resolve configuration identifier))
+         (pathname (conversation-pathname-for-id configuration normalized))
+         (task-fragment
+           (or (conversation-identifier-path-fragment normalized)
+               (string-downcase normalized)))
+         (artifact-roots
+           (list
+            (merge-pathnames
+             (format nil "conversation-images/~A/" normalized)
+             (configuration-data-root configuration))
+            (merge-pathnames
+             (format nil "tasks/~A/" task-fragment)
+             (configuration-data-root configuration))))
+         (lease nil))
+    (unwind-protect
+         (progn
+           (setf lease (conversation-lease-acquire configuration normalized))
+           (unless (probe-file pathname)
+             (error 'conversation-error
+                    :message
+                    (format nil "Conversation ~A does not exist."
+                            (conversation-identifier-display normalized))
+                    :pathname pathname
+                    :sequence nil))
+           (handler-case
+               (delete-file pathname)
+             (error (condition)
+               (error 'conversation-invariant-error
+                      :message
+                      (format nil "Could not delete conversation ~A: ~A"
+                              (conversation-identifier-display normalized)
+                              condition)
+                      :pathname pathname
+                      :sequence nil)))
+           (handler-case
+               (dolist (root artifact-roots)
+                 (when (probe-file root)
+                   (funcall *conversation-delete-directory-tree-function*
+                            root
+                            :validate t
+                            :if-does-not-exist :ignore)))
+             (error (condition)
+               (error 'conversation-invariant-error
+                      :message
+                      (format
+                       nil
+                       "Conversation ~A was deleted, but private artifacts remain: ~A"
+                       (conversation-identifier-display normalized)
+                       condition)
+                      :pathname pathname
+                      :sequence nil))))
+      (when lease
+        (conversation-lease-release lease)))
+    pathname))
