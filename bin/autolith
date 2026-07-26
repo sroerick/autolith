@@ -71,6 +71,19 @@ if [[ -t 0 ]]; then
   terminal_state=$(stty -g 2>/dev/null || true)
 fi
 
+launcher_brand=
+launcher_dim=
+launcher_notice=
+launcher_failure=
+launcher_reset=
+if [[ -t 2 && -z ${NO_COLOR:-} ]]; then
+  launcher_brand=$'\033[35;1m'
+  launcher_dim=$'\033[2m'
+  launcher_notice=$'\033[33m'
+  launcher_failure=$'\033[31;1m'
+  launcher_reset=$'\033[0m'
+fi
+
 restore_terminal()
 {
   if [[ -n "$terminal_state" && -t 0 ]]; then
@@ -99,7 +112,8 @@ run_recovery()
     "$sbcl_command" --noinform --core "$recovery_core" \
       --end-runtime-options "$source_root" "$@"
   else
-    printf 'Pristine recovery image is missing or invalid; using source bootstrap. Run ./script/build-recovery to replace it.\n' >&2
+    printf '%sPristine recovery image is missing or invalid; using source bootstrap.%s %sRun ./script/build-recovery to replace it.%s\n' \
+      "$launcher_notice" "$launcher_reset" "$launcher_dim" "$launcher_reset" >&2
     "$sbcl_command" --script "$source_root/recovery/launcher.lisp" \
       "$source_root" "$@"
   fi
@@ -149,12 +163,14 @@ bootstrap_active_image()
   fi
   bootstrap_status=$?
   if [[ "$bootstrap_status" -ne 0 ]]; then
-    printf 'Autolith bootstrap failed with status %d.\n' "$bootstrap_status" >&2
+    printf '%sAutolith bootstrap failed with status %d.%s\n' \
+      "$launcher_failure" "$bootstrap_status" "$launcher_reset" >&2
     return 64
   fi
   refresh_runtime_command
   if ! active_image_valid; then
-    printf 'Autolith bootstrap completed without a usable fast startup image.\n' >&2
+    printf '%sAutolith bootstrap completed without a usable fast startup image.%s\n' \
+      "$launcher_failure" "$launcher_reset" >&2
     return 64
   fi
   return 0
@@ -165,8 +181,9 @@ offer_bootstrap()
   local answer=
 
   while true; do
-    printf 'Autolith fast startup image is missing or stale. Run "%s/script/bootstrap" now? [Y/n] ' \
-      "$source_root" >&2
+    printf '%sAutolith%s fast startup image is missing or stale. Run %s"%s/script/bootstrap"%s now? [Y/n] ' \
+      "$launcher_brand" "$launcher_reset" \
+      "$launcher_dim" "$source_root" "$launcher_reset" >&2
     if ! IFS= read -r answer; then
       answer=n
     fi
@@ -179,7 +196,8 @@ offer_bootstrap()
         return 1
         ;;
       *)
-        printf 'Please answer yes or no.\n' >&2
+        printf '%sPlease answer yes or no.%s\n' \
+          "$launcher_dim" "$launcher_reset" >&2
         ;;
     esac
   done
@@ -200,7 +218,8 @@ run_active()
       if [[ "$status" -eq 64 ]]; then
         return 64
       fi
-      printf 'Loading Autolith from source.\n' >&2
+      printf '%sLoading Autolith from source.%s\n' \
+        "$launcher_dim" "$launcher_reset" >&2
       run_active_source "$@"
     fi
   else
