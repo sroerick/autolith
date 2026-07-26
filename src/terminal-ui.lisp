@@ -649,10 +649,10 @@ columns: name, tally, and description."
        (length *terminal-ui-agent-spinner-frames*)))
 
 (-> terminal-ui--agent-activity-row-at
-    (list real integer &key (:identity-width integer))
+    (list real integer &key (:identity-width integer) (:role-width integer))
     list)
 (defun terminal-ui--agent-activity-row-at
-    (activity now row-width &key (identity-width 0))
+    (activity now row-width &key (identity-width 0) (role-width 0))
   "Return one clipped child ACTIVITY row at monotonic NOW."
   (let* ((running-p (eq (getf activity :state) ':running))
          (current-tool (getf activity :current-tool))
@@ -684,7 +684,9 @@ columns: name, tally, and description."
                        (layout-fit-text (getf activity :id)
                                         identity-width))
         (terminal-span ':dim " · ")
-        (terminal-span ':agent-role (getf activity :agent)))
+        (terminal-span ':agent-role
+                         (layout-fit-text (getf activity :agent)
+                                          role-width)))
        (when detail
          (list (terminal-span ':dim " · ")
                detail))))
@@ -700,10 +702,8 @@ columns: name, tally, and description."
            (min *terminal-ui-agent-visible-limit* (length activities)))
          (omitted-count (- (length activities) visible-count))
          (visible-activities (subseq activities 0 visible-count))
-         (identity-width
-           (or
-            (first
-             (layout-column-widths
+         (column-widths
+           (layout-column-widths
               (loop for activity in visible-activities
                     collect
                     (list (getf activity :id)
@@ -711,7 +711,8 @@ columns: name, tally, and description."
               (max 0 (- row-width (text-cell-width "  ○ ")))
               :gap-width 3
               :minimum-widths '(1 1)))
-            0)))
+           (identity-width (or (first column-widths) 0))
+           (role-width (or (second column-widths) 0)))
     (when activities
       (append
        (list
@@ -725,7 +726,8 @@ columns: name, tally, and description."
              collect
              (terminal-ui--agent-activity-row-at
               activity now row-width
-              :identity-width identity-width))
+              :identity-width identity-width
+              :role-width role-width))
        (when (plusp omitted-count)
          (list
           (terminal--clip-spans

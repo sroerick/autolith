@@ -982,7 +982,11 @@
                (search-role-position
                  (and search-line (search "explorer" search-line)))
                (review-role-position
-                 (and review-line (search "reviewer" review-line))))
+                 (and review-line (search "reviewer" review-line)))
+                 (search-detail-position
+                   (and search-line (search " · search.content" search-line)))
+                 (review-detail-position
+                   (and review-line (search " · queued" review-line))))
           (test-assert
            (and header-index
                 search-index
@@ -1001,7 +1005,13 @@
                     (subseq search-line 0 search-role-position))
                    (text-cell-width
                     (subseq review-line 0 review-role-position)))
-                (search "explorer · search.content" text)
+                search-detail-position
+                  review-detail-position
+                  (= (text-cell-width
+                      (subseq search-line 0 search-detail-position))
+                     (text-cell-width
+                      (subseq review-line 0 review-detail-position)))
+                  (search "explorer · search.content" text)
                 (search "reviewer · queued" text))
            "child rows are separated, indented, aligned, and above the modeline")
           (test-assert (not (search "async" text))
