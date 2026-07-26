@@ -1035,3 +1035,48 @@
                 "the next conversation append atomically repairs its tail"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
+
+(-> test-conversation-working-seconds () null)
+(defun test-conversation-working-seconds ()
+  "Test working-time accumulation across durable records and replay."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let ((pathname (conversation-pathname-for-id configuration "worked"))
+               (message-json
+                 "{\"type\":\"message\",\"role\":\"user\",\"content\":[]}")
+               (reasoning-json "{\"type\":\"reasoning\",\"content\":[]}"))
+           (ensure-directories-exist pathname)
+           (snapshot-write
+            pathname
+            (list :conversation :version 1 :id "worked" :created-at 1000))
+           (dolist (record
+                    (list
+                     (list :message :seq 1 :time 1000 :role :user
+                           :content "start" :wire-json message-json)
+                     (list :provider-item :seq 2 :time 1030
+                           :wire-json reasoning-json)
+                     (list :provider-item :seq 3 :time 1090
+                           :wire-json reasoning-json)
+                     (list :message :seq 4 :time 1500 :role :user
+                           :content "next" :wire-json message-json)
+                     (list :provider-item :seq 5 :time 1520
+                           :wire-json reasoning-json)))
+             (log-append pathname record))
+           (let ((loaded (conversation-load-by-id configuration "worked")))
+             (test-assert
+              (= (conversation-working-seconds loaded) 110)
+              "working seconds accumulate record gaps within logical turns")
+             (test-assert
+              (= (conversation-user-turn-count loaded) 2)
+              "working-time replay preserves the user turn count")
+             (conversation-append-user-message loaded "one more")
+             (test-assert
+              (= (conversation-working-seconds loaded) 110)
+              "the idle gap before a live user message accrues nothing"))
+           (let ((reloaded (conversation-load-by-id configuration "worked")))
+             (test-assert
+              (= (conversation-working-seconds reloaded) 110)
+              "replay reproduces the accumulated working seconds exactly")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)

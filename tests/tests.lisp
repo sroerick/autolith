@@ -113,6 +113,7 @@
     (test-conversation-origin-directory)
     (test-conversation-model-selection)
     (test-conversation-compaction)
+    (test-conversation-working-seconds)
     (test-authentication-store)
     (test-authentication-bootstrap-and-refresh)
     (test-grok-authentication)

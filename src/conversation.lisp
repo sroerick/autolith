@@ -98,6 +98,12 @@
     :accessor conversation-user-turn-count
     :type (integer 0)
     :documentation "The number of durable user message records.")
+   (working-seconds
+    :initform 0
+    :accessor conversation-working-seconds
+    :type (integer 0)
+    :documentation
+    "Accumulated seconds of agent work, excluding gaps before user messages.")
    (latest-goal-record
     :initform nil
     :accessor conversation-latest-goal-record
@@ -283,15 +289,27 @@ reports an operating-system failure."
 
 (-> conversation--note-activity (conversation list) null)
 (defun conversation--note-activity (conversation record)
-  "Project RECORD's activity metadata into CONVERSATION."
-  (let ((time (and (consp record) (getf (rest record) :time))))
+  "Project RECORD's activity metadata into CONVERSATION.
+
+The gap since the previous durable record counts as working time unless
+RECORD is a user message, whose preceding gap is the user reading and
+typing."
+  (let ((time (and (consp record) (getf (rest record) :time)))
+        (user-message-p
+          (and (consp record)
+               (eq (first record) ':message)
+               (eq (getf (rest record) :role) ':user))))
     (when (typep time 'timestamp)
+      (let ((previous (conversation-last-activity-at conversation)))
+        (when (and previous
+                   (not user-message-p)
+                   (> time previous))
+          (incf (conversation-working-seconds conversation)
+                (- time previous))))
       (setf (conversation-last-activity-at conversation)
-            (max (or (conversation-last-activity-at conversation) 0) time))))
-  (when (and (consp record)
-             (eq (first record) ':message)
-             (eq (getf (rest record) :role) ':user))
-    (incf (conversation-user-turn-count conversation)))
+            (max (or (conversation-last-activity-at conversation) 0) time)))
+    (when user-message-p
+      (incf (conversation-user-turn-count conversation))))
   nil)
 
 (-> conversation--header-record (conversation) list)
