@@ -103,10 +103,10 @@
 (define-condition application-turn-cancelled (serious-condition)
   ()
   (:documentation
-   "An internal control condition unwinding a model turn during application exit.")
+   "An internal control condition unwinding the current application turn.")
   (:report (lambda (condition stream)
              (declare (ignore condition))
-             (write-string "The active model turn was cancelled during exit."
+             (write-string "The active turn was cancelled."
                            stream))))
 
 (define-condition application-input-failed (serious-condition)

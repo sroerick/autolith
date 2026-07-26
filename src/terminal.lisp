@@ -27,6 +27,21 @@
   "Return the trusted control that disables bracketed paste mode."
   (format nil "~C[?2004l" *terminal-escape-character*))
 
+(-> terminal-modified-keys-enable-sequence () string)
+(defun terminal-modified-keys-enable-sequence ()
+  "Return xterm controls enabling distinguishable modified key reports.
+
+Autolith deliberately avoids Kitty keyboard disambiguation because its enhanced
+plain Escape report is not portable across the supported input decoder."
+  (format nil "~C[>4;0m~C[>4;2m"
+          *terminal-escape-character*
+          *terminal-escape-character*))
+
+(-> terminal-modified-keys-disable-sequence () string)
+(defun terminal-modified-keys-disable-sequence ()
+  "Return the xterm control restoring ordinary modified key reports."
+  (format nil "~C[>4;0m" *terminal-escape-character*))
+
 
 ;;;; -- Terminal Objects --
 
@@ -165,6 +180,16 @@
     :accessor terminal-ui-status
     :type (option string)
     :documentation "The optional unfinished activity shown above the prompt.")
+   (notice
+    :initform nil
+    :accessor terminal-ui-notice
+    :type (option string)
+    :documentation "The optional transient notice shown above the prompt.")
+   (notice-deadline
+    :initform nil
+    :accessor terminal-ui-notice-deadline
+    :type (option real)
+    :documentation "The monotonic time at which the transient notice expires.")
    (status-details
     :initform nil
     :accessor terminal-ui-status-details

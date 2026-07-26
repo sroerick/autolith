@@ -1248,11 +1248,16 @@ when the primary window is absent, a bounded five-hour estimate may be used.
 Deferred state is private readable data, survives restart, and supports listing
 and exact cancellation.
 
-Ctrl-C with an empty input exits the interface. When the active conversation
-has durable records, shutdown displays the exact command that resumes its
-identifier. An empty conversation has no resume command. While graceful
-cancellation is pending, another Ctrl-C restores the terminal, prints the
-durable resume command when one exists, and forces exit with status 130.
+Ctrl-C with a nonempty idle input clears the draft. With an empty idle input it
+exits the interface without showing a force-exit confirmation. During an active
+turn, Escape or Ctrl-C cancels only that turn, preserves the draft and queued
+messages, and returns to the prompt. Active Ctrl-C shows a transient
+force-exit notice only if cancellation remains pending long enough for the
+option to be useful. A second Ctrl-C within 2.5 seconds
+restores the terminal and forces exit with status 130. The force option ends when
+cancellation finishes. Escape never opens or counts toward forced exit. Ordinary
+shutdown of a conversation with durable records displays the exact command that
+resumes its identifier; an empty conversation has no resume command.
 
 Only command-line =autolith resume= may offer to create a missing root
 =AUTOLITH.org=. A resumed conversation qualifies when its recorded activity

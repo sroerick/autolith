@@ -402,23 +402,32 @@
                               (application-input-controller--next-work
                                input-controller)
                             while work
-                            do (unwind-protect
-                                   (application-input-controller--run-work
-                                    input-controller work)
-                                 (application-input-controller--finish-work
-                                  input-controller)))
-                        (application-turn-cancelled ()
-                          nil)
+                            do (handler-case
+                                   (unwind-protect
+                                        (progn
+                                          (application-input-controller--run-work
+                                           input-controller work)
+                                          (when
+                                              (application-input-controller--consume-turn-cancellation-delivery-p
+                                               input-controller)
+                                            (error
+                                             (make-condition
+                                              'application-turn-cancelled))))
+                                     (application-input-controller--finish-work
+                                      input-controller))
+                                 (application-turn-cancelled ()
+                                   (conversation--repair-incomplete-tool-calls
+                                    (application-conversation application))
+                                   nil)))
                         (application-input-failed (condition)
                           (application-raise-fatal
                            application
                            (application-input-failed-original-condition
                             condition)
                            (application-input-failed-backtrace condition)))))
-                    (when (eq
-                           (application-input-controller-exit-reason
-                            input-controller)
-                           ':interrupt)
+                    (when (eq (application-input-controller-exit-reason
+                               input-controller)
+                              ':interrupt)
                       (application--present-resume-instruction application)))
                (finish-shutdown)))
         (sb-sys:enable-interrupt sb-unix:sigwinch :default)

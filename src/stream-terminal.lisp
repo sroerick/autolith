@@ -41,8 +41,7 @@
 (-> terminal--enable-input-protocols (stream-terminal) null)
 (defun terminal--enable-input-protocols (terminal)
   "Enable distinguishable modified keys and bracketed paste on TERMINAL."
-  (enable-keyboard-enhancement
-   :stream (stream-terminal-output-stream terminal))
+  (terminal--write terminal (terminal-modified-keys-enable-sequence))
   (terminal--write terminal (terminal-bracketed-paste-enable-sequence))
   (terminal-flush terminal)
   nil)
@@ -51,8 +50,7 @@
 (defun terminal--disable-input-protocols (terminal)
   "Restore ordinary keyboard reporting and paste handling on TERMINAL."
   (terminal--write terminal (terminal-bracketed-paste-disable-sequence))
-  (disable-keyboard-enhancement
-   :stream (stream-terminal-output-stream terminal))
+  (terminal--write terminal (terminal-modified-keys-disable-sequence))
   (terminal-flush terminal)
   nil)
 

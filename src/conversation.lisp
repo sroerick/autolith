@@ -641,8 +641,8 @@ typing."
    blocks))
 
 (defparameter *conversation-interrupted-tool-output*
-  "Autolith restarted before recording this tool call's result. The call may have changed external state. Inspect the relevant state before deciding whether to retry it."
-  "The provider-visible result synthesized for a tool call interrupted by exit.")
+  "Autolith interrupted this tool call before recording its result. The call may have changed external state. Inspect the relevant state before deciding whether to retry it."
+  "The provider-visible result synthesized for a tool call with an unknown outcome.")
 
 (-> conversation-append-tool-result
     (conversation string

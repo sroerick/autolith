@@ -103,6 +103,115 @@
     (condition-notify (gated-provider-condition-variable provider)))
   nil)
 
+;;;; -- Active-Turn Cancellation Test Support --
+
+(defclass application-test-gated-tool (tool)
+  ((lock
+    :initform (make-lock "Autolith gated tool")
+    :reader application-test-gated-tool-lock
+    :type t
+    :documentation "The lock protecting deterministic tool execution timing.")
+   (condition-variable
+    :initform (make-condition-variable :name "Autolith gated tool")
+    :reader application-test-gated-tool-condition-variable
+    :type t
+    :documentation "The wait point for gated tool execution.")
+   (entered-p
+    :initform nil
+    :accessor application-test-gated-tool-entered-p
+    :type boolean
+    :documentation "Whether the tool reached its cancellable execution point.")
+   (released-p
+    :initform nil
+    :accessor application-test-gated-tool-released-p
+    :type boolean
+    :documentation "Whether a fallback cleanup may complete the tool.")
+   (completed-p
+    :initform nil
+    :accessor application-test-gated-tool--completed-p
+    :type boolean
+    :documentation "Whether the tool reached its normal completion point."))
+  (:documentation "A deterministic tool that waits until cancelled or released."))
+
+(-> application-test-gated-tool-wait-until-entered
+    (application-test-gated-tool real)
+    boolean)
+(defun application-test-gated-tool-wait-until-entered (tool timeout)
+  "Wait up to TIMEOUT for TOOL execution to reach its cancellation gate."
+  (task-tests--wait-until
+   (lambda ()
+     (with-lock-held ((application-test-gated-tool-lock tool))
+       (application-test-gated-tool-entered-p tool)))
+   timeout))
+
+(-> application-test-gated-tool-release (application-test-gated-tool) null)
+(defun application-test-gated-tool-release (tool)
+  "Allow TOOL to complete when test cleanup needs to release its gate."
+  (with-lock-held ((application-test-gated-tool-lock tool))
+    (setf (application-test-gated-tool-released-p tool) t)
+    (condition-notify (application-test-gated-tool-condition-variable tool)))
+  nil)
+
+(-> application-test-gated-tool-completed-p (application-test-gated-tool) boolean)
+(defun application-test-gated-tool-completed-p (tool)
+  "Return whether TOOL reached normal completion."
+  (not
+   (null
+    (with-lock-held ((application-test-gated-tool-lock tool))
+      (application-test-gated-tool--completed-p tool)))))
+
+(defmethod tool-execute ((tool application-test-gated-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Wait at TOOL's gate, then report completion only after explicit release."
+  (declare (ignore context arguments))
+  (with-lock-held ((application-test-gated-tool-lock tool))
+    (setf (application-test-gated-tool-entered-p tool) t)
+    (condition-notify (application-test-gated-tool-condition-variable tool))
+    (loop until (application-test-gated-tool-released-p tool)
+          do (condition-wait
+              (application-test-gated-tool-condition-variable tool)
+              (application-test-gated-tool-lock tool)))
+    (setf (application-test-gated-tool--completed-p tool) t))
+  (tool-success "gated tool completed"))
+
+(defclass application-test-counting-provider (scripted-provider)
+  ((lock
+    :initform (make-lock "Autolith counting provider")
+    :reader application-test-counting-provider-lock
+    :type t
+    :documentation "The lock protecting the completed request count.")
+   (request-count
+    :initform 0
+    :accessor application-test-counting-provider-request-count
+    :type (integer 0)
+    :documentation "The number of provider requests that returned a result."))
+  (:documentation "A scripted provider exposing a synchronized request count."))
+
+(defmethod provider-stream-turn :around
+    ((provider application-test-counting-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Count PROVIDER requests only after their scripted result is available."
+  (declare (ignore conversation tool-namespaces event-callback
+                   goal-context compaction-p))
+  (let ((result (call-next-method)))
+    (with-lock-held ((application-test-counting-provider-lock provider))
+      (incf (application-test-counting-provider-request-count provider)))
+    result))
+
+(-> application-test-counting-provider-wait-for-requests
+    (application-test-counting-provider (integer 0) real)
+    boolean)
+(defun application-test-counting-provider-wait-for-requests
+    (provider count timeout)
+  "Wait up to TIMEOUT for PROVIDER to return at least COUNT scripted results."
+  (task-tests--wait-until
+   (lambda ()
+     (with-lock-held ((application-test-counting-provider-lock provider))
+       (>= (application-test-counting-provider-request-count provider) count)))
+   timeout))
+
 (defclass responsive-scripted-terminal (scripted-terminal)
   ((provider
     :initarg :provider
@@ -805,116 +914,105 @@
 
 (-> test-repeated-interrupt-forces-exit () null)
 (defun test-repeated-interrupt-forces-exit ()
-  "Test another Ctrl-C bypasses APPLICATION-RUN's blocked runtime cleanup."
+  "Test a second active-cancellation Ctrl-C forces exit before cleanup finishes."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration
-                                            :identifier "force-resume"))
-         (terminal (make-instance 'queued-recording-terminal :columns 80))
-         (ui (terminal-ui-create :terminal terminal))
-         (registry (make-instance 'tool-registry))
-         (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation conversation
-                          :provider nil
-                          :tool-registry registry
-                          :worker nil
-                          :agent nil
-                          :ui ui))
-         (barrier-lock (make-lock "Autolith shutdown cleanup test"))
-         (barrier (make-condition-variable
-                   :name "Autolith shutdown cleanup test"))
-         (cleanup-entered-p nil)
-         (cleanup-released-p nil)
-         (cleanup-timed-out-p nil)
-         (forced-status nil)
-         (terminal-restored-before-exit-p nil)
-         (first-exit-reason nil)
-         (reader-alive-during-cleanup-p nil)
-         (producer nil))
+                                            :identifier "force-resume")))
     (unwind-protect
-         (progn
-           (conversation-append-user-message conversation "preserve this work")
-           (tool-registry-register
-            registry
-            (make-instance
-             'tool-test-runtime-tool
-             :namespace "test"
-             :name "shutdown"
-             :description "Wait at the shutdown regression barrier."
-             :parameters (json-object "type" "object")
-             :runtime-identity (list ':shutdown-barrier)
-             :close-function
-             (lambda ()
-               ;; Holding the presentation lock proves the emergency path
-               ;; never waits for repaint or ordinary UI serialization.
-               (with-terminal-ui-locked (ui)
-                 (with-lock-held (barrier-lock)
-                   (let ((controller
-                           (application-input-controller application)))
-                     (setf first-exit-reason
-                           (application-input-controller-exit-reason controller)
-                           reader-alive-during-cleanup-p
-                           (thread-alive-p
-                            (application-input-controller-reader-thread
-                             controller))))
-                   (setf cleanup-entered-p t)
-                   (condition-notify barrier)
-                   (unless cleanup-released-p
-                     (condition-wait barrier barrier-lock :timeout 2))
-                   (setf cleanup-timed-out-p
-                         (not cleanup-released-p)))))
-             :detach-function (lambda () nil)))
-           (queued-recording-terminal-enqueue terminal ':interrupt)
-           (setf producer
-                 (make-thread
-                  (lambda ()
-                    (with-lock-held (barrier-lock)
-                      (unless cleanup-entered-p
-                        (condition-wait barrier barrier-lock :timeout 2)))
-                    (queued-recording-terminal-enqueue terminal ':interrupt))
-                  :name "Autolith repeated Ctrl-C test"))
-           (let ((*application-forced-exit-function*
+         (let* ((terminal (make-instance 'recording-terminal :columns 80))
+                (ui (terminal-ui-create :terminal terminal))
+                (application (make-instance 'application
+                                            :configuration configuration
+                                            :conversation conversation
+                                            :ui ui))
+                (forced-status nil)
+                (terminal-restored-before-exit-p nil)
+                (controller
+                  (make-instance
+                   'application-input-controller
+                   :application application
+                   :later-state (make-instance 'later-state)
+                   :pending-later-entries nil
+                   :main-thread (current-thread)
+                   :interrupt-clock-function (lambda () 10)
+                   :forced-exit-function
                    (lambda (status)
-                     (with-lock-held (barrier-lock)
-                       (setf forced-status status
-                             terminal-restored-before-exit-p
-                             (and (not (terminal-started-p terminal))
-                                  (not (terminal-interactive-p terminal)))
-                             cleanup-released-p t)
-                       (condition-notify barrier)))))
-             (application-run application))
-           (join-thread producer)
-           (setf producer nil)
-           (test-assert (eq first-exit-reason ':interrupt)
-                        "the first Ctrl-C remains a graceful interrupt")
-           (test-assert reader-alive-during-cleanup-p
-                        "the interrupt-only reader survives into runtime cleanup")
-           (test-assert (not cleanup-timed-out-p)
-                        "repeated Ctrl-C escapes blocked shutdown cleanup")
-           (test-assert (= forced-status *application-forced-interrupt-status*)
-                        "a repeated Ctrl-C forces process status 130")
-           (test-assert terminal-restored-before-exit-p
-                        "forced interruption restores the terminal before exit")
-           (let ((output (recording-terminal-output terminal)))
+                     (setf forced-status status
+                           terminal-restored-before-exit-p
+                           (and (not (terminal-started-p terminal))
+                                (not (terminal-interactive-p terminal))))))))
+           (conversation-append-user-message conversation "keep this conversation")
+           (setf (application-input-controller application) controller
+                 (application-input-controller-active-p controller) t)
+           (with-terminal-ui (active-ui ui)
+             (declare (ignore active-ui))
+             (application-input-controller--process-event controller ':interrupt)
              (test-assert
-              (search "Ctrl-C pressed again; forcing Autolith to exit." output)
-              "forced interruption explains why Autolith is exiting")
-             (test-assert (search "autolith resume force-resume" output)
-                          "forced interruption preserves the exact resume command")))
-      (when producer
-        (ignore-errors (join-thread producer)))
-      (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist :ignore)))
+              (application-input-controller-turn-cancellation-p controller)
+              "the first Ctrl-C leaves cancellation cleanup pending")
+             (test-assert (null forced-status)
+                          "the first active Ctrl-C never forces exit")
+             (application-input-controller--process-event controller ':interrupt)
+             (test-assert (= forced-status *application-forced-interrupt-status*)
+                          "a timely second active Ctrl-C forces process status 130")
+             (test-assert terminal-restored-before-exit-p
+                          "forced interruption restores the terminal before exit")
+             (test-assert
+              (null (application-input-controller-exit-reason controller))
+              "active cancellation does not become application shutdown")
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert
+                (search
+                 "Ctrl-C pressed twice within 2.5 seconds; forcing Autolith to exit."
+                 output)
+                "forced interruption explains the active cancellation window")
+               (test-assert
+                (search "autolith resume force-resume" output)
+                "forced cancellation carries the exact resume command"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-forced-exit-without-durable-conversation () null)
+(defun test-forced-exit-without-durable-conversation ()
+  "Test forced exit offers no resume command for an unsaved conversation."
+  (let* ((terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (forced-status nil)
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () 10)
+            :forced-exit-function
+            (lambda (status)
+              (setf forced-status status)))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (application-input-controller--process-event controller ':interrupt)
+      (application-input-controller--process-event controller ':interrupt)
+      (test-assert (= forced-status *application-forced-interrupt-status*)
+                   "a timely second active Ctrl-C still forces exit")
+      (let ((output (recording-terminal-output terminal)))
+        (test-assert
+         (search
+          "Ctrl-C pressed twice within 2.5 seconds; forcing Autolith to exit."
+          output)
+         "forced interruption still explains why Autolith exits")
+        (test-assert (not (search "autolith resume" output))
+                     "an unsaved conversation produces no resume command"))))
   nil)
 
 (-> test-graceful-shutdown-retains-interrupt-escape () null)
 (defun test-graceful-shutdown-retains-interrupt-escape ()
-  "Test every graceful shutdown reason retains the emergency Ctrl-C reader."
-  (dolist (reason '(:quit :end-of-input))
+  "Test Ctrl-C forces already-pending shutdown while Escape remains harmless."
+  (dolist (reason '(:quit :end-of-input :shutdown))
     (let* ((terminal (make-instance 'queued-recording-terminal :columns 80))
            (ui (terminal-ui-create :terminal terminal))
            (application (make-instance 'application :ui ui))
@@ -935,6 +1033,16 @@
               (thread-alive-p
                (application-input-controller-reader-thread controller))
               "graceful shutdown preserves its interrupt-only reader")
+             (test-assert
+              (null (application-input-controller-interrupt-deadline controller))
+              "ordinary shutdown never owns the active-cancellation timer")
+             (test-assert (null (terminal-ui-notice ui))
+                          "ordinary shutdown never shows the force-window hint")
+             (queued-recording-terminal-enqueue terminal ':escape)
+             (sleep 0.05)
+             (test-assert
+              (null (with-lock-held (status-lock) forced-status))
+              "Escape remains harmless during graceful shutdown")
              (queued-recording-terminal-enqueue terminal ':interrupt)
              (test-assert
               (task-tests--wait-until
@@ -943,16 +1051,762 @@
                    (= (or forced-status -1)
                       *application-forced-interrupt-status*)))
                2)
-              "Ctrl-C forces exit while non-interrupt shutdown is pending")
+              "Ctrl-C immediately forces already-pending shutdown")
              (application-input-controller-stop controller)
              (setf controller nil)
              (test-assert
-              (search "Ctrl-C pressed during shutdown; forcing Autolith to exit."
-                      (recording-terminal-output terminal))
-              "forced exit distinguishes an interrupt during graceful shutdown"))
+              (search
+               "Ctrl-C pressed during shutdown; forcing Autolith to exit."
+               (recording-terminal-output terminal))
+              "forced shutdown explains that cleanup was already pending"))
         (when controller
           (ignore-errors (application-input-controller-stop controller)))
         (ignore-errors (terminal-ui-stop ui)))))
+  nil)
+
+(-> test-active-turn-interrupt-events () null)
+(defun test-active-turn-interrupt-events ()
+  "Test Ctrl-C and Escape request turn-only cancellation without data loss."
+  (dolist (event '(:interrupt :escape))
+    (let* ((now 10)
+           (terminal (make-instance 'recording-terminal :columns 80))
+           (ui (terminal-ui-create
+                :terminal terminal
+                :clock-function (lambda () now)))
+           (application (make-instance 'application :ui ui))
+           (controller
+             (make-instance
+              'application-input-controller
+              :application application
+              :later-state (make-instance 'later-state)
+              :pending-later-entries nil
+              :main-thread (current-thread)
+              :interrupt-clock-function (lambda () now))))
+      (setf (application-input-controller application) controller
+            (application-input-controller-active-p controller) t
+            (application-input-controller-work-items controller)
+            (list (list ':message "queued"))
+            (application-input-controller-steering-items controller)
+            (list "steering"))
+      (terminal-ui-set-input ui "draft survives")
+      (application-input-controller--process-event controller event)
+      (test-assert (not (application-input-controller-stopping-p controller))
+                   "an active-turn stop keeps the application running")
+      (test-assert (null (application-input-controller-exit-reason controller))
+                   "an active-turn stop does not set an application exit reason")
+      (test-assert
+       (string= (line-editor-text (terminal-ui-editor ui)) "draft survives")
+       "active-turn stop keys preserve the current draft")
+      (test-assert
+       (equal (application-input-controller-work-items controller)
+              (list (list ':message "queued")))
+       "active-turn stop keys preserve queued work")
+      (test-assert
+       (equal (application-input-controller-steering-items controller)
+              (list "steering"))
+       "active-turn stop keys preserve steering work")
+      (test-assert
+       (application-input-controller-turn-cancellation-p controller)
+       "the cancellation lifecycle remains active until work cleanup finishes")
+      (test-assert
+       (eq (not (null
+                 (application-input-controller-interrupt-deadline controller)))
+           (eq event ':interrupt))
+       "only active Ctrl-C arms the force-exit window")
+      (test-assert
+       (eq (not (null
+                 (application-input-controller-interrupt-hint-time controller)))
+           (eq event ':interrupt))
+       "only active Ctrl-C schedules the transient force-exit notice")
+      (test-assert (null (terminal-ui-notice ui))
+                   "no stop key shows the force-exit notice immediately")
+      (application-input-controller--refresh-interrupt-hint controller)
+      (test-assert (null (terminal-ui-notice ui))
+                   "a cancellation inside the hint delay stays silent")
+      (setf now 21/2)
+      (application-input-controller--refresh-interrupt-hint controller)
+      (test-assert
+       (eq (not (null (terminal-ui-notice ui)))
+           (eq event ':interrupt))
+       "only active Ctrl-C announces forced exit once cancellation persists")
+      (test-assert
+       (or (eq event ':escape)
+           (= (terminal-ui-notice-deadline ui)
+              (application-input-controller-interrupt-deadline controller)))
+       "the visible notice expires exactly with the force-exit window")
+      (test-assert
+       (application-input-controller--consume-turn-cancellation-delivery-p
+        controller)
+       "the first active stop records one pending cancellation delivery")
+      (test-assert
+       (not
+        (application-input-controller--request-active-turn-cancellation
+         controller))
+       "turn-only cancellation has a single request winner")
+      (test-assert
+       (not
+        (application-input-controller--consume-turn-cancellation-delivery-p
+         controller))
+       "a repeated request does not re-arm cancellation delivery")
+      (application-input-controller--finish-work controller)
+      (test-assert
+       (and (not (application-input-controller-turn-cancellation-p controller))
+            (null
+             (application-input-controller-interrupt-deadline controller))
+            (null (terminal-ui-notice ui)))
+       "work cleanup ends the cancellation lifecycle and force window")))
+  nil)
+
+(-> test-idle-interrupt-exits-without-force-hint () null)
+(defun test-idle-interrupt-exits-without-force-hint ()
+  "Test idle Ctrl-C clears a draft or exits directly without force state."
+  (let* ((terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () 10))))
+    (setf (application-input-controller application) controller)
+    (terminal-ui-set-input ui "clear me")
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert (not (application-input-controller-stopping-p controller))
+                 "idle Ctrl-C only clears a nonempty draft")
+    (test-assert (string= (line-editor-text (terminal-ui-editor ui)) "")
+                 "idle Ctrl-C clears the current draft")
+    (test-assert
+     (and (null (application-input-controller-interrupt-deadline controller))
+          (null (terminal-ui-notice ui)))
+     "clearing an idle draft never arms or displays forced exit")
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert (application-input-controller-stopping-p controller)
+                 "idle Ctrl-C at an empty prompt requests graceful exit")
+    (test-assert (eq (application-input-controller-exit-reason controller)
+                     ':interrupt)
+                 "empty-prompt Ctrl-C preserves the interrupt exit reason")
+    (test-assert
+     (and (null (application-input-controller-interrupt-deadline controller))
+          (null (terminal-ui-notice ui)))
+     "empty-prompt Ctrl-C exits without a force window or hint"))
+  nil)
+
+(-> test-active-turn-stop-keys () null)
+(defun test-active-turn-stop-keys ()
+  "Test Ctrl-C and Escape cancel one provider turn and return to the prompt."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (dolist (event '(:interrupt :escape))
+           (let* ((conversation
+                    (conversation-create
+                     configuration
+                     :identifier (format nil "active-stop-~(~A~)" event)))
+                  (provider
+                    (make-instance
+                     'gated-provider
+                     :results
+                     (list
+                      (agent-test-result
+                       "unexpected completion"
+                       (list (agent-test-message "not cancelled"))
+                       :turn-completion :end))))
+                  (terminal
+                    (make-instance 'queued-recording-terminal :columns 80))
+                  (ui (terminal-ui-create :terminal terminal))
+                  (registry (agent-test-registry))
+                  (agent (agent-create :configuration configuration
+                                       :provider provider
+                                       :conversation conversation
+                                       :tool-registry registry
+                                       :worker nil))
+                  (application
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :provider provider
+                                   :tool-registry registry
+                                   :worker nil
+                                   :agent agent
+                                   :ui ui))
+                  (forced-status nil)
+                  (provider-entered-observed-p nil)
+                  (cancellation-finished-observed-p nil)
+                  (draft-preserved-observed-p nil)
+                  (output-before-exit nil)
+                  (producer nil))
+             (queued-recording-terminal-enqueue
+              terminal '(:insert "cancel this turn"))
+             (queued-recording-terminal-enqueue terminal ':submit)
+             (setf producer
+                   (make-thread
+                    (lambda ()
+                      (setf provider-entered-observed-p
+                            (task-tests--wait-until
+                             (lambda ()
+                               (gated-provider-entered-p provider))
+                             2))
+                      (when provider-entered-observed-p
+                        (queued-recording-terminal-enqueue
+                         terminal '(:insert "draft survives"))
+                        (queued-recording-terminal-enqueue terminal event)
+                        (setf cancellation-finished-observed-p
+                              (task-tests--wait-until
+                               (lambda ()
+                                 (let ((controller
+                                         (application-input-controller
+                                          application)))
+                                   (and controller
+                                        (not
+                                         (application-input-controller-turn-active-p
+                                          controller))
+                                        (not
+                                         (application-input-controller--turn-cancellation-active-p
+                                          controller))
+                                        (null
+                                         (application-input-controller-interrupt-deadline
+                                          controller))
+                                        (null (terminal-ui-notice ui)))))
+                               2)))
+                      (unless cancellation-finished-observed-p
+                        (gated-provider-release provider)
+                        (task-tests--wait-until
+                         (lambda ()
+                           (let ((controller
+                                   (application-input-controller application)))
+                             (and controller
+                                  (not
+                                   (application-input-controller-turn-active-p
+                                    controller)))))
+                         2))
+                      (setf draft-preserved-observed-p
+                            (string=
+                             (line-editor-text (terminal-ui-editor ui))
+                             "draft survives")
+                            output-before-exit
+                            (recording-terminal-output terminal))
+                      (queued-recording-terminal-enqueue terminal ':interrupt)
+                      (queued-recording-terminal-enqueue
+                       terminal '(:insert "/quit"))
+                      (queued-recording-terminal-enqueue terminal ':submit))
+                    :name "Autolith active-turn stop-key test"))
+             (unwind-protect
+                  (let ((*application-forced-exit-function*
+                          (lambda (status)
+                            (setf forced-status status))))
+                    (application-run application))
+               (gated-provider-release provider)
+               (when producer
+                 (join-thread producer)
+                 (setf producer nil)))
+             (test-assert provider-entered-observed-p
+                          "the provider turn reaches its cancellation gate")
+             (test-assert cancellation-finished-observed-p
+                          "the cancelled turn finishes and returns to input")
+             (test-assert
+              (not (search "not cancelled"
+                           (recording-terminal-output terminal)))
+              "the stop key cancels the active provider turn")
+             (test-assert (null forced-status)
+                          "one active-turn stop key never forces exit")
+             (test-assert draft-preserved-observed-p
+                          "the active reader preserves draft text while cancelling")
+             (test-assert
+              (not
+               (search "To resume this conversation, run:" output-before-exit))
+              "active-turn cancellation never prints a resume command")
+             (test-assert
+              (not
+               (search "Press Ctrl-C again within 2.5 seconds"
+                       output-before-exit))
+              "a promptly cancelled turn never flashes the force-exit hint")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+;;;; -- Active Command Cancellation --
+
+(-> test-active-command-stop-key () null)
+(defun test-active-command-stop-key ()
+  "Test Escape cancels a shared active command without fatal recovery."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (conversation  (conversation-create configuration
+                                            :identifier "active-command-stop"))
+         (terminal      (make-instance 'queued-recording-terminal :columns 80))
+         (ui            (terminal-ui-create :terminal terminal))
+         (application   (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :provider nil
+                                       :tool-registry (make-instance 'tool-registry)
+                                       :worker nil
+                                       :agent nil
+                                       :ui ui))
+         (command-lock  (make-lock "Autolith active command stop-key test"))
+         (command-gate  (make-condition-variable
+                         :name "Autolith active command stop-key test"))
+         (command-entered-p nil)
+         (command-released-p nil)
+         (registrations (application-command--registry-snapshot))
+         (forced-status nil)
+         (cancellation-finished-observed-p nil)
+         (draft-preserved-observed-p nil)
+         (producer nil))
+    (unwind-protect
+         (unwind-protect
+              (progn
+                (register-application-command
+                 (application-command-create
+                  :definition-name 'test-active-command-stop-key-command
+                  :name "/test-cancel-command"
+                  :aliases nil
+                  :argument nil
+                  :description "Block until the active-turn cancellation test stops it."
+                  :tip "Use this test command only from the application test suite."
+                  :busy-behavior ':hold
+                  :terminal-behavior ':shared
+                  :handler
+                  (lambda (ignored-application ignored-invocation)
+                    (declare (ignore ignored-application ignored-invocation))
+                    (with-lock-held (command-lock)
+                      (setf command-entered-p t)
+                      (condition-notify command-gate)
+                      (loop until command-released-p
+                            do (condition-wait command-gate command-lock)))
+                    ':continue))
+                 :source ':test)
+                (queued-recording-terminal-enqueue
+                 terminal '(:insert "/test-cancel-command"))
+                (queued-recording-terminal-enqueue terminal ':submit)
+                (setf producer
+                      (make-thread
+                       (lambda ()
+                         (let ((command-entered-observed-p
+                                 (task-tests--wait-until
+                                  (lambda ()
+                                    (with-lock-held (command-lock)
+                                      command-entered-p))
+                                  2)))
+                           (when command-entered-observed-p
+                             (queued-recording-terminal-enqueue
+                              terminal '(:insert "draft survives"))
+                             (queued-recording-terminal-enqueue terminal ':escape)
+                             (setf cancellation-finished-observed-p
+                                   (task-tests--wait-until
+                                    (lambda ()
+                                      (let ((controller
+                                              (application-input-controller
+                                               application)))
+                                        (and controller
+                                             (not
+                                              (application-input-controller-turn-active-p
+                                               controller))
+                                             (not
+                                              (application-input-controller--turn-cancellation-active-p
+                                               controller)))))
+                                    2)))
+                           (unless cancellation-finished-observed-p
+                             (with-lock-held (command-lock)
+                               (setf command-released-p t)
+                               (condition-notify command-gate)))
+                           (setf draft-preserved-observed-p
+                                 (string=
+                                  (line-editor-text (terminal-ui-editor ui))
+                                  "draft survives"))
+                           (queued-recording-terminal-enqueue terminal ':interrupt)
+                           (queued-recording-terminal-enqueue terminal ':interrupt)))
+                       :name "Autolith active command stop-key test"))
+                (let ((*application-forced-exit-function*
+                        (lambda (status)
+                          (setf forced-status status))))
+                  (application-run application))
+                (test-assert cancellation-finished-observed-p
+                             "Escape cancels a shared active command and returns to input")
+                (test-assert draft-preserved-observed-p
+                             "command cancellation preserves the draft")
+                (test-assert (null forced-status)
+                             "command cancellation never enters forced exit"))
+           (with-lock-held (command-lock)
+             (setf command-released-p t)
+             (condition-notify command-gate))
+           (when producer
+             (join-thread producer)
+             (setf producer nil))
+           (application-command--registry-restore registrations))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+;;;; -- Active Tool Cancellation --
+
+(-> test-active-tool-stop-repairs-unknown-outcome () null)
+(defun test-active-tool-stop-repairs-unknown-outcome ()
+  "Test cancellation records an unknown tool outcome before the next turn."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "active-tool-stop"))
+                (provider
+                  (make-instance
+                   'application-test-counting-provider
+                   :results
+                   (list
+                    (agent-test-result
+                     "tool-call"
+                     (list
+                      (agent-test-call
+                       :call-id "interrupted-tool-call"
+                       :name "gate")))
+                    (agent-test-result
+                     "recovered-turn"
+                     (list (agent-test-message "the next turn ran"))
+                     :turn-completion :end))))
+                (registry (agent-test-registry))
+                (tool
+                  (make-instance
+                   'application-test-gated-tool
+                   :namespace "test"
+                   :name "gate"
+                   :description "Wait at the active-tool cancellation test gate."
+                   :parameters (tool-object-schema (json-object) '())))
+                (terminal (make-instance 'queued-recording-terminal :columns 80))
+                (ui (terminal-ui-create :terminal terminal))
+                (agent (agent-create :configuration configuration
+                                     :provider provider
+                                     :conversation conversation
+                                     :tool-registry registry
+                                     :worker nil))
+                (application
+                  (make-instance 'application
+                                 :configuration configuration
+                                 :conversation conversation
+                                 :provider provider
+                                 :tool-registry registry
+                                 :worker nil
+                                 :agent agent
+                                 :ui ui))
+                (forced-status nil)
+                (tool-entered-observed-p nil)
+                (cancellation-finished-observed-p nil)
+                (next-turn-observed-p nil)
+                (producer nil))
+           (tool-registry-register registry tool)
+           (queued-recording-terminal-enqueue
+            terminal '(:insert "run the gated tool"))
+           (queued-recording-terminal-enqueue terminal ':submit)
+           (setf producer
+                 (make-thread
+                  (lambda ()
+                    (setf tool-entered-observed-p
+                          (application-test-gated-tool-wait-until-entered tool 2))
+                    (when tool-entered-observed-p
+                      (queued-recording-terminal-enqueue terminal ':escape)
+                      (setf cancellation-finished-observed-p
+                            (task-tests--wait-until
+                             (lambda ()
+                               (let ((controller
+                                       (application-input-controller application)))
+                                 (and controller
+                                      (not
+                                       (application-input-controller-turn-active-p
+                                        controller))
+                                      (not
+                                       (application-input-controller--turn-cancellation-active-p
+                                        controller)))))
+                             2)))
+                    (unless cancellation-finished-observed-p
+                      (application-test-gated-tool-release tool))
+                    (when cancellation-finished-observed-p
+                      (queued-recording-terminal-enqueue
+                       terminal '(:insert "continue after cancellation"))
+                      (queued-recording-terminal-enqueue terminal ':submit)
+                      (setf next-turn-observed-p
+                            (application-test-counting-provider-wait-for-requests
+                             provider 2 2)))
+                    (queued-recording-terminal-enqueue terminal ':interrupt))
+                  :name "Autolith active tool stop-key test"))
+           (unwind-protect
+                (let ((*application-forced-exit-function*
+                        (lambda (status)
+                          (setf forced-status status))))
+                  (application-run application))
+             (application-test-gated-tool-release tool)
+             (when producer
+               (join-thread producer)
+               (setf producer nil)))
+           (test-assert tool-entered-observed-p
+                        "the tool reaches its cancellable execution point")
+           (test-assert cancellation-finished-observed-p
+                        "active-tool cancellation finishes before the next turn")
+           (test-assert next-turn-observed-p
+                        "the next queued message reaches the provider")
+           (test-assert (not (application-test-gated-tool-completed-p tool))
+                        "cancellation leaves the tool outcome unknown")
+           (test-assert (null forced-status)
+                        "one active-tool stop key never forces exit")
+           (let* ((snapshots
+                    (nreverse
+                     (copy-list
+                      (scripted-provider-input-snapshots provider))))
+                  (next-request (second snapshots))
+                  (output
+                    (find-if
+                     (lambda (item)
+                       (and (json-object-p item)
+                            (string=
+                             (or (json-get item "type") "")
+                             "function_call_output")))
+                     next-request)))
+             (test-assert (= (length snapshots) 2)
+                          "cancellation prevents a same-turn tool retry request")
+             (test-assert output
+                          "the next request includes an unknown-outcome tool result")
+             (test-assert
+              (string= (json-get output "call_id") "interrupted-tool-call")
+              "the repaired result retains its original tool call identifier")
+             (test-assert
+              (string= (json-get output "output")
+                       *conversation-interrupted-tool-output*)
+              "the repaired result explains that tool state is unknown")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-interrupt-force-window () null)
+(defun test-interrupt-force-window ()
+  "Test only a second Ctrl-C within 2.5 seconds requests forced exit."
+  (let* ((now 10)
+         (application (make-instance 'application))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () now))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (test-assert
+     (null
+      (application-input-controller--active-turn-interrupt-action controller))
+     "an idle Ctrl-C owns no active-cancellation action")
+    (test-assert
+     (application-input-controller--request-active-turn-cancellation
+      controller :force-exit-window-p t)
+     "the first Ctrl-C only arms forced exit")
+    (setf now 25/2)
+    (test-assert
+     (eq (application-input-controller--active-turn-interrupt-action controller)
+         ':force)
+     "a second Ctrl-C at the 2.5-second boundary forces exit")
+    (setf now 15)
+    (test-assert
+     (eq (application-input-controller--active-turn-interrupt-action controller)
+         ':hint)
+     "a later first Ctrl-C starts a fresh window")
+    (setf now 17501/1000)
+    (test-assert
+     (eq (application-input-controller--active-turn-interrupt-action controller)
+         ':hint)
+     "a Ctrl-C after 2.5 seconds does not force exit")
+    (setf now 20)
+    (test-assert
+     (eq (application-input-controller--active-turn-interrupt-action controller)
+         ':force)
+     "the press after an expired window can arm a new timely second press"))
+  nil)
+
+(-> test-visible-interrupt-hint-does-not-extend-window () null)
+(defun test-visible-interrupt-hint-does-not-extend-window ()
+  "Test a delayed visible notice cannot extend an expired force deadline."
+  (let* ((now 0)
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () now)))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () now))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (test-assert
+     (application-input-controller--request-active-turn-cancellation
+      controller :force-exit-window-p t)
+     "the first Ctrl-C arms the force-exit deadline")
+    (terminal-ui-set-notice
+     ui
+     "Press Ctrl-C again within 2.5 seconds to force exit."
+     :duration-seconds 5)
+    (setf now 3)
+    (test-assert
+     (eq (application-input-controller--active-turn-interrupt-action controller)
+         ':hint)
+     "a visible notice cannot make an expired Ctrl-C force exit")
+    (test-assert
+     (= (application-input-controller-interrupt-deadline controller) 11/2)
+     "the expired press starts a fresh 2.5-second window"))
+  nil)
+
+(-> test-dropped-interrupt-hint-reappears () null)
+(defun test-dropped-interrupt-hint-reappears ()
+  "Test contended presentation only delays the force-exit hint."
+  (let* ((now 0)
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () now)))
+         (application (make-instance 'application :ui ui))
+         (gate (make-lock "Autolith hint contention test"))
+         (gate-condition (make-condition-variable :name "Autolith hint test"))
+         (holding-p nil)
+         (released-p nil)
+         (holder nil)
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () now))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (application-input-controller--request-active-turn-cancellation
+     controller :force-exit-window-p t)
+    (setf now 1/2)
+    (setf holder
+          (make-thread
+           (lambda ()
+             (with-terminal-ui-locked (ui)
+               (with-lock-held (gate)
+                 (setf holding-p t)
+                 (condition-notify gate-condition)
+                 (loop until released-p
+                       do (condition-wait gate-condition gate)))))
+           :name "Autolith hint contention holder"))
+    (unwind-protect
+         (progn
+           (with-lock-held (gate)
+             (loop until holding-p
+                   do (condition-wait gate-condition gate :timeout 2)))
+           (application-input-controller--refresh-interrupt-hint controller)
+           (test-assert (null (terminal-ui-notice ui))
+                        "contended presentation drops the due hint")
+           (test-assert
+            (application-input-controller-interrupt-hint-time controller)
+            "a dropped hint stays due for a later reader pass"))
+      (with-lock-held (gate)
+        (setf released-p t)
+        (condition-notify gate-condition))
+      (join-thread holder))
+    (application-input-controller--refresh-interrupt-hint controller)
+    (test-assert (terminal-ui-notice ui)
+                 "the delayed hint appears once presentation is free")
+    (test-assert
+     (null (application-input-controller-interrupt-hint-time controller))
+     "a shown hint stops asking for another reader pass"))
+  nil)
+
+(-> test-active-cancellation-interrupt-window-expiry () null)
+(defun test-active-cancellation-interrupt-window-expiry ()
+  "Test an expired active-cancellation window requires a new timely press."
+  (let* ((now 0)
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (forced-status nil)
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () now)
+            :forced-exit-function
+            (lambda (status)
+              (setf forced-status status)))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert
+     (= (application-input-controller-interrupt-deadline controller) 5/2)
+     "the first active Ctrl-C starts the 2.5-second window")
+    (setf now 3)
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert (null forced-status)
+                 "an expired second active Ctrl-C does not force exit")
+    (test-assert
+     (= (application-input-controller-interrupt-deadline controller) 11/2)
+     "an expired second active Ctrl-C starts a fresh window")
+    (setf now 5)
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert (= forced-status *application-forced-interrupt-status*)
+                 "a new timely second active Ctrl-C forces exit"))
+  nil)
+
+(-> test-cancellation-completion-clears-interrupt-state () null)
+(defun test-cancellation-completion-clears-interrupt-state ()
+  "Test completed cancellation clears force state and restores idle Ctrl-C."
+  (let* ((now 0)
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (forced-status nil)
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :pending-later-entries nil
+            :main-thread (current-thread)
+            :interrupt-clock-function (lambda () now)
+            :forced-exit-function
+            (lambda (status)
+              (setf forced-status status)))))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert
+     (and (application-input-controller-turn-cancellation-p controller)
+          (application-input-controller-interrupt-deadline controller)
+          (application-input-controller-interrupt-hint-time controller))
+     "active Ctrl-C establishes cancellation lifecycle and force state")
+    (setf now 1/2)
+    (application-input-controller--refresh-interrupt-hint controller)
+    (test-assert (terminal-ui-notice ui)
+                 "a cancellation past the hint delay explains forced exit")
+    (application-input-controller--finish-work controller)
+    (test-assert
+     (and (not (application-input-controller-active-p controller))
+          (not (application-input-controller-turn-cancellation-p controller))
+          (not
+           (application-input-controller-turn-cancellation-delivery-pending-p
+            controller))
+          (null (application-input-controller-interrupt-deadline controller))
+          (null (application-input-controller-interrupt-hint-time controller))
+          (null (terminal-ui-notice ui)))
+     "turn cleanup clears cancellation delivery, deadline, and notice")
+    (application-input-controller--process-event controller ':interrupt)
+    (test-assert (application-input-controller-stopping-p controller)
+                 "the next empty-prompt Ctrl-C follows idle exit semantics")
+    (test-assert (eq (application-input-controller-exit-reason controller)
+                     ':interrupt)
+                 "post-cancellation idle Ctrl-C records ordinary interrupt exit")
+    (test-assert (null forced-status)
+                 "post-cancellation idle Ctrl-C never inherits forced exit")
+    (test-assert
+     (null (application-input-controller-interrupt-deadline controller))
+     "post-cancellation idle Ctrl-C does not arm a force window"))
   nil)
 
 (-> test-transcript-entries () null)
@@ -4684,7 +5538,18 @@
   (test-command-permission-modes)
   (test-interrupt-resume-instruction)
   (test-repeated-interrupt-forces-exit)
+  (test-forced-exit-without-durable-conversation)
   (test-graceful-shutdown-retains-interrupt-escape)
+  (test-active-turn-interrupt-events)
+  (test-idle-interrupt-exits-without-force-hint)
+  (test-active-turn-stop-keys)
+  (test-active-command-stop-key)
+  (test-active-tool-stop-repairs-unknown-outcome)
+  (test-interrupt-force-window)
+  (test-visible-interrupt-hint-does-not-extend-window)
+  (test-dropped-interrupt-hint-reappears)
+  (test-active-cancellation-interrupt-window-expiry)
+  (test-cancellation-completion-clears-interrupt-state)
   (test-transcript-entries)
   (test-task-run-call-presentation)
   (test-recovery-cursor-normalization)

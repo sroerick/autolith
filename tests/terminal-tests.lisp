@@ -560,6 +560,18 @@
                  "Kitty keyboard protocol Ctrl-C requests interruption")
     (test-assert (eq (terminal-read-event terminal) :interrupt)
                  "xterm modifyOtherKeys Ctrl-C requests interruption"))
+  (dolist (case (list (list (string *terminal-escape-character*) ':escape)
+                       (list (string (code-char 3)) ':interrupt)))
+    (destructuring-bind (input expected) case
+      (let ((terminal
+              (make-instance 'stream-terminal
+                             :input-stream (make-string-input-stream input)
+                             :output-stream (make-string-output-stream)
+                             :input-file-descriptor 0
+                             :interactive-p t
+                             :columns 40)))
+        (test-assert (eq (terminal-read-event terminal) expected)
+                     "raw Escape and Ctrl-C retain semantic input events"))))
   (let* ((output (make-string-output-stream))
          (terminal
            (make-instance 'stream-terminal
@@ -569,17 +581,18 @@
     (terminal--enable-input-protocols terminal)
     (terminal--disable-input-protocols terminal)
     (let ((controls (get-output-stream-string output)))
-      (test-assert (and (search (format nil "~C[>1u"
-                                        *terminal-escape-character*)
-                                controls)
-                        (search (format nil "~C[>4;2m"
-                                        *terminal-escape-character*)
-                                controls))
-                   "terminal startup requests distinguishable modified keys")
-      (test-assert (search (format nil "~C[<u"
-                                   *terminal-escape-character*)
-                           controls)
-                   "terminal shutdown restores ordinary keyboard reporting")))
+      (test-assert (search (format nil "~C[>4;2m"
+                                  *terminal-escape-character*)
+                          controls)
+                   "terminal startup requests xterm modified key reports")
+      (test-assert (not (search (format nil "~C[>1u"
+                                       *terminal-escape-character*)
+                               controls))
+                   "terminal startup leaves Kitty Escape reporting disabled")
+      (test-assert (search (format nil "~C[>4;0m"
+                                  *terminal-escape-character*)
+                          controls)
+                   "terminal shutdown restores ordinary modified key reports")))
   nil)
 
 (-> test-terminal-live-region-layout () null)
@@ -850,6 +863,105 @@
         (declare (ignore display cursor))
         (test-assert (not (search "reasoning summary" text))
                      "a cleared preview disappears without entering scrollback"))))
+  nil)
+
+(-> test-terminal-transient-notice () null)
+(defun test-terminal-transient-notice ()
+  "Test transient notices expire without entering terminal scrollback."
+  (let* ((clock 0)
+         (terminal (make-instance 'recording-terminal :columns 60))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () clock))))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-notice
+       active-ui
+       "Press Ctrl-C again within 2.5 seconds to force exit."
+       :duration-seconds 5/2)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore display cursor))
+        (test-assert (search "Press Ctrl-C again" text)
+                     "the transient notice appears in the live region"))
+      (setf clock 5/2)
+      (with-terminal-ui-locked (active-ui)
+        (terminal-ui-set-input active-ui "draft"))
+      (test-assert (null (terminal-ui-notice active-ui))
+                   "any locked repaint clears a notice at its deadline")
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore display cursor))
+        (test-assert (not (search "Press Ctrl-C again" text))
+                     "the expired notice vanishes from the live region"))
+      (setf clock 10)
+      (terminal-ui-set-notice
+       active-ui
+       "Press Ctrl-C again within 2.5 seconds to force exit."
+       :duration-seconds 5/2)
+      (setf clock 25/2)
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "the reader refresh also repaints an expired notice")
+      (test-assert (null (terminal-ui-notice active-ui))
+                   "the reader refresh clears the renewed notice")))
+  nil)
+
+(-> test-terminal-notice-lock-contention () null)
+(defun test-terminal-notice-lock-contention ()
+  "Test notice updates never wait behind ordinary presentation work."
+  (let* ((terminal (make-instance 'recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (state-lock (make-lock "Autolith notice contention test"))
+         (condition (make-condition-variable
+                     :name "Autolith notice contention test"))
+         (ui-lock-held-p nil)
+         (release-ui-lock-p nil)
+         (notice-call-returned-p nil)
+         (holder nil)
+         (setter nil))
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (setf holder
+                 (make-thread
+                  (lambda ()
+                    (with-terminal-ui-locked (ui)
+                      (with-lock-held (state-lock)
+                        (setf ui-lock-held-p t)
+                        (condition-notify condition)
+                        (unless release-ui-lock-p
+                          (condition-wait condition state-lock :timeout 2)))))
+                  :name "Autolith notice lock holder"))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (with-lock-held (state-lock) ui-lock-held-p))
+             1)
+            "the contention test holds the presentation lock")
+           (setf setter
+                 (make-thread
+                  (lambda ()
+                    (terminal-ui-set-notice
+                     ui "must not appear" :duration-seconds 5/2)
+                    (with-lock-held (state-lock)
+                      (setf notice-call-returned-p t)
+                      (condition-notify condition)))
+                  :name "Autolith nonblocking notice setter"))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (with-lock-held (state-lock) notice-call-returned-p))
+             1)
+            "a notice update returns while presentation remains locked")
+           (test-assert (null (terminal-ui-notice ui))
+                        "a contended notice is dropped instead of delayed"))
+      (with-lock-held (state-lock)
+        (setf release-ui-lock-p t)
+        (condition-notify condition))
+      (when setter
+        (ignore-errors (join-thread setter)))
+      (when holder
+        (ignore-errors (join-thread holder)))
+      (ignore-errors (terminal-ui-stop ui))))
   nil)
 
 (-> test-terminal-timed-status () null)
@@ -1686,6 +1798,8 @@
   (test-terminal-narrow-live-region)
   (test-terminal-bounded-editor-repaint)
   (test-terminal-preview-rows)
+  (test-terminal-transient-notice)
+  (test-terminal-notice-lock-contention)
   (test-terminal-timed-status)
   (test-terminal-agent-activities)
   (test-terminal-stream-update)

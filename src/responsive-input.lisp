@@ -5,6 +5,34 @@
 (defparameter *application-forced-interrupt-status* 130
   "The process status used when repeated Ctrl-C forces exit.")
 
+(defparameter *application-interrupt-exit-window-seconds* 5/2
+  "Seconds in which a second Ctrl-C may force the process to exit.")
+
+(defparameter *application-interrupt-hint-delay-seconds* 1/4
+  "Seconds a cancellation may run before its force-exit hint becomes worth showing.")
+
+(-> application-input-controller--interrupt-window-text () string)
+(defun application-input-controller--interrupt-window-text ()
+  "Return the force-exit window as concise user-facing seconds."
+  (format nil "~,1F" *application-interrupt-exit-window-seconds*))
+
+(-> application-input-controller--forced-exit-text () string)
+(defun application-input-controller--forced-exit-text ()
+  "Return the repeated-Ctrl-C forced-exit explanation."
+  (format nil
+          "Ctrl-C pressed twice within ~A seconds; forcing Autolith to exit."
+          (application-input-controller--interrupt-window-text)))
+
+(-> application-input-controller--monotonic-seconds () real)
+(defun application-input-controller--monotonic-seconds ()
+  "Return monotonically increasing process time in seconds."
+  (/ (get-internal-real-time)
+     (coerce internal-time-units-per-second 'double-float)))
+
+(defparameter *application-interrupt-clock-function*
+  #'application-input-controller--monotonic-seconds
+  "The monotonic clock captured by newly created input controllers.")
+
 (defvar *application-forced-exit-function*
   (lambda (status)
     (sb-ext:exit :code status :abort t))
@@ -52,6 +80,16 @@
     :accessor application-input-controller-active-p
     :type boolean
     :documentation "Whether the main thread is processing one work item.")
+   (turn-cancellation-p
+    :initform nil
+    :accessor application-input-controller-turn-cancellation-p
+    :type boolean
+    :documentation "Whether one active turn is cancelling but not yet finished.")
+   (turn-cancellation-delivery-pending-p
+    :initform nil
+    :accessor application-input-controller-turn-cancellation-delivery-pending-p
+    :type boolean
+    :documentation "Whether the main thread must still receive turn cancellation.")
    (stopping-p
     :initform nil
     :accessor application-input-controller-stopping-p
@@ -88,8 +126,25 @@
     :reader application-input-controller-forced-exit-function
     :type function
     :documentation "The process termination boundary captured before the reader starts.")
+   (interrupt-clock-function
+    :initarg :interrupt-clock-function
+    :initform *application-interrupt-clock-function*
+    :reader application-input-controller-interrupt-clock-function
+    :type function
+    :documentation "The monotonic clock used to recognize repeated Ctrl-C input.")
+   (interrupt-deadline
+    :initform nil
+    :accessor application-input-controller-interrupt-deadline
+    :type (option real)
+    :documentation "The inclusive monotonic deadline for a force-exit Ctrl-C.")
+   (interrupt-hint-time
+    :initform nil
+    :accessor application-input-controller-interrupt-hint-time
+    :type (option real)
+    :documentation "The monotonic time at which an unshown force-exit hint is due.")
    (forced-exit-message
-    :initform "Ctrl-C pressed during shutdown; forcing Autolith to exit."
+    :initform (format nil "~%~A~%"
+                      (application-input-controller--forced-exit-text))
     :accessor application-input-controller-forced-exit-message
     :type string
     :documentation "The complete plain-text notice emitted by forced shutdown.")
@@ -143,7 +198,10 @@ lock because ordinary shutdown may be blocked while either is unavailable."
     (application-input-controller keyword)
     string)
 (defun application-input-controller--forced-exit-message (controller reason)
-  "Return CONTROLLER's forced-exit notice for graceful shutdown REASON."
+  "Return CONTROLLER's forced-exit notice for shutdown or cancellation REASON.
+
+Forced exit abandons an unfinished run, so every reason carries the durable
+resume command that reopens the conversation the run leaves behind."
   (let* ((application
            (application-input-controller-application controller))
          (conversation
@@ -155,33 +213,101 @@ lock because ordinary shutdown may be blocked while either is unavailable."
                 (application--resume-command application))))
     (format nil
             "~%~A~%~@[To resume this conversation, run:~%  ~A~%~]"
-            (if (eq reason ':interrupt)
-                "Ctrl-C pressed again; forcing Autolith to exit."
+            (if (eq reason ':turn-cancellation)
+                (application-input-controller--forced-exit-text)
                 "Ctrl-C pressed during shutdown; forcing Autolith to exit.")
             resume-command)))
 
+(-> application-input-controller--show-interrupt-hint
+    (application-input-controller real)
+    boolean)
+(defun application-input-controller--show-interrupt-hint
+    (controller remaining-seconds)
+  "Show CONTROLLER's force-exit notice for REMAINING-SECONDS and report display.
+
+The notice expires with the force-exit window itself, and a contended
+presentation lock reports no display so a later reader pass can try again."
+  (let* ((application
+           (application-input-controller-application controller))
+         (ui (application-ui application))
+         (shown-p nil))
+    (ignore-errors
+      (setf shown-p
+            (nth-value
+             1
+             (terminal-ui-set-notice
+              ui
+              (format nil
+                      "Press Ctrl-C again within ~A seconds to force exit."
+                      (application-input-controller--interrupt-window-text))
+              :duration-seconds remaining-seconds))))
+    (not (null shown-p))))
+
+(-> application-input-controller--refresh-interrupt-hint
+    (application-input-controller)
+    null)
+(defun application-input-controller--refresh-interrupt-hint (controller)
+  "Show CONTROLLER's force-exit hint once cancellation outlives the hint delay.
+
+Waiting keeps a promptly cancelled turn from flashing an option it no longer
+offers, so the hint appears only while forcing exit is still worth explaining."
+  (let ((hint-time nil)
+        (remaining-seconds nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (let ((due (application-input-controller-interrupt-hint-time controller))
+            (deadline
+              (application-input-controller-interrupt-deadline controller)))
+        (when (and due deadline)
+          (let ((now
+                  (funcall
+                   (application-input-controller-interrupt-clock-function
+                    controller))))
+            (when (>= now due)
+              (setf hint-time due
+                    remaining-seconds (- deadline now)))))))
+    (when (and remaining-seconds
+               (plusp remaining-seconds)
+               (application-input-controller--show-interrupt-hint
+                controller remaining-seconds))
+      (with-lock-held ((application-input-controller-lock controller))
+        ;; A newer press owns any hint time this pass did not observe.
+        (when (eql (application-input-controller-interrupt-hint-time controller)
+                   hint-time)
+          (setf (application-input-controller-interrupt-hint-time controller)
+                nil)))))
+  nil)
+
 (-> application-input-controller--prepare-shutdown
     (application-input-controller keyword)
-    boolean)
+    (values boolean boolean))
 (defun application-input-controller--prepare-shutdown (controller reason)
-  "Stop ordinary CONTROLLER work and arm its interrupt-only shutdown reader.
+  "Prepare CONTROLLER shutdown and report active and prepared state.
 
-Return true when a model or command turn still needs cancellation."
+The first value reports whether a model or command turn needs cancellation. The
+second reports whether shutdown was prepared."
   (let ((active-p nil)
+        (prepared-p nil)
         (message
           (application-input-controller--forced-exit-message controller reason)))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (application-input-controller-exit-reason controller)
-        (setf (application-input-controller-exit-reason controller) reason
-              (application-input-controller-forced-exit-message controller)
-              message))
-      (setf (application-input-controller-stopping-p controller) t
-            (application-input-controller-work-items controller) nil
-            (application-input-controller-steering-items controller) nil
-            active-p (application-input-controller-active-p controller))
-      (condition-notify
-       (application-input-controller-condition-variable controller)))
-    active-p))
+      (setf active-p (application-input-controller-active-p controller))
+      (unless (application-input-controller-stopping-p controller)
+        (setf prepared-p t)
+        (unless (application-input-controller-exit-reason controller)
+          (setf (application-input-controller-exit-reason controller) reason
+                (application-input-controller-forced-exit-message controller)
+                message))
+        (when active-p
+          (setf (application-input-controller-turn-cancellation-p controller) t
+                (application-input-controller-turn-cancellation-delivery-pending-p
+                 controller)
+                t))
+        (setf (application-input-controller-stopping-p controller) t
+              (application-input-controller-work-items controller) nil
+              (application-input-controller-steering-items controller) nil)
+        (condition-notify
+         (application-input-controller-condition-variable controller)))
+      (values active-p prepared-p))))
 
 (-> application-input--text ((or string user-message-input)) string)
 (defun application-input--text (input)
@@ -277,6 +403,36 @@ Return true when a model or command turn still needs cancellation."
         (interrupt-thread thread (lambda () (error condition))))))
   nil)
 
+(-> application-input-controller--consume-turn-cancellation-delivery-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller--consume-turn-cancellation-delivery-p
+    (controller)
+  "Atomically consume and report CONTROLLER's pending cancellation delivery."
+  (eq (sb-ext:compare-and-swap
+       (slot-value controller 'turn-cancellation-delivery-pending-p)
+       t
+       nil)
+      t))
+
+(-> application-input-controller--interrupt-main-for-turn-cancellation
+    (application-input-controller)
+    null)
+(defun application-input-controller--interrupt-main-for-turn-cancellation
+    (controller)
+  "Promptly deliver CONTROLLER's pending turn cancellation to its main thread."
+  (let ((thread (application-input-controller-main-thread controller)))
+    (unless (eq thread (current-thread))
+      (when (thread-alive-p thread)
+        (interrupt-thread
+         thread
+         (lambda ()
+           (when
+               (application-input-controller--consume-turn-cancellation-delivery-p
+                controller)
+             (error (make-condition 'application-turn-cancelled))))))))
+  nil)
+
 (-> application-input-controller--record-failure
     (application-input-controller serious-condition (option string))
     null)
@@ -360,14 +516,105 @@ Return true when a model or command turn still needs cancellation."
     null)
 (defun application-input-controller--request-exit (controller reason)
   "Stop CONTROLLER for REASON, discarding work and cancelling an active turn."
-  (when (application-input-controller--prepare-shutdown controller reason)
-    (handler-case
-        (application-input-controller--interrupt-main
-         controller
-         (make-condition 'application-turn-cancelled))
-      (error ()
-        nil)))
+  (multiple-value-bind (active-p prepared-p)
+      (application-input-controller--prepare-shutdown controller reason)
+    (when (and active-p prepared-p)
+      (handler-case
+          (application-input-controller--interrupt-main-for-turn-cancellation
+           controller)
+        (error ()
+          nil))))
   nil)
+
+(-> application-input-controller--turn-cancellation-active-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller--turn-cancellation-active-p (controller)
+  "Return true while CONTROLLER is still finishing active-turn cancellation."
+  (not
+   (null
+    (with-lock-held ((application-input-controller-lock controller))
+      (application-input-controller-turn-cancellation-p controller)))))
+
+(-> application-input-controller--request-active-turn-cancellation
+    (application-input-controller &key (:force-exit-window-p boolean))
+    boolean)
+(defun application-input-controller--request-active-turn-cancellation
+    (controller &key force-exit-window-p)
+  "Atomically request cancellation only for CONTROLLER's current active turn.
+
+When FORCE-EXIT-WINDOW-P is true, arm the repeated-Ctrl-C option before
+cancellation can finish and schedule the hint that explains it."
+  (let ((accepted-p nil)
+        (message
+          (and force-exit-window-p
+               (application-input-controller--forced-exit-message
+                controller ':turn-cancellation))))
+    (with-lock-held ((application-input-controller-lock controller))
+      (when (and (application-input-controller-active-p controller)
+                 (not (application-input-controller-stopping-p controller))
+                 (not
+                  (application-input-controller-turn-cancellation-p controller)))
+        (setf (application-input-controller-turn-cancellation-p controller) t
+              (application-input-controller-turn-cancellation-delivery-pending-p
+               controller)
+              t
+              accepted-p t)
+        (when force-exit-window-p
+          (let ((now
+                  (funcall
+                   (application-input-controller-interrupt-clock-function
+                    controller))))
+            (setf (application-input-controller-interrupt-deadline controller)
+                  (+ now *application-interrupt-exit-window-seconds*)
+                  (application-input-controller-interrupt-hint-time controller)
+                  (+ now *application-interrupt-hint-delay-seconds*)
+                  (application-input-controller-forced-exit-message controller)
+                  message)))))
+    (when accepted-p
+      (handler-case
+          (application-input-controller--interrupt-main-for-turn-cancellation
+           controller)
+        (error ()
+          nil)))
+    accepted-p))
+
+(-> application-input-controller--active-turn-interrupt-action
+    (application-input-controller)
+    (option keyword))
+(defun application-input-controller--active-turn-interrupt-action (controller)
+  "Return and apply CONTROLLER's active-cancellation Ctrl-C action, if any.
+
+The forced-exit notice is prepared outside the lock because a lapsed press
+re-arms a window that a wedged turn may never let ordinary shutdown reach."
+  (let ((message
+          (application-input-controller--forced-exit-message
+           controller ':turn-cancellation)))
+    (with-lock-held ((application-input-controller-lock controller))
+      (when (application-input-controller-turn-cancellation-p controller)
+        (let* ((now
+                 (funcall
+                  (application-input-controller-interrupt-clock-function
+                   controller)))
+               (deadline
+                 (application-input-controller-interrupt-deadline controller)))
+          (if (and deadline (<= now deadline))
+              (progn
+                (setf (application-input-controller-interrupt-deadline controller)
+                      nil
+                      (application-input-controller-interrupt-hint-time controller)
+                      nil)
+                ':force)
+              (progn
+                ;; This press already outlived one window, so the wedged turn
+                ;; has earned its hint at the reader's next opportunity.
+                (setf (application-input-controller-interrupt-deadline controller)
+                      (+ now *application-interrupt-exit-window-seconds*)
+                      (application-input-controller-interrupt-hint-time controller)
+                      now
+                      (application-input-controller-forced-exit-message controller)
+                      message)
+                ':hint)))))))
 
 (-> application-input-controller--schedule-command
     (application-input-controller string)
@@ -495,24 +742,47 @@ Return true when a model or command turn still needs cancellation."
   "Apply terminal EVENT and publish any resulting work or exit request."
   (let ((ui (application-ui
              (application-input-controller-application controller)))
-        (turn-active-p
-          (application-input-controller-turn-active-p controller)))
-    (multiple-value-bind (action payload)
-        (terminal-ui-process-event
-         ui event :queue-completion-p turn-active-p)
-      (case action
-        (:submit
-         (application-input-controller--handle-submission
-          controller payload :steer-p turn-active-p))
-        (:queue
-         (application-input-controller--handle-queue-submission
-          controller payload))
-        (:edit-queue
-         (application-input-controller--recall-follow-up controller))
-        (:end-of-input
-         (application-input-controller--request-exit controller ':end-of-input))
-        (:interrupt
-         (application-input-controller--request-exit controller ':interrupt)))))
+        (active-interrupt-action
+          (and (eq event ':interrupt)
+               (application-input-controller--active-turn-interrupt-action
+                controller))))
+    (cond
+      ((eq active-interrupt-action ':force)
+       (application-input-controller--force-interrupt-exit controller))
+      ((eq active-interrupt-action ':hint)
+       nil)
+      ((and (eq event ':interrupt)
+            (application-input-controller--request-active-turn-cancellation
+             controller :force-exit-window-p t))
+       nil)
+      ((and (eq event ':escape)
+            (or
+             (application-input-controller--turn-cancellation-active-p
+              controller)
+             (application-input-controller--request-active-turn-cancellation
+              controller)))
+       nil)
+      (t
+       (let ((turn-active-p
+               (application-input-controller-turn-active-p controller)))
+         (multiple-value-bind (action payload)
+             (terminal-ui-process-event
+              ui event :queue-completion-p turn-active-p)
+           (case action
+             (:submit
+              (application-input-controller--handle-submission
+               controller payload :steer-p turn-active-p))
+             (:queue
+              (application-input-controller--handle-queue-submission
+               controller payload))
+             (:edit-queue
+              (application-input-controller--recall-follow-up controller))
+             (:end-of-input
+              (application-input-controller--request-exit
+               controller ':end-of-input))
+             (:interrupt
+              (application-input-controller--request-exit
+               controller ':interrupt))))))))
   nil)
 
 (-> application-input-controller--input-ready-p
@@ -550,6 +820,7 @@ Return true when a model or command turn still needs cancellation."
              (setf signal-backtrace (application-safe-backtrace)))))
       (handler-case
           (loop
+            (application-input-controller--refresh-interrupt-hint controller)
             (multiple-value-bind (stopping-p reader-paused-p)
                 (with-lock-held
                     ((application-input-controller-lock controller))
@@ -562,13 +833,16 @@ Return true when a model or command turn still needs cancellation."
                 (stopping-p
                  (let* ((application
                           (application-input-controller-application controller))
-                        (terminal
-                          (terminal-ui-terminal (application-ui application))))
+                        (ui (application-ui application))
+                        (terminal (terminal-ui-terminal ui)))
+                   (terminal-ui-refresh-status ui)
                    (if (terminal-input-ready-p terminal)
                        (case (terminal-read-event terminal)
                          (:interrupt
                           (application-input-controller--force-interrupt-exit
                            controller))
+                         (:escape
+                          nil)
                          (:end-of-input
                           (return)))
                        (with-lock-held
@@ -998,21 +1272,35 @@ Return true when a model or command turn still needs cancellation."
     null)
 (defun application-input-controller--finish-work (controller)
   "Finish current work and promote unconsumed steering before queued follow-ups."
-  (with-lock-held ((application-input-controller-lock controller))
-    (unless (application-input-controller-stopping-p controller)
-      (let ((steering-items
-              (application-input-controller-steering-items controller)))
-        (when steering-items
-          (setf (application-input-controller-work-items controller)
-                (append (mapcar (lambda (input)
-                                  (list ':message input))
-                                steering-items)
-                        (application-input-controller-work-items controller)))))
-      (setf (application-input-controller-steering-items controller) nil))
-    (setf (application-input-controller-active-p controller) nil)
-    (condition-notify
-     (application-input-controller-condition-variable controller)))
-  (application-input-controller--publish-counts controller)
+  (let ((clear-notice-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless (application-input-controller-stopping-p controller)
+        (let ((steering-items
+                (application-input-controller-steering-items controller)))
+          (when steering-items
+            (setf (application-input-controller-work-items controller)
+                  (append (mapcar (lambda (input)
+                                    (list ':message input))
+                                  steering-items)
+                          (application-input-controller-work-items controller)))))
+        (setf (application-input-controller-steering-items controller) nil))
+      (setf clear-notice-p
+            (or (application-input-controller-turn-cancellation-p controller)
+                (application-input-controller-interrupt-deadline controller))
+            (application-input-controller-active-p controller) nil
+            (application-input-controller-turn-cancellation-p controller) nil
+            (application-input-controller-turn-cancellation-delivery-pending-p
+             controller)
+            nil
+            (application-input-controller-interrupt-deadline controller) nil
+            (application-input-controller-interrupt-hint-time controller) nil)
+      (condition-notify
+       (application-input-controller-condition-variable controller)))
+    (when clear-notice-p
+      (terminal-ui-set-notice
+       (application-ui (application-input-controller-application controller))
+       nil))
+    (application-input-controller--publish-counts controller))
   nil)
 
 (-> application-input-controller-stop (application-input-controller) null)
@@ -1026,6 +1314,12 @@ Return true when a model or command turn still needs cancellation."
             (application-input-controller-steering-items controller) nil
             (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
+            (application-input-controller-turn-cancellation-p controller) nil
+            (application-input-controller-turn-cancellation-delivery-pending-p
+             controller)
+            nil
+            (application-input-controller-interrupt-deadline controller) nil
+            (application-input-controller-interrupt-hint-time controller) nil
             thread (application-input-controller-reader-thread controller))
       (condition-notify
        (application-input-controller-condition-variable controller)))
@@ -1100,6 +1394,10 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              (setf signal-backtrace (application-safe-backtrace)))))
       (handler-case
           (application-handle-input application input)
+        (application-turn-cancelled (condition)
+          (error condition))
+        (application-input-failed (condition)
+          (error condition))
         (rollback-requested (condition)
           (error condition))
         ((or agent-loop-error

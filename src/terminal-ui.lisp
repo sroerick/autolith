@@ -128,6 +128,24 @@
        (with-recursive-lock-held ((terminal-ui-lock ,locked-ui))
          ,@body))))
 
+(-> terminal-ui--call-with-lock-if-available
+    (terminal-ui function)
+    (values t boolean))
+(defun terminal-ui--call-with-lock-if-available (ui function)
+  "Call FUNCTION under UI's lock when it is immediately available.
+
+The second value reports whether FUNCTION ran. This nonblocking path keeps
+emergency terminal input responsive while another thread owns presentation."
+  (let* ((lock (terminal-ui-lock ui))
+         (acquired-p
+           (sb-sys:without-interrupts
+             (sb-thread:grab-mutex lock :waitp nil))))
+    (if acquired-p
+        (unwind-protect
+             (values (funcall function) t)
+          (sb-thread:release-mutex lock))
+        (values nil nil))))
+
 
 ;;;; -- Terminal Presentation --
 
@@ -950,6 +968,14 @@ content; a narrow row drops it before any activity detail."
                      nil
                      (terminal-ui--status-row-at
                       ui status-now row-width)))))
+    (when (terminal-ui-notice ui)
+      (setf rows
+            (append rows
+                    (list
+                     nil
+                     (terminal--clip-spans
+                      (list (terminal-span ':hint (terminal-ui-notice ui)))
+                      row-width)))))
     (let ((steering-inputs (terminal-ui-steering-input-previews ui)))
       (when steering-inputs
         (setf rows
@@ -1066,6 +1092,18 @@ live unfinished line continuing that block, or removes it when NIL."
         (terminal-flush terminal))))
   ui)
 
+(-> terminal-ui--expire-notice-at (terminal-ui (option real)) boolean)
+(defun terminal-ui--expire-notice-at (ui now)
+  "Clear UI's notice when monotonic NOW reaches its deadline."
+  (if (and now
+           (terminal-ui-notice ui)
+           (>= now (terminal-ui-notice-deadline ui)))
+      (progn
+        (setf (terminal-ui-notice ui) nil
+              (terminal-ui-notice-deadline ui) nil)
+        t)
+      nil))
+
 (-> terminal-ui--present-live
     (terminal-ui &key (:status-now (option real))
                       (:appended-text string)
@@ -1076,9 +1114,11 @@ live unfinished line continuing that block, or removes it when NIL."
   "Present UI live content, atomically preceding it with appended scrollback."
   (let* ((status-now (or status-now
                          (and (or (terminal-ui-status ui)
-                                  (terminal-ui-agent-activities ui))
+                                  (terminal-ui-agent-activities ui)
+                                  (terminal-ui-notice ui))
                               (funcall (terminal-ui-clock-function ui)))))
          (terminal (terminal-ui-terminal ui)))
+    (terminal-ui--expire-notice-at ui status-now)
     (setf (terminal-ui-status-rendered-signature ui)
           (and status-now
                (terminal-ui--animation-signature-at ui status-now)))
@@ -1270,7 +1310,9 @@ when no resize needs to be applied."
     (unwind-protect
          (when (terminal-ui-started-p ui)
            (live-region-dismiss (terminal-ui-live-region ui)))
-      (setf (terminal-ui-started-p ui) nil)
+      (setf (terminal-ui-started-p ui) nil
+            (terminal-ui-notice ui) nil
+            (terminal-ui-notice-deadline ui) nil)
       (terminal-stop (terminal-ui-terminal ui))))
   ui)
 
@@ -1380,6 +1422,44 @@ when no resize needs to be applied."
       (terminal-ui--paint-live ui)))
   ui)
 
+(-> terminal-ui-set-notice
+    (terminal-ui (option string) &key (:duration-seconds (option real)))
+    (values terminal-ui boolean))
+(defun terminal-ui-set-notice (ui notice &key duration-seconds)
+  "Show NOTICE transiently for DURATION-SECONDS when UI is immediately available.
+
+A contended presentation lock drops the notice rather than delaying emergency
+terminal input or displaying a lifetime longer than the force-exit window. The
+second value reports whether UI applied this update, so a caller that must be
+seen can offer the notice again."
+  (let ((safe-notice (and notice
+                          (sanitize-text notice :single-line-p t)))
+        (applied-p nil))
+    (when (and safe-notice
+               (or (null duration-seconds)
+                   (not (plusp duration-seconds))))
+      (error 'terminal-error
+             :message "A terminal notice requires a positive duration."
+             :operation ':set-notice
+             :cause nil))
+    (setf applied-p
+          (nth-value
+           1
+           (terminal-ui--call-with-lock-if-available
+            ui
+            (lambda ()
+              (cond
+                (safe-notice
+                 (let ((now (funcall (terminal-ui-clock-function ui))))
+                   (setf (terminal-ui-notice ui) safe-notice
+                         (terminal-ui-notice-deadline ui) (+ now duration-seconds))
+                   (terminal-ui--paint-live ui now)))
+                ((terminal-ui-notice ui)
+                 (setf (terminal-ui-notice ui) nil
+                       (terminal-ui-notice-deadline ui) nil)
+                 (terminal-ui--paint-live ui)))))))
+    (values ui applied-p)))
+
 (-> terminal-ui-set-status
     (terminal-ui (option string)
      &key (:details terminal-styled-text)
@@ -1466,19 +1546,30 @@ frames, so this function never paints directly from a child thread."
 
 (-> terminal-ui-refresh-status (terminal-ui) boolean)
 (defun terminal-ui-refresh-status (ui)
-  "Repaint UI when a visible status or child-agent value changed."
-  (with-terminal-ui-locked (ui)
-    (let* ((status-now (and (or (terminal-ui-status ui)
-                                (terminal-ui-agent-activities ui))
-                            (funcall (terminal-ui-clock-function ui))))
-           (signature (and status-now
-                           (terminal-ui--animation-signature-at
-                            ui status-now))))
-      (if (equal signature (terminal-ui-status-rendered-signature ui))
-          nil
-          (progn
-            (terminal-ui--paint-live ui status-now)
-            t)))))
+  "Repaint changed live timing without waiting for a contended presentation lock."
+  (multiple-value-bind (repainted-p acquired-p)
+      (terminal-ui--call-with-lock-if-available
+       ui
+       (lambda ()
+         (let* ((status-now
+                  (and (or (terminal-ui-status ui)
+                           (terminal-ui-agent-activities ui)
+                           (terminal-ui-notice ui))
+                       (funcall (terminal-ui-clock-function ui))))
+                (notice-expired-p
+                  (terminal-ui--expire-notice-at ui status-now))
+                (signature nil))
+           (setf signature
+                 (and status-now
+                      (terminal-ui--animation-signature-at ui status-now)))
+           (if (and (not notice-expired-p)
+                    (equal signature
+                           (terminal-ui-status-rendered-signature ui)))
+               nil
+               (progn
+                 (terminal-ui--paint-live ui status-now)
+                 t)))))
+    (and acquired-p (not (null repainted-p)))))
 
 (-> terminal-ui-set-pending-inputs (terminal-ui list list) terminal-ui)
 (defun terminal-ui-set-pending-inputs (ui steering-inputs queued-inputs)
