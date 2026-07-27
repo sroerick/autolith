@@ -26,8 +26,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "clinedi";
-      rev = "5c1ccedba423cbe424214593345962b70fc0512c";
-      hash = "sha256-HV9+8WpCEhZ7qd0I+0doITTdveX4bcfs9azCMKbIXBA=";
+      rev = "d9a93837bcf4046f5db1aa39d2062434694fc953";
+      hash = "sha256-73zhgooaRE2gnoQ3nGjb82VmVPXq/tjTJaQgDN5j5pA=";
     };
     lispLibs = [ clColorist ];
   };
@@ -195,7 +195,7 @@ let
 
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
-    version = "0.18.0";
+    version = "0.19.0";
     inherit src;
     systems = [ "autolith" "autolith/tests" ];
     lispLibs = with pkgs.sbclPackages; [
