@@ -48,8 +48,8 @@
   :version "git-a4b65e63f40248c091d8ccf6023ad6fef5de7f0d"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/clinedi.git" :ref "95ec422da1fa8285c98ff5bf2dd2e5d0c3ec166c")
-  :version "git-95ec422da1fa8285c98ff5bf2dd2e5d0c3ec166c"))
+  :initargs (:remote-url "https://github.com/luciusmagn/clinedi.git" :ref "d9a93837bcf4046f5db1aa39d2062434694fc953")
+  :version "git-d9a93837bcf4046f5db1aa39d2062434694fc953"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "4ebe975e6de1451dbe6c773c64bac17dca062cd9")

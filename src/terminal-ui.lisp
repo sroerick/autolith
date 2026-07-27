@@ -892,6 +892,31 @@ content; a narrow row drops it before any activity detail."
       (t
        clipped))))
 
+(-> terminal-ui--word-wrap-spans (terminal list integer) list)
+(defun terminal-ui--word-wrap-spans (terminal spans row-width)
+  "Return single-line SPANS as styled rows wrapped at word boundaries."
+  (let* ((safe-spans
+           (loop for span in spans
+                 collect (terminal-span
+                          (terminal-span-style span)
+                          (sanitize-text (terminal-span-text span)
+                                         :single-line-p t))))
+         (text (terminal--spans-text safe-spans))
+         (display (terminal--render-spans terminal safe-spans)))
+    (loop for (row-text row-display) in (wrap-styled-text text
+                                                          display
+                                                          row-width)
+          collect (terminal--make-rendered-row row-text row-display))))
+
+(-> terminal-ui--row-content (terminal t) (values string string))
+(defun terminal-ui--row-content (terminal row)
+  "Return ROW's plain and styled content for TERMINAL."
+  (if (terminal-rendered-row-p row)
+      (values (terminal-rendered-row-text row)
+              (terminal-rendered-row-display row))
+      (values (terminal--spans-text row)
+              (terminal--render-spans terminal row))))
+
 (-> terminal-ui--rows-content
     (terminal list &key (:cursor-row integer) (:cursor-offset integer))
     (values string string integer))
@@ -904,19 +929,19 @@ content; a narrow row drops it before any activity detail."
         (cursor-index nil))
     (loop for row in rows
           for index from 0
-          for plain = (terminal--spans-text row)
-          for display = (terminal--render-spans terminal row)
-          do (when (= index cursor-row)
-               (setf cursor-index
-                     (+ plain-length
-                        (min (max 0 cursor-offset) (length plain)))))
-             (write-string plain plain-stream)
-             (write-string display display-stream)
-             (incf plain-length (length plain))
-             (when (< (1+ index) (length rows))
-               (write-char #\Newline plain-stream)
-               (write-char #\Newline display-stream)
-               (incf plain-length)))
+          do (multiple-value-bind (plain display)
+                 (terminal-ui--row-content terminal row)
+               (when (= index cursor-row)
+                 (setf cursor-index
+                       (+ plain-length
+                          (min (max 0 cursor-offset) (length plain)))))
+               (write-string plain plain-stream)
+               (write-string display display-stream)
+               (incf plain-length (length plain))
+               (when (< (1+ index) (length rows))
+                 (write-char #\Newline plain-stream)
+                 (write-char #\Newline display-stream)
+                 (incf plain-length))))
     (unless cursor-index
       (error 'terminal-error
              :message "The live-region cursor row is outside its content."
@@ -941,17 +966,17 @@ content; a narrow row drops it before any activity detail."
     (dolist (row (terminal-ui-preview-rows ui))
       (setf rows
             (append rows
-                    (list (terminal--clip-spans row row-width)))))
+                    (terminal-ui--word-wrap-spans terminal row row-width))))
     (let ((tail (terminal-ui-stream-tail ui)))
       (when tail
         (setf rows
               (append rows
-                      (list
-                       (terminal--clip-spans
-                        (if (stringp tail)
-                            (list (terminal-span ':plain tail))
-                            tail)
-                        row-width))))))
+                      (terminal-ui--word-wrap-spans
+                       terminal
+                       (if (stringp tail)
+                           (list (terminal-span ':plain tail))
+                           tail)
+                       row-width)))))
     (let ((activity-rows
             (and (terminal-ui-agent-activities ui)
                  (terminal-ui--agent-activity-rows-at

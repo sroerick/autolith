@@ -865,6 +865,40 @@
                      "a cleared preview disappears without entering scrollback"))))
   nil)
 
+(-> test-terminal-live-word-wrapping () null)
+(defun test-terminal-live-word-wrapping ()
+  "Test styled previews and stream tails wrap at word boundaries."
+  (let* ((terminal (make-instance 'recording-terminal
+                                  :columns 10
+                                  :rows 8
+                                  :styled-p t))
+         (ui (terminal-ui-create :terminal terminal))
+         (spans (list (terminal-span ':user "alpha ")
+                      (terminal-span ':strong "beta ")
+                      (terminal-span ':emphasis "gamma")))
+         (expected (format nil "alpha beta~%gamma")))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-preview-rows active-ui (list spans))
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore cursor))
+        (test-assert (search expected text)
+                     "styled previews wrap only between words")
+        (test-assert (string= text (cl-colorist:strip-ansi display))
+                     "wrapped previews preserve ANSI-visible equivalence")
+        (test-assert (search (terminal-style-sequence ':emphasis) display)
+                     "wrapped previews retain continued span styling"))
+      (terminal-ui-set-preview-rows active-ui nil)
+      (terminal-ui-stream-update active-ui :tail spans)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore cursor))
+        (test-assert (search expected text)
+                     "styled stream tails wrap only between words")
+        (test-assert (string= text (cl-colorist:strip-ansi display))
+                     "wrapped stream tails preserve ANSI-visible equivalence"))))
+  nil)
+
 (-> test-terminal-transient-notice () null)
 (defun test-terminal-transient-notice ()
   "Test transient notices expire without entering terminal scrollback."
@@ -1798,6 +1832,7 @@
   (test-terminal-narrow-live-region)
   (test-terminal-bounded-editor-repaint)
   (test-terminal-preview-rows)
+    (test-terminal-live-word-wrapping)
   (test-terminal-transient-notice)
   (test-terminal-notice-lock-contention)
   (test-terminal-timed-status)

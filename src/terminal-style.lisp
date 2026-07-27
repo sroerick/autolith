@@ -143,6 +143,13 @@
   "A proper list of styled spans rendered in order."
   '(satisfies terminal-styled-text-p))
 
+(defstruct (terminal-rendered-row
+            (:constructor terminal--make-rendered-row (text display))
+            (:copier nil))
+  "One fully rendered terminal row with matched plain and styled content."
+  (text    "" :type string :read-only t)
+  (display "" :type string :read-only t))
+
 
 ;;;; -- Single-Row Span Layout --
 

@@ -65,6 +65,7 @@
                 #:text-cell-width
                 #:text-cell-prefix
                 #:wrap-text
+                 #:wrap-styled-text
                 #:screen-position
                 #:live-region
                 #:make-live-region
