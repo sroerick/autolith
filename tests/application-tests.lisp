@@ -3319,6 +3319,62 @@
                "command-line help documents initial local images")
   (test-assert (search "--auth [chatgpt | grok]" (main-usage))
                "command-line help documents provider authentication choices")
+  (test-assert (search "--permissions MODE" (main-usage))
+               "command-line help documents initial permission mode")
+  (dolist (case '((("--permissions" "ask") :ask)
+                  (("--permissions" "sandbox") :sandboxed)
+                  (("--permissions" "full") :full-access)
+                  (("--immutable" "--permissions" "full") :full-access)))
+    (destructuring-bind (arguments expected) case
+      (test-assert (eq (main--permission-mode arguments) expected)
+                   (format nil "--permissions parses ~S" arguments))))
+  (dolist (arguments '(("--permissions")
+                       ("--permissions" "unknown")
+                       ("--permissions" "ask" "--permissions" "full")))
+    (test-assert
+     (handler-case
+         (progn
+           (main--permission-mode arguments)
+           nil)
+       (configuration-error ()
+         t))
+     (format nil "--permissions rejects ~S" arguments)))
+  (let ((observed-mode nil)
+        (*active-application* nil))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application-create
+       (lambda (configuration &key conversation-id permission-mode)
+         (declare (ignore configuration conversation-id))
+         (make-instance 'application :permission-mode permission-mode)))
+      (list
+       'application-run
+       (lambda (application &rest arguments)
+         (declare (ignore arguments))
+         (setf observed-mode (application-permission-mode application)))))
+     (lambda ()
+       (main-dispatch '("--permissions" "sandbox"))))
+    (test-assert (eq observed-mode ':sandboxed)
+                 "--permissions sets the initial application mode"))
+  (let ((observed-mode nil)
+        (*active-application* (make-instance 'application)))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application-reconnect
+       (lambda (application &key conversation-id immutable-p permission-mode)
+         (declare (ignore application conversation-id immutable-p))
+         (make-instance 'application :permission-mode permission-mode)))
+      (list
+       'application-run
+       (lambda (application &rest arguments)
+         (declare (ignore arguments))
+         (setf observed-mode (application-permission-mode application)))))
+     (lambda ()
+       (main-dispatch '("--permissions" "full"))))
+    (test-assert (eq observed-mode ':full-access)
+                 "--permissions sets the initial reconnect mode"))
   (test-assert (null (main--auth-selection '("--auth")))
                "plain --auth defers to the configured provider family")
   (test-assert (string= (main--auth-selection '("--auth" "grok")) "grok")

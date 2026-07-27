@@ -361,7 +361,9 @@ and move merge without discarding existing target items or memory attachments.
 =shell.run= requests user authorization before every unrecognized command. An
 approval is defined by exact command text and canonical working directory. The
 user may save that exact approval or choose a session-wide mode through
-=/permissions=.
+=/permissions=. =--permissions ask=, =--permissions sandbox=, and
+=--permissions full= select that mode when starting a process and do not alter
+persistent approvals.
 
 Ordinary approvals run the command in a host command sandbox with an isolated
 network, a read-only host filesystem, writable workspace and temporary roots,

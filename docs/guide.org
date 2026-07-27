@@ -192,6 +192,12 @@ Use =autolith --immutable= when the active image should expose only
 checkpoint, and rollback tools from the provider schema. It does not turn
 filesystem, shell, or worker operations into a security sandbox.
 
+Start with =autolith --permissions MODE= to select the initial command
+authorization mode for that process session. =ask= is the default and requests
+approval for unknown commands, =sandbox= permits workspace-scoped commands in
+the host command sandbox, and =full= grants the process full user privileges.
+The selection is not persisted.
+
 The interface stays on the primary screen. Completed transcript rows are emitted
 once and remain in ordinary terminal scrollback. Only the bounded live region,
 holding unfinished trace previews, status, the full-width prompt, and command

@@ -669,10 +669,12 @@ newly acquired lease."
   nil)
 
 (-> application-create
-    (configuration &key (:conversation-id (option string)))
+    (configuration &key (:conversation-id (option string))
+                        (:permission-mode (member :ask :sandboxed :full-access)))
     application)
-(defun application-create (configuration &key conversation-id)
-  "Create a connected application, loading CONVERSATION-ID when supplied."
+(defun application-create
+    (configuration &key conversation-id (permission-mode ':ask))
+  "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE."
   (let ((preferred-configuration
           (preferences-apply-model-selection configuration)))
     (context-runtime-reset)
@@ -755,6 +757,7 @@ newly acquired lease."
                                :agent agent
                                :ui ui
                                :permission-state permission-state
+                               :permission-mode permission-mode
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
                                :installation-provenance
@@ -800,12 +803,14 @@ newly acquired lease."
 
 (-> application-reconnect
     (application &key (:conversation-id (option string))
-                      (:immutable-p boolean))
+                      (:immutable-p boolean)
+                      (:permission-mode (member :ask :sandboxed :full-access)))
     application)
 (defun application-reconnect
     (application &key conversation-id
-                   (immutable-p nil immutable-p-supplied-p))
-  "Build and commit a replacement connection without damaging APPLICATION."
+                   (immutable-p nil immutable-p-supplied-p)
+                   (permission-mode ':ask))
+  "Build and commit a replacement using PERMISSION-MODE without damaging APPLICATION."
   (let* ((previous (application-configuration application))
          (effective-immutable-p
            (if immutable-p-supplied-p
@@ -954,6 +959,7 @@ newly acquired lease."
                     :agent agent
                     :ui ui
                     :permission-state permission-state
+                    :permission-mode permission-mode
                     :reasoning-traces-p reasoning-traces-p
                     :compact-view-p compact-view-p
                     :installation-provenance installation-provenance

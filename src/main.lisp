@@ -448,12 +448,40 @@
 (-> main-usage () string)
 (defun main-usage ()
   "Return the command-line usage text."
-  "Usage: autolith [--from-source] [--immutable]
-       autolith [--from-source] [--immutable] [-i FILE | --image FILE]...
-       autolith [--from-source] [--immutable] resume [ID]
+  "Usage: autolith [--from-source] [--immutable] [--permissions MODE]
+       autolith [--from-source] [--immutable] [--permissions MODE] [-i FILE | --image FILE]...
+       autolith [--from-source] [--immutable] [--permissions MODE] resume [ID]
        autolith --auth [chatgpt | grok]
        autolith --version
        autolith --recovery [--generation ID | --list]")
+
+(-> main--permission-mode (list) (member :ask :sandboxed :full-access))
+(defun main--permission-mode (arguments)
+  "Return the session command-authorization mode selected by ARGUMENTS."
+  (let ((count (count "--permissions" arguments :test #'string=)))
+    (when (> count 1)
+      (error 'configuration-error
+             :message "The --permissions option may appear only once."))
+    (if (zerop count)
+        ':ask
+        (let ((selection
+                (nth (1+ (position "--permissions" arguments :test #'string=))
+                     arguments)))
+          (cond ((or (not (non-empty-string-p selection))
+                     (uiop:string-prefix-p "-" selection))
+                 (error 'configuration-error
+                        :message "The --permissions option requires ask, sandbox, or full."))
+                ((string-equal selection "ask")
+                 ':ask)
+                ((string-equal selection "sandbox")
+                 ':sandboxed)
+                ((string-equal selection "full")
+                 ':full-access)
+                (t
+                 (error 'configuration-error
+                        :message (format nil
+                                         "Unknown --permissions mode ~S. The choices are ask, sandbox, and full."
+                                         selection))))))))
 
 (-> main--auth-family (configuration (option string)) keyword)
 (defun main--auth-family (configuration selection)
@@ -578,6 +606,7 @@ Without a SELECTION the configured model chooses the family."
     (t
      (let* ((immutable-p (not (null (member "--immutable" arguments
                                             :test #'string=))))
+            (permission-mode (main--permission-mode arguments))
             (configuration (configuration-create :immutable-p immutable-p))
             (resume-selection
               (multiple-value-list (main--resume-selection arguments)))
@@ -592,8 +621,11 @@ Without a SELECTION the configured model chooses the family."
                 (if (typep *active-application* 'application)
                     (application-reconnect *active-application*
                                            :conversation-id resume-id
-                                           :immutable-p immutable-p)
-                    (application-create configuration :conversation-id resume-id)))
+                                           :immutable-p immutable-p
+                                           :permission-mode permission-mode)
+                    (application-create configuration
+                                          :conversation-id resume-id
+                                          :permission-mode permission-mode)))
           (when (and (member "--simulate-crash" arguments :test #'string=)
                      (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
             (let ((capsule
