@@ -879,7 +879,7 @@ Example:
  :call-id 1
  :status :ok
  :value (:lambda-list (request)
-         :source "src/provider.lisp"))
+         :source "src/provider/client.lisp"))
 
 (:summary
  :seq 40
