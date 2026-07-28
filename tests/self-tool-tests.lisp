@@ -521,7 +521,7 @@
             "command definitions remain distinct from same-named functions")
            (let* ((tracked-root (merge-pathnames "tracked/" root))
                   (tracked-pathname
-                    (merge-pathnames "src/commands.lisp" tracked-root))
+                    (merge-pathnames "src/application/commands.lisp" tracked-root))
                   (tracked-configuration
                     (test-configuration-for-source-root tracked-root)))
              (ensure-directories-exist tracked-pathname)

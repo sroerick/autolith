@@ -1972,12 +1972,13 @@
                     "name" "read"
                     "arguments" (json-encode
                                  (json-object
-                                  "path" "src/application.lisp"
+                                  "path" "src/application/runtime.lisp"
                                   "start-line" 5
                                   "line-count" 3)))))
            (text (markdown-tests--row-text entry)))
-      (test-assert (search "src/application.lisp  lines 5-7" text)
-                   "fs.read calls show the requested path and line window"))
+      (test-assert (and (search "src/application/runtime.lisp" text)
+                        (search "lines …" text))
+                   "fs.read calls fit the moved path within the transcript width"))
     (let* ((root (uiop:ensure-directory-pathname
                   (merge-pathnames
                    (format nil "autolith-edit-presentation-~A/"
@@ -2100,13 +2101,14 @@
                          :cpu-microseconds 1234
                          :real-microseconds 567890
                          :output (format nil
-                                         "src/application.lisp lines 5-7 of 100~%~
+                                         "src/application/runtime.lisp lines 5-7 of 100~%~
                                           5  hidden source~%~
                                           6  more hidden source~%~
                                           7  final hidden source"))))
            (text (markdown-tests--row-text entry)))
-      (test-assert (search "src/application.lisp lines 5-7 of 100" text)
-                   "fs.read results show the actual path, window, and total")
+      (test-assert (and (search "src/application/runtime.lisp" text)
+                        (search "lines 5…" text))
+                   "fs.read results fit the moved path within the transcript width")
       (test-assert (and (search "cpu 0.001s" text)
                         (search "real 0.568s" text))
                    "tool results show CPU and real elapsed time")
