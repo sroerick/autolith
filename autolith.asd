@@ -26,12 +26,12 @@
                #:yason)
   :components ((:module "src"
                 :serial t
-                :components ((:file "package")
-                             (:file "types")
-                             (:file "conditions")
-                             (:file "json")
-                             (:file "time")
-                             (:file "source-files")
+                :components ((:file "core/package")
+                             (:file "core/types")
+                             (:file "core/conditions")
+                             (:file "core/json")
+                             (:file "core/time")
+                             (:file "core/source-files")
                              (:file "configuration")
                              (:file "workspace")
                              (:file "image-input")
