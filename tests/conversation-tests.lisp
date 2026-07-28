@@ -808,12 +808,76 @@
     (sb-sys:with-pinned-objects (buffer)
       (sb-posix:write descriptor (sb-sys:vector-sap buffer) 1))))
 
-(-> test-conversation--call-with-child-lease
+(-> test-conversation--single-thread-p () boolean)
+(defun test-conversation--single-thread-p ()
+  "Return true when this image may safely use SB-POSIX:FORK."
+  (= 1 (length (sb-thread:list-all-threads))))
+
+(-> test-conversation--sbcl-command () string)
+(defun test-conversation--sbcl-command ()
+  "Return the SBCL command used to spawn isolated lease children."
+  (or (uiop:getenv "AUTOLITH_SBCL")
+      (namestring (truename (uiop:argv0)))
+      "sbcl"))
+
+(-> test-conversation--child-configuration-form (configuration) string)
+(defun test-conversation--child-configuration-form (configuration)
+  "Return a readable form that reconstructs CONFIGURATION in a child process."
+  (let ((*print-readably* t)
+        (*print-circle* nil))
+    (prin1-to-string
+     `(make-instance
+       'configuration
+       :source-root
+       (pathname ,(namestring (configuration-source-root configuration)))
+       :working-directory
+       (pathname ,(namestring (configuration-working-directory configuration)))
+       :config-root
+       (pathname ,(namestring (configuration-config-root configuration)))
+       :data-root
+       (pathname ,(namestring (configuration-data-root configuration)))
+       :state-root
+       (pathname ,(namestring (configuration-state-root configuration)))
+       :cache-root
+       (pathname ,(namestring (configuration-cache-root configuration)))
+       :codex-auth-path
+       (pathname ,(namestring (configuration-codex-auth-path configuration)))
+       :grok-bootstrap-auth-path
+       (pathname
+        ,(namestring (configuration-grok-bootstrap-auth-path configuration)))
+       :model ,*default-model*
+       :reasoning-effort ,*default-reasoning-effort*
+       :provider-endpoint ,*codex-responses-endpoint*))))
+
+(-> test-conversation--run-child-form (string) (integer 0 255))
+(defun test-conversation--run-child-form (form)
+  "Evaluate FORM in a fresh SBCL and return its exit status."
+  (nth-value
+   2
+   (uiop:run-program
+    (list (test-conversation--sbcl-command)
+          "--noinform"
+          "--disable-debugger"
+          "--non-interactive"
+          "--eval" "(require :asdf)"
+          "--eval"
+          (format nil "(asdf:load-asd ~S)"
+                  (namestring
+                   (merge-pathnames "autolith.asd"
+                                    (asdf:system-source-directory :autolith))))
+          "--eval" "(asdf:load-system :autolith)"
+          "--eval" form
+          "--quit")
+    :output :string
+    :error-output :output
+    :ignore-error-status t)))
+
+(-> test-conversation--call-with-child-lease/fork
     (configuration string function)
     null)
-(defun test-conversation--call-with-child-lease
+(defun test-conversation--call-with-child-lease/fork
     (configuration identifier function)
-  "Call FUNCTION while a child process holds IDENTIFIER until explicitly released."
+  "Call FUNCTION while a forked child holds IDENTIFIER until released."
   (multiple-value-bind (ready-read ready-write)
       (sb-posix:pipe)
     (multiple-value-bind (release-read release-write)
@@ -861,28 +925,111 @@
                "the child conversation owner exited cleanly"))))))
   nil)
 
+(-> test-conversation--call-with-child-lease/process
+    (configuration string function)
+    null)
+(defun test-conversation--call-with-child-lease/process
+    (configuration identifier function)
+  "Call FUNCTION while an external SBCL holds IDENTIFIER until released.
+
+SBCL cannot fork once any non-main thread exists, so multi-threaded suites use a
+fresh process and file-based synchronization instead of SB-POSIX:FORK."
+  (let* ((root (test-configuration-root configuration))
+         (ready-path (merge-pathnames "lease-child-ready" root))
+         (release-path (merge-pathnames "lease-child-release" root))
+         (process nil))
+    (when (probe-file ready-path) (delete-file ready-path))
+    (when (probe-file release-path) (delete-file release-path))
+    (setf process
+          (uiop:launch-program
+           (list (test-conversation--sbcl-command)
+                 "--noinform"
+                 "--disable-debugger"
+                 "--non-interactive"
+                 "--eval" "(require :asdf)"
+                 "--eval"
+                 (format nil "(asdf:load-asd ~S)"
+                         (namestring
+                          (merge-pathnames
+                           "autolith.asd"
+                           (asdf:system-source-directory :autolith))))
+                 "--eval" "(asdf:load-system :autolith)"
+                 "--eval"
+                 (format
+                  nil
+                  "(let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S) (with-open-file (stream ~S :direction :output :if-exists :supersede :if-does-not-exist :create) (write-line \"ready\" stream)) (loop until (probe-file ~S) do (sleep 0.05)) (uiop:quit 0))"
+                  (test-conversation--child-configuration-form configuration)
+                  identifier
+                  (namestring ready-path)
+                  (namestring release-path))
+                 "--quit")
+           :output :string
+           :error-output :output))
+    (unwind-protect
+         (progn
+           (loop with deadline = (+ (get-internal-real-time)
+                                    (* 30 internal-time-units-per-second))
+                 until (or (probe-file ready-path)
+                           (not (uiop:process-alive-p process)))
+                 do (when (> (get-internal-real-time) deadline)
+                      (error "Timed out waiting for the child lease holder."))
+                    (sleep 0.05))
+           (test-assert (probe-file ready-path)
+                        "the child process acquired its conversation lease")
+           (funcall function))
+      (ignore-errors
+        (with-open-file (stream release-path
+                                :direction :output
+                                :if-exists :supersede
+                                :if-does-not-exist :create)
+          (write-line "release" stream)))
+      (let ((status (uiop:wait-process process)))
+        (test-assert (zerop status)
+                     "the child conversation owner exited cleanly"))))
+  nil)
+
+(-> test-conversation--call-with-child-lease
+    (configuration string function)
+    null)
+(defun test-conversation--call-with-child-lease
+    (configuration identifier function)
+  "Call FUNCTION while a child process holds IDENTIFIER until explicitly released."
+  (if (test-conversation--single-thread-p)
+      (test-conversation--call-with-child-lease/fork
+       configuration identifier function)
+      (test-conversation--call-with-child-lease/process
+       configuration identifier function)))
+
 (-> test-conversation--child-can-acquire-lease-p
     (configuration string)
     boolean)
 (defun test-conversation--child-can-acquire-lease-p
     (configuration identifier)
   "Return true when a separate child process can claim IDENTIFIER."
-  (let ((child-pid (sb-posix:fork)))
-    (if (zerop child-pid)
-        (handler-case
-            (progn
-              (clrhash *conversation-leases*)
-              (conversation-lease-acquire configuration identifier)
-              (sb-posix:_exit 0))
-          (conversation-in-use ()
-            (sb-posix:_exit 2))
-          (serious-condition ()
-            (sb-posix:_exit 1)))
-        (multiple-value-bind (waited-pid status)
-            (sb-posix:waitpid child-pid 0)
-          (and (= waited-pid child-pid)
-               (sb-posix:wifexited status)
-               (zerop (sb-posix:wexitstatus status)))))))
+  (if (test-conversation--single-thread-p)
+      (let ((child-pid (sb-posix:fork)))
+        (if (zerop child-pid)
+            (handler-case
+                (progn
+                  (clrhash *conversation-leases*)
+                  (conversation-lease-acquire configuration identifier)
+                  (sb-posix:_exit 0))
+              (conversation-in-use ()
+                (sb-posix:_exit 2))
+              (serious-condition ()
+                (sb-posix:_exit 1)))
+            (multiple-value-bind (waited-pid status)
+                (sb-posix:waitpid child-pid 0)
+              (and (= waited-pid child-pid)
+                   (sb-posix:wifexited status)
+                   (zerop (sb-posix:wexitstatus status))))))
+      (zerop
+       (test-conversation--run-child-form
+        (format
+         nil
+         "(handler-case (progn (let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S)) (uiop:quit 0)) (autolith::conversation-in-use () (uiop:quit 2)) (serious-condition () (uiop:quit 1)))"
+         (test-conversation--child-configuration-form configuration)
+         identifier)))))
 
 (-> test-conversation-process-lease () null)
 (defun test-conversation-process-lease ()
