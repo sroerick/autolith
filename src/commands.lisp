@@ -258,34 +258,23 @@
 (defparameter *conversation-preview-width* 48
   "The cell width of the newest-message excerpt in pickers.")
 
+(-> application--conversation-preview-from-metadata
+    (conversation-picker-metadata)
+    (option string))
+(defun application--conversation-preview-from-metadata (metadata)
+  "Return a one-line excerpt from compact picker METADATA."
+  (let ((preview (conversation-picker-metadata-preview metadata)))
+    (when preview
+      (text-cell-prefix
+       (sanitize-text preview :single-line-p t)
+       *conversation-preview-width*))))
+
 (-> application--conversation-preview (pathname) (option string))
 (defun application--conversation-preview (pathname)
-  "Return a one-line excerpt of PATHNAME's newest user or assistant message."
-  (handler-case
-      (let ((preview nil))
-        (conversation--map-records
-         pathname
-         (lambda (record)
-           (case (first record)
-             (:message
-              (let ((content (getf (rest record) :content)))
-                (when (and (eq (getf (rest record) :role) :user)
-                           (stringp content))
-                  (setf preview content))))
-             (:provider-item
-              (let ((wire-json (getf (rest record) :wire-json)))
-                (when (stringp wire-json)
-                  (let ((item (json-decode wire-json)))
-                    (when (json-object-p item)
-                      (let ((text (response-item-assistant-text item)))
-                        (when text
-                          (setf preview text)))))))))))
-        (when preview
-          (text-cell-prefix
-           (sanitize-text preview :single-line-p t)
-           *conversation-preview-width*)))
-    (error ()
-      nil)))
+  "Return a one-line excerpt from PATHNAME's compact picker metadata."
+  (let ((metadata (conversation-picker-metadata-find pathname)))
+    (when metadata
+      (application--conversation-preview-from-metadata metadata))))
 
 (-> application--conversation-current-directory-p
     ((option string) pathname)
@@ -320,11 +309,13 @@
              (terminal-span ':plain suffix))))))
 
 
-(-> application--conversation-tally (pathname) string)
-(defun application--conversation-tally (pathname)
-  "Return a compact work-time or turn-count tally for PATHNAME."
-  (multiple-value-bind (working-seconds user-turn-count)
-      (conversation-activity-summary pathname)
+(-> application--conversation-metadata-tally
+    (conversation-picker-metadata)
+    string)
+(defun application--conversation-metadata-tally (metadata)
+  "Return a compact work-time or turn-count tally for picker METADATA."
+  (let ((working-seconds (conversation-picker-metadata-working-seconds metadata))
+        (user-turn-count (conversation-picker-metadata-user-turn-count metadata)))
     (cond
       ((plusp working-seconds)
        (terminal-ui--duration-text working-seconds))
@@ -332,6 +323,14 @@
        (format nil "~D turn~:P" user-turn-count))
       (t
        "0 turns"))))
+
+(-> application--conversation-tally (pathname) string)
+(defun application--conversation-tally (pathname)
+  "Return a compact work-time or turn-count tally for PATHNAME."
+  (let ((metadata (conversation-picker-metadata-find pathname)))
+    (if metadata
+        (application--conversation-metadata-tally metadata)
+        "0 turns")))
 
 
 (-> application--conversation-items (application) list)
@@ -356,7 +355,10 @@
                (application--conversation-current-directory-p
                 directory
                 current-directory))
-             (preview (application--conversation-preview pathname)))
+             (metadata (conversation-picker-metadata-find pathname))
+             (preview
+               (and metadata
+                    (application--conversation-preview-from-metadata metadata))))
         (multiple-value-bind (description description-spans)
             (application--conversation-description
              (or (file-write-date pathname) 0)
@@ -370,7 +372,9 @@
                         :group (if current-directory-p
                                    current-group
                                    "other sessions")
-                        :tally (application--conversation-tally pathname)
+                        :tally (if metadata
+                                (application--conversation-metadata-tally metadata)
+                                "0 turns")
                         :description description
                         :description-spans description-spans)))
             (if current-directory-p

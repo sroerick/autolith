@@ -1072,6 +1072,32 @@
              (test-assert (string= (application--conversation-tally pathname)
                                    "01:50")
                           "resume tallies prefer measured working time"))
+           (let ((metadata-pathname
+                   (conversation-picker-metadata-pathname pathname)))
+             (test-assert (probe-file metadata-pathname)
+                          "activity scans publish compact picker metadata")
+             (let ((metadata (conversation-picker-metadata-read pathname)))
+               (test-assert
+                (and metadata
+                     (= (conversation-picker-metadata-working-seconds metadata)
+                        110)
+                     (= (conversation-picker-metadata-user-turn-count metadata) 2)
+                     (string= (conversation-picker-metadata-preview metadata)
+                              "next"))
+                "picker metadata retains exact tallies and newest messages"))
+             (test-call-with-function-replacements
+              (list
+               (list
+                'conversation--map-records
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (error "A valid picker cache must avoid a log scan."))))
+              (lambda ()
+                (multiple-value-bind (working-seconds user-turn-count)
+                    (conversation-activity-summary pathname)
+                  (test-assert
+                   (and (= working-seconds 110) (= user-turn-count 2))
+                   "valid picker metadata avoids rescanning conversation logs")))))
            (let ((loaded (conversation-load-by-id configuration "worked")))
              (test-assert
               (= (conversation-working-seconds loaded) 110)
@@ -1087,6 +1113,50 @@
              (test-assert
               (= (conversation-working-seconds reloaded) 110)
               "replay reproduces the accumulated working seconds exactly")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-conversation-picker-metadata-stability () null)
+(defun test-conversation-picker-metadata-stability ()
+  "Test that an append racing a cache scan cannot publish stale metadata."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (pathname (conversation-pathname-for-id configuration "metadata-race")))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist pathname)
+           (snapshot-write
+            pathname
+            (list :conversation :version 1 :id "metadata-race" :created-at 1000))
+           (log-append pathname
+                       (list :message :seq 1 :time 1000 :role :user
+                             :content "first"))
+           (let ((map-records-function (symbol-function 'conversation--map-records)))
+             (test-assert
+              (null
+               (test-call-with-function-replacements
+                (list
+                 (list
+                  'conversation--map-records
+                  (lambda (mapped-pathname function &key (start-position 0))
+                    (multiple-value-prog1
+                        (funcall map-records-function
+                                 mapped-pathname
+                                 function
+                                 :start-position start-position)
+                      (log-append pathname
+                                  (list :message :seq 2 :time 1010 :role :user
+                                        :content "second"))))))
+                (lambda ()
+                  (conversation-picker-metadata-scan pathname))))
+              "a scan racing an append refuses to publish stale picker metadata"))
+           (let ((metadata (conversation-picker-metadata-find pathname)))
+             (test-assert
+              (and metadata
+                   (= (conversation-picker-metadata-user-turn-count metadata) 2)
+                   (string= (conversation-picker-metadata-preview metadata)
+                            "second"))
+              "a later picker scan rebuilds metadata from the complete log")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -1174,5 +1244,58 @@
                           "cleanup failure leaves undeleted artifacts recoverable")))
       (when lease
         (conversation-lease-release lease))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-conversation-cross-family-reasoning () null)
+(defun test-conversation-cross-family-reasoning ()
+  "Test that reasoning replay is confined to the family that produced it."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let ((conversation (conversation-create configuration
+                                                  :identifier "families")))
+           (conversation-append-user-message conversation "start on gpt")
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "reasoning"
+                         "encrypted_content" "codex-private-blob"
+                         "summary" (json-array)))
+           (conversation-set-model-selection conversation "grok-4.5" "high")
+           (conversation-append-user-message conversation "continue on grok")
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "reasoning"
+                         "encrypted_content" "grok-private-blob"
+                         "summary" (json-array)))
+           (dolist (case '((:codex "codex-private-blob" "grok-private-blob")
+                           (:grok "grok-private-blob" "codex-private-blob")))
+             (destructuring-bind (family kept dropped) case
+               (let ((blobs
+                       (loop for item
+                               in (conversation-input-items-for-family
+                                   conversation family)
+                             when (reasoning-item-p item)
+                               collect (json-get item "encrypted_content"))))
+                 (test-assert
+                  (and (member kept blobs :test #'equal)
+                       (not (member dropped blobs :test #'equal)))
+                  (format nil "~(~A~) requests replay only their own reasoning"
+                          family)))))
+           (test-assert
+            (= (length (conversation-input-items-for-family conversation
+                                                            ':grok))
+               (1- (length (conversation-input-items-for-request
+                            conversation))))
+            "only the foreign reasoning item is withheld from a request")
+           (let ((reloaded (conversation-load-by-id configuration "families")))
+             (test-assert
+              (equal (loop for item
+                             in (conversation-input-items-for-family reloaded
+                                                                     ':grok)
+                           when (reasoning-item-p item)
+                             collect (json-get item "encrypted_content"))
+                     '("grok-private-blob"))
+              "replay restores each item's producing family")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

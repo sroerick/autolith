@@ -78,6 +78,12 @@
     :type list
     :documentation
     "Request-local provider items and owned attachments awaiting one response.")
+   (input-item-families
+    :initform (make-hash-table :test #'eq)
+    :reader conversation-input-item-families
+    :type hash-table
+    :documentation
+    "The model family that produced each projected item, keyed by item.")
    (turn-state
     :initform nil
     :accessor conversation-turn-state
@@ -104,6 +110,11 @@
     :type (integer 0)
     :documentation
     "Accumulated seconds of agent work, excluding gaps before user messages.")
+   (picker-preview
+    :initform nil
+    :accessor conversation-picker-preview
+    :type (option string)
+    :documentation "The newest user or assistant text retained for conversation pickers.")
    (latest-goal-record
     :initform nil
     :accessor conversation-latest-goal-record
@@ -119,8 +130,61 @@
 
 (defmethod (setf conversation-input-items)
     :after ((items list) (conversation conversation))
-  "Keep CONVERSATION's projection tail synchronized after whole-list replacement."
-  (setf (conversation-input-items-tail conversation) (last items)))
+  "Keep CONVERSATION's projection tail and item families synchronized.
+
+Compaction replaces the whole projection, so families recorded for
+discarded items are pruned here rather than retained for the session."
+  (setf (conversation-input-items-tail conversation) (last items))
+  (let ((families (conversation-input-item-families conversation)))
+    (when (plusp (hash-table-count families))
+      (let ((retained (make-hash-table :test #'eq)))
+        (dolist (item items)
+          (multiple-value-bind (family present-p) (gethash item families)
+            (when present-p
+              (setf (gethash item retained) family))))
+        (clrhash families)
+        (maphash (lambda (item family)
+                   (setf (gethash item families) family))
+                 retained)))))
+
+
+(defclass conversation-picker-metadata ()
+  ((source-size
+    :initarg :source-size
+    :reader conversation-picker-metadata-source-size
+    :type (integer 0)
+    :documentation "The byte size of the indexed conversation file.")
+   (source-write-date
+    :initarg :source-write-date
+    :reader conversation-picker-metadata-source-write-date
+    :type (integer 0)
+    :documentation "The indexed conversation file's write date.")
+   (source-revision
+    :initarg :source-revision
+    :reader conversation-picker-metadata-source-revision
+    :type (integer 0)
+    :documentation "The durable picker-cache revision captured with the log.")
+   (working-seconds
+    :initarg :working-seconds
+    :reader conversation-picker-metadata-working-seconds
+    :type (integer 0)
+    :documentation "The accumulated durable agent-working seconds.")
+   (user-turn-count
+    :initarg :user-turn-count
+    :reader conversation-picker-metadata-user-turn-count
+    :type (integer 0)
+    :documentation "The count of durable user-message records.")
+   (preview
+    :initarg :preview
+    :reader conversation-picker-metadata-preview
+    :type (option string)
+    :documentation "The newest user or assistant message text.")
+   (incomplete-tail-p
+    :initarg :incomplete-tail-p
+    :reader conversation-picker-metadata-incomplete-tail-p
+    :type boolean
+    :documentation "Whether indexing stopped before an interrupted final form."))
+  (:documentation "A validated compact cache of one conversation's picker fields."))
 
 
 ;;;; -- Primary Application Ownership --
@@ -287,29 +351,86 @@ reports an operating-system failure."
 
 ;;;; -- Durable Projection --
 
-(-> conversation--note-activity (conversation list) null)
-(defun conversation--note-activity (conversation record)
-  "Project RECORD's activity metadata into CONVERSATION.
-
-The gap since the previous durable record counts as working time unless
-RECORD is a user message, whose preceding gap is the user reading and
-typing."
+(-> conversation--activity-after-record
+    (list &key (:working-seconds (integer 0))
+               (:user-turn-count (integer 0))
+               (:last-activity-at (option timestamp)))
+    (values (integer 0) (integer 0) (option timestamp)))
+(defun conversation--activity-after-record
+    (record &key (working-seconds 0) (user-turn-count 0) last-activity-at)
+  "Return activity values after applying durable RECORD to a picker summary."
   (let ((time (and (consp record) (getf (rest record) :time)))
         (user-message-p
           (and (consp record)
                (eq (first record) ':message)
                (eq (getf (rest record) :role) ':user))))
     (when (typep time 'timestamp)
-      (let ((previous (conversation-last-activity-at conversation)))
-        (when (and previous
-                   (not user-message-p)
-                   (> time previous))
-          (incf (conversation-working-seconds conversation)
-                (- time previous))))
-      (setf (conversation-last-activity-at conversation)
-            (max (or (conversation-last-activity-at conversation) 0) time)))
+      (when (and last-activity-at
+                 (not user-message-p)
+                 (> time last-activity-at))
+        (incf working-seconds (- time last-activity-at)))
+      (setf last-activity-at (max (or last-activity-at 0) time)))
     (when user-message-p
-      (incf (conversation-user-turn-count conversation))))
+      (incf user-turn-count))
+    (values working-seconds user-turn-count last-activity-at)))
+
+(-> conversation--assistant-preview (json-object) (option string))
+(defun conversation--assistant-preview (item)
+  "Return the visible assistant text in provider response ITEM, when present."
+  (when (and (string= (or (json-get item "type") "") "message")
+             (string= (or (json-get item "role") "") "assistant"))
+    (let ((content (json-get item "content")))
+      (when (vectorp content)
+        (let ((parts
+                (loop for part across content
+                      when (and (json-object-p part)
+                                (member (json-get part "type")
+                                        '("output_text" "text")
+                                        :test #'string=)
+                                (stringp (json-get part "text")))
+                        collect (json-get part "text"))))
+          (when parts
+            (format nil "~{~A~^~%~}" parts)))))))
+
+(-> conversation--record-preview (list) (option string))
+(defun conversation--record-preview (record)
+  "Return the user or assistant text represented by durable RECORD."
+  (case (first record)
+    (:message
+     (let ((content (getf (rest record) :content)))
+       (when (and (eq (getf (rest record) :role) ':user)
+                  (stringp content))
+         content)))
+    (:provider-item
+     (let ((wire-json (getf (rest record) :wire-json)))
+       (when (stringp wire-json)
+         (handler-case
+             (let ((item (json-decode wire-json)))
+               (when (json-object-p item)
+                 (conversation--assistant-preview item)))
+           (error ()
+             nil)))))))
+
+(-> conversation--note-preview (conversation list) null)
+(defun conversation--note-preview (conversation record)
+  "Retain RECORD's newest user or assistant text for picker metadata."
+  (let ((preview (conversation--record-preview record)))
+    (when preview
+      (setf (conversation-picker-preview conversation) preview)))
+  nil)
+
+(-> conversation--note-activity (conversation list) null)
+(defun conversation--note-activity (conversation record)
+  "Project RECORD's activity metadata into CONVERSATION."
+  (multiple-value-bind (working-seconds user-turn-count last-activity-at)
+      (conversation--activity-after-record
+       record
+       :working-seconds (conversation-working-seconds conversation)
+       :user-turn-count (conversation-user-turn-count conversation)
+       :last-activity-at (conversation-last-activity-at conversation))
+    (setf (conversation-working-seconds conversation) working-seconds
+          (conversation-user-turn-count conversation) user-turn-count
+          (conversation-last-activity-at conversation) last-activity-at))
   nil)
 
 (-> conversation--header-record (conversation) list)
@@ -338,6 +459,189 @@ typing."
                 (list (conversation--header-record conversation)))
     (setf (conversation-persisted-p conversation) t
           (conversation-incomplete-tail-p conversation) nil))
+  nil)
+
+;;;; -- Conversation Picker Metadata --
+
+(-> conversation-picker-metadata-pathname (pathname) pathname)
+(defun conversation-picker-metadata-pathname (conversation-pathname)
+  "Return the compact picker-cache pathname for CONVERSATION-PATHNAME."
+  (let* ((conversation-root
+           (uiop:pathname-directory-pathname conversation-pathname))
+         (data-root
+           (uiop:pathname-parent-directory-pathname conversation-root)))
+    (merge-pathnames
+     (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
+     (merge-pathnames "conversation-picker/" data-root))))
+
+(-> conversation-picker-revision-pathname (pathname) pathname)
+(defun conversation-picker-revision-pathname (conversation-pathname)
+  "Return the durable picker-cache revision pathname for CONVERSATION-PATHNAME."
+  (make-pathname :type "revision"
+                 :defaults
+                 (conversation-picker-metadata-pathname conversation-pathname)))
+
+(-> conversation-picker-revision-read (pathname) (integer 0))
+(defun conversation-picker-revision-read (conversation-pathname)
+  "Return CONVERSATION-PATHNAME's durable picker-cache revision, or zero."
+  (let ((revision-pathname
+          (conversation-picker-revision-pathname conversation-pathname)))
+    (if (probe-file revision-pathname)
+        (handler-case
+            (multiple-value-bind (record complete-p)
+                (snapshot-read revision-pathname)
+              (let ((revision (and complete-p
+                                   (listp record)
+                                   (eq (first record) :conversation-picker-revision)
+                                   (= (or (getf (rest record) :version) 0) 1)
+                                   (getf (rest record) :value))))
+                (if (typep revision '(integer 0))
+                    revision
+                    0)))
+          (error ()
+            0))
+        0)))
+
+(-> conversation-picker-revision-write (pathname (integer 0)) (integer 0))
+(defun conversation-picker-revision-write (conversation-pathname revision)
+  "Atomically record REVISION before changing CONVERSATION-PATHNAME's log."
+  (let ((revision-pathname
+          (conversation-picker-revision-pathname conversation-pathname)))
+    (ensure-directories-exist revision-pathname)
+    (snapshot-write revision-pathname
+                    (list :conversation-picker-revision
+                          :version 1
+                          :value revision))
+    revision))
+
+(-> conversation-picker-metadata-invalidate (conversation) (integer 0))
+(defun conversation-picker-metadata-invalidate (conversation)
+  "Advance CONVERSATION's picker revision before its durable log changes."
+  (let ((pathname (conversation-pathname conversation)))
+    (handler-case
+        (conversation-picker-revision-write
+         pathname
+         (1+ (conversation-picker-revision-read pathname)))
+      (error (condition)
+        (error 'conversation-invariant-error
+               :message (format nil
+                                "Could not invalidate conversation picker metadata: ~A"
+                                condition)
+               :pathname pathname
+               :sequence (conversation-next-sequence conversation))))))
+
+(-> conversation--file-identity (pathname)
+    (values (integer 0) (integer 0)))
+(defun conversation--file-identity (pathname)
+  "Return PATHNAME's byte size and write date for picker-cache validation."
+  (with-open-file (stream pathname
+                          :direction :input
+                          :element-type '(unsigned-byte 8))
+    (values (file-length stream)
+            (or (file-write-date pathname) 0))))
+
+(-> conversation-picker-metadata-record (conversation-picker-metadata) list)
+(defun conversation-picker-metadata-record (metadata)
+  "Return METADATA as one portable atomically published picker-cache form."
+  (list :conversation-picker-metadata
+        :version 1
+        :source-size (conversation-picker-metadata-source-size metadata)
+        :source-write-date
+        (conversation-picker-metadata-source-write-date metadata)
+        :source-revision (conversation-picker-metadata-source-revision metadata)
+        :working-seconds (conversation-picker-metadata-working-seconds metadata)
+        :user-turn-count (conversation-picker-metadata-user-turn-count metadata)
+        :preview (conversation-picker-metadata-preview metadata)
+        :incomplete-tail-p
+        (conversation-picker-metadata-incomplete-tail-p metadata)))
+
+(-> conversation-picker-metadata-from-record (t)
+    (option conversation-picker-metadata))
+(defun conversation-picker-metadata-from-record (record)
+  "Return validated picker metadata represented by RECORD, or NIL."
+  (when (and (listp record)
+             (eq (first record) :conversation-picker-metadata)
+             (= (or (getf (rest record) :version) 0) 1))
+    (let ((source-size (getf (rest record) :source-size))
+          (source-write-date (getf (rest record) :source-write-date))
+          (source-revision (getf (rest record) :source-revision))
+          (working-seconds (getf (rest record) :working-seconds))
+          (user-turn-count (getf (rest record) :user-turn-count))
+          (preview (getf (rest record) :preview))
+          (incomplete-tail-p (getf (rest record) :incomplete-tail-p)))
+      (when (and (typep source-size '(integer 0))
+                 (typep source-write-date '(integer 0))
+                 (typep source-revision '(integer 0))
+                 (typep working-seconds '(integer 0))
+                 (typep user-turn-count '(integer 0))
+                 (or (null preview) (stringp preview))
+                 (typep incomplete-tail-p 'boolean))
+        (make-instance 'conversation-picker-metadata
+                       :source-size source-size
+                       :source-write-date source-write-date
+                       :source-revision source-revision
+                       :working-seconds working-seconds
+                       :user-turn-count user-turn-count
+                       :preview preview
+                       :incomplete-tail-p incomplete-tail-p)))))
+
+(-> conversation-picker-metadata-read (pathname)
+    (option conversation-picker-metadata))
+(defun conversation-picker-metadata-read (pathname)
+  "Return PATHNAME's valid picker cache, or NIL when it is absent or stale."
+  (let ((metadata-pathname (conversation-picker-metadata-pathname pathname)))
+    (when (probe-file metadata-pathname)
+      (handler-case
+          (multiple-value-bind (record complete-p)
+              (snapshot-read metadata-pathname)
+            (let ((metadata
+                    (and complete-p
+                         (conversation-picker-metadata-from-record record))))
+              (when metadata
+                (multiple-value-bind (size write-date)
+                    (conversation--file-identity pathname)
+                  (when (and (= size (conversation-picker-metadata-source-size
+                                      metadata))
+                             (= write-date
+                                (conversation-picker-metadata-source-write-date
+                                 metadata))
+                             (= (conversation-picker-revision-read pathname)
+                                (conversation-picker-metadata-source-revision
+                                 metadata)))
+                    metadata)))))
+        (error ()
+          nil)))))
+
+(-> conversation-picker-metadata-write
+    (pathname conversation-picker-metadata)
+    conversation-picker-metadata)
+(defun conversation-picker-metadata-write (pathname metadata)
+  "Atomically publish METADATA as the validated picker cache for PATHNAME."
+  (let ((metadata-pathname (conversation-picker-metadata-pathname pathname)))
+    (ensure-directories-exist metadata-pathname)
+    (snapshot-write metadata-pathname
+                    (conversation-picker-metadata-record metadata))
+    metadata))
+
+(-> conversation-picker-metadata-publish (conversation) null)
+(defun conversation-picker-metadata-publish (conversation)
+  "Best-effort publish CONVERSATION's compact picker cache after a durable append."
+  (ignore-errors
+    (multiple-value-bind (size write-date)
+        (conversation--file-identity (conversation-pathname conversation))
+      (conversation-picker-metadata-write
+       (conversation-pathname conversation)
+       (make-instance 'conversation-picker-metadata
+                      :source-size size
+                      :source-write-date write-date
+                      :source-revision
+                      (conversation-picker-revision-read
+                       (conversation-pathname conversation))
+                      :working-seconds (conversation-working-seconds conversation)
+                      :user-turn-count (conversation-user-turn-count conversation)
+                      :preview (conversation-picker-preview conversation)
+                      :incomplete-tail-p
+                      (conversation-incomplete-tail-p conversation)))))
   nil)
 
 (-> conversation-create
@@ -396,6 +700,10 @@ typing."
                              :seq sequence
                              :time (get-universal-time)
                              (rest record))))
+      ;; Advance the durable picker revision before the log changes so a
+      ;; concurrent scan cannot stamp a pre-append summary with a post-append
+      ;; identity.
+      (conversation-picker-metadata-invalidate conversation)
       (handler-case
           (if (conversation-persisted-p conversation)
               (progn
@@ -422,15 +730,26 @@ typing."
                  :sequence sequence)))
       (incf (conversation-next-sequence conversation))
       (conversation--note-activity conversation sequenced)
+      (conversation--note-preview conversation sequenced)
       (when (eq (first sequenced) :goal)
         (setf (conversation-latest-goal-record conversation) sequenced))
+      (conversation-picker-metadata-publish conversation)
       sequenced)))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
-  "Append provider ITEM to CONVERSATION's in-memory chronological projection."
+  "Append provider ITEM to CONVERSATION's in-memory chronological projection.
+
+The model active when ITEM is projected identifies the family that
+produced it, which lets a later request omit provider-private content
+another family cannot read. Replay establishes the same association
+because durable configuration records are projected in order."
   (let ((cell (list item))
-        (tail (conversation-input-items-tail conversation)))
+        (tail (conversation-input-items-tail conversation))
+        (model (conversation-model conversation)))
+    (when (non-empty-string-p model)
+      (setf (gethash item (conversation-input-item-families conversation))
+            (model-family model)))
     (if tail
         (setf (rest tail) cell)
         (setf (conversation-input-items conversation) cell))
@@ -468,6 +787,39 @@ typing."
          (lambda (item)
            (gethash item ephemeral-items))
          (conversation-input-items conversation)))))
+
+(-> reasoning-item-p (t) boolean)
+(defun reasoning-item-p (item)
+  "Return true when ITEM is a Responses reasoning item."
+  (and (json-object-p item)
+       (string= (or (json-get item "type") "") "reasoning")
+       t))
+
+(-> conversation-input-item-family (conversation json-object) (option keyword))
+(defun conversation-input-item-family (conversation item)
+  "Return the model family that produced ITEM, or NIL when it is unknown."
+  (values (gethash item (conversation-input-item-families conversation))))
+
+(-> conversation-input-items-for-family
+    (conversation keyword &key (:include-ephemeral-p boolean))
+    list)
+(defun conversation-input-items-for-family
+    (conversation family &key (include-ephemeral-p t))
+  "Return CONVERSATION's provider projection usable by FAMILY.
+
+A reasoning item carries encrypted content that only the family which
+produced it can decrypt, so reasoning from another family, or from an
+unrecorded one, is omitted rather than replayed into a rejected request.
+Every other item stays, keeping the conversation portable across
+families."
+  (remove-if
+   (lambda (item)
+     (and (reasoning-item-p item)
+          (not (eq (conversation-input-item-family conversation item)
+                   family))))
+   (conversation-input-items-for-request
+    conversation
+    :include-ephemeral-p include-ephemeral-p)))
 
 (-> conversation-clear-ephemeral-input-items (conversation) null)
 (defun conversation-clear-ephemeral-input-items (conversation)
@@ -1009,6 +1361,68 @@ invariant errors while callback conditions propagate unchanged."
                    :pathname pathname
                    :sequence nil))))))
 
+(-> conversation-picker-metadata-scan (pathname)
+    (option conversation-picker-metadata))
+(defun conversation-picker-metadata-scan (pathname)
+  "Scan PATHNAME once to create exact metadata for its resume-picker cache."
+  (let ((working-seconds 0)
+        (user-turn-count 0)
+        (last-activity-at nil)
+        (preview nil)
+        (header-seen-p nil)
+        (record-count 0))
+    (handler-case
+        (multiple-value-bind (initial-size initial-write-date)
+            (conversation--file-identity pathname)
+          (let ((initial-revision (conversation-picker-revision-read pathname)))
+          (multiple-value-bind (position incomplete-tail-p count)
+              (conversation--map-records
+               pathname
+               (lambda (record)
+                 (if header-seen-p
+                     (progn
+                       (incf record-count)
+                       (multiple-value-setq
+                           (working-seconds user-turn-count last-activity-at)
+                         (conversation--activity-after-record
+                          record
+                          :working-seconds working-seconds
+                          :user-turn-count user-turn-count
+                          :last-activity-at last-activity-at))
+                       (let ((record-preview (conversation--record-preview record)))
+                         (when record-preview
+                           (setf preview record-preview))))
+                     (setf header-seen-p t))))
+            (declare (ignore position count))
+            (when (and header-seen-p (plusp record-count))
+              (multiple-value-bind (final-size final-write-date)
+                  (conversation--file-identity pathname)
+                (when (and (= initial-size final-size)
+                           (= initial-write-date final-write-date)
+                           (= initial-revision
+                              (conversation-picker-revision-read pathname)))
+                  (make-instance 'conversation-picker-metadata
+                                 :source-size initial-size
+                                 :source-write-date initial-write-date
+                                 :source-revision initial-revision
+                                 :working-seconds working-seconds
+                                 :user-turn-count user-turn-count
+                                 :preview preview
+                                 :incomplete-tail-p incomplete-tail-p)))))))
+      (error ()
+        nil))))
+
+(-> conversation-picker-metadata-find (pathname)
+    (option conversation-picker-metadata))
+(defun conversation-picker-metadata-find (pathname)
+  "Return PATHNAME's validated picker cache, rebuilding a missing cache once."
+  (or (conversation-picker-metadata-read pathname)
+      (let ((metadata (conversation-picker-metadata-scan pathname)))
+        (when metadata
+          (ignore-errors
+            (conversation-picker-metadata-write pathname metadata)))
+        metadata)))
+
 (-> conversation--read-records (pathname) (values list boolean))
 (defun conversation--read-records (pathname)
   "Read complete forms and report whether PATHNAME has an incomplete tail."
@@ -1082,6 +1496,7 @@ invariant errors while callback conditions propagate unchanged."
                :pathname (conversation-pathname conversation)
                :sequence sequence)))
     (conversation--note-activity conversation record)
+    (conversation--note-preview conversation record)
     (when (eq (first record) :goal)
       (setf (conversation-latest-goal-record conversation) record))
     (when (integerp sequence)
@@ -1332,39 +1747,15 @@ conversation files."
 (-> conversation-activity-summary (pathname)
     (values (integer 0) (integer 0)))
 (defun conversation-activity-summary (pathname)
-  "Return working seconds and user-turn count from PATHNAME without full load.
+  "Return PATHNAME's cached working seconds and user-turn count.
 
-Only durable activity timestamps and user-message roles are scanned, so the
-resume picker can show a tally without rebuilding provider projections."
-  (let ((working-seconds 0)
-        (user-turn-count 0)
-        (last-activity-at nil)
-        (header-seen-p nil))
-    (handler-case
-        (conversation--map-records
-         pathname
-         (lambda (record)
-           (cond
-             ((not header-seen-p)
-              (setf header-seen-p t))
-             (t
-              (let ((time (and (consp record) (getf (rest record) :time)))
-                    (user-message-p
-                      (and (consp record)
-                           (eq (first record) ':message)
-                           (eq (getf (rest record) :role) ':user))))
-                (when (typep time 'timestamp)
-                  (when (and last-activity-at
-                             (not user-message-p)
-                             (> time last-activity-at))
-                    (incf working-seconds (- time last-activity-at)))
-                  (setf last-activity-at
-                        (max (or last-activity-at 0) time)))
-                (when user-message-p
-                  (incf user-turn-count)))))))
-      (error ()
-        nil))
-    (values working-seconds user-turn-count)))
+A missing or stale cache is rebuilt once from durable records. Subsequent
+resume-picker reads use the compact sidecar instead of replaying the log."
+  (let ((metadata (conversation-picker-metadata-find pathname)))
+    (if metadata
+        (values (conversation-picker-metadata-working-seconds metadata)
+                (conversation-picker-metadata-user-turn-count metadata))
+        (values 0 0))))
 
 
 (defparameter *conversation-delete-directory-tree-function*
@@ -1382,6 +1773,8 @@ conversation."
   (let* ((normalized
            (conversation-identifier-migration-resolve configuration identifier))
          (pathname (conversation-pathname-for-id configuration normalized))
+         (metadata-pathname (conversation-picker-metadata-pathname pathname))
+         (revision-pathname (conversation-picker-revision-pathname pathname))
          (task-fragment
            (or (conversation-identifier-path-fragment normalized)
                (string-downcase normalized)))
@@ -1415,12 +1808,17 @@ conversation."
                       :pathname pathname
                       :sequence nil)))
            (handler-case
-               (dolist (root artifact-roots)
-                 (when (probe-file root)
-                   (funcall *conversation-delete-directory-tree-function*
-                            root
-                            :validate t
-                            :if-does-not-exist :ignore)))
+               (progn
+                 (when (probe-file metadata-pathname)
+                   (delete-file metadata-pathname))
+                 (when (probe-file revision-pathname)
+                   (delete-file revision-pathname))
+                 (dolist (root artifact-roots)
+                   (when (probe-file root)
+                     (funcall *conversation-delete-directory-tree-function*
+                              root
+                              :validate t
+                              :if-does-not-exist :ignore))))
              (error (condition)
                (error 'conversation-invariant-error
                       :message
