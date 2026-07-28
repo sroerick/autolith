@@ -142,7 +142,7 @@
                                   implementation-package))
                             "private replay reconstructs a locked-package definition")))
            (let* ((source-root (merge-pathnames "source/" root))
-                  (source-pathname (merge-pathnames "src/sample.lisp" source-root))
+                  (source-pathname (merge-pathnames "src/nested/sample.lisp" source-root))
                   (source-configuration
                     (test-configuration-for-source-root source-root)))
              (ensure-directories-exist source-pathname)
@@ -162,8 +162,8 @@
                                                        'test-self-target)))
                (test-assert (= (length definitions) 1)
                             "tracked source inspection finds the complete definition")
-               (test-assert (search "src/sample.lisp" rendered)
-                            "tracked source inspection reports its repository path")
+               (test-assert (search "src/nested/sample.lisp" rendered)
+                            "tracked source inspection reports its nested repository path")
                (test-assert (search "Tracked source documentation." rendered)
                             "tracked source inspection returns exact definition text")))
            (let* ((conversation

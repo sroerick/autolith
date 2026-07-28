@@ -36,7 +36,7 @@
          (lisp-paths
            (mapcar (lambda (pathname)
                      (enough-namestring pathname source-root))
-                   (uiop:directory-files source-directory "*.lisp"))))
+                   (source-lisp-pathnames source-directory))))
     (sort (append '("bin/autolith"
                     "bin/autolith-active"
                     "bin/autolith-search-worker"

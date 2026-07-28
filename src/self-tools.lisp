@@ -1007,7 +1007,7 @@ protocol."
   (let* ((source-root (configuration-source-root configuration))
          (editable-root (merge-pathnames "src/" source-root)))
     (self-source--definitions
-     (uiop:directory-files editable-root "*.lisp")
+     (source-lisp-pathnames editable-root)
      :root source-root
      :package (find-package '#:autolith)
      :symbol symbol)))

@@ -31,6 +31,7 @@
                              (:file "conditions")
                              (:file "json")
                              (:file "time")
+                             (:file "source-files")
                              (:file "configuration")
                              (:file "workspace")
                              (:file "image-input")
