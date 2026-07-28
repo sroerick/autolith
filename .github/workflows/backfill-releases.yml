@@ -1,0 +1,42 @@
+name: Backfill GitHub releases
+
+on:
+  push:
+    paths:
+      - ".github/workflows/backfill-releases.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Create missing GitHub releases for tagged notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for notes in docs/releases/v*.md; do
+            tag=$(basename "$notes" .md)
+            if ! git rev-parse "$tag" >/dev/null 2>&1; then
+              printf 'Skipping %s: tag is absent.\n' "$tag"
+              continue
+            fi
+            if gh release view "$tag" >/dev/null 2>&1; then
+              printf 'Skipping %s: release already exists.\n' "$tag"
+              continue
+            fi
+            gh release create "$tag" \
+              --verify-tag \
+              --notes-file "$notes" \
+              --title "Autolith ${tag#v}"
+            printf 'Created GitHub release %s.\n' "$tag"
+          done

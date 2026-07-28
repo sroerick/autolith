@@ -21,20 +21,6 @@ jobs:
           test "v$version" = "$GITHUB_REF_NAME"
           test -s "docs/releases/$GITHUB_REF_NAME.md"
 
-      - name: Wait for the release service
-        shell: bash
-        run: |
-          archive=autolith-"$GITHUB_REF_NAME"-x86_64-linux.tar.gz
-          checksum_url=https://sh.lambda-symbolics.com/releases/"$GITHUB_REF_NAME"/"$archive".sha256
-          for attempt in $(seq 1 120); do
-            if curl --fail --silent --show-error --head "$checksum_url"; then
-              exit 0
-            fi
-            sleep 30
-          done
-          printf 'The release service did not publish %s.\n' "$GITHUB_REF_NAME" >&2
-          exit 1
-
       - name: Publish GitHub release metadata
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,3 +33,17 @@ jobs:
               --notes-file "docs/releases/$GITHUB_REF_NAME.md" \
               --title "Autolith ${GITHUB_REF_NAME#v}"
           fi
+
+      - name: Wait for the release service
+        shell: bash
+        run: |
+          archive=autolith-"$GITHUB_REF_NAME"-x86_64-linux.tar.gz
+          checksum_url=https://sh.lambda-symbolics.com/releases/"$GITHUB_REF_NAME"/"$archive".sha256
+          for attempt in $(seq 1 120); do
+            if curl --fail --silent --show-error --head "$checksum_url"; then
+              exit 0
+            fi
+            sleep 30
+          done
+          printf 'GitHub metadata for %s is published, but the release service has not published the Linux archive checksum yet.\n' "$GITHUB_REF_NAME" >&2
+          exit 0
