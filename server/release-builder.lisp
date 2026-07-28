@@ -182,28 +182,50 @@
 
 (-> release-builder--parse-remote-tags (string) list)
 (defun release-builder--parse-remote-tags (output)
-  "Parse Git ls-remote OUTPUT into semantic release source tags."
-  (sort
-   (loop for line in (uiop:split-string output :separator '(#\Newline #\Return))
-         unless (zerop (length line))
-           collect
-           (let* ((separator (position #\Tab line))
-                  (commit (and separator (subseq line 0 separator)))
-                  (reference (and separator (subseq line (1+ separator))))
-                  (prefix "refs/tags/")
-                  (tag (and reference
-                            (uiop:string-prefix-p prefix reference)
-                            (subseq reference (length prefix)))))
-             (unless (and commit
-                          tag
-                          (release-builder--commit-valid-p commit)
-                          (release-tag-valid-p tag))
-               (error 'release-builder-error
-                      :stage ':tag-discovery
-                      :cause (format nil "Malformed remote tag line ~S." line)))
-             (make-instance 'release-source-tag :name tag :commit commit)))
-   #'release-tag<
-   :key #'release-source-tag-name))
+  "Parse Git ls-remote OUTPUT into semantic release source tags.
+
+Annotated tags publish both the tag object and a peeled commit line ending in
+^{}. Prefer the peeled commit so checkout validation matches HEAD after clone.
+Lightweight tags only publish one line and keep that commit identity."
+  (let ((commits (make-hash-table :test #'equal))
+        (peeled (make-hash-table :test #'equal)))
+    (dolist (line (uiop:split-string output :separator '(#\Newline #\Return)))
+      (unless (zerop (length line))
+        (let* ((separator (position #\Tab line))
+               (commit (and separator (subseq line 0 separator)))
+               (reference (and separator (subseq line (1+ separator))))
+               (prefix "refs/tags/")
+               (suffix "^{}")
+               (tag nil)
+               (peeled-p nil))
+          (when (and reference (uiop:string-prefix-p prefix reference))
+            (let ((name (subseq reference (length prefix))))
+              (when (and (>= (length name) (length suffix))
+                         (string= name suffix
+                                  :start1 (- (length name) (length suffix))))
+                (setf peeled-p t
+                      name (subseq name 0 (- (length name) (length suffix)))))
+              (setf tag name)))
+          (unless (and commit
+                       tag
+                       (release-builder--commit-valid-p commit)
+                       (release-tag-valid-p tag))
+            (error 'release-builder-error
+                   :stage ':tag-discovery
+                   :cause (format nil "Malformed remote tag line ~S." line)))
+          (if peeled-p
+              (progn
+                (setf (gethash tag commits) commit
+                      (gethash tag peeled) t))
+              (unless (gethash tag peeled)
+                (setf (gethash tag commits) commit))))))
+    (sort
+     (loop for tag being the hash-keys of commits using (hash-value commit)
+           collect (make-instance 'release-source-tag
+                                  :name tag
+                                  :commit commit))
+     #'release-tag<
+     :key #'release-source-tag-name)))
 
 (-> release-builder-remote-tags (release-builder-configuration) list)
 (defun release-builder-remote-tags (configuration)
@@ -211,7 +233,8 @@
   (handler-case
       (release-builder--parse-remote-tags
        (uiop:run-program
-        (list "git" "ls-remote" "--tags" "--refs"
+        ;; Omit --refs so annotated tags also emit peeled ^{} commit lines.
+        (list "git" "ls-remote" "--tags"
               (release-builder-configuration-repository configuration)
               "v*.*.*")
         :output :string

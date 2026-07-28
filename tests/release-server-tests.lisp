@@ -288,15 +288,29 @@
             "release archives remove broken dependency links"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   (let* ((commit-a "0123456789abcdef0123456789abcdef01234567")
-         (commit-b "89abcdef0123456789abcdef0123456789abcdef")
-         (parsed
-           (release-builder--parse-remote-tags
-            (format nil "~A~Crefs/tags/v0.11.2~%~A~Crefs/tags/v0.10.9~%"
-                    commit-a #\Tab commit-b #\Tab))))
-    (test-assert
-     (equal (mapcar #'release-source-tag-name parsed)
-            '("v0.10.9" "v0.11.2"))
-     "remote release tags are validated and sorted semantically"))
+           (commit-b "89abcdef0123456789abcdef0123456789abcdef")
+           (tag-object "fedcba9876543210fedcba9876543210fedcba98")
+           (peeled "abcdef0123456789abcdef0123456789abcdef01")
+           (parsed
+             (release-builder--parse-remote-tags
+              (format nil "~A~Crefs/tags/v0.11.2~%~A~Crefs/tags/v0.10.9~%"
+                      commit-a #\Tab commit-b #\Tab)))
+           (annotated
+             (release-builder--parse-remote-tags
+              (format nil
+                      "~A~Crefs/tags/v0.12.0~%~A~Crefs/tags/v0.12.0^{}~%"
+                      tag-object #\Tab peeled #\Tab))))
+      (test-assert
+       (equal (mapcar #'release-source-tag-name parsed)
+              '("v0.10.9" "v0.11.2"))
+       "remote release tags are validated and sorted semantically")
+      (test-assert
+       (and
+        (equal (mapcar #'release-source-tag-name annotated)
+               '("v0.12.0"))
+        (equal (release-source-tag-commit (first annotated))
+               peeled))
+       "annotated remote tags prefer the peeled commit identity"))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
