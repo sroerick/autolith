@@ -254,6 +254,146 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                           ':code
                           (application--presentation-value value))))))))
 
+;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.
+(-> application--plan-update-text (t) (option string))
+(defun application--plan-update-text (value)
+  "Return VALUE as sanitized non-empty single-line plan text."
+  (when (stringp value)
+    (let ((text
+            (sanitize-text
+             (string-trim '(#\Space #\Tab #\Newline #\Return) value)
+             :single-line-p t)))
+      (and (plusp (length text)) text))))
+
+(-> application--plan-update-wrapped-rows
+    (application string
+                 &key (:style terminal-style)
+                      (:initial-prefix list)
+                      (:continuation-prefix list))
+    list)
+(defun application--plan-update-wrapped-rows
+    (application text &key style initial-prefix continuation-prefix)
+  "Return styled wrapped plan TEXT rows after the supplied prefix spans."
+  (let* ((columns
+           (terminal-columns
+            (terminal-ui-terminal (application-ui application))))
+         (prefix-width
+           (max (terminal--spans-width initial-prefix)
+                (terminal--spans-width continuation-prefix)))
+         (text-width (max 1 (- columns 3 prefix-width)))
+         (lines (or (wrap-text text text-width) (list ""))))
+    (loop for line in lines
+          for first-p = t then nil
+          collect
+          (append (if first-p initial-prefix continuation-prefix)
+                  (list (terminal-span style line))))))
+
+(-> application--plan-update-step-rows
+    (application json-object boolean)
+    list)
+(defun application--plan-update-step-rows (application step first-content-p)
+  "Return wrapped rows for one plan STEP with its visible status marker."
+  (let* ((text
+           (application--plan-update-text
+            (or (json-get step "step") (json-get step "text"))))
+         (status (plan--status (json-get step "status")))
+         (valid-p (and text status))
+         (marker
+           (if valid-p
+               (if (eq status ':done) "✔ " "□ ")
+               "? "))
+         (style
+           (if valid-p
+               (if (eq status ':doing) ':plan-active ':dim)
+               ':failure))
+         (initial-prefix
+           (list (terminal-span ':dim (if first-content-p "└ " "  "))
+                 (terminal-span style marker)))
+         (continuation-prefix (list (terminal-span ':plain "    "))))
+    (application--plan-update-wrapped-rows
+     application
+     (or text "invalid plan step")
+     :style style
+     :initial-prefix initial-prefix
+     :continuation-prefix continuation-prefix)))
+
+(-> application--plan-update-rows
+    (application (option json-object))
+    list)
+(defun application--plan-update-rows (application arguments)
+  "Return Codex-style explanation and checklist rows from plan ARGUMENTS."
+  (block nil
+    (unless arguments
+      (return
+        (list (list (terminal-span ':dim "└ ")
+                    (terminal-span ':hint "arguments unavailable")))))
+    (let* ((explanation
+             (application--plan-update-text
+              (json-get arguments "explanation")))
+           (steps (json-get arguments "steps"))
+           (rows nil)
+           (content-p nil))
+      (when explanation
+        (setf rows
+              (application--plan-update-wrapped-rows
+               application explanation
+               :style ':hint
+               :initial-prefix (list (terminal-span ':dim "└ "))
+               :continuation-prefix (list (terminal-span ':plain "  ")))
+              content-p t))
+      (unless (and (vectorp steps) (not (stringp steps)))
+        (return
+          (nconc rows
+                 (list
+                  (list (terminal-span ':dim (if content-p "  " "└ "))
+                        (terminal-span ':hint "steps unavailable"))))))
+      (if (zerop (length steps))
+          (nconc rows
+                 (list
+                  (list (terminal-span ':dim (if content-p "  " "└ "))
+                        (terminal-span ':hint "(no steps provided)"))))
+          (let ((visible-count (min (length steps) *plan-maximum-steps*)))
+            (loop for index below visible-count
+                  for step = (aref steps index)
+                  do (setf rows
+                           (nconc
+                            rows
+                            (if (json-object-p step)
+                                (application--plan-update-step-rows
+                                 application step (not content-p))
+                                (list
+                                 (list
+                                  (terminal-span
+                                   ':dim (if content-p "  " "└ "))
+                                  (terminal-span ':failure "? invalid plan step")))))
+                           content-p t))
+            (let ((omitted (- (length steps) visible-count)))
+              (when (plusp omitted)
+                (setf rows
+                      (nconc
+                       rows
+                       (list
+                        (list
+                         (terminal-span ':dim "  ")
+                         (terminal-span
+                          ':dim
+                          (format nil "… +~D more step~:P" omitted))))))))
+            rows)))))
+
+(defmethod application-tool-call-entry
+    ((tool plan-update-tool) (application application) (call hash-table))
+  "Present plan.update as a wrapped checklist instead of argument JSON."
+  (declare (ignore tool))
+  (let ((rows
+          (application--plan-update-rows
+           application (application--function-call-arguments call))))
+    (append
+     (list (terminal-span ':dim "• ")
+           (terminal-span ':strong "Updated Plan"))
+     (loop for row in rows
+           append (list (terminal-span ':plain (string #\Newline)))
+           append (application--tool-row-spans application row)))))
+
 (-> application--task-run-arguments
     (task-run-tool json-object)
     (option json-object))

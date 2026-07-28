@@ -2197,6 +2197,95 @@
                  "help lists command descriptions"))
   nil)
 
+(-> test-plan-update-call-presentation () null)
+(defun test-plan-update-call-presentation ()
+  "Test Codex-style plan.update checklist rendering and malformed fallbacks."
+  (labels ((call-entry (application arguments &key source)
+             "Render one plan.update call for APPLICATION."
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" "plan"
+               "name" "update"
+               "arguments" (or source (json-encode arguments))))))
+    (let* ((application (application-tests--ui-application :columns 60))
+           (entry
+             (call-entry
+              application
+              (json-object
+               "explanation" "Adapt the implementation."
+               "steps"
+               (json-array
+                (json-object "step" "Inspect existing behavior"
+                             "status" "completed")
+                (json-object "step" "Render plan steps clearly"
+                             "status" "in_progress")
+                (json-object "step" "Run the full checks"
+                             "status" "pending")))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (equal (subseq entry 0 2)
+              (list (terminal-span :dim "• ")
+                    (terminal-span :strong "Updated Plan")))
+       "plan.update uses the Codex-style updated-plan heading")
+      (test-assert
+       (and (search "└ Adapt the implementation." text)
+            (search "✔ Inspect existing behavior" text)
+            (search "□ Render plan steps clearly" text)
+            (search "□ Run the full checks" text)
+            (find (terminal-span :plan-active "□ ") entry :test #'equal)
+            (not (search "{\"step\"" text))
+            (not (search "\"status\"" text)))
+       "plan.update presents explanation and statuses without argument JSON"))
+    (let* ((application (application-tests--ui-application :columns 28))
+           (entry
+             (call-entry
+              application
+              (json-object
+               "steps"
+               (json-array
+                (json-object
+                 "step" "Wrap a deliberately long active plan step cleanly"
+                 "status" "doing")))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (and (> (count #\Newline text) 2)
+            (every (lambda (line)
+                     (<= (text-cell-width line) 27))
+                   (uiop:split-string text :separator '(#\Newline))))
+       "plan steps wrap beneath their markers within narrow transcripts"))
+    (let* ((application (application-tests--ui-application :columns 40))
+           (malformed
+             (markdown-tests--row-text
+              (call-entry application nil :source "{")))
+           (empty
+             (markdown-tests--row-text
+              (call-entry application
+                          (json-object "steps" (json-array)))))
+           (string-steps
+             (markdown-tests--row-text
+              (call-entry application
+                          (json-object "steps" "not an array"))))
+           (oversized-steps
+             (make-array
+              (1+ *plan-maximum-steps*)
+              :initial-element
+              (json-object "step" "bounded plan step" "status" "pending")))
+           (oversized
+             (markdown-tests--row-text
+              (call-entry application
+                          (json-object "steps" oversized-steps)))))
+      (test-assert
+       (and (search "arguments unavailable" malformed)
+            (search "(no steps provided)" empty)
+            (search "steps unavailable" string-steps)
+            (search "… +1 more step" oversized)
+            (not (search "invalid plan step" string-steps))
+            (not (search "{" malformed)))
+       "plan.update malformed, empty, and oversized calls stay bounded")))
+  nil)
+
 (-> test-task-run-call-presentation () null)
 (defun test-task-run-call-presentation ()
   "Test compact, expanded, malformed, and narrow task.run call rendering."
@@ -5893,6 +5982,7 @@
   (test-active-cancellation-interrupt-window-expiry)
   (test-cancellation-completion-clears-interrupt-state)
   (test-transcript-entries)
+  (test-plan-update-call-presentation)
   (test-task-run-call-presentation)
   (test-recovery-cursor-normalization)
   (test-bounded-transcript-replay)
