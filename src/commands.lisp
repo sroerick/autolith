@@ -596,26 +596,30 @@
              (find (char word (length "update")) '(#\Space #\Tab)))
          (application--command-remainder remainder))))
 
-(-> application--goal-update (application string) null)
+(-> application--goal-update (application string) boolean)
 (defun application--goal-update (application objective)
   "Rewrite the current session goal's objective to OBJECTIVE in place.
 
 An active or paused goal keeps its status and creation time while its
-continuation budget restarts. A completed goal becomes active again."
+continuation budget restarts. A completed goal becomes active again.
+Return true only when the objective was rewritten."
   (let ((goal (application-goal application)))
     (cond
       ((null goal)
        (application-present
         application
-        "No session goal to update. Use /goal OBJECTIVE to set one."))
+        "No session goal to update. Use /goal OBJECTIVE to set one.")
+       nil)
       ((zerop (length objective))
-       (application-present application "Usage: /goal update NEW-OBJECTIVE"))
+       (application-present application "Usage: /goal update NEW-OBJECTIVE")
+       nil)
       ((uiop:string-prefix-p "/" objective)
        (application-present
         application
         (format nil "~S looks like a command, not an objective. ~
                      Usage: /goal update NEW-OBJECTIVE"
-                objective)))
+                objective))
+       nil)
       (t
        (when (eq (getf goal :status) ':complete)
          (setf (getf (application-goal application) :status) ':active))
@@ -629,7 +633,19 @@ continuation budget restarts. A completed goal becomes active again."
                 "Goal updated: ~A~:[~;~%It stays paused until /goal resume.~]"
                 objective
                 (eq (getf (application-goal application) :status)
-                    ':paused))))))
+                    ':paused)))
+       t))))
+
+(-> application--start-goal-work (application) null)
+(defun application--start-goal-work (application)
+  "Begin working toward APPLICATION's active session goal immediately."
+  (let ((goal (application-goal application)))
+    (when (and goal (eq (getf goal :status) ':active))
+      (setf (getf (application-goal application) :continuations) 0)
+      (application--run-turn application
+                             *application-goal-continuation-prompt*
+                             :continuation-p t)
+      (application--run-goal-continuations application)))
   nil)
 
 (-> application-goal-command (application string) null)
@@ -661,13 +677,13 @@ continuation budget restarts. A completed goal becomes active again."
              (application--record-goal application)
              (application-present application
                                   "The session goal is active again.")
-             (application--run-turn application
-                                    *application-goal-continuation-prompt*
-                                    :continuation-p t)
-             (application--run-goal-continuations application))
+             (application--start-goal-work application))
            (application-present application "No paused goal to resume.")))
       (update-argument
-       (application--goal-update application update-argument))
+       (when (and (application--goal-update application update-argument)
+                  (application-goal application)
+                  (eq (getf (application-goal application) :status) ':active))
+         (application--start-goal-work application)))
       ((uiop:string-prefix-p "/" remainder)
        (application-present
         application
@@ -684,9 +700,10 @@ continuation budget restarts. A completed goal becomes active again."
        (application-present
         application
         (format nil
-                "Goal set: ~A~%Autolith keeps working toward it after every ~
-                 message. Use /goal to inspect it and /goal clear to stop."
-                remainder)))))
+                "Goal set: ~A~%Autolith is starting work on it now. Use /goal ~
+                 to inspect it and /goal clear to stop."
+                remainder))
+       (application--start-goal-work application))))
   nil)
 
 
