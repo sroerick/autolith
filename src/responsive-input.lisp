@@ -392,7 +392,9 @@ second reports whether shutdown was prepared."
     (when (and (typep configuration 'configuration)
                (typep conversation 'conversation))
       (handler-case
-          (let* ((pathname (configuration-pending-inputs-path configuration))
+          (let* ((pathname
+                  (configuration-pending-inputs-path
+                   configuration (conversation-pathname conversation)))
                  (steering
                    (mapcar #'application-input--text
                            (application-input-controller-steering-items
@@ -430,11 +432,20 @@ second reports whether shutdown was prepared."
                 (application-conversation application))))
     (when (and (typep configuration 'configuration)
                (typep conversation 'conversation))
-      (let ((pathname (configuration-pending-inputs-path configuration)))
-        (when (probe-file pathname)
+      (let* ((pathname
+               (configuration-pending-inputs-path
+                configuration (conversation-pathname conversation)))
+             (legacy-pathname
+               (configuration-legacy-pending-inputs-path configuration))
+             (source-pathname
+               (cond
+                 ((probe-file pathname) pathname)
+                 ((probe-file legacy-pathname) legacy-pathname)
+                 (t nil))))
+        (when source-pathname
           (handler-case
               (multiple-value-bind (form complete-p)
-                  (snapshot-read pathname)
+                  (snapshot-read source-pathname)
                 (when (and complete-p
                            (listp form)
                            (eq (first form) :pending-inputs)
@@ -454,7 +465,11 @@ second reports whether shutdown was prepared."
                              (application-input-controller--restore-work-items
                               work)
                              (application-input-controller-work-items
-                              controller)))))))
+                              controller)))))
+                  (when (equal source-pathname legacy-pathname)
+                    (application-input-controller--persist-pending controller)
+                    (when (probe-file pathname)
+                      (delete-file legacy-pathname)))))
             (error ()
               nil))))))
   nil)

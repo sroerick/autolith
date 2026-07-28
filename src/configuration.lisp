@@ -536,9 +536,17 @@ Selecting a different model recomputes the context window for that model."
   "Return the atomic deferred-input queue pathname."
   (merge-pathnames "later.sexp" (configuration-state-root configuration)))
 
-(-> configuration-pending-inputs-path (configuration) pathname)
-(defun configuration-pending-inputs-path (configuration)
-  "Return the atomic unprocessed follow-up and steering pathname."
+(-> configuration-pending-inputs-path (configuration pathname) pathname)
+(defun configuration-pending-inputs-path (configuration conversation-pathname)
+  "Return one conversation's atomic unprocessed-input pathname."
+  (merge-pathnames
+   (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
+   (merge-pathnames "pending-inputs/"
+                    (configuration-state-root configuration))))
+
+(-> configuration-legacy-pending-inputs-path (configuration) pathname)
+(defun configuration-legacy-pending-inputs-path (configuration)
+  "Return the legacy process-global unprocessed-input pathname."
   (merge-pathnames "pending-inputs.sexp"
                    (configuration-state-root configuration)))
 

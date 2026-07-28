@@ -5603,9 +5603,54 @@
            (application-input-controller--enqueue controller ':message "follow later")
            (application-input-controller-stop controller)
            (setf controller nil)
-           (test-assert (probe-file (configuration-pending-inputs-path configuration))
-                        "pending inputs are written before controller stop")
+           (test-assert
+            (probe-file
+             (configuration-pending-inputs-path
+              configuration (conversation-pathname conversation)))
+            "pending inputs are written before controller stop")
+           (rename-file
+            (configuration-pending-inputs-path
+             configuration (conversation-pathname conversation))
+            (configuration-legacy-pending-inputs-path configuration))
+           (let* ((other-conversation
+                    (conversation-create configuration
+                                         :identifier "pending-inputs-other"))
+                  (other-application
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation other-conversation
+                                   :ui ui))
+                  (other-controller nil))
+             (unwind-protect
+                  (progn
+                    (setf other-controller
+                          (application-input-controller-create other-application))
+                    (application-input-controller--enqueue
+                     other-controller ':message "other follow-up")
+                    (application-input-controller-stop other-controller)
+                    (setf other-controller nil)
+                    (test-assert
+                     (probe-file
+                      (configuration-pending-inputs-path
+                       configuration
+                       (conversation-pathname other-conversation)))
+                     "another conversation keeps its own pending snapshot")
+                    (test-assert
+                     (probe-file
+                      (configuration-legacy-pending-inputs-path configuration))
+                     "another conversation cannot erase the legacy snapshot"))
+               (when other-controller
+                 (application-input-controller-stop other-controller))))
            (setf restored (application-input-controller-create application))
+           (test-assert
+            (and
+             (probe-file
+              (configuration-pending-inputs-path
+               configuration (conversation-pathname conversation)))
+             (not
+              (probe-file
+               (configuration-legacy-pending-inputs-path configuration))))
+            "loading a legacy snapshot migrates it to the conversation path")
            (test-assert
             (equal (application-input-controller-steering-items restored)
                    '("steer later"))
