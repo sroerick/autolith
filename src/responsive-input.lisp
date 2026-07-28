@@ -1379,7 +1379,10 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (application-raise-fatal application condition signal-backtrace))
         (autolith-error (condition)
           (application-handle-expected-error application condition)
-          ':failed)
+          (if (and (typep condition 'provider-error)
+                   (eql (provider-error-status condition) 429))
+              ':rate-limited
+              ':failed))
         (serious-condition (condition)
           (application-raise-fatal application condition signal-backtrace))))))
 
@@ -1453,6 +1456,87 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (application-input-controller--request-exit controller ':quit)))))
   nil)
 
+(-> application-input-controller--defer-after-rate-limit
+    (application-input-controller)
+    null)
+(defun application-input-controller--defer-after-rate-limit (controller)
+  "Move remaining queued work into durable deferred inputs after a 429.
+
+A failed rate-limited turn must not immediately submit the next follow-up.
+Queued messages, commands, and unconsumed steering become later entries at the
+provider reset deadline, or a five-minute fallback when no reset is known."
+  (let* ((application (application-input-controller-application controller))
+         (configuration (application-configuration application))
+         (provider (application-provider application))
+         (directory (configuration-working-directory configuration))
+         (now (get-universal-time))
+         (deferred-count 0))
+    (multiple-value-bind (reset-at window)
+        (later-reset-deadline (and provider (provider-rate-limits provider))
+                              :now now)
+      (let ((due-at (if (and reset-at (> reset-at now))
+                        reset-at
+                        (+ now 300)))
+            (window-label (if (and window reset-at (> reset-at now))
+                              window
+                              "5 minute retry"))
+            (pending nil))
+        (with-lock-held ((application-input-controller-lock controller))
+          (setf pending
+                (append
+                 (mapcar (lambda (input)
+                           (list ':message input))
+                         (application-input-controller-steering-items controller))
+                 (application-input-controller-work-items controller))
+                (application-input-controller-steering-items controller) nil
+                (application-input-controller-work-items controller) nil))
+        (dolist (item pending)
+          (let ((input
+                  (case (first item)
+                    (:message
+                     (let ((message (second item)))
+                       (etypecase message
+                         (string message)
+                         (user-message-input
+                          (user-message-input-text message)))))
+                    (:command (second item))
+                    (t nil))))
+            (when (non-empty-string-p input)
+              (handler-case
+                  (let ((entry
+                          (later-schedule
+                           :configuration configuration
+                           :state (application-input-controller-later-state
+                                   controller)
+                           :input input
+                           :directory directory
+                           :due-at due-at
+                           :window window-label)))
+                    (with-lock-held
+                        ((application-input-controller-lock controller))
+                      (setf (application-input-controller-pending-later-entries
+                             controller)
+                            (later--sort-entries
+                             (append
+                              (application-input-controller-pending-later-entries
+                               controller)
+                              (list entry))))
+                      (condition-notify
+                       (application-input-controller-condition-variable
+                        controller)))
+                    (incf deferred-count))
+                (later-error (condition)
+                  (application-handle-expected-error application condition))))))
+        (application-input-controller--publish-counts controller)
+        (when (plusp deferred-count)
+          (application-present
+           application
+           (format nil
+                   "Deferred ~D queued follow-up~:P until the ~A reset."
+                   deferred-count
+                   window-label))))))
+  nil)
+
 (-> application-input-controller--run-work
     (application-input-controller list)
     null)
@@ -1461,12 +1545,15 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
   (let ((application (application-input-controller-application controller)))
     (case (first work)
       (:message
-       (application--run-message-input
-        application
-        (second work)
-        :steering-function
-        (lambda ()
-          (application-input-controller--take-steering controller))))
+       (let ((result
+               (application--run-message-input
+                application
+                (second work)
+                :steering-function
+                (lambda ()
+                  (application-input-controller--take-steering controller)))))
+         (when (eq result ':rate-limited)
+           (application-input-controller--defer-after-rate-limit controller))))
       (:command
        (let* ((input (second work))
               (invocation (application-command-invocation-parse input))

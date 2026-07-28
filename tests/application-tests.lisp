@@ -5528,6 +5528,75 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-rate-limit-defers-queued-follow-ups () null)
+(defun test-rate-limit-defers-queued-follow-ups ()
+  "Test that a 429 defers remaining follow-ups instead of submitting them."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (provider (provider-create configuration))
+         (conversation
+           (conversation-create configuration :identifier "rate-limit-queue"))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :provider provider
+                          :ui ui))
+         (controller nil)
+         (ran-inputs nil))
+    (unwind-protect
+         (progn
+           (setf (provider-rate-limits provider)
+                 (list :primary
+                       (list :used-percent 100
+                             :window-minutes 300
+                             :resets-at (+ (get-universal-time) 600))))
+           (configuration-ensure-directories configuration)
+           (terminal-ui-start ui)
+           (setf controller (application-input-controller-create application))
+           (application-input-controller--enqueue controller ':message "first")
+           (application-input-controller--enqueue controller ':message "second")
+           (application-input-controller--enqueue controller ':message "third")
+           (test-call-with-function-replacements
+            (list
+             (list
+              'application--run-message-input
+              (lambda (application input &key steering-function)
+                (declare (ignore application steering-function))
+                (push (if (stringp input)
+                          input
+                          (user-message-input-text input))
+                      ran-inputs)
+                ':rate-limited)))
+            (lambda ()
+              (let ((work (application-input-controller--next-work controller)))
+                (application-input-controller--run-work controller work)
+                (application-input-controller--finish-work controller))))
+           (test-assert (equal (nreverse ran-inputs) '("first"))
+                        "only the rate-limited turn runs before deferral")
+           (test-assert
+            (null (application-input-controller-work-items controller))
+            "queued follow-ups leave the ordinary work queue after a 429")
+           (let ((entries
+                   (application-input-controller-pending-later-entries
+                    controller)))
+             (test-assert (= (length entries) 2)
+                          "remaining follow-ups become durable deferred inputs")
+             (test-assert
+              (equal (mapcar #'later-entry-input entries)
+                     '("second" "third"))
+              "deferred follow-ups preserve submission order"))
+           (let ((output (recording-terminal-output terminal)))
+             (test-assert (search "Deferred 2 queued follow-ups" output)
+                          "the user is told that follow-ups were deferred")))
+      (when controller
+        (application-input-controller-stop controller))
+      (terminal-ui-stop ui)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-later-scheduler () null)
 (defun test-later-scheduler ()
   "Test /later scheduling, listing, cancellation, and due-work promotion."
@@ -5642,5 +5711,6 @@
   (test-effort-switch)
   (test-status-entry)
   (test-session-goal)
+  (test-rate-limit-defers-queued-follow-ups)
   (test-later-scheduler)
   t)
