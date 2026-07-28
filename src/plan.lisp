@@ -149,58 +149,111 @@
                  :updated-at (getf (rest form) :updated-at)
                  :steps (mapcar #'form->plan-step (getf (rest form) :steps))))
 
+(-> plan--directory-name (configuration) string)
+(defun plan--directory-name (configuration)
+  "Return CONFIGURATION's canonical workspace directory key."
+  (workspace-directory-name
+   (configuration-working-directory configuration)))
+
+(-> plan--pathname (configuration) pathname)
+(defun plan--pathname (configuration)
+  "Return CONFIGURATION's workspace-specific plan pathname."
+  (configuration-plan-path
+   configuration
+   (workspace-directory-identifier
+    (configuration-working-directory configuration))))
+
+(-> plan--read-path (pathname) (option workspace-plan))
+(defun plan--read-path (pathname)
+  "Return the valid plan at PATHNAME, or NIL when absent or malformed."
+  (when (probe-file pathname)
+    (handler-case
+        (multiple-value-bind (form complete-p)
+            (snapshot-read pathname)
+          (when (and complete-p (plan--form-p form))
+            (form->plan form)))
+      (error (condition)
+        (error 'plan-error
+               :message (format nil "Could not load the workspace plan: ~A"
+                                condition)
+               :pathname pathname
+               :operation ':load)))))
+
+(-> plan--write-path (pathname workspace-plan) workspace-plan)
+(defun plan--write-path (pathname plan)
+  "Atomically publish PLAN at PATHNAME."
+  (handler-case
+      (progn
+        (ensure-directories-exist pathname)
+        (snapshot-write pathname (plan->form plan))
+        plan)
+    (error (condition)
+      (error 'plan-error
+             :message (format nil "Could not write the workspace plan: ~A"
+                              condition)
+             :pathname pathname
+             :operation ':write))))
+
+(-> plan--delete-path (pathname keyword) null)
+(defun plan--delete-path (pathname operation)
+  "Remove PATHNAME when present, reporting failures as OPERATION."
+  (when (probe-file pathname)
+    (handler-case
+        (delete-file pathname)
+      (error (condition)
+        (error 'plan-error
+               :message (format nil "Could not remove the workspace plan: ~A"
+                                condition)
+               :pathname pathname
+               :operation operation))))
+  nil)
+
+(-> plan--retire-matching-legacy (configuration string) null)
+(defun plan--retire-matching-legacy (configuration directory)
+  "Remove the legacy global plan when it belongs to DIRECTORY."
+  (let* ((pathname (configuration-legacy-plan-path configuration))
+         (plan (plan--read-path pathname)))
+    (when (and plan
+               (string= (workspace-plan-directory plan) directory))
+      (plan--delete-path pathname ':migrate)))
+  nil)
+
 (-> plan-load (configuration) (option workspace-plan))
 (defun plan-load (configuration)
-  "Return CONFIGURATION's workspace plan when present and valid."
-  (let ((pathname (configuration-plan-path configuration)))
-    (when (probe-file pathname)
-      (handler-case
-          (multiple-value-bind (form complete-p)
-              (snapshot-read pathname)
-            (when (and complete-p (plan--form-p form))
-              (let ((plan (form->plan form))
-                    (directory
-                      (namestring
-                       (uiop:ensure-directory-pathname
-                        (configuration-working-directory configuration)))))
-                (when (string= (workspace-plan-directory plan) directory)
-                  plan))))
-        (error (condition)
-          (error 'plan-error
-                 :message (format nil "Could not load the workspace plan: ~A"
-                                  condition)
-                 :pathname pathname
-                 :operation ':load))))))
+  "Return CONFIGURATION's workspace plan, migrating legacy state when needed."
+  (let* ((directory (plan--directory-name configuration))
+         (pathname (plan--pathname configuration))
+         (plan (plan--read-path pathname)))
+    (cond
+      (plan
+       (and (string= (workspace-plan-directory plan) directory)
+            plan))
+      ((probe-file pathname)
+       nil)
+      (t
+       (let* ((legacy-pathname
+                (configuration-legacy-plan-path configuration))
+              (legacy-plan (plan--read-path legacy-pathname)))
+         (when (and legacy-plan
+                    (string= (workspace-plan-directory legacy-plan) directory))
+           (plan--write-path pathname legacy-plan)
+           (plan--delete-path legacy-pathname ':migrate)
+           legacy-plan))))))
 
 (-> plan-write (configuration workspace-plan) workspace-plan)
 (defun plan-write (configuration plan)
-  "Atomically publish PLAN for CONFIGURATION."
-  (let ((pathname (configuration-plan-path configuration)))
-    (handler-case
-        (progn
-          (ensure-directories-exist pathname)
-          (snapshot-write pathname (plan->form plan))
-          plan)
-      (error (condition)
-        (error 'plan-error
-               :message (format nil "Could not write the workspace plan: ~A"
-                                condition)
-               :pathname pathname
-               :operation ':write)))))
+  "Atomically publish PLAN for CONFIGURATION without affecting other workspaces."
+  (let ((directory (plan--directory-name configuration)))
+    (plan--write-path (plan--pathname configuration) plan)
+    (plan--retire-matching-legacy configuration directory)
+    plan))
 
 (-> plan-clear (configuration) null)
 (defun plan-clear (configuration)
-  "Remove CONFIGURATION's workspace plan when present."
-  (let ((pathname (configuration-plan-path configuration)))
-    (when (probe-file pathname)
-      (handler-case
-          (delete-file pathname)
-        (error (condition)
-          (error 'plan-error
-                 :message (format nil "Could not clear the workspace plan: ~A"
-                                  condition)
-                 :pathname pathname
-                 :operation ':clear)))))
+  "Remove only CONFIGURATION's workspace plan when present."
+  (let ((directory (plan--directory-name configuration)))
+    (plan--delete-path (plan--pathname configuration) ':clear)
+    (plan--retire-matching-legacy configuration directory))
   nil)
 
 (-> plan-update
@@ -213,19 +266,19 @@ STEPS is a list of (:text string :status plan-status) property lists."
   (unless (and (listp steps) (plusp (length steps)))
     (error 'plan-error
            :message "A plan requires at least one step."
-           :pathname (configuration-plan-path configuration)
+           :pathname (plan--pathname configuration)
            :operation ':update))
   (when (> (length steps) *plan-maximum-steps*)
     (error 'plan-error
            :message (format nil "A plan may contain at most ~D steps."
                             *plan-maximum-steps*)
-           :pathname (configuration-plan-path configuration)
+           :pathname (plan--pathname configuration)
            :operation ':update))
   (when (and explanation
              (not (stringp explanation)))
     (error 'plan-error
            :message "Plan explanation must be a string."
-           :pathname (configuration-plan-path configuration)
+           :pathname (plan--pathname configuration)
            :operation ':update))
   (let ((plan-steps
           (mapcar
@@ -236,12 +289,12 @@ STEPS is a list of (:text string :status plan-status) property lists."
                             (<= (length text) *plan-step-text-limit*))
                  (error 'plan-error
                         :message "Each plan step needs bounded non-empty text."
-                        :pathname (configuration-plan-path configuration)
+                        :pathname (plan--pathname configuration)
                         :operation ':update))
                (unless status
                  (error 'plan-error
                         :message "Plan status must be pending, doing, or done."
-                        :pathname (configuration-plan-path configuration)
+                        :pathname (plan--pathname configuration)
                         :operation ':update))
                (make-instance 'plan-step :text text :status status)))
            steps)))
@@ -249,10 +302,7 @@ STEPS is a list of (:text string :status plan-status) property lists."
      configuration
      (make-instance
       'workspace-plan
-      :directory
-      (namestring
-       (uiop:ensure-directory-pathname
-        (configuration-working-directory configuration)))
+      :directory (plan--directory-name configuration)
       :explanation (and (non-empty-string-p explanation) explanation)
       :updated-at (get-universal-time)
       :steps plan-steps))))

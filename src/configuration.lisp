@@ -550,9 +550,16 @@ Selecting a different model recomputes the context window for that model."
   (merge-pathnames "pending-inputs.sexp"
                    (configuration-state-root configuration)))
 
-(-> configuration-plan-path (configuration) pathname)
-(defun configuration-plan-path (configuration)
-  "Return the atomic workspace plan pathname."
+(-> configuration-plan-path (configuration string) pathname)
+(defun configuration-plan-path (configuration workspace-identifier)
+  "Return one workspace's atomic plan pathname."
+  (merge-pathnames
+   (make-pathname :name workspace-identifier :type "sexp")
+   (merge-pathnames "plans/" (configuration-state-root configuration))))
+
+(-> configuration-legacy-plan-path (configuration) pathname)
+(defun configuration-legacy-plan-path (configuration)
+  "Return the legacy process-global workspace plan pathname."
   (merge-pathnames "plan.sexp" (configuration-state-root configuration)))
 
 (-> configuration-auth-path (configuration) pathname)
