@@ -90,8 +90,9 @@ net Autolith reduction: 874 source lines across the two worker files.
 * Later Candidate
 
 Autolith still contains higher-level terminal presentation code in
-=src/layout.lisp=, =src/terminal-style.lisp=, =src/markdown.lisp=,
-=src/terminal.lisp=, =src/stream-terminal.lisp=, and =src/terminal-ui.lisp=.
+=src/terminal/layout.lisp=, =src/terminal/style.lisp=,
+=src/terminal/markdown.lisp=, =src/terminal/protocol.lisp=,
+=src/terminal/stream.lisp=, and =src/terminal/ui.lisp=.
 Low-level color capability detection, style encoding, and ANSI parsing now live
 in the focused =cl-colorist= library shared with Clinedi. Remaining coherent
 Clinedi candidates are cell-aware layout and semantic spans, optional terminal
