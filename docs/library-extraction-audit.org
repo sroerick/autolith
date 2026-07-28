@@ -30,7 +30,7 @@ conversion into Autolith tool results and conditions.
 The remaining Autolith adapter is:
 
 - =src/tools/search.lisp=
-- =src/search-worker.lisp=
+- =src/workers/search.lisp=
 - Native fff build and manifest identity used by those files
 
 Realized net Autolith reduction: 965 source lines across the two search files.
@@ -80,8 +80,8 @@ argument handling, configuration adaptation, and prompt inventory rendering.
 
 The remaining Autolith adapter is:
 
-- =src/lisp-worker.lisp=
-- =src/lisp-images.lisp=
+- =src/workers/lisp.lisp=
+- =src/workers/images.lisp=
 
 It retains tool schemas and results, configuration conversion, Autolith
 condition translation, and model-facing image inventory rendering. Realized
