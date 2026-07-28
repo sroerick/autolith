@@ -5576,7 +5576,7 @@
 
 (-> test-pending-input-persistence () null)
 (defun test-pending-input-persistence ()
-  "Test unprocessed follow-ups and steering survive controller restart."
+  "Test unprocessed follow-ups and steering survive restart and shutdown races."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (terminal (make-instance 'recording-terminal :columns 60))
@@ -5589,7 +5589,8 @@
                           :conversation conversation
                           :ui ui))
          (controller nil)
-         (restored nil))
+         (restored nil)
+         (restored-after-shutdown nil))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
@@ -5612,7 +5613,28 @@
            (test-assert
             (equal (application-input-controller-work-items restored)
                    '((:message "follow later")))
-            "follow-ups are restored for the same conversation"))
+            "follow-ups are restored for the same conversation")
+           ;; Reproduce an enqueue publisher delayed until ordinary shutdown
+           ;; has persisted and cleared the process-local queues.
+           (application-input-controller--prepare-shutdown restored ':interrupt)
+           (application-input-controller--publish-counts restored)
+           (application-input-controller-stop restored)
+           (setf restored nil)
+           (setf restored-after-shutdown
+                 (application-input-controller-create application))
+           (test-assert
+            (equal
+             (application-input-controller-steering-items
+              restored-after-shutdown)
+             '("steer later"))
+            "a delayed publisher cannot erase shutdown steering")
+           (test-assert
+            (equal
+             (application-input-controller-work-items restored-after-shutdown)
+             '((:message "follow later")))
+            "a delayed publisher cannot erase shutdown follow-ups"))
+      (when restored-after-shutdown
+        (application-input-controller-stop restored-after-shutdown))
       (when restored
         (application-input-controller-stop restored))
       (when controller

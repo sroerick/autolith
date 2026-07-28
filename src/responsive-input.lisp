@@ -463,7 +463,11 @@ second reports whether shutdown was prepared."
     (application-input-controller)
     null)
 (defun application-input-controller--publish-counts (controller)
-  "Publish CONTROLLER's pending input previews through its serialized UI."
+  "Publish CONTROLLER's pending input previews through its serialized UI.
+
+A stopping controller has already finalized its durable pending-input snapshot.
+Skipping a later publisher prevents an accepted enqueue from deleting that
+snapshot after shutdown cleared the process-local queues."
   (with-lock-held ((application-input-controller-lock controller))
     (terminal-ui-set-pending-inputs
      (application-ui (application-input-controller-application controller))
@@ -473,7 +477,8 @@ second reports whether shutdown was prepared."
            for input = (second work)
            when (typep input '(or string user-message-input))
              collect (application-input--preview input)))
-    (application-input-controller--persist-pending controller))
+    (unless (application-input-controller-stopping-p controller)
+      (application-input-controller--persist-pending controller)))
   nil)
 
 (-> application-input-controller-turn-active-p
@@ -551,7 +556,11 @@ second reports whether shutdown was prepared."
               (application-input-controller-failure-backtrace controller) backtrace
               (application-input-controller-work-items controller) nil
               (application-input-controller-steering-items controller) nil
-              (application-input-controller-stopping-p controller) t))
+              (application-input-controller-stopping-p controller) t)
+        ;; Reader failure deliberately discards queued work, unlike ordinary
+        ;; shutdown, so finalize an empty durable snapshot before publishers
+        ;; begin skipping stopping controllers.
+        (application-input-controller--persist-pending controller))
       (setf active-p (application-input-controller-active-p controller))
       (condition-notify
        (application-input-controller-condition-variable controller)))
