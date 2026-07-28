@@ -1562,7 +1562,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
                   (application--run-message-input application message)
                   (application--run-command-input application input))))
         (handler-case
-            (if (eq result ':failed)
+            (if (member result '(:failed :rate-limited) :test #'eq)
                 (application-input-controller--retry-later controller entry)
                 (application-input-controller--complete-later controller entry))
           (later-error (condition)

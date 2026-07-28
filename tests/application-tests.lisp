@@ -5782,11 +5782,41 @@
                (test-assert (and (eq (first work) ':later)
                                  (eq (second work) entry))
                             "due deferred inputs enter the ordinary work queue"))
-             (application-input-controller--complete-later controller entry)
+             (test-call-with-function-replacements
+              (list
+               (list
+                'application-set-working-directory
+                (lambda (app directory)
+                  (declare (ignore app directory))
+                  nil))
+               (list
+                'application--run-message-input
+                (lambda (app input &key steering-function)
+                  (declare (ignore app input steering-function))
+                  ':rate-limited)))
+              (lambda ()
+                (application-input-controller--run-later controller entry)))
+             (let ((replacement
+                     (first
+                      (later-state-entries
+                       (application-input-controller-later-state controller)))))
+               (test-assert
+                (and replacement
+                     (string= (later-entry-identifier replacement)
+                              (later-entry-identifier entry))
+                     (> (later-entry-due-at replacement) (get-universal-time)))
+                "another rate limit reschedules the same durable input")
+               (test-assert
+                (member
+                 replacement
+                 (application-input-controller-pending-later-entries controller)
+                 :test #'eq)
+                "a rate-limited deferred input returns to the pending scheduler")
+               (application-input-controller--complete-later controller replacement))
              (application-input-controller--finish-work controller)
              (test-assert
               (null (later-state-entries (later-load configuration)))
-              "successful deferred dispatch removes durable state")))
+              "successful deferred completion removes durable state")))
       (when controller
         (application-input-controller-stop controller))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
