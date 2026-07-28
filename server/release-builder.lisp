@@ -381,6 +381,26 @@ semantic order so a temporary builder outage cannot skip a version."
   "Return one Docker bind-mount argument from PATHNAME to TARGET."
   (format nil "~A:~A" (namestring (truename pathname)) target))
 
+(-> release-builder--clear-shared-source-fasl-cache (pathname) null)
+(defun release-builder--clear-shared-source-fasl-cache (state-root)
+  "Delete shared /source ASDF fasls so successive tags cannot poison each other.
+
+Every release checkout is bind-mounted at the same container path, /source.
+ASDF therefore keys compiled fasls under one shared cache tree. Leaving that
+tree intact lets one tag's object files fail a later tag's checks."
+  (let ((cache-root (merge-pathnames "cache/common-lisp/" state-root)))
+    (when (uiop:directory-exists-p cache-root)
+      (dolist (implementation (uiop:subdirectories cache-root))
+        (let ((source-cache (merge-pathnames "source/" implementation)))
+          (when (uiop:directory-exists-p source-cache)
+            (uiop:delete-directory-tree source-cache
+                                        :validate t
+                                        :if-does-not-exist :ignore)
+            (format t "~&Cleared shared source fasl cache at ~A.~%"
+                    source-cache)
+            (finish-output))))))
+  nil)
+
 (-> release-builder--run-container
     (release-builder-configuration release-source-tag pathname)
     pathname)
@@ -395,6 +415,7 @@ semantic order so a temporary builder outage cannot skip a version."
                                   :validate t
                                   :if-does-not-exist :ignore))
     (uiop:ensure-all-directories-exist (list state staging))
+    (release-builder--clear-shared-source-fasl-cache state)
     (handler-case
         (uiop:run-program
          (list (release-builder-configuration-container-command configuration)
