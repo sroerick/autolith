@@ -55,7 +55,7 @@ The remaining Autolith storage policy is:
 
 - Property-list record validation in =src/readable-state.lisp=.
 - Conversation formats, sequencing, and provider projection in
-  =src/conversation.lisp=.
+  =src/conversation/store.lisp=.
 - Memory formats, replay, selection, and validation in =src/memories.lisp=.
 
 The dependency also publishes credential, generation, private image, worker
