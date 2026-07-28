@@ -29,7 +29,7 @@ conversion into Autolith tool results and conditions.
 
 The remaining Autolith adapter is:
 
-- =src/search-tools.lisp=
+- =src/tools/search.lisp=
 - =src/search-worker.lisp=
 - Native fff build and manifest identity used by those files
 
