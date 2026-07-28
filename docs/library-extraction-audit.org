@@ -53,10 +53,10 @@ semantic repairs such as unmatched conversation tool-call handling.
 
 The remaining Autolith storage policy is:
 
-- Property-list record validation in =src/readable-state.lisp=.
+- Property-list record validation in =src/state/records.lisp=.
 - Conversation formats, sequencing, and provider projection in
   =src/conversation/store.lisp=.
-- Memory formats, replay, selection, and validation in =src/memories.lisp=.
+- Memory formats, replay, selection, and validation in =src/state/memories.lisp=.
 
 The dependency also publishes credential, generation, private image, worker
 image, and preloaded active-image manifests. Realized net Autolith reduction:
