@@ -4079,6 +4079,7 @@
          (previous-defaults *default-pathname-defaults*)
          (old-close-count 0)
          (workspace-close-count 0)
+         (workspace-resume-count 0)
          (conversation-close-count 0)
          (old-registry
            (application-tests--replacement-registry
@@ -4120,7 +4121,9 @@
                   (workspace-registry
                     (application-tests--replacement-registry
                      "workspace-new"
-                     (lambda () (incf workspace-close-count)))))
+                     (lambda () (incf workspace-close-count))
+                     :resume-function
+                     (lambda () (incf workspace-resume-count)))))
              (push workspace-registry owned-registries)
              (test-call-with-function-replacements
               (list
@@ -4214,7 +4217,8 @@
                        workspace-registry)
                    (eq (application-agent application) active-agent)
                    (equal (uiop:getcwd) active-process-directory)
-                   (zerop workspace-close-count)
+                   (= workspace-close-count 1)
+                   (= workspace-resume-count 1)
                    (eq
                     (task-orchestrator-lifecycle-state
                      workspace-orchestrator)
@@ -4243,7 +4247,7 @@
                        (application--task-orchestrator application)))
                  (test-assert
                   (and
-                   (= workspace-close-count 1)
+                   (= workspace-close-count 2)
                    (eq (application-conversation application)
                        second-conversation)
                    (eq (application-tool-registry application)
@@ -4498,10 +4502,20 @@
                 (eq
                  (task-orchestrator-lifecycle-state old-orchestrator)
                  ':open)
-                (eq
-                 (task-orchestrator-lifecycle-state new-orchestrator)
-                 ':closed)
-                (= new-close-count 1))
+                (if (eq operation ':working-directory)
+                    ;; Workspace switches quiesce the old runtime before
+                    ;; preparing a replacement, so a retirement failure never
+                    ;; creates or closes the candidate registry.
+                    (and
+                     (eq
+                      (task-orchestrator-lifecycle-state new-orchestrator)
+                      ':open)
+                     (zerop new-close-count))
+                    (and
+                     (eq
+                      (task-orchestrator-lifecycle-state new-orchestrator)
+                      ':closed)
+                     (= new-close-count 1))))
                "runtime retirement rollback resumes old tasks and closes new tasks")
               (test-assert
                (and
