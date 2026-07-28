@@ -528,7 +528,7 @@
      "response.failed keeps its response identifier distinct")
     (test-assert (search "Temporary provider failure." (format nil "~A" condition))
                  "response.failed surfaces the provider's explanation"))
-  (dolist (code '("server_is_overloaded" "slow_down"))
+  (dolist (code '("server_is_overloaded" "slow_down" "rate_limit_exceeded"))
     (let* ((source
              (test-sse-event-string
               (json-object
@@ -556,7 +556,11 @@
        (format nil "~A response failures are retryable" code))
       (test-assert
        (string= (provider-error-code condition) code)
-       (format nil "~A response failures retain their code" code))))
+       (format nil "~A response failures retain their code" code))
+      (when (string= code "rate_limit_exceeded")
+        (test-assert
+         (provider-rate-limit-error-p condition)
+         "streamed rate-limit failures retain their exhausted-allowance class"))))
   (let* ((source
            (test-sse-event-string
             (json-object

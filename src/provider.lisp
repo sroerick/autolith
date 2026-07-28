@@ -175,11 +175,16 @@
     '(1 2 4 8 16)
   "Backoff seconds for bounded provider stream reconnects.")
 
+(defparameter *provider-rate-limit-event-error-codes*
+    '("rate_limit_exceeded")
+  "Structured SSE error codes reporting exhausted provider allowance.")
+
 (defparameter *provider-retryable-event-error-codes*
     '("server_error"
       "internal_server_error"
       "server_is_overloaded"
-      "slow_down")
+      "slow_down"
+      "rate_limit_exceeded")
   "Structured SSE error codes eligible for bounded retry.")
 
 (defparameter *provider-error-detail-limit* 1000
@@ -1041,6 +1046,20 @@ are decoded as UTF-8."
                   (member code
                           *provider-retryable-event-error-codes*
                           :test #'string-equal)))))
+
+(-> provider-rate-limit-error-p (t) boolean)
+(defun provider-rate-limit-error-p (condition)
+  "Return true when CONDITION reports exhausted provider allowance."
+  (and (typep condition 'provider-error)
+       (let ((code (provider-error-code condition)))
+         (or (eql (provider-error-status condition) 429)
+             (and code
+                  (not
+                   (null
+                    (member code
+                            *provider-rate-limit-event-error-codes*
+                            :test #'string-equal))))))
+       t))
 
 (-> provider--signal-event-failure
     (json-object

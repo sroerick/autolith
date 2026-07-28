@@ -1495,8 +1495,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (application-raise-fatal application condition signal-backtrace))
         (autolith-error (condition)
           (application-handle-expected-error application condition)
-          (if (and (typep condition 'provider-error)
-                   (eql (provider-error-status condition) 429))
+          (if (provider-rate-limit-error-p condition)
               ':rate-limited
               ':failed))
         (serious-condition (condition)
