@@ -95,14 +95,15 @@
         (list
          'fs-edit-tool
          "fs" "edit"
-         "Replace one exact text occurrence inside a workspace file."
+         "Replace one exact text occurrence inside a workspace file. Indentation and newlines must match the file exactly; do not copy line numbers from fs.read."
          (tool-object-schema
           (json-object
            "path" (tool-string-property
                    "The file path, absolute or workspace-relative.")
            "old-text" (tool-string-property
-                       "The exact existing text to replace; include enough context to be unique.")
-           "new-text" (tool-string-property "The replacement text.")
+                       "The exact existing text to replace, including its original indentation and newlines. Include enough context to be unique. Never include fs.read line-number prefixes.")
+           "new-text" (tool-string-property
+                       "The replacement text, using the file's exact indentation style.")
            "replace-all" (tool-boolean-property
                           "Replace every occurrence instead of requiring a unique match."))
           '("path" "old-text" "new-text")))))
@@ -342,6 +343,53 @@
              "target-directory" (tool-string-property
                                  "An existing destination workspace for copy or move; defaults to the current workspace."))
             '("operation")))))
+      (default-tools--register registry specification)))
+  registry)
+
+(-> default-tools--register-plan (tool-registry) tool-registry)
+(defun default-tools--register-plan (registry)
+  "Register workspace plan tools in REGISTRY."
+  (let ((empty-schema (tool-object-schema (json-object) nil)))
+    (dolist
+        (specification
+         (list
+          (list
+           'plan-list-tool
+           "plan" "list"
+           "List the current workspace plan steps and optional explanation."
+           empty-schema)
+          (list
+           'plan-update-tool
+           "plan" "update"
+           "Replace the current workspace plan with ordered steps. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan."
+           (tool-object-schema
+            (json-object
+             "steps"
+             (json-object
+              "type" "array"
+              "description" "Ordered plan steps from first to last."
+              "items"
+              (json-object
+               "type" "object"
+               "properties"
+               (json-object
+                "step" (tool-string-property
+                        "The work this plan point describes.")
+                "status"
+                (json-object
+                 "type" "string"
+                 "description" "pending, doing/in_progress, or done/completed."))
+               "required" (json-array "step" "status")
+               "additionalProperties" false))
+             "explanation"
+             (tool-string-property
+              "Optional short explanation of the plan."))
+            '("steps")))
+          (list
+           'plan-clear-tool
+           "plan" "clear"
+           "Clear the current workspace plan."
+           empty-schema)))
       (default-tools--register registry specification)))
   registry)
 
@@ -608,6 +656,7 @@
     (default-tools--register-shell registry)
     (default-tools--register-memory registry)
     (default-tools--register-agenda registry)
+    (default-tools--register-plan registry)
     (default-tools--register-lisp registry)
     (default-tools--register-self registry)
     (skill-augment-tool-registry registry)

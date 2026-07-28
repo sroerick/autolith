@@ -120,6 +120,7 @@
     (test-conversation-working-seconds)
     (test-conversation-picker-metadata-stability)
     (test-conversation-deletion)
+    (test-workspace-plan)
     (test-authentication-store)
     (test-authentication-bootstrap-and-refresh)
     (test-grok-authentication)
