@@ -182,6 +182,9 @@
       "slow_down")
   "Structured SSE error codes eligible for bounded retry.")
 
+(defparameter *provider-error-detail-limit* 1000
+  "The characters of a provider failure explanation shown in its message.")
+
 (defparameter *provider-retryable-http-statuses*
     '(500 502 503 504)
   "HTTP statuses eligible for bounded provider retry.")
@@ -516,8 +519,9 @@ delivery that the transport consumes only after a completed response."
                 (responses-lite-developer-message
                  (context-delivery-rendered delivery))))
          (input (coerce (append prefix
-                                (conversation-input-items-for-request
+                                (conversation-input-items-for-family
                                  conversation
+                                 (provider-family provider)
                                  :include-ephemeral-p (not compaction-p))
                                 (when context-message (list context-message))
                                 (when compaction-p
@@ -731,15 +735,46 @@ delivery that the transport consumes only after a completed response."
 
 (-> provider--drain-error-body (stream) (option string))
 (defun provider--drain-error-body (stream)
-  "Read and return a bounded error body from STREAM, closing it afterwards."
+  "Read and return a bounded error body from STREAM, closing it afterwards.
+
+Both decoded character streams and undecoded byte streams are accepted,
+because the dependency chooses the element type from response headers."
   (unwind-protect
        (handler-case
-           (let ((buffer (make-string 4000)))
-             (let ((end (read-sequence buffer stream)))
-               (and (plusp end) (subseq buffer 0 end))))
+           (if (subtypep (stream-element-type stream) 'character)
+               (let* ((buffer (make-string 4000))
+                      (end (read-sequence buffer stream)))
+                 (and (plusp end) (subseq buffer 0 end)))
+               (let* ((buffer (make-array 4000 :element-type '(unsigned-byte 8)))
+                      (end (read-sequence buffer stream)))
+                 (and (plusp end)
+                      (sb-ext:octets-to-string (subseq buffer 0 end)
+                                               :external-format ':utf-8))))
          (error ()
            nil))
     (provider--close-response-stream stream)))
+
+(-> provider--error-body-text (t) (option string))
+(defun provider--error-body-text (content)
+  "Return dependency error CONTENT as displayable text, when it carries any.
+
+A streaming request leaves the dependency's failure body as an undrained
+character stream rather than a string, so every shape is normalized here:
+strings pass through, streams are drained and closed, and octet vectors
+are decoded as UTF-8."
+  (handler-case
+      (cond
+        ((stringp content)
+         (and (plusp (length content)) content))
+        ((streamp content)
+         (provider--drain-error-body content))
+        ((and (vectorp content) (plusp (length content)))
+         (sb-ext:octets-to-string (coerce content '(vector (unsigned-byte 8)))
+                                  :external-format ':utf-8))
+        (t
+         nil))
+    (error ()
+      nil)))
 
 (-> provider--error-body-detail ((option string)) (option string))
 (defun provider--error-body-detail (body)
@@ -749,15 +784,18 @@ delivery that the transport consumes only after a completed response."
             (handler-case
                 (let ((decoded (json-decode body)))
                   (when (json-object-p decoded)
-                    (let ((error-object (json-get decoded "error")))
-                      (or (and (json-object-p error-object)
-                               (let ((text (json-get error-object "message")))
+                    (let ((error-value (json-get decoded "error")))
+                      (or (and (json-object-p error-value)
+                               (let ((text (json-get error-value "message")))
                                  (and (non-empty-string-p text) text)))
+                          ;; The Grok proxy reports a plain string here.
+                          (and (non-empty-string-p error-value) error-value)
                           (let ((detail (json-get decoded "detail")))
                             (and (non-empty-string-p detail) detail))))))
               (error ()
                 nil))))
-      (bounded-string (or message body) :limit 400))))
+      (bounded-string (or message body)
+                      :limit *provider-error-detail-limit*))))
 
 (-> provider--http-error-message (integer (option string)) string)
 (defun provider--http-error-message (status body)
@@ -787,13 +825,12 @@ delivery that the transport consumes only after a completed response."
         (headers
           (provider--sanitize-wire-value
            (response-headers condition)))
-        (body (handler-case
-                  (let ((content (response-body condition)))
-                    (and
-                     (stringp content)
-                     (provider--sanitize-wire-string content)))
-                (error ()
-                  nil))))
+        (body (let ((text (provider--error-body-text
+                           (handler-case
+                               (response-body condition)
+                             (error ()
+                               nil)))))
+                (and text (provider--sanitize-wire-string text)))))
     (provider-note-response-headers provider headers)
     (if (= status 401)
         (error 'provider-unauthorized

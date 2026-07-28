@@ -156,8 +156,9 @@ the transport consumes only after a completed response."
                  (context-delivery-rendered delivery))))
          (input (coerce (append prefix
                                 (mapcar #'grok-wire-input-item
-                                        (conversation-input-items-for-request
+                                        (conversation-input-items-for-family
                                          conversation
+                                         (provider-family provider)
                                          :include-ephemeral-p
                                          (not compaction-p)))
                                 (when context-message
@@ -167,17 +168,25 @@ the transport consumes only after a completed response."
                                          *compaction-instructions*))))
                         'vector)))
     (values
-     (json-object
-      "model" (configuration-model configuration)
-      "input" input
-      "tools" (grok-wire-tools effective-namespaces)
-      "tool_choice" "auto"
-      "parallel_tool_calls" false
-      "reasoning" (json-object
-                   "effort" (configuration-grok-wire-effort configuration))
-      "store" false
-      "stream" t
-      "include" (json-array "reasoning.encrypted_content"))
+     ;; The proxy rejects a tool choice without tools, so a tool-free
+     ;; compaction request must omit the choice rather than send "auto".
+     (let ((tools (grok-wire-tools effective-namespaces)))
+       (apply #'json-object
+              (append
+               (list "model" (configuration-model configuration)
+                     "input" input
+                     "tools" tools)
+               (when (plusp (length tools))
+                 (list "tool_choice" "auto"))
+               (list "parallel_tool_calls" false
+                     "reasoning"
+                     (json-object
+                      "effort"
+                      (configuration-grok-wire-effort configuration))
+                     "store" false
+                     "stream" t
+                     "include"
+                     (json-array "reasoning.encrypted_content")))))
      delivery)))
 
 

@@ -3661,7 +3661,8 @@
          (previous-defaults *default-pathname-defaults*)
          (extension-registry-snapshot
            (application--extension-registry-snapshot))
-         (pool nil))
+         (pool nil)
+         (closable-application nil))
     (ensure-directories-exist workspace)
     (ensure-directories-exist old-workspace)
     (ensure-directories-exist broken-workspace)
@@ -3715,6 +3716,7 @@
                                  :ui nil))
                 (worker nil))
            (setf pool worker-pool
+                 closable-application application
                  worker (lisp-worker-pool-start pool "workspace" "pristine"))
            (lisp-worker-request
             worker :eval '(:form "(defparameter *workspace-marker* 73)"))
@@ -3821,6 +3823,12 @@
                "failed inherited configuration restores the prior runtime")))
       (when pool
         (lisp-worker-pool-stop-all pool))
+      ;; A workspace switch installs a replacement registry owning task
+      ;; threads. Leaving them alive breaks a later test that forks.
+      (when closable-application
+        (ignore-errors
+          (tool-registry-close-runtime-state
+           (application-tool-registry closable-application))))
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
       (application--extension-registry-restore extension-registry-snapshot)

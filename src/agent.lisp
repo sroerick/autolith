@@ -454,6 +454,7 @@
         :code (provider-error-code condition)
         :request-id (provider-error-request-id condition)
         :response-id (provider-error-response-id condition)
+        :response (provider-error-response condition)
         :retryable-p (typep condition 'provider-retryable-error)))
 
 (-> agent--validate-tool-call-identifiers
