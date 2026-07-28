@@ -5528,6 +5528,53 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-pending-input-persistence () null)
+(defun test-pending-input-persistence ()
+  "Test unprocessed follow-ups and steering survive controller restart."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (conversation
+           (conversation-create configuration :identifier "pending-inputs"))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (controller nil)
+         (restored nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (conversation-append-user-message conversation "seed")
+           (terminal-ui-start ui)
+           (setf controller (application-input-controller-create application))
+           (application-input-controller--enqueue controller ':message "active turn")
+           (application-input-controller--next-work controller)
+           (application-input-controller--enqueue-steering controller "steer later")
+           (application-input-controller--enqueue controller ':message "follow later")
+           (application-input-controller-stop controller)
+           (setf controller nil)
+           (test-assert (probe-file (configuration-pending-inputs-path configuration))
+                        "pending inputs are written before controller stop")
+           (setf restored (application-input-controller-create application))
+           (test-assert
+            (equal (application-input-controller-steering-items restored)
+                   '("steer later"))
+            "steering is restored for the same conversation")
+           (test-assert
+            (equal (application-input-controller-work-items restored)
+                   '((:message "follow later")))
+            "follow-ups are restored for the same conversation"))
+      (when restored
+        (application-input-controller-stop restored))
+      (when controller
+        (application-input-controller-stop controller))
+      (terminal-ui-stop ui)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-rate-limit-defers-queued-follow-ups () null)
 (defun test-rate-limit-defers-queued-follow-ups ()
   "Test that a 429 defers remaining follow-ups instead of submitting them."
@@ -5544,21 +5591,28 @@
                           :conversation conversation
                           :provider provider
                           :ui ui))
-         (controller nil)
-         (ran-inputs nil))
+         (later-state (make-instance 'later-state))
+         (controller
+           (make-instance 'application-input-controller
+                          :application application
+                          :later-state later-state
+                          :pending-later-entries nil
+                          :main-thread (bt:current-thread)))
+         (ran-inputs nil)
+         (presented nil))
     (unwind-protect
          (progn
            (setf (provider-rate-limits provider)
                  (list :primary
                        (list :used-percent 100
                              :window-minutes 300
-                             :resets-at (+ (get-universal-time) 600))))
+                             :resets-at (+ (get-universal-time) 600)))
+                 (application-input-controller application) controller)
            (configuration-ensure-directories configuration)
-           (terminal-ui-start ui)
-           (setf controller (application-input-controller-create application))
-           (application-input-controller--enqueue controller ':message "first")
-           (application-input-controller--enqueue controller ':message "second")
-           (application-input-controller--enqueue controller ':message "third")
+           (setf (application-input-controller-work-items controller)
+                 (list (list ':message "first")
+                       (list ':message "second")
+                       (list ':message "third")))
            (test-call-with-function-replacements
             (list
              (list
@@ -5569,10 +5623,23 @@
                           input
                           (user-message-input-text input))
                       ran-inputs)
-                ':rate-limited)))
+                ':rate-limited))
+             (list
+              'application-present
+              (lambda (application text)
+                (declare (ignore application))
+                (push text presented))))
             (lambda ()
-              (let ((work (application-input-controller--next-work controller)))
-                (application-input-controller--run-work controller work)
+              (let ((work
+                      (with-lock-held
+                          ((application-input-controller-lock controller))
+                        (setf (application-input-controller-active-p controller)
+                              t)
+                        (pop (application-input-controller-work-items
+                              controller)))))
+                (application-input-controller--run-work controller
+                                                        (list ':message
+                                                              (second work)))
                 (application-input-controller--finish-work controller))))
            (test-assert (equal (nreverse ran-inputs) '("first"))
                         "only the rate-limited turn runs before deferral")
@@ -5588,12 +5655,11 @@
               (equal (mapcar #'later-entry-input entries)
                      '("second" "third"))
               "deferred follow-ups preserve submission order"))
-           (let ((output (recording-terminal-output terminal)))
-             (test-assert (search "Deferred 2 queued follow-ups" output)
-                          "the user is told that follow-ups were deferred")))
-      (when controller
-        (application-input-controller-stop controller))
-      (terminal-ui-stop ui)
+           (test-assert
+            (some (lambda (text)
+                    (search "Deferred 2 queued follow-ups" text))
+                  presented)
+            "the user is told that follow-ups were deferred"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -5711,6 +5777,7 @@
   (test-effort-switch)
   (test-status-entry)
   (test-session-goal)
+  (test-pending-input-persistence)
   (test-rate-limit-defers-queued-follow-ups)
   (test-later-scheduler)
   t)

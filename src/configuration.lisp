@@ -536,6 +536,17 @@ Selecting a different model recomputes the context window for that model."
   "Return the atomic deferred-input queue pathname."
   (merge-pathnames "later.sexp" (configuration-state-root configuration)))
 
+(-> configuration-pending-inputs-path (configuration) pathname)
+(defun configuration-pending-inputs-path (configuration)
+  "Return the atomic unprocessed follow-up and steering pathname."
+  (merge-pathnames "pending-inputs.sexp"
+                   (configuration-state-root configuration)))
+
+(-> configuration-plan-path (configuration) pathname)
+(defun configuration-plan-path (configuration)
+  "Return the atomic workspace plan pathname."
+  (merge-pathnames "plan.sexp" (configuration-state-root configuration)))
+
 (-> configuration-auth-path (configuration) pathname)
 (defun configuration-auth-path (configuration)
   "Return Autolith's private ChatGPT OAuth credential pathname."

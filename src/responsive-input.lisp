@@ -302,6 +302,9 @@ second reports whether shutdown was prepared."
                 (application-input-controller-turn-cancellation-delivery-pending-p
                  controller)
                 t))
+        ;; Persist unprocessed follow-ups before clearing process-local queues
+        ;; so the next session can restore them for this conversation.
+        (application-input-controller--persist-pending controller)
         (setf (application-input-controller-stopping-p controller) t
               (application-input-controller-work-items controller) nil
               (application-input-controller-steering-items controller) nil)
@@ -355,6 +358,107 @@ second reports whether shutdown was prepared."
       (t
        (application-input--copy input)))))
 
+(-> application-input-controller--pending-work-form (list) list)
+(defun application-input-controller--pending-work-form (work-items)
+  "Return durable forms for WORK-ITEMS that can be restored after restart."
+  (loop for work in work-items
+        for kind = (first work)
+        for input = (second work)
+        when (and (member kind '(:message :command) :test #'eq)
+                  (typep input '(or string user-message-input)))
+          collect (list kind (application-input--text input))))
+
+(-> application-input-controller--restore-work-items (list) list)
+(defun application-input-controller--restore-work-items (forms)
+  "Return in-memory work items restored from durable FORMS."
+  (loop for form in forms
+        when (and (listp form)
+                  (member (first form) '(:message :command) :test #'eq)
+                  (stringp (second form)))
+          collect (list (first form) (copy-seq (second form)))))
+
+(-> application-input-controller--persist-pending
+    (application-input-controller)
+    null)
+(defun application-input-controller--persist-pending (controller)
+  "Atomically publish CONTROLLER's unprocessed follow-ups and steering."
+  (let* ((application (application-input-controller-application controller))
+         (configuration
+           (and (slot-boundp application 'configuration)
+                (application-configuration application)))
+         (conversation
+           (and (slot-boundp application 'conversation)
+                (application-conversation application))))
+    (when (and (typep configuration 'configuration)
+               (typep conversation 'conversation))
+      (handler-case
+          (let* ((pathname (configuration-pending-inputs-path configuration))
+                 (steering
+                   (mapcar #'application-input--text
+                           (application-input-controller-steering-items
+                            controller)))
+                 (work
+                   (application-input-controller--pending-work-form
+                    (application-input-controller-work-items controller)))
+                 (form
+                   (list :pending-inputs
+                         :version 1
+                         :conversation-id (conversation-identifier conversation)
+                         :steering steering
+                         :work work)))
+            (if (and (null steering) (null work))
+                (when (probe-file pathname)
+                  (delete-file pathname))
+                (progn
+                  (ensure-directories-exist pathname)
+                  (snapshot-write pathname form))))
+        (error ()
+          nil))))
+  nil)
+
+(-> application-input-controller--load-pending
+    (application-input-controller)
+    null)
+(defun application-input-controller--load-pending (controller)
+  "Restore unprocessed follow-ups and steering for CONTROLLER's conversation."
+  (let* ((application (application-input-controller-application controller))
+         (configuration
+           (and (slot-boundp application 'configuration)
+                (application-configuration application)))
+         (conversation
+           (and (slot-boundp application 'conversation)
+                (application-conversation application))))
+    (when (and (typep configuration 'configuration)
+               (typep conversation 'conversation))
+      (let ((pathname (configuration-pending-inputs-path configuration)))
+        (when (probe-file pathname)
+          (handler-case
+              (multiple-value-bind (form complete-p)
+                  (snapshot-read pathname)
+                (when (and complete-p
+                           (listp form)
+                           (eq (first form) :pending-inputs)
+                           (= (or (getf (rest form) :version) 0) 1)
+                           (string= (getf (rest form) :conversation-id)
+                                    (conversation-identifier conversation)))
+                  (let ((steering (getf (rest form) :steering))
+                        (work (getf (rest form) :work)))
+                    (when (listp steering)
+                      (setf (application-input-controller-steering-items
+                             controller)
+                            (mapcar #'copy-seq
+                                    (remove-if-not #'stringp steering))))
+                    (when (listp work)
+                      (setf (application-input-controller-work-items controller)
+                            (append
+                             (application-input-controller--restore-work-items
+                              work)
+                             (application-input-controller-work-items
+                              controller)))))))
+            (error ()
+              nil))))))
+  nil)
+
 (-> application-input-controller--publish-counts
     (application-input-controller)
     null)
@@ -368,7 +472,8 @@ second reports whether shutdown was prepared."
      (loop for work in (application-input-controller-work-items controller)
            for input = (second work)
            when (typep input '(or string user-message-input))
-             collect (application-input--preview input))))
+             collect (application-input--preview input)))
+    (application-input-controller--persist-pending controller))
   nil)
 
 (-> application-input-controller-turn-active-p
@@ -1228,6 +1333,8 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                           (copy-list (later-state-entries later-state))
                           :main-thread (current-thread))))
     (setf (application-input-controller application) controller)
+    (application-input-controller--load-pending controller)
+    (application-input-controller--publish-counts controller)
     (application-input-controller--start-reader controller)
     controller))
 
