@@ -78,7 +78,7 @@
                              (:file "state/overlays")
                              (:file "state/durable-mutations")
                              (:file "state/image-commits")
-                             (:file "user-init")
+                             (:file "startup/user-init")
                              (:file "state/generations")
                              (:file "self/status")
                              (:file "self/discard")
@@ -104,8 +104,8 @@
                              (:file "application/recovery")
                              (:file "application/commands")
                              (:file "terminal/responsive-input")
-                             (:file "main")
-                             (:file "active-image"))))
+                             (:file "startup/main")
+                             (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
 
 (asdf:defsystem #:autolith/release-server

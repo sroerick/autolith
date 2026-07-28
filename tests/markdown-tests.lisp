@@ -62,9 +62,9 @@
   (let* ((renderer (markdown-renderer-create :width 60))
          (row (first (markdown-render-line
                       renderer
-                      "*inspect `src/main.lisp` now*"))))
+                      "*inspect `src/startup/main.lisp` now*"))))
     (test-assert
-     (string= (markdown-tests--row-text row) "  inspect src/main.lisp now")
+     (string= (markdown-tests--row-text row) "  inspect src/startup/main.lisp now")
      "inline code inside emphasis consumes both outer delimiters")
     (test-assert (find (terminal-span :emphasis "inspect ") row :test #'equal)
                  "emphasis styling precedes nested inline code")
