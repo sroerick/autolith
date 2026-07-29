@@ -272,6 +272,8 @@
          ("/cwd /tmp" :hold)
          ("/trace" :execute)
          ("/trace on" :hold)
+         ("/timestamps" :execute)
+         ("/timestamps on" :hold)
          ("/goal" :execute)
          ("/goal pause" :hold)
          ("/agenda" :execute)

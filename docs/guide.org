@@ -315,6 +315,7 @@ prefix from before selection. The commands are:
 /model          pick the 5.6 model and reasoning effort
 /effort         pick the reasoning effort
 /trace on|off   show visible reasoning summaries
+/timestamps on|off show local timestamps beside user and assistant turns
 /permissions    choose command access for this session
 /later INPUT    run input after rate limits reset
 /goal OBJECTIVE set or view the session goal
@@ -381,6 +382,11 @@ live trace above the status and prompt, then finalizes it once in the transcript
 globally in =${XDG_STATE_HOME:-~/.local/state}/autolith/preferences.sexp= and
 survives clean restarts. Autolith never displays raw reasoning text or encrypted
 reasoning payloads; these are model-provided summaries, not hidden chain-of-thought.
+
+=/timestamps on= adds a dim local =YYYY-MM-DD HH:MM= label beside each user and
+assistant transcript header. =/timestamps off=, the default, hides those labels.
+This global presentation preference is saved beside =/trace= and =/compact=; it
+does not alter durable history or provider context.
 
 ** Child agents and jobs
 

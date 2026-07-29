@@ -42,8 +42,11 @@
               (null (preference-state-reasoning-effort preferences))
               "missing preferences have no saved reasoning effort")
              (test-assert
-              (preference-state-compact-view-p preferences)
-              "missing preferences default to compact tool presentation"))
+             (preference-state-compact-view-p preferences)
+              "missing preferences default to compact tool presentation")
+             (test-assert
+              (not (preference-state-turn-timestamps-p preferences))
+              "missing preferences default turn timestamps to hidden"))
            (ensure-directories-exist pathname)
            (snapshot-write
             pathname
@@ -52,11 +55,15 @@
               :model "gpt-5.6-luna"
               :reasoning-effort "high"
               :reasoning-traces-p t
-              :compact-view-p nil))
+              :compact-view-p nil
+              :turn-timestamps-p t))
            (let ((preferences (preferences-load configuration)))
              (test-assert
               (not (preference-state-compact-view-p preferences))
               "version three compact preferences remain readable")
+             (test-assert
+              (preference-state-turn-timestamps-p preferences)
+              "version three turn-timestamp preferences remain readable")
              (multiple-value-bind (form sole-form-p)
                  (snapshot-read pathname)
                (test-assert sole-form-p
@@ -64,8 +71,11 @@
                (test-assert (= (getf (rest form) :version) 2)
                             "version three preferences normalize to version two")
                (test-assert
-                (not (getf (rest form) :compact-view-p))
-                "normalizing preferences preserves compact presentation")))
+               (not (getf (rest form) :compact-view-p))
+                "normalizing preferences preserves compact presentation")
+               (test-assert
+                (getf (rest form) :turn-timestamps-p)
+                "normalizing preferences preserves turn-timestamp presentation")))
            (with-open-file (stream pathname
                                    :direction :output
                                    :if-exists :supersede
@@ -84,7 +94,10 @@
                           "version one preferences have no saved model")
              (test-assert
               (preference-state-compact-view-p legacy)
-              "version one preferences default to compact tool presentation"))
+              "version one preferences default to compact tool presentation")
+             (test-assert
+              (not (preference-state-turn-timestamps-p legacy))
+              "version one preferences default turn timestamps to hidden"))
            (let* ((selected
                     (configuration-with-reasoning-effort
                      (configuration-with-model configuration "gpt-5.6-luna")
@@ -101,8 +114,11 @@
                 (preference-state-reasoning-traces-p preferences)
                 "saving model choices preserves the trace preference")
                (test-assert
-                (preference-state-compact-view-p preferences)
-                "saving model choices preserves compact presentation"))
+               (preference-state-compact-view-p preferences)
+                "saving model choices preserves compact presentation")
+               (test-assert
+                (not (preference-state-turn-timestamps-p preferences))
+                "saving model choices preserves hidden turn timestamps"))
              (preferences-tests--without-model-environment
               (lambda ()
                 (let ((restored
@@ -130,7 +146,10 @@
               "changing traces preserves the selected effort")
              (test-assert
               (preference-state-compact-view-p preferences)
-              "changing traces preserves compact presentation"))
+              "changing traces preserves compact presentation")
+             (test-assert
+              (not (preference-state-turn-timestamps-p preferences))
+              "changing traces preserves hidden turn timestamps"))
            (preferences-set-compact-view configuration nil)
            (let ((preferences (preferences-load configuration)))
              (test-assert
@@ -141,7 +160,21 @@
               "changing compact presentation preserves the selected model")
              (test-assert
               (not (preference-state-reasoning-traces-p preferences))
-              "changing compact presentation preserves trace mode"))
+              "changing compact presentation preserves trace mode")
+             (test-assert
+              (not (preference-state-turn-timestamps-p preferences))
+              "changing compact presentation preserves hidden turn timestamps"))
+           (preferences-set-turn-timestamps configuration t)
+           (let ((preferences (preferences-load configuration)))
+             (test-assert
+              (preference-state-turn-timestamps-p preferences)
+              "visible turn timestamps survive a preference reload")
+             (test-assert
+              (not (preference-state-compact-view-p preferences))
+              "changing turn timestamps preserves compact presentation")
+             (test-assert
+              (not (preference-state-reasoning-traces-p preferences))
+              "changing turn timestamps preserves trace mode"))
            (with-open-file (stream pathname
                                    :direction :output
                                    :if-exists :supersede

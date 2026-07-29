@@ -814,6 +814,53 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-turn-timestamps-command () null)
+(defun test-turn-timestamps-command ()
+  "Test persistent optional timestamps for transcript turn headers."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (application-tests--ui-application :columns 60))
+         (ui (application-ui application))
+         (terminal (terminal-ui-terminal ui)))
+    (setf (application-configuration application) configuration)
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (test-assert (not (application-turn-timestamps-p application))
+                        "turn timestamps default to hidden")
+           (test-assert (eq (application-command application "/timestamps on")
+                            ':continue)
+                        "/timestamps on remains a nonmodal command")
+           (test-assert (application-turn-timestamps-p application)
+                        "/timestamps on enables header timestamps")
+           (test-assert (preferences-turn-timestamps-p configuration)
+                        "/timestamps on persists visible timestamps")
+           (test-assert (search "enabled and saved"
+                                (recording-terminal-output terminal))
+                        "/timestamps on confirms persistence")
+           (recording-terminal-reset terminal)
+           (test-assert (eq (application-command application "/timestamps off")
+                            ':continue)
+                        "/timestamps off remains a nonmodal command")
+           (test-assert (not (application-turn-timestamps-p application))
+                        "/timestamps off hides header timestamps")
+           (test-assert (not (preferences-turn-timestamps-p configuration))
+                        "/timestamps off persists hidden timestamps")
+           (test-assert (search "hidden and saved"
+                                (recording-terminal-output terminal))
+                        "/timestamps off confirms persistence")
+           (test-assert
+            (handler-case
+                (progn
+                  (application-turn-timestamps-command application "sometimes")
+                  nil)
+              (configuration-error ()
+                t))
+            "unsupported timestamp modes signal a typed usage error"))
+      (terminal-ui-stop ui)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-command-permission-modes () null)
 (defun test-command-permission-modes ()
   "Test session permission commands and fail-closed command authorization."
@@ -1823,6 +1870,35 @@
       (test-assert (search "  hello there"
                            (terminal-span-text (first (last entry))))
                    "user bodies are indented beneath their header"))
+    (let* ((timestamp (encode-universal-time 0 30 14 29 7 2026))
+           (timestamped-application
+             (application-tests--ui-application
+              :columns 60
+              :compact-view-p nil)))
+      (setf (application-turn-timestamps-p timestamped-application) t)
+      (let ((user-entry
+              (conversation-record-entry
+               timestamped-application
+               (list :message :seq 1 :time timestamp :role :user
+                     :content "dated prompt"))))
+        (test-assert
+         (find (terminal-span :dim "  2026-07-29 14:30")
+               user-entry
+               :test #'equal)
+         "enabled timestamps appear as dim local text beside user headers"))
+      (let ((assistant-entry
+              (conversation-record-entry
+               timestamped-application
+               (list :provider-item
+                     :seq 2
+                     :time timestamp
+                     :wire-json
+                     "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"dated answer\"}]}"))))
+        (test-assert
+         (find (terminal-span :dim "  2026-07-29 14:30")
+               assistant-entry
+               :test #'equal)
+         "enabled timestamps appear as dim local text beside assistant headers")))
     (let ((entry (conversation-record-entry
                   application
                   (list :message :seq 1 :time 0 :role :user
@@ -5968,6 +6044,7 @@
   (test-application-status-details)
   (test-reasoning-trace-command)
   (test-compact-view-command)
+  (test-turn-timestamps-command)
   (test-command-permission-modes)
   (test-interrupt-resume-instruction)
   (test-repeated-interrupt-forces-exit)

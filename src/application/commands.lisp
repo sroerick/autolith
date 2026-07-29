@@ -482,6 +482,40 @@
               :message "Usage: /trace on or /trace off."))))
   nil)
 
+(-> application-set-turn-timestamps (application boolean) null)
+(defun application-set-turn-timestamps (application enabled-p)
+  "Persist and apply whether user and assistant headers show timestamps."
+  (preferences-set-turn-timestamps
+   (application-configuration application)
+   enabled-p)
+  (unless (eq (application-turn-timestamps-p application) enabled-p)
+    (setf (application-turn-timestamps-p application) enabled-p)
+    (application-reset-history-pagination application))
+  (application-publish-recovery-session application)
+  nil)
+
+(-> application-turn-timestamps-command (application (option string)) null)
+(defun application-turn-timestamps-command (application argument)
+  "Show or change APPLICATION's optional turn-timestamp presentation."
+  (let ((mode (and argument (string-downcase argument))))
+    (cond
+      ((null mode)
+       (application-present
+        application
+        (format nil
+                "Turn timestamps are ~:[hidden~;shown~]. This setting persists across restarts."
+                (application-turn-timestamps-p application))))
+      ((string= mode "on")
+       (application-set-turn-timestamps application t)
+       (application-present application "Turn timestamps are enabled and saved."))
+      ((string= mode "off")
+       (application-set-turn-timestamps application nil)
+       (application-present application "Turn timestamps are hidden and saved."))
+      (t
+       (error 'configuration-error
+              :message "Usage: /timestamps on or /timestamps off."))))
+  nil)
+
 (-> application-compact-view-command (application string) null)
 (defun application-compact-view-command (application argument)
   "Persist and apply APPLICATION's compact tool presentation mode."
@@ -1355,6 +1389,19 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :terminal-behavior :shared)
     (application invocation)
   (application-trace-command
+   application
+   (application-command-invocation-argument invocation))
+  ':continue)
+
+(define-application-command application--builtin-turn-timestamps-command
+    (:name "/timestamps"
+     :argument "on|off"
+     :description "show local timestamps beside user and assistant turns"
+     :tip "toggles dim local timestamps beside user and assistant turns."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (application-turn-timestamps-command
    application
    (application-command-invocation-argument invocation))
   ':continue)

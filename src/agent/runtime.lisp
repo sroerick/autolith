@@ -327,7 +327,8 @@
            (agent-observer-status
             observer
             :user-message-persisted
-            (list :sequence (getf (rest record) :seq))))
+            (list :sequence (getf (rest record) :seq)
+                  :time (getf (rest record) :time))))
          (unwind-protect
               (agent--run-provider-loop agent observer goal-context)
            (conversation-clear-ephemeral-input-items conversation)

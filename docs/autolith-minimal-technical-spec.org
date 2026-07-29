@@ -1240,6 +1240,12 @@ before a user message, and reconstructs the total exactly on resume. While a
 turn is active, the status row right-aligns the conversation's total worked
 time beside the running activity clock and drops it first on narrow rows.
 
+Turn timestamps are an optional global terminal presentation preference, off
+by default. When enabled, each user and assistant transcript header carries a
+dim local =YYYY-MM-DD HH:MM= label. Replayed headers derive that label from
+their durable record timestamp. This changes neither conversation history nor
+provider context.
+
 While a turn is active, Enter steers its next tool boundary and Tab queues a
 later follow-up. Pending inputs are previewed in the live region, and an empty
 Tab recalls the newest follow-up for editing. While idle, Tab submits like Enter.

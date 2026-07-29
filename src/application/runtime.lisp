@@ -62,6 +62,12 @@
     :type boolean
     :documentation
     "Whether verbose tool calls are condensed and successful routine results hidden.")
+   (turn-timestamps-p
+    :initarg :turn-timestamps-p
+    :initform nil
+    :accessor application-turn-timestamps-p
+    :type boolean
+    :documentation "Whether user and assistant headers show local timestamps.")
    (installation-provenance
     :initarg :installation-provenance
     :initform nil
@@ -718,6 +724,9 @@ newly acquired lease."
                            (compact-view-p
                              (preferences-compact-view-p
                               preferred-configuration))
+                           (turn-timestamps-p
+                             (preferences-turn-timestamps-p
+                              preferred-configuration))
                            (permission-state
                              (permissions-load preferred-configuration))
                            (configuration
@@ -760,6 +769,7 @@ newly acquired lease."
                                :permission-mode permission-mode
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
+                               :turn-timestamps-p turn-timestamps-p
                                :installation-provenance
                                installation-provenance
                                :update-availability update-availability)
@@ -862,6 +872,8 @@ newly acquired lease."
                   (preferences-reasoning-traces-p prepared-configuration))
                 (compact-view-p
                   (preferences-compact-view-p prepared-configuration))
+                (turn-timestamps-p
+                  (preferences-turn-timestamps-p prepared-configuration))
                 (permission-state (permissions-load prepared-configuration))
                 (recovery-conversation-id
                   (let ((value
@@ -962,6 +974,7 @@ newly acquired lease."
                     :permission-mode permission-mode
                     :reasoning-traces-p reasoning-traces-p
                     :compact-view-p compact-view-p
+                    :turn-timestamps-p turn-timestamps-p
                     :installation-provenance installation-provenance
                     :update-availability update-availability))
              (multiple-value-bind
@@ -1492,16 +1505,31 @@ newly acquired lease."
                                              ':plain
                                              (string #\Newline))))))))
 
+(-> application--turn-timestamp-text
+    (application (option timestamp))
+    (option string))
+(defun application--turn-timestamp-text (application timestamp)
+  "Return TIMESTAMP as a local turn-header label when that display is enabled."
+  (when (and (application-turn-timestamps-p application)
+             (typep timestamp 'timestamp))
+    (multiple-value-bind (second minute hour date month year)
+        (decode-universal-time timestamp)
+      (declare (ignore second))
+      (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D"
+              year month date hour minute))))
+
 (-> application--transcript-entry
     (application &key (:style terminal-style) (:header string)
                  (:detail (option string)) (:body (option string))
-                 (:body-style terminal-style))
+                 (:body-style terminal-style) (:timestamp (option timestamp)))
     list)
 (defun application--transcript-entry
     (application &key (style ':plain) (header "") detail body
-                 (body-style ':plain))
+                 (body-style ':plain) timestamp)
   "Return one styled transcript entry with HEADER, optional DETAIL, and BODY rows."
-  (let ((spans (list (terminal-span style header))))
+  (let ((spans (list (terminal-span style header)))
+        (detail (or detail
+                    (application--turn-timestamp-text application timestamp))))
     (when detail
       (let ((available (- (terminal-columns
                            (terminal-ui-terminal (application-ui application)))
@@ -1656,8 +1684,10 @@ newly acquired lease."
                    row
                    (cons (terminal-span ':plain (string #\Newline)) row))))
 
-(-> response-item-entry (application json-object) (option list))
-(defun response-item-entry (application item)
+(-> response-item-entry
+    (application json-object &key (:timestamp (option timestamp)))
+    (option list))
+(defun response-item-entry (application item &key timestamp)
   "Return a styled transcript entry for completed provider ITEM."
   (let ((type (json-get item "type")))
     (cond
@@ -1665,8 +1695,12 @@ newly acquired lease."
             (string= (or (json-get item "role") "") "assistant"))
        (let ((text (response-item-assistant-text item)))
          (when text
-           (append (list (terminal-span ':brand "● autolith")
-                         (terminal-span ':plain (string #\Newline)))
+           (append (application--transcript-entry
+                    application
+                    :style ':brand
+                    :header "● autolith"
+                    :timestamp timestamp)
+                   (list (terminal-span ':plain (string #\Newline)))
                    (application--markdown-body application text)))))
       ((string= (or type "") "reasoning")
        (when (application-reasoning-traces-p application)
@@ -1700,11 +1734,14 @@ newly acquired lease."
              (application--transcript-entry application
                                             :style ':user
                                             :header "❯ you"
+                                            :timestamp (getf (rest record) :time)
                                             :body content)))))
     (:provider-item
      (let ((wire-json (getf (rest record) :wire-json)))
        (and (stringp wire-json)
-            (response-item-entry application (json-decode wire-json)))))
+            (response-item-entry application
+                                 (json-decode wire-json)
+                                 :timestamp (getf (rest record) :time)))))
     (:tool-result
      (let* ((canonical-name (getf (rest record) :tool))
             (tool (application--find-tool application canonical-name)))
@@ -2348,6 +2385,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
         (stream-text "")
         (stream-pending "")
         (stream-open-p nil)
+        (stream-started-at nil)
         (stream-renderer nil))
     (labels ((reasoning-flush ()
                "Finalize the visible reasoning summary before assistant output."
@@ -2373,10 +2411,17 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                    (unless stream-open-p
                      (reasoning-flush)
                      (setf stream-open-p t
+                           stream-started-at (get-universal-time)
                            stream-renderer (application--markdown-renderer
                                             application))
                      (application-set-activity application "receiving response")
-                     (push (list (terminal-span ':brand "● autolith")) rows))
+                     (push
+                      (application--transcript-entry
+                       application
+                       :style ':brand
+                       :header "● autolith"
+                       :timestamp stream-started-at)
+                      rows))
                    (loop for newline = (position #\Newline stream-pending)
                          while newline
                          do (setf rows
@@ -2424,7 +2469,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
        (lambda (status details)
          (case status
            (:user-message-persisted
-            (let ((sequence (getf details :sequence)))
+            (let ((sequence (getf details :sequence))
+                  (timestamp (getf details :time)))
               (unless (typep sequence '(integer 0))
                 (error 'conversation-invariant-error
                        :message
@@ -2447,6 +2493,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                       application
                       :style ':user
                       :header "❯ you"
+                      :timestamp timestamp
                       :body
                       (user-message-input-preview user-message-input))))
                 (setf (application-rendered-sequence application) sequence)))

@@ -30,7 +30,13 @@
     :reader preference-state-compact-view-p
     :type boolean
     :documentation
-    "Whether verbose tool calls are condensed and successful routine results hidden."))
+    "Whether verbose tool calls are condensed and successful routine results hidden.")
+   (turn-timestamps-p
+    :initarg :turn-timestamps-p
+    :initform nil
+    :reader preference-state-turn-timestamps-p
+    :type boolean
+    :documentation "Whether transcript turn headers include local timestamps."))
   (:documentation "Validated global choices restored across Autolith processes."))
 
 (-> preferences--form-p (t) boolean)
@@ -53,7 +59,10 @@
                            (effort (getf properties :reasoning-effort))
                            (compact-present-p
                              (readable-state-property-present-p
-                              properties :compact-view-p)))
+                              properties :compact-view-p))
+                           (turn-timestamps-present-p
+                             (readable-state-property-present-p
+                              properties :turn-timestamps-p)))
                        (and
                         (readable-state-property-present-p properties :model)
                         (readable-state-property-present-p
@@ -67,6 +76,9 @@
                                       :test #'string=))))
                         (or (not compact-present-p)
                             (typep (getf properties :compact-view-p)
+                                   'boolean))
+                        (or (not turn-timestamps-present-p)
+                            (typep (getf properties :turn-timestamps-p)
                                    'boolean))
                         (or (= version 2) compact-present-p))))
                     (otherwise
@@ -83,7 +95,9 @@
                    :reasoning-effort (getf properties :reasoning-effort)
                    :reasoning-traces-p
                    (getf properties :reasoning-traces-p)
-                   :compact-view-p (getf properties :compact-view-p t))))
+                   :compact-view-p (getf properties :compact-view-p t)
+                   :turn-timestamps-p
+                   (getf properties :turn-timestamps-p nil))))
 
 (-> preferences--state-form (preference-state) list)
 (defun preferences--state-form (preferences)
@@ -96,7 +110,9 @@
         :reasoning-traces-p
         (preference-state-reasoning-traces-p preferences)
         :compact-view-p
-        (preference-state-compact-view-p preferences)))
+        (preference-state-compact-view-p preferences)
+        :turn-timestamps-p
+        (preference-state-turn-timestamps-p preferences)))
 
 (-> preferences--read
     (configuration)
@@ -160,6 +176,11 @@
   "Return the persisted compact tool-presentation setting, defaulting to true."
   (preference-state-compact-view-p (preferences-load configuration)))
 
+(-> preferences-turn-timestamps-p (configuration) boolean)
+(defun preferences-turn-timestamps-p (configuration)
+  "Return the persisted turn-timestamp setting, defaulting to false."
+  (preference-state-turn-timestamps-p (preferences-load configuration)))
+
 (-> preferences-apply-model-selection (configuration) configuration)
 (defun preferences-apply-model-selection (configuration)
   "Apply saved model choices unless their corresponding environment variables exist."
@@ -208,7 +229,9 @@
       :reasoning-traces-p
       (preference-state-reasoning-traces-p previous)
       :compact-view-p
-      (preference-state-compact-view-p previous))))
+      (preference-state-compact-view-p previous)
+      :turn-timestamps-p
+      (preference-state-turn-timestamps-p previous))))
   nil)
 
 (-> preferences-set-reasoning-traces (configuration boolean) null)
@@ -222,7 +245,9 @@
       :model (preference-state-model previous)
       :reasoning-effort (preference-state-reasoning-effort previous)
       :reasoning-traces-p enabled-p
-      :compact-view-p (preference-state-compact-view-p previous))))
+      :compact-view-p (preference-state-compact-view-p previous)
+      :turn-timestamps-p
+      (preference-state-turn-timestamps-p previous))))
   nil)
 
 (-> preferences-set-compact-view (configuration boolean) null)
@@ -237,5 +262,23 @@
       :reasoning-effort (preference-state-reasoning-effort previous)
       :reasoning-traces-p
       (preference-state-reasoning-traces-p previous)
-      :compact-view-p enabled-p)))
+      :compact-view-p enabled-p
+      :turn-timestamps-p
+      (preference-state-turn-timestamps-p previous))))
+  nil)
+
+(-> preferences-set-turn-timestamps (configuration boolean) null)
+(defun preferences-set-turn-timestamps (configuration enabled-p)
+  "Atomically persist ENABLED-P without discarding other global choices."
+  (let ((previous (preferences-load configuration)))
+    (preferences--write
+     configuration
+     (make-instance
+      'preference-state
+      :model (preference-state-model previous)
+      :reasoning-effort (preference-state-reasoning-effort previous)
+      :reasoning-traces-p
+      (preference-state-reasoning-traces-p previous)
+      :compact-view-p (preference-state-compact-view-p previous)
+      :turn-timestamps-p enabled-p)))
   nil)
