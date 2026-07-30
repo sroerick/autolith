@@ -1,145 +1,84 @@
-#+TITLE: Autolith Library Extraction Audit
+#+TITLE: Autolith Library Extraction Report
 #+STARTUP: content
-#+OPTIONS: toc:2 num:nil
+#+OPTIONS: toc:nil num:nil
 
-* Purpose
+* Decision
 
-This audit identifies implementation that can become general-purpose Common
-Lisp libraries while leaving Autolith's product behavior and defining
-self-modification architecture easy to inspect.
+Do not create another library merely to shrink Autolith. Extract only a
+coherent protocol that has, or is about to have, a second consumer. The next
+promising move is an optional Clinedi output-rendering extension, not a new
+unrelated repository.
 
-The audit covers roughly 25,100 implementation lines in =src/=, =recovery/=,
-and =server/=. Moving code does not reduce the total amount of maintained code.
-It is useful only when the resulting library has a narrower independent API,
-tests its own invariants, and leaves a small Autolith adapter.
+* Already Shared
 
-* Selected Extractions
+- =clinedi= owns Unicode editing, completion selection, terminal geometry, and
+  the scrollback-safe live region shared by Autolith and CCLSH.
+- =cl-colorist= owns ANSI capability detection, color styles, and control
+  sequence handling.
+- =colorlisp= owns language detection and Tree-sitter highlighting.
+- =mcparen= owns MCP transport and protocol machinery.
+- =sexp-store= owns safe readable snapshots and append-only S-expression logs.
+- =sbcl-workers= and =clifff= also keep worker and indexed-search machinery
+  outside the agent application.
 
-** =clifff=
+* Viable Future Extractions
 
-Natural home: =luciusmagn/clifff=.
+** Clinedi output rendering extension
 
-Status: implemented and integrated at
-=a57058ba3ffd222af57513e412a1d01508b4d1b3=.
+Priority: first, when CCLSH or another terminal program needs rich streaming
+output.
 
-The fff CFFI binding, native index lifecycle, result decoding, content search,
-and restartable helper process are general-purpose facilities. Autolith should
-retain only tool schemas, workspace configuration, argument validation, and
-conversion into Autolith tool results and conditions.
+Autolith's =src/terminal/layout.lisp=, generic styled-span handling in
+=src/terminal/style.lisp=, and the reusable parts of
+=src/terminal/markdown.lisp= form one terminal-presentation boundary. They
+already rely on Clinedi's cell geometry and live-region behavior.
 
-The remaining Autolith adapter is:
+The extension should provide cell-aware columns, neutral styled spans,
+streaming Markdown fences and tables, and an optional ColorLisp adapter. It
+should not contain Autolith's palette names, tool panels, status line,
+conversation transcript, or application classes. It belongs as an optional
+Clinedi ASDF system, not as a new renderer library.
 
-- =src/tools/search.lisp=
-- =src/workers/search.lisp=
-- Native fff build and manifest identity used by those files
+** Request-local context engine
 
-Realized net Autolith reduction: 965 source lines across the two search files.
+Priority: second, only after a second agent or shell feature needs it.
 
-** =sexp-store=
+=src/agent/context.lisp= has a general core: named contributors, stacking,
+deduplication, priorities, bounded advice budgets, =:turn= and
+=:next-request= lifetimes, and payload-free diagnostics. A neutral library
+could accept caller-owned request and conversation keys, then return selected
+contributions and lifecycle receipts.
 
-Natural home: =luciusmagn/sexp-store=.
+Autolith must keep memory ranking, Skill selection, project adaptations,
+self-review policy, provider-request construction, and all built-in advice.
+Without another consumer this would be a premature abstract harness, so it
+should remain in-tree for now.
 
-Status: implemented and integrated at
-=92a2ad458e92ecf4526ccb9bb387f89283c4dcc3=.
+** =sexp-store/schema= optional system
 
-The reusable storage layer should support atomic readable snapshots and
-append-only sequences of top-level S-expressions. Reads must bind
-=*read-eval*= to =nil=. Append logs must retain every complete preceding form,
-detect an incomplete final form, and repair that tail atomically before the
-next successful append.
+Priority: third, only if another library needs versioned native configuration.
 
-Autolith should retain record formats, domain validation, projections, and
-semantic repairs such as unmatched conversation tool-call handling.
+The repeated safe property-list validation and migration patterns in
+=src/state/records.lisp= and =src/configuration/= could become a small optional
+=sexp-store= system. Its scope would be exact required and optional fields,
+version dispatch, typed validators, and explicit migrations over data already
+read by =sexp-store=.
 
-The remaining Autolith storage policy is:
-
-- Property-list record validation in =src/state/records.lisp=.
-- Conversation formats, sequencing, and provider projection in
-  =src/conversation/store.lisp=.
-- Memory formats, replay, selection, and validation in =src/state/memories.lisp=.
-
-The dependency also publishes credential, generation, private image, worker
-image, and preloaded active-image manifests. Realized net Autolith reduction:
-220 source lines.
-
-** =sbcl-workers=
-
-Natural home: =luciusmagn/sbcl-workers=.
-
-Status: implemented and integrated at
-=fff2bc4bbeb8eec93a963c5ad1f7af85bbf7a6a3=.
-
-Named persistent SBCL subprocesses, the readable request protocol, evaluation
-and compilation operations, source lookup, working-directory changes, worker
-pool lifecycle, forked core saving, immutable image manifests, and runtime
-compatibility probes are useful independently of Autolith.
-
-The library must describe process isolation as a reliability boundary, not a
-security sandbox. Autolith should retain =lisp.*= tool definitions, tool
-argument handling, configuration adaptation, and prompt inventory rendering.
-
-The remaining Autolith adapter is:
-
-- =src/workers/lisp.lisp=
-- =src/workers/images.lisp=
-
-It retains tool schemas and results, configuration conversion, Autolith
-condition translation, and model-facing image inventory rendering. Realized
-net Autolith reduction: 874 source lines across the two worker files.
-
-* Later Candidate
-
-Autolith still contains higher-level terminal presentation code in
-=src/terminal/layout.lisp=, =src/terminal/style.lisp=,
-=src/terminal/markdown.lisp=, =src/terminal/protocol.lisp=,
-=src/terminal/stream.lisp=, and =src/terminal/ui.lisp=.
-Low-level color capability detection, style encoding, and ANSI parsing now live
-in the focused =cl-colorist= library shared with Clinedi. Remaining coherent
-Clinedi candidates are cell-aware layout and semantic spans, optional terminal
-Markdown rendering, and a transcript plus live-editor session component.
+It should not become an object mapper or absorb Autolith's configuration
+policy. Until there is a second schema consumer, the local validation remains
+clearer.
 
 * Keep In Autolith
 
-The following code may contain reusable primitives but should remain visible in
-Autolith until another consumer proves a clean boundary:
+The provider and conversation model, tool registry, Skills, task scheduler,
+self-modification and recovery, memories and agendas, image attachments, and
+release service are product semantics. They have no clean independent API yet.
+Extracting them now would move complexity without buying reuse.
 
-- The agent loop, provider projection, and conversation semantics.
-- Self-modification, mutation journals, image commits, generations, and
-  recovery.
-- Memories, agendas, deferred input, responsive input, and tool presentation.
-- The Autolith release builder and installer service.
-- OpenAI-specific authentication and device authorization behavior.
+* Extraction Gate
 
-Moving these areas would make this repository smaller without making the
-system simpler. In particular, the live mutation and recovery code is
-Autolith's defining architecture.
-
-* Extraction Requirements
-
-Each extraction must satisfy all of the following:
-
-1. The library has its own package, ASDF systems, documentation, and tests.
-2. The library API contains no Autolith configuration, tool, provider, or
-   conversation types.
-3. Autolith depends on a pinned source revision and keeps only a narrow adapter.
-4. Existing behavior and difficult failure paths remain covered after code is
-   moved.
-5. Distribution builds include the dependency without requiring it to be
-   installed globally.
-6. Autolith source inspection gains a way to inspect relevant ASDF dependency
-   source before moving code needed for live diagnosis or repair.
-
-* Completed Sequence
-
-1. Implement =clifff= and replace Autolith's private binding and helper.
-2. Implement =sexp-store= and consolidate snapshot and append-log mechanics.
-3. Implement =sbcl-workers= and replace the in-tree worker runtime and image
-   machinery.
-4. Extend =self.source= to inspect pinned dependency source where required.
-5. Implement =cl-colorist= and replace duplicated ANSI color encoding in
-   Autolith and Clinedi.
-
-* Remaining Sequence
-
-1. Move the remaining general terminal presentation into Clinedi in separate
-   vertical changes.
+An extraction proceeds only when it has a second consumer, a small API free of
+Autolith classes, its own package and ASDF system, focused failure-path tests,
+and a narrow adapter left here. Pin the dependency as source, keep it
+inspectable through =self.source=, and make release builds bundle it without
+requiring a global installation.
