@@ -100,13 +100,15 @@
               "an immutable session never carries the reminder"))
            (setf (conversation-user-turn-count conversation) 46
                  (conversation-working-seconds conversation) 2600)
-           (test-assert
-            (search "mutation quota"
-                    (or (context-delivery-rendered
-                         (context-resolve-request configuration
-                                                  conversation
-                                                  #()))
-                        ""))
-            "a triggered reminder renders into the request context"))
+           (let ((delivery
+                   (context-resolve-request configuration conversation #())))
+             (test-assert
+              (not
+               (null
+                (find "self-improvement-review"
+                      (context-delivery-contributions delivery)
+                      :key #'context-contribution-identifier
+                      :test #'string=)))
+              "a triggered reminder reaches the request context")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

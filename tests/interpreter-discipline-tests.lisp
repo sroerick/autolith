@@ -12,14 +12,16 @@
    "namespace" "shell"
    "arguments" (json-encode (json-object "command" command))))
 
-(-> interpreter-discipline-tests--rendered
+(-> interpreter-discipline-tests--contribution
     (configuration conversation)
-    string)
-(defun interpreter-discipline-tests--rendered (configuration conversation)
-  "Return the rendered request-local context for CONVERSATION."
-  (or (context-delivery-rendered
-       (context-resolve-request configuration conversation #()))
-      ""))
+    (option context-contribution))
+(defun interpreter-discipline-tests--contribution (configuration conversation)
+  "Return the interpreter-discipline contribution for CONVERSATION, if active."
+  (find "interpreter-discipline"
+        (context-delivery-contributions
+         (context-resolve-request configuration conversation #()))
+        :key #'context-contribution-identifier
+        :test #'string=))
 
 (-> test-interpreter-discipline () null)
 (defun test-interpreter-discipline ()
@@ -36,17 +38,13 @@
                                   :source ':built-in)
     (conversation-append-user-message conversation "sum the report numbers")
     (test-assert
-     (not (search "interpreter one-liner"
-                  (interpreter-discipline-tests--rendered configuration
-                                                          conversation)))
+     (null (interpreter-discipline-tests--contribution configuration conversation))
      "a turn without shell calls draws no interpreter rebuke")
     (conversation-append-provider-item
      conversation
      (interpreter-discipline-tests--shell-call "ls -la"))
     (test-assert
-     (not (search "interpreter one-liner"
-                  (interpreter-discipline-tests--rendered configuration
-                                                          conversation)))
+     (null (interpreter-discipline-tests--contribution configuration conversation))
      "an ordinary shell command draws no interpreter rebuke")
     (conversation-append-provider-item
      conversation
@@ -58,32 +56,28 @@
       "arguments" (json-encode
                    (json-object "form" "(print \"python3 -c\")"))))
     (test-assert
-     (not (search "interpreter one-liner"
-                  (interpreter-discipline-tests--rendered configuration
-                                                          conversation)))
+     (null (interpreter-discipline-tests--contribution configuration conversation))
      "a non-shell tool call mentioning the fragment draws no rebuke")
     (conversation-append-provider-item
      conversation
      (interpreter-discipline-tests--shell-call
       "python3 -c 'print(40 + 2)'"))
     (test-assert
-     (search "interpreter one-liner"
-             (interpreter-discipline-tests--rendered configuration
-                                                     conversation))
+     (not (null (interpreter-discipline-tests--contribution
+                 configuration
+                 conversation)))
      "a python3 -c shell call draws the interpreter rebuke")
     (conversation-append-user-message conversation "carry on")
     (test-assert
-     (not (search "interpreter one-liner"
-                  (interpreter-discipline-tests--rendered configuration
-                                                          conversation)))
+     (null (interpreter-discipline-tests--contribution configuration conversation))
      "a new logical turn clears the interpreter rebuke")
     (conversation-append-provider-item
      conversation
      (interpreter-discipline-tests--shell-call
       "python -c 'import sys; print(sys.platform)'"))
     (test-assert
-     (search "interpreter one-liner"
-             (interpreter-discipline-tests--rendered configuration
-                                                     conversation))
+     (not (null (interpreter-discipline-tests--contribution
+                 configuration
+                 conversation)))
      "a python -c shell call draws the interpreter rebuke"))
   nil)

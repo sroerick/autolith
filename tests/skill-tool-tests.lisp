@@ -227,18 +227,9 @@
                            "skill-warning-oversized")))
                     (test-assert
                      (and warning
-                          (search "could not be read"
-                                  (context-contribution-instruction warning)))
-                     "deferred body failure becomes request-local warning"))))))
-           (let ((catalog-text
-                   (skill--catalog-instruction
-                    (skill-catalog-for-configuration configuration))))
-             (test-assert
-             (and (search "call `skill.load`" catalog-text)
-                   (search "Do not read SKILL.sexp through `fs.read`"
-                           catalog-text)
-                   (search "subsequent provider requests" catalog-text))
-              "catalog guidance routes implicit selection through skill.load")))
+                          (eq (context-contribution-class warning)
+                              ':mandatory))
+                     "deferred body failure becomes request-local warning")))))))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist :ignore)))

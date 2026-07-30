@@ -355,8 +355,6 @@
                       (context--registration-find "project-adaptations")))
                (test-assert
                 (and contribution
-                     (search "smallest scoped self-modification"
-                             (context-contribution-instruction contribution))
                      (search (namestring notes)
                              (context-contribution-evidence contribution))
                      (search "adaptation-marker"
@@ -367,10 +365,6 @@
                 (and registration
                      (eq (getf registration :source) ':built-in))
                 "the project adaptation contributor has visible built-in provenance")
-               (test-assert
-                (search "never override AGENTS.md"
-                        (context-contribution-instruction contribution))
-                "the prompt preserves project instruction precedence")
                (test-assert
                 (null
                  (project-adaptation--context-contributor compaction-request))

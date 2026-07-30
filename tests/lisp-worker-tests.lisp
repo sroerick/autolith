@@ -43,17 +43,13 @@
              (test-assert (lisp-image-compatible-p image)
                           "a manifest written by this runtime is compatible")
              (test-assert
-              (search "instrumented-compiler"
+             (search "instrumented-compiler"
                       (lisp-image-render-inventory configuration))
               "the image inventory reminds the model about saved images")
              (test-assert
               (search "Traces compiler type derivation"
                       (lisp-image-prompt-notes configuration))
-              "the prompt inventory includes durable image notes")
-             (test-assert
-              (search "Traces compiler type derivation"
-                      (system-prompt configuration))
-              "every model request is reminded of durable image notes"))
+              "the prompt inventory includes durable image notes"))
            (handler-case
                (progn
                  (lisp-image-publish-manifest

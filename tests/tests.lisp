@@ -90,7 +90,7 @@
     (test-agenda-command)
     (test-agenda-version-one-migration)
     (test-agenda-malformed-state)
-    (test-agenda-tools-and-prompt)
+    (test-agenda-tools)
     (test-preferences)
     (test-command-permission-persistence)
     (test-command-permission-corruption)

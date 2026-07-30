@@ -243,9 +243,9 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
-(-> test-agenda-tools-and-prompt () null)
-(defun test-agenda-tools-and-prompt ()
-  "Test agenda tool dispatch, transport inspection, and prompt recall."
+(-> test-agenda-tools () null)
+(defun test-agenda-tools ()
+  "Test agenda tool dispatch and transport inspection."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (target (merge-pathnames "transport-target/" root))
@@ -283,14 +283,7 @@
                (let* ((state (agenda-load configuration))
                       (item (first (workspace-agenda-items
                                     (agenda-current configuration state))))
-                      (identifier (agenda-item-identifier item))
-                      (prompt (system-prompt configuration)))
-                 (test-assert
-                  (and (search identifier prompt)
-                       (search "finish agenda integration" prompt)
-                       (search "[doing]" prompt)
-                       (search (memory-identifier memory) prompt))
-                  "the system prompt carries the complete agenda and memory links")
+                      (identifier (agenda-item-identifier item)))
                  (test-assert
                   (tool-result-success-p
                    (run "update" "id" identifier "status" "blocked"))

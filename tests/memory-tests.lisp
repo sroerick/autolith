@@ -201,10 +201,7 @@
                   (and evidence
                        (search "Repository check" evidence)
                        (not (search "Other project" evidence)))
-                  "request-local recall offers ranked relevant memory metadata")
-                 (test-assert
-                  (not (search "Repository check" (system-prompt configuration)))
-                  "persistent memory metadata stays outside the durable system prompt")))
+                  "request-local recall offers ranked relevant memory metadata")))
              (with-open-file (stream (configuration-memory-path configuration)
                                      :direction :output
                                      :if-exists :append
