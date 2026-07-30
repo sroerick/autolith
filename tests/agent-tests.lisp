@@ -56,6 +56,35 @@
     :documentation "The compaction flag supplied on each request."))
   (:documentation "A deterministic provider for exercising repeated agent rounds."))
 
+(defclass native-scripted-provider (scripted-provider)
+  ((native-items
+    :initarg :native-items
+    :accessor native-scripted-provider-native-items
+    :type list
+    :documentation "Opaque native checkpoints returned in request order.")
+   (native-input-snapshots
+    :initform nil
+    :accessor native-scripted-provider-native-input-snapshots
+    :type list
+    :documentation "Durable projections observed by native compaction requests."))
+  (:documentation "A scripted provider that supports Codex-style native compaction."))
+
+(defmethod provider-family ((provider native-scripted-provider))
+  "Treat the native scripted provider as the Codex model family."
+  (declare (ignore provider))
+  ':codex)
+
+(defmethod provider-native-compact-conversation
+    ((provider native-scripted-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback)
+  "Return the next scripted native checkpoint after recording durable input."
+  (declare (ignore tool-namespaces event-callback))
+  (push (conversation-input-items-for-request
+         conversation :include-ephemeral-p nil)
+        (native-scripted-provider-native-input-snapshots provider))
+  (pop (native-scripted-provider-native-items provider)))
+
 (defmethod provider-stream-turn
     ((provider scripted-provider)
      (conversation conversation)
@@ -1009,6 +1038,72 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-agent-native-compaction () null)
+(defun test-agent-native-compaction ()
+  "Test that an opaque native checkpoint supplements the durable handoff."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "agent-native-compact"))
+                (summary-item
+                  (json-object
+                   "type" "message"
+                   "role" "assistant"
+                   "content" (json-array
+                              (json-object
+                               "type" "output_text"
+                               "text" "Portable compaction handoff."))))
+                (answer-item
+                  (json-object
+                   "type" "message"
+                   "role" "assistant"
+                   "content" (json-array
+                              (json-object "type" "output_text"
+                                           "text" "Done."))))
+                (provider
+                  (make-instance
+                   'native-scripted-provider
+                   :native-items
+                   (list (json-object "type" "compaction"
+                                      "encrypted_content" "native-checkpoint"))
+                   :results (list (agent-test-result "compact-native"
+                                                     (list summary-item)
+                                                     :turn-completion :end)
+                                  (agent-test-result "turn-native"
+                                                     (list answer-item)
+                                                     :turn-completion :end))))
+                (agent (agent-create :configuration configuration
+                                     :provider provider
+                                     :conversation conversation
+                                     :tool-registry (agent-test-registry)
+                                     :worker nil)))
+           (conversation-append-user-message conversation "earlier context")
+           (conversation-append-provider-metadata
+            conversation
+            (list :request-number 1
+                  :response-id "seed-native"
+                  :usage '(("total_tokens" 999999))))
+           (agent-run-user-turn agent "hello")
+           (test-assert
+            (= (length (native-scripted-provider-native-input-snapshots provider)) 1)
+            "native compaction receives one durable projection")
+           (test-assert
+            (find :native-compaction
+                  (rest (conversation--read-records
+                         (conversation-pathname conversation)))
+                  :key #'first)
+            "native compaction persists its opaque checkpoint")
+           (test-assert
+            (native-compaction-item-p
+             (first (conversation-input-items conversation)))
+            "the active provider reuses the opaque checkpoint")
+           (test-assert
+            (= (length (conversation-input-items-for-family conversation ':grok)) 3)
+            "another provider receives the portable handoff and new messages"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> run-agent-tests () boolean)
 (defun run-agent-tests ()
   "Run focused agent-loop tests and return true on success."
@@ -1024,4 +1119,5 @@
   (test-agent-default-turn-has-no-step-guillotine)
   (test-agent-skill-provider-barrier)
   (test-agent-compaction)
+  (test-agent-native-compaction)
   t)

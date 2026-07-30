@@ -795,6 +795,20 @@ because durable configuration records are projected in order."
        (string= (or (json-get item "type") "") "reasoning")
        t))
 
+(-> native-compaction-item-p (t) boolean)
+(defun native-compaction-item-p (item)
+  "Return true when ITEM is an opaque Responses compaction checkpoint."
+  (and (json-object-p item)
+       (string= (or (json-get item "type") "") "compaction")
+       (non-empty-string-p (json-get item "encrypted_content"))
+       t))
+
+(-> conversation-family-private-item-p (t) boolean)
+(defun conversation-family-private-item-p (item)
+  "Return true when ITEM can only be read by its producing model family."
+  (or (reasoning-item-p item)
+      (native-compaction-item-p item)))
+
 (-> conversation-input-item-family (conversation json-object) (option keyword))
 (defun conversation-input-item-family (conversation item)
   "Return the model family that produced ITEM, or NIL when it is unknown."
@@ -807,14 +821,14 @@ because durable configuration records are projected in order."
     (conversation family &key (include-ephemeral-p t))
   "Return CONVERSATION's provider projection usable by FAMILY.
 
-A reasoning item carries encrypted content that only the family which
-produced it can decrypt, so reasoning from another family, or from an
-unrecorded one, is omitted rather than replayed into a rejected request.
-Every other item stays, keeping the conversation portable across
-families."
+A private reasoning or native compaction item carries encrypted content that
+only the family which produced it can decrypt, so such items from another
+family, or from an unrecorded one, are omitted rather than replayed into a
+rejected request. Every other item stays, including a portable compaction
+summary, keeping the conversation usable across families."
   (remove-if
    (lambda (item)
-     (and (reasoning-item-p item)
+     (and (conversation-family-private-item-p item)
           (not (eq (conversation-input-item-family conversation item)
                    family))))
    (conversation-input-items-for-request
@@ -1329,6 +1343,46 @@ it described the uncompacted context."
           (conversation-last-total-tokens conversation) 0)
     record))
 
+(-> conversation-append-native-compaction
+    (conversation json-object &key (:family keyword) (:summary string))
+    list)
+(defun conversation-append-native-compaction
+    (conversation item &key family summary)
+  "Persist opaque native ITEM and portable SUMMARY as one compaction checkpoint.
+
+ITEM retains private model context for FAMILY. SUMMARY is deliberately kept
+alongside it so a later provider family can continue from a readable handoff.
+Both replace every preceding durable provider item while pending request-local
+items remain available for the next ordinary request."
+  (unless (and (keywordp family)
+               (native-compaction-item-p item)
+               (non-empty-string-p summary))
+    (error 'conversation-invariant-error
+           :message "A native compaction checkpoint is invalid."
+           :pathname (conversation-pathname conversation)
+           :sequence (conversation-next-sequence conversation)))
+  (let* ((ephemeral-items
+           (mapcar
+            (lambda (entry)
+              (getf entry :item))
+            (conversation-ephemeral-input-entries conversation)))
+         (summary-item (conversation-summary-item summary))
+         (record
+           (conversation-append-record
+            conversation
+            (list :native-compaction
+                  :through-seq (1- (conversation-next-sequence conversation))
+                  :family family
+                  :wire-json (json-encode item)
+                  :summary summary))))
+    (setf (conversation-input-items conversation)
+          (append (list item summary-item) ephemeral-items)
+          (conversation-turn-state conversation) nil
+          (conversation-last-total-tokens conversation) 0
+          (gethash item (conversation-input-item-families conversation))
+          family)
+    record))
+
 
 ;;;; -- Conversation Loading --
 
@@ -1596,6 +1650,38 @@ invariant errors while callback conditions propagate unchanged."
           (setf (conversation-input-items conversation)
                 (list (conversation-summary-item content))
                 (conversation-last-total-tokens conversation) 0))))
+    (when (eq (first record) :native-compaction)
+      (let ((family (getf (rest record) :family))
+            (wire-json (getf (rest record) :wire-json))
+            (summary (getf (rest record) :summary)))
+        (unless (and (keywordp family)
+                     (stringp wire-json)
+                     (non-empty-string-p summary))
+          (error 'conversation-invariant-error
+                 :message "A persisted native compaction checkpoint is invalid."
+                 :pathname (conversation-pathname conversation)
+                 :sequence sequence))
+        (let ((item
+                (handler-case
+                    (json-decode wire-json)
+                  (error ()
+                    (error 'conversation-invariant-error
+                           :message
+                           "A persisted native compaction checkpoint is not JSON."
+                           :pathname (conversation-pathname conversation)
+                           :sequence sequence)))))
+          (unless (native-compaction-item-p item)
+            (error 'conversation-invariant-error
+                   :message
+                   "A persisted native compaction item is unsupported."
+                   :pathname (conversation-pathname conversation)
+                   :sequence sequence))
+          (setf (conversation-input-items conversation)
+                (list item (conversation-summary-item summary))
+                (conversation-turn-state conversation) nil
+                (conversation-last-total-tokens conversation) 0
+                (gethash item (conversation-input-item-families conversation))
+                family))))
     (when (eq (first record) :provider)
       (let ((total (conversation--usage-total
                     (getf (getf (rest record) :metadata) :usage))))

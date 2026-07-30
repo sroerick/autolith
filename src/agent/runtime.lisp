@@ -650,17 +650,29 @@
 
 (-> agent-compact-conversation (agent agent-observer) null)
 (defun agent-compact-conversation (agent observer)
-  "Summarize AGENT's conversation and replace its projection with the summary.
+  "Compact AGENT's conversation with native state when the provider supports it.
 
-The summarization request itself is a side channel: its output items are not
-persisted as history, only the durable summary record is."
+The summarization request remains a side channel. Its durable text is the
+portable handoff for another provider family, while a supported native
+checkpoint preserves the current model's opaque reasoning state."
   (let ((conversation (agent-conversation agent)))
     (agent-observer-status
      observer
      :compaction-started
      (list :total-tokens (conversation-last-total-tokens conversation)))
-    (let* ((result (provider-stream-turn
-                    (agent-provider agent)
+    (let* ((provider (agent-provider agent))
+           (native-item
+             (provider-native-compact-conversation
+              provider
+              conversation
+              :tool-namespaces
+              (tool-registry-provider-schemas (agent-tool-registry agent))
+              :event-callback
+              (lambda (event)
+                (declare (ignore event))
+                (agent-observer-status observer :provider-progress nil))))
+           (result (provider-stream-turn
+                    provider
                     conversation
                     :tool-namespaces #()
                     :event-callback
@@ -674,11 +686,17 @@ persisted as history, only the durable summary record is."
                :message "Compaction produced no summary text."
                :conversation-id (conversation-identifier conversation)
                :request-number nil))
-      (conversation-append-summary conversation summary)
+      (if native-item
+          (conversation-append-native-compaction
+           conversation native-item
+           :family (provider-family provider)
+           :summary summary)
+          (conversation-append-summary conversation summary))
       (agent-observer-status
        observer
        :compaction-completed
-       (list :summary-characters (length summary)))))
+       (list :summary-characters (length summary)
+             :native-p (not (null native-item))))))
   nil)
 
 (-> agent--run-provider-loop

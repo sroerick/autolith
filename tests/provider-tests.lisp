@@ -283,6 +283,150 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-provider-native-compaction () null)
+(defun test-provider-native-compaction ()
+  "Test the Codex native checkpoint request, transport, and fallback boundary."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "native-request"))
+         (provider (provider-create configuration))
+         (credentials (provider-tests--credentials configuration))
+         (schemas
+           (json-array
+            (json-object "type" "namespace"
+                         "name" "test"
+                         "description" "Test tools."
+                         "tools" (json-array)))))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "retain this work")
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "reasoning"
+                         "encrypted_content" "retained-reasoning"
+                         "summary" (json-array)))
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "function_call"
+                         "call_id" "ephemeral-call"
+                         "name" "test")
+            :persistence ':next-response)
+           (let* ((request
+                    (provider-native-compaction-request-object
+                     provider conversation schemas))
+                  (input (json-get request "input")))
+             (test-assert (= (length input) 5)
+                          "native compaction carries prefix, durable history, and trigger")
+             (test-assert
+              (string= (json-get (aref input 0) "type") "additional_tools")
+              "native compaction retains the Responses Lite tool prefix")
+             (test-assert
+              (string= (json-get (aref input 1) "role") "developer")
+              "native compaction retains the system developer message")
+             (test-assert
+              (and (reasoning-item-p (aref input 3))
+                   (string= (json-get (aref input 3) "encrypted_content")
+                            "retained-reasoning"))
+              "native compaction carries retained encrypted reasoning")
+             (test-assert
+              (string= (json-get (aref input 4) "type") "compaction_trigger")
+              "native compaction ends with the provider trigger")
+             (test-assert
+              (string= (json-get (json-get request "reasoning") "context")
+                       "all_turns")
+              "native compaction retains reasoning across its input")
+             (dolist (name '("stream" "store" "include" "tool_choice"))
+               (multiple-value-bind (value present-p) (gethash name request)
+                 (declare (ignore value))
+                 (test-assert (not present-p)
+                              (format nil "native compaction omits ~A" name)))))
+           (let ((captured-url nil)
+                 (captured-headers nil))
+             (test-call-with-function-replacements
+              (list
+               (list
+                'dexador:post
+                (lambda (url &key headers &allow-other-keys)
+                  (setf captured-url url
+                        captured-headers headers)
+                  (values "{\"output\":[]}" 200 nil))))
+              (lambda ()
+                (provider-open-native-compaction
+                 provider
+                 (json-object "model" *default-model*)
+                 :credentials credentials
+                 :conversation conversation)))
+             (flet ((header (name)
+                      (rest (assoc name captured-headers :test #'string-equal))))
+               (test-assert
+                (string= captured-url
+                         "https://chatgpt.com/backend-api/codex/responses/compact")
+                "native compaction derives the Responses compact endpoint")
+               (test-assert (string= (header "Accept") "application/json")
+                            "native compaction requests one JSON response")
+               (test-assert
+                (string= (header "Authorization")
+                         "Bearer provider-test-access-7f386d")
+                "native compaction uses the ordinary subscription credentials")))
+           (credential-source-save
+            (credential-manager-primary-source
+             (provider-credential-manager provider))
+            credentials)
+           (let ((result nil))
+             (test-call-with-function-replacements
+              (list
+               (list
+                'dexador:post
+                (lambda (&rest arguments)
+                  (declare (ignore arguments))
+                  (values
+                   (json-encode
+                   (json-object
+                     "output"
+                     (json-array
+                      (json-object
+                       "type" "message"
+                       "role" "assistant"
+                       "content"
+                       (json-array
+                        (json-object "type" "output_text"
+                                     "text" "Ignored compact reply.")))
+                      (json-object "id" "cmp_123"
+                                   "type" "compaction"
+                                   "encrypted_content" "opaque-checkpoint"))))
+                   200
+                   '(("x-request-id" . "native-success"))))))
+              (lambda ()
+                (setf result
+                      (provider-native-compact-conversation
+                       provider conversation
+                       :tool-namespaces schemas
+                       :event-callback #'identity))))
+             (test-assert (native-compaction-item-p result)
+                          "native compaction finds its opaque checkpoint among output")
+             (multiple-value-bind (value present-p) (gethash "id" result)
+               (declare (ignore value))
+               (test-assert (not present-p)
+                            "native compaction drops transient server item identifiers")))
+           (test-call-with-function-replacements
+            (list
+             (list
+              'dexador:post
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                (values "not found" 404 nil))))
+            (lambda ()
+              (test-assert
+               (null
+                (provider-native-compact-conversation
+                 provider conversation
+                 :tool-namespaces schemas
+                 :event-callback #'identity))
+               "an unavailable native endpoint falls back without failing compaction"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-sse-event-string (json-object) string)
 (defun test-sse-event-string (event)
   "Encode EVENT as one complete server-sent event."

@@ -888,6 +888,17 @@ Example:
  :content "The provider transport was inspected and simplified.")
 #+END_SRC
 
+For Codex subscription models, Autolith first uses the Responses
+=responses/compact= endpoint with the complete durable, family-compatible
+projection and a trailing =compaction_trigger=. It persists the endpoint's one
+opaque =compaction= item together with a concise portable handoff summary in a
+=:native-compaction= record. Same-family requests replay the opaque item, so
+the provider retains the model's private reasoning context. A different model
+family omits that opaque item and receives the portable handoff instead.
+Ordinary summary compaction remains the fallback for providers without the
+native endpoint. This behavior follows the Codex reference checkout at commit
+=6219b7c40fc9c702c0aef9964e72b492558f60e4=.
+
 Records may represent:
 
 - Conversation metadata.
@@ -895,6 +906,7 @@ Records may represent:
 - Tool calls and results.
 - Condition and restart events.
 - Context summaries.
+- Native compaction checkpoints.
 - Provider metadata and usage.
 - References to external artifacts.
 

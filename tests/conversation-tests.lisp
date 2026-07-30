@@ -204,6 +204,62 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-conversation-native-compaction () null)
+(defun test-conversation-native-compaction ()
+  "Test durable opaque compaction with a portable cross-family handoff."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "native-compact"))
+                (item
+                  (json-object "type" "compaction"
+                               "encrypted_content" "codex-checkpoint")))
+           (conversation-append-user-message conversation "earlier context")
+           (conversation-append-provider-metadata
+            conversation
+            (list :request-number 1
+                  :response-id "before-native-compact"
+                  :usage '(("total_tokens" 4321))))
+           (conversation-append-native-compaction
+            conversation item :family ':codex :summary "Portable handoff.")
+           (test-assert
+            (and (= (length (conversation-input-items conversation)) 2)
+                 (native-compaction-item-p
+                  (first (conversation-input-items conversation))))
+            "native compaction retains one opaque checkpoint beside its handoff")
+           (test-assert (zerop (conversation-last-total-tokens conversation))
+                        "native compaction resets the tracked usage")
+           (test-assert
+            (= (length (conversation-input-items-for-family conversation ':codex)) 2)
+            "the producing family receives its opaque checkpoint")
+           (let ((grok-items
+                   (conversation-input-items-for-family conversation ':grok)))
+             (test-assert (= (length grok-items) 1)
+                          "another family omits the opaque checkpoint")
+             (test-assert
+              (search "Portable handoff."
+                      (json-get
+                       (aref (json-get (first grok-items) "content") 0)
+                       "text"))
+              "another family receives the portable handoff"))
+           (test-assert
+            (find :native-compaction
+                  (rest (conversation--read-records
+                         (conversation-pathname conversation)))
+                  :key #'first)
+            "native compaction persists one durable checkpoint record")
+           (let ((reloaded
+                   (conversation-load-by-id configuration "native-compact")))
+             (test-assert
+              (and (= (length (conversation-input-items-for-family reloaded ':codex))
+                      2)
+                   (= (length (conversation-input-items-for-family reloaded ':grok))
+                      1))
+              "native checkpoint replay preserves each family projection")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-conversation-ephemeral-tool-projection () null)
 (defun test-conversation-ephemeral-tool-projection ()
   "Test request-local tool correlation stays out of durable history and replay."
