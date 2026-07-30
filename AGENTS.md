@@ -22,7 +22,7 @@ Current upstream source is available in shallow, read-only reference
 checkouts outside this Git worktree:
 
 - OpenAI Codex: `/home/mag/common-lisp/frob-reference-sources/codex`
-  at `5c19155cbd93bfa099016e7487259f61669823ff`
+  at `ba42e6866cef4baed7ad92c73e6be8cd42e49d8b`
 - Pi Agent Harness: `/home/mag/common-lisp/frob-reference-sources/pi`
   at `5416b1834a28b79800393b7bf792ab36065c49b2`
 - OpenCode: `/home/mag/common-lisp/frob-reference-sources/opencode`

@@ -797,11 +797,28 @@ because durable configuration records are projected in order."
 
 (-> native-compaction-item-p (t) boolean)
 (defun native-compaction-item-p (item)
-  "Return true when ITEM is an opaque Responses compaction checkpoint."
+  "Return true when ITEM carries an opaque Responses compaction checkpoint."
   (and (json-object-p item)
-       (string= (or (json-get item "type") "") "compaction")
-       (non-empty-string-p (json-get item "encrypted_content"))
+       (let ((type (json-get item "type")))
+         (and (stringp type)
+              (not (null
+                    (member type
+                            '("compaction"
+                              "compaction_summary"
+                              "context_compaction")
+                            :test #'string=)))
+              (non-empty-string-p (json-get item "encrypted_content"))))
        t))
+
+(-> native-compaction-item-canonicalize (t) t)
+(defun native-compaction-item-canonicalize (item)
+  "Canonicalize ITEM's legacy opaque compaction type when it is a JSON object."
+  (when (json-object-p item)
+    (let ((type (json-get item "type")))
+      (when (and (stringp type)
+                 (string= type "compaction_summary"))
+        (setf (gethash "type" item) "compaction"))))
+  item)
 
 (-> conversation-family-private-item-p (t) boolean)
 (defun conversation-family-private-item-p (item)
@@ -1354,6 +1371,7 @@ ITEM retains private model context for FAMILY. SUMMARY is deliberately kept
 alongside it so a later provider family can continue from a readable handoff.
 Both replace every preceding durable provider item while pending request-local
 items remain available for the next ordinary request."
+  (native-compaction-item-canonicalize item)
   (unless (and (keywordp family)
                (native-compaction-item-p item)
                (non-empty-string-p summary))
@@ -1670,6 +1688,7 @@ invariant errors while callback conditions propagate unchanged."
                            "A persisted native compaction checkpoint is not JSON."
                            :pathname (conversation-pathname conversation)
                            :sequence sequence)))))
+          (native-compaction-item-canonicalize item)
           (unless (native-compaction-item-p item)
             (error 'conversation-invariant-error
                    :message

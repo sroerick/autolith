@@ -584,15 +584,20 @@ delivery that the transport consumes only after a completed response."
   "Build Codex's non-streaming Responses compaction request for CONVERSATION.
 
 This mirrors the Responses Lite compaction payload at Codex reference commit
-6219b7c40f: durable family-compatible history receives the ordinary developer
-prefix and one trailing compaction trigger. Request-local contributions and
-pending one-response items stay outside the checkpoint."
+ba42e6866cef4baed7ad92c73e6be8cd42e49d8b: durable family-compatible history
+receives the ordinary developer prefix without an extra compaction trigger.
+Request-local contributions and pending one-response items stay outside the
+checkpoint."
   (let* ((configuration (provider-configuration provider))
          (web-search-tool (provider-web-search-tool configuration))
          (effective-tools
            (if web-search-tool
                (concatenate 'vector tool-namespaces (vector web-search-tool))
                tool-namespaces))
+         (reasoning
+           (json-object
+            "effort" (configuration-wire-effort configuration)
+            "context" "all_turns"))
          (input
            (coerce
             (append
@@ -602,16 +607,15 @@ pending one-response items stay outside the checkpoint."
              (conversation-input-items-for-family
               conversation
               (provider-family provider)
-              :include-ephemeral-p nil)
-             (list (json-object "type" "compaction_trigger")))
+              :include-ephemeral-p nil))
             'vector)))
+    (when (provider-reasoning-summaries-p provider)
+      (setf (gethash "summary" reasoning) "auto"))
     (json-object
      "model" (configuration-model configuration)
      "input" input
      "parallel_tool_calls" false
-     "reasoning" (json-object
-                  "effort" (configuration-wire-effort configuration)
-                  "context" "all_turns")
+     "reasoning" reasoning
      "prompt_cache_key" (conversation-identifier conversation)
      "text" (json-object "verbosity" "low"))))
 
@@ -1492,13 +1496,15 @@ streaming turns and native compaction requests."
 
 (-> provider--decode-native-compaction-response
     (codex-subscription-provider t &key (:status integer) (:headers t))
-    json-object)
+    (option json-object))
 (defun provider--decode-native-compaction-response
     (provider body &key status headers)
-  "Decode BODY and return its one normalized opaque compaction output item.
+  "Decode BODY and return its newest normalized opaque compaction output item.
 
-The endpoint can also return ordinary output items. They are not a durable
-checkpoint, so accept them but require exactly one opaque compaction item."
+The endpoint can return a compacted transcript containing ordinary output,
+multiple checkpoint encodings, or no opaque checkpoint. The newest usable
+checkpoint carries native state; an opaque-free transcript uses the portable
+summary fallback."
   (let ((source (provider--error-body-text body)))
     (unless (non-empty-string-p source)
       (provider--signal-invalid-native-compaction provider status headers))
@@ -1518,20 +1524,19 @@ checkpoint, so accept them but require exactly one opaque compaction item."
                  #'native-compaction-item-p
                  (map 'list
                       (lambda (item)
-                        (provider-normalize-output-item provider item))
+                        (native-compaction-item-canonicalize
+                         (provider-normalize-output-item provider item)))
                       output))))
-          (unless (= (length items) 1)
-            (provider--signal-invalid-native-compaction provider status headers))
-          (first items))))))
+          (first (last items)))))))
 
 (-> provider-attempt-native-compaction
     (codex-subscription-provider conversation
      &key (:tool-namespaces vector) (:force-refresh boolean))
-    json-object)
+    (option json-object))
 (defgeneric provider-attempt-native-compaction
     (provider conversation &key tool-namespaces force-refresh)
   (:documentation
-   "Perform one authenticated Codex native-compaction request."))
+   "Perform one authenticated Codex native compaction request."))
 
 (defmethod provider-attempt-native-compaction
     ((provider codex-subscription-provider)

@@ -890,14 +890,17 @@ Example:
 
 For Codex subscription models, Autolith first uses the Responses
 =responses/compact= endpoint with the complete durable, family-compatible
-projection and a trailing =compaction_trigger=. It persists the endpoint's one
-opaque =compaction= item together with a concise portable handoff summary in a
-=:native-compaction= record. Same-family requests replay the opaque item, so
-the provider retains the model's private reasoning context. A different model
-family omits that opaque item and receives the portable handoff instead.
-Ordinary summary compaction remains the fallback for providers without the
-native endpoint. This behavior follows the Codex reference checkout at commit
-=6219b7c40fc9c702c0aef9964e72b492558f60e4=.
+projection. The endpoint may return a compacted transcript containing ordinary
+items and one or more opaque checkpoints. Autolith selects the newest usable
+=compaction=, legacy =compaction_summary=, or encrypted
+=context_compaction= item and persists it with a concise portable handoff
+summary in a =:native-compaction= record. If no usable opaque checkpoint is
+returned, ordinary summary compaction continues without native state.
+Same-family requests replay the opaque item, so the provider retains the
+model's private reasoning context. A different model family omits that opaque
+item and receives the portable handoff instead. This behavior follows the
+Codex reference checkout at commit
+=ba42e6866cef4baed7ad92c73e6be8cd42e49d8b=.
 
 Records may represent:
 

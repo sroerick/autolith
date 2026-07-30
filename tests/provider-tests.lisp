@@ -316,8 +316,8 @@
                     (provider-native-compaction-request-object
                      provider conversation schemas))
                   (input (json-get request "input")))
-             (test-assert (= (length input) 5)
-                          "native compaction carries prefix, durable history, and trigger")
+             (test-assert (= (length input) 4)
+                          "native compaction carries prefix and durable history")
              (test-assert
               (string= (json-get (aref input 0) "type") "additional_tools")
               "native compaction retains the Responses Lite tool prefix")
@@ -330,8 +330,12 @@
                             "retained-reasoning"))
               "native compaction carries retained encrypted reasoning")
              (test-assert
-              (string= (json-get (aref input 4) "type") "compaction_trigger")
-              "native compaction ends with the provider trigger")
+              (not (find-if
+                    (lambda (item)
+                      (string= (or (json-get item "type") "")
+                               "compaction_trigger"))
+                    (coerce input 'list)))
+              "native compaction leaves the endpoint to select its own trigger")
              (test-assert
               (string= (json-get (json-get request "reasoning") "context")
                        "all_turns")
@@ -341,6 +345,17 @@
                  (declare (ignore value))
                  (test-assert (not present-p)
                               (format nil "native compaction omits ~A" name)))))
+           (setf (provider-reasoning-summaries-p provider) t)
+           (test-assert
+            (string= (json-get
+                      (json-get
+                       (provider-native-compaction-request-object
+                        provider conversation schemas)
+                       "reasoning")
+                      "summary")
+                     "auto")
+            "native compaction preserves enabled reasoning summaries")
+           (setf (provider-reasoning-summaries-p provider) nil)
            (let ((captured-url nil)
                  (captured-headers nil))
              (test-call-with-function-replacements
@@ -409,6 +424,40 @@
                (declare (ignore value))
                (test-assert (not present-p)
                             "native compaction drops transient server item identifiers")))
+           (let ((result
+                   (provider--decode-native-compaction-response
+                    provider
+                    (json-encode
+                     (json-object
+                      "output"
+                      (json-array
+                       (json-object "type" "compaction_summary"
+                                    "encrypted_content" "legacy-checkpoint")
+                       (json-object "type" "context_compaction"
+                                    "encrypted_content" "current-checkpoint")))))))
+             (test-assert
+              (and (native-compaction-item-p result)
+                   (string= (json-get result "type") "context_compaction")
+                   (string= (json-get result "encrypted_content")
+                            "current-checkpoint"))
+              "native compaction keeps the newest current checkpoint encoding"))
+           (let ((result
+                   (provider--decode-native-compaction-response
+                    provider
+                    (json-encode
+                     (json-object
+                      "output"
+                      (json-array
+                       (json-object "type" "compaction_summary"
+                                    "encrypted_content" "legacy-checkpoint")))))))
+             (test-assert
+              (string= (json-get result "type") "compaction")
+              "native compaction canonicalizes Codex's legacy checkpoint alias"))
+           (test-assert
+            (null
+             (provider--decode-native-compaction-response
+              provider (json-encode (json-object "output" (json-array)))))
+            "an opaque-free compact transcript falls back to the portable summary")
            (test-call-with-function-replacements
             (list
              (list

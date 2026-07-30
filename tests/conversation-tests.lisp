@@ -213,7 +213,7 @@
          (let* ((conversation
                   (conversation-create configuration :identifier "native-compact"))
                 (item
-                  (json-object "type" "compaction"
+                  (json-object "type" "context_compaction"
                                "encrypted_content" "codex-checkpoint")))
            (conversation-append-user-message conversation "earlier context")
            (conversation-append-provider-metadata
@@ -228,6 +228,11 @@
                  (native-compaction-item-p
                   (first (conversation-input-items conversation))))
             "native compaction retains one opaque checkpoint beside its handoff")
+           (test-assert
+            (string= (json-get (first (conversation-input-items conversation))
+                               "type")
+                     "context_compaction")
+            "native compaction preserves Codex's current checkpoint encoding")
            (test-assert (zerop (conversation-last-total-tokens conversation))
                         "native compaction resets the tracked usage")
            (test-assert
