@@ -29,6 +29,7 @@
                 #:sandbox-result
                 #:sandbox-result-exit-code
                 #:sandbox-result-output
+                #:sandbox-result-output-truncated-p
                 #:sandbox-result-timed-out-p
                 #:sandbox-unavailable
                 #:workspace-write-sandbox-policy)

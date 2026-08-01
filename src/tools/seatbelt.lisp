@@ -172,11 +172,14 @@ only after every broader workspace and temporary-directory write allowance."
      (:policy sandbox-policy)
      (:working-directory pathname)
      (:timeout real)
-     (:merge-output-p boolean))
+     (:merge-output-p boolean)
+     (:output-limit (option integer))
+     (:error-output-limit (option integer)))
     sandbox-result)
 (defun seatbelt-run-sandboxed
     (program arguments
-     &key policy working-directory timeout merge-output-p)
+     &key policy working-directory timeout merge-output-p
+       output-limit error-output-limit)
   "Run PROGRAM and ARGUMENTS under POLICY through macOS Seatbelt."
   (unless (seatbelt-available-p)
     (seatbelt--unavailable
@@ -189,7 +192,9 @@ only after every broader workspace and temporary-directory write allowance."
    :policy (external-sandbox-policy)
    :working-directory working-directory
    :timeout timeout
-   :merge-output-p merge-output-p))
+   :merge-output-p merge-output-p
+   :output-limit output-limit
+   :error-output-limit error-output-limit))
 
 (-> command-sandbox-run
     (string list
@@ -197,11 +202,14 @@ only after every broader workspace and temporary-directory write allowance."
      (:policy sandbox-policy)
      (:working-directory pathname)
      (:timeout real)
-     (:merge-output-p boolean))
+     (:merge-output-p boolean)
+     (:output-limit (option integer))
+     (:error-output-limit (option integer)))
     sandbox-result)
 (defun command-sandbox-run
     (program arguments
-     &key policy working-directory timeout merge-output-p)
+     &key policy working-directory timeout merge-output-p
+       output-limit error-output-limit)
   "Run PROGRAM under POLICY using the host command sandbox backend."
   (if (and (member :darwin *features*)
            (eq (sandbox-policy-filesystem-kind policy) ':restricted))
@@ -210,10 +218,14 @@ only after every broader workspace and temporary-directory write allowance."
        :policy policy
        :working-directory working-directory
        :timeout timeout
-       :merge-output-p merge-output-p)
+       :merge-output-p merge-output-p
+       :output-limit output-limit
+       :error-output-limit error-output-limit)
       (run-sandboxed
        program arguments
        :policy policy
        :working-directory working-directory
        :timeout timeout
-       :merge-output-p merge-output-p)))
+       :merge-output-p merge-output-p
+       :output-limit output-limit
+       :error-output-limit error-output-limit)))

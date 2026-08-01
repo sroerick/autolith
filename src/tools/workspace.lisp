@@ -73,6 +73,9 @@
 (defparameter *shell-maximum-timeout-seconds* 600
   "The largest timeout one shell.run command may request.")
 
+(defparameter *shell-maximum-output-characters* 65536
+  "The maximum combined output characters returned by shell.run.")
+
 
 ;;;; -- Path Resolution --
 
@@ -551,13 +554,21 @@ is retained whenever the configured maximum can contain the fixed metadata."
                     :policy policy
                     :working-directory directory
                     :timeout timeout
-                    :merge-output-p t))
-                 (output (sandbox-result-output result)))
+                    :merge-output-p t
+                    :output-limit *shell-maximum-output-characters*
+                    :error-output-limit *shell-maximum-output-characters*))
+                 (output (sandbox-result-output result))
+                 (presented-output
+                   (if (sandbox-result-output-truncated-p result)
+                       (format nil
+                               "~A~%[combined output truncated after ~D characters]"
+                               output *shell-maximum-output-characters*)
+                       output)))
             (if (sandbox-result-timed-out-p result)
                 (tool-failure
                  (format nil "The command was stopped after ~D seconds.~%~A"
-                         timeout output))
+                         timeout presented-output))
                 (tool-success
                  (format nil "exit ~D~%~A"
                          (sandbox-result-exit-code result)
-                         output))))))))
+                         presented-output))))))))

@@ -483,6 +483,19 @@
                (test-assert (search "autolith-shell-works"
                                     (tool-result-content result))
                             "shell.run captures combined output"))
+             (let* ((*shell-maximum-output-characters* 5)
+                    (result (run "shell" "run"
+                                 "command" "printf 123456789"))
+                    (content (tool-result-content result)))
+               (test-assert (tool-result-success-p result)
+                            "shell.run completes when output is truncated")
+               (test-assert (search "12345" content)
+                            "shell.run retains the bounded output prefix")
+               (test-assert (not (search "6789" content))
+                            "shell.run omits output beyond the capture limit")
+               (test-assert
+                (search "combined output truncated after 5 characters" content)
+                "shell.run reports output truncation explicitly"))
              (let* ((target (merge-pathnames "denied-command.txt" root))
                     (result
                       (tool-registry-execute-call
