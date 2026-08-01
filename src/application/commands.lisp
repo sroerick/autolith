@@ -1334,7 +1334,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :argument nil
      :description "pick the 5.6 model and reasoning effort"
      :tip "changes both the model and its reasoning effort."
-     :busy-behavior :hold
+     :busy-behavior :execute
      :terminal-behavior :exclusive)
     (application invocation)
   (let ((model
@@ -1346,18 +1346,17 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
                :usage "Usage: /model NAME"
                :empty-notice "No supported models exist."))))
     (when model
-      (configuration-with-model (application-configuration application)
-                                model)
+      (application-set-model application model)
       (let ((effort (application--pick-reasoning-effort application)))
         (when effort
-          (application-set-model-selection application model effort)
-          (application-present
-           application
-           (format nil "The model is now ~A with reasoning effort ~A."
-                   (configuration-model
-                    (application-configuration application))
-                   (configuration-reasoning-effort
-                    (application-configuration application))))))))
+          (application-set-reasoning-effort application effort))
+        (application-present
+         application
+         (format nil "The model is now ~A with reasoning effort ~A."
+                 (configuration-model
+                  (application-configuration application))
+                 (configuration-reasoning-effort
+                  (application-configuration application)))))))
   ':continue)
 
 (define-application-command application--builtin-effort-command
@@ -1365,7 +1364,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :argument nil
      :description "pick the reasoning effort"
      :tip "changes reasoning effort without switching models."
-     :busy-behavior :hold
+     :busy-behavior :execute
      :terminal-behavior :exclusive-without-arguments)
     (application invocation)
   (let ((effort

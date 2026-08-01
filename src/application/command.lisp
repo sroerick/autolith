@@ -13,7 +13,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-    '(:hold :inspect :cancel)
+    '(:hold :inspect :execute :cancel)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -160,7 +160,7 @@
    (busy-behavior
     :initarg :busy-behavior
     :reader application-command-busy-behavior
-    :type (member :hold :inspect :cancel)
+    :type (member :hold :inspect :execute :cancel)
     :documentation "The command policy while application work is active.")
    (terminal-behavior
     :initarg :terminal-behavior
@@ -641,6 +641,8 @@ without changing the registry."
           (length (application-command-invocation-remainder invocation)))
          ':execute
          ':hold))
+    (:execute
+     ':execute)
     (:cancel
      ':cancel)))
 

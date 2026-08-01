@@ -581,8 +581,9 @@ Interactive commands use the same live extension model:
 
 The stable Lisp definition name identifies revisions even when slash names or
 aliases change. =:inspect= permits only an argument-free invocation while a
-turn is active; =:hold= waits for the main application thread, and =:cancel=
-requests shutdown. Terminal behavior is =:shared=, =:exclusive=, or
+turn is active; =:execute= runs immediately with or without arguments,
+=:hold= waits for the main application thread, and =:cancel= requests shutdown.
+Terminal behavior is =:shared=, =:exclusive=, or
 =:exclusive-without-arguments=. Every command requires a nonblank tip. The
 defining form participates in =self.redefine=, =self.discard=, private replay,
 dynamic completion, help, and startup tips.

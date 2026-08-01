@@ -5423,14 +5423,29 @@
              (test-assert
               (string= (preference-state-reasoning-effort preferences) "low")
               "switching models preserves the global effort default"))
-           (setf (scripted-terminal-events terminal)
-                 (list :history-next :history-next :submit))
-           (with-terminal-ui (active-ui ui)
-             (declare (ignore active-ui))
+           (let ((model-installed-before-effort-p nil))
+             (setf (scripted-terminal-events terminal)
+                   (list :history-next :history-next :submit)
+                   (slot-value terminal 'read-callback)
+                   (lambda ()
+                     (setf model-installed-before-effort-p
+                           (or model-installed-before-effort-p
+                               (string=
+                                (configuration-model
+                                 (application-configuration application))
+                                "gpt-5.6-luna")))))
+             (unwind-protect
+                  (with-terminal-ui (active-ui ui)
+                    (declare (ignore active-ui))
+                    (test-assert
+                     (eq (application-command application
+                                              "/model gpt-5.6-luna")
+                         ':continue)
+                     "an explicit model change continues after choosing its effort"))
+               (setf (slot-value terminal 'read-callback) nil))
              (test-assert
-              (eq (application-command application "/model gpt-5.6-luna")
-                  ':continue)
-              "an explicit model change continues after choosing its effort"))
+              model-installed-before-effort-p
+              "model commands install the selection before prompting for effort"))
            (test-assert
             (and (string= (configuration-model
                            (application-configuration application))
@@ -5438,7 +5453,7 @@
                  (string= (configuration-reasoning-effort
                            (application-configuration application))
                           "medium"))
-            "model commands apply the prompted reasoning effort atomically")
+            "model commands apply the prompted effort after switching models")
            (test-assert
             (and (string= (conversation-model conversation) "gpt-5.6-luna")
                  (string= (conversation-reasoning-effort conversation) "medium"))
