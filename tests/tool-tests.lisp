@@ -423,7 +423,16 @@
                                       :command-authorization-function
                                       (lambda (command directory)
                                         (declare (ignore command directory))
-                                        ':full-access)))))
+                                        ':full-access))))
+
+                    (write-text (path text)
+                      "Replace PATH with UTF-8 TEXT for one workspace-tool case."
+                      (with-open-file (stream path
+                                              :direction :output
+                                              :if-exists :supersede
+                                              :if-does-not-exist :create
+                                              :external-format :utf-8)
+                        (write-string text stream))))
              (let ((sample (merge-pathnames "sample.txt" root)))
                (with-open-file (stream sample
                                        :direction :output
@@ -624,6 +633,185 @@
                                        "old-text" "missing text"
                                        "new-text" "x")))
                             "fs.edit fails cleanly when old-text is absent"))
+              (let* ((target (merge-pathnames "indented-edit.lisp" root))
+                     (original
+                       (format nil
+                               "(defun sample ()~%  (alpha)~%  (omega))~%"))
+                     (old-text
+                       (format nil
+                               " (defun sample ()~%   (alpha)~%   (omega))~%"))
+                     (new-text
+                       (format nil
+                               " (defun sample ()~%   (alpha)~%   (beta)~%   (omega))~%"))
+                     (expected
+                       (format nil
+                               "(defun sample ()~%  (alpha)~%  (beta)~%  (omega))~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" new-text)))
+                  (test-assert
+                   (tool-result-success-p result)
+                   "fs.edit repairs a unique uniform multiline indentation shift")
+                  (test-assert
+                   (search "shifted new-text left by 1 space"
+                           (tool-result-content result))
+                   "fs.edit reports relaxed indentation matching")
+                  (test-assert (string= (uiop:read-file-string target) expected)
+                               "fs.edit shifts replacement indentation uniformly")))
+              (let* ((target (merge-pathnames "indented-delete.lisp" root))
+                     (original (format nil "(foo)~%  (bar)~%tail~%"))
+                     (old-text (format nil " (foo)~%   (bar)~%")))
+                (write-text target original)
+                (test-assert
+                 (tool-result-success-p
+                  (run "fs" "edit"
+                       "path" (namestring target)
+                       "old-text" old-text
+                       "new-text" ""))
+                 "fs.edit permits a unique relaxed deletion")
+                (test-assert
+                 (string= (uiop:read-file-string target) (format nil "tail~%"))
+                 "a relaxed deletion preserves the following file boundary"))
+              (let* ((target (merge-pathnames "indented-final-line.lisp" root))
+                     (original (format nil "root~% (foo)~%   (bar)"))
+                     (old-text (format nil "  (foo)~%    (bar)"))
+                     (new-text (format nil
+                                      "  (foo)~%    (baz)~%    (bar)"))
+                     (expected (format nil
+                                      "root~% (foo)~%   (baz)~%   (bar)")))
+                (write-text target original)
+                (test-assert
+                 (tool-result-success-p
+                  (run "fs" "edit"
+                       "path" (namestring target)
+                       "old-text" old-text
+                       "new-text" new-text))
+                 "fs.edit relaxes indentation at a file without a final newline")
+                (test-assert (string= (uiop:read-file-string target) expected)
+                             "fs.edit preserves the missing final newline"))
+              (let* ((target (merge-pathnames "crlf-edit.txt" root))
+                     (crlf (format nil "~C~C" #\Return #\Newline))
+                     (original (format nil "alpha~Abeta~Agamma~A"
+                                       crlf crlf crlf))
+                     (old-text (format nil "beta~%gamma~%"))
+                     (new-text (format nil "BETA~%GAMMA~%"))
+                     (expected (format nil "alpha~ABETA~AGAMMA~A"
+                                       crlf crlf crlf)))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" new-text)))
+                  (test-assert (tool-result-success-p result)
+                               "fs.edit normalizes a unique CRLF mismatch")
+                  (test-assert
+                   (search "line-ending-normalized"
+                           (tool-result-content result))
+                   "fs.edit reports relaxed line-ending matching")
+                  (test-assert (string= (uiop:read-file-string target) expected)
+                               "fs.edit preserves CRLF delimiters")))
+              (let* ((target (merge-pathnames "lf-edit.txt" root))
+                     (crlf (format nil "~C~C" #\Return #\Newline))
+                     (original (format nil "alpha~%beta~%gamma~%"))
+                     (old-text (format nil "beta~Agamma~A" crlf crlf))
+                     (new-text (format nil "BETA~AGAMMA~A" crlf crlf))
+                     (expected (format nil "alpha~%BETA~%GAMMA~%")))
+                (write-text target original)
+                (test-assert
+                 (tool-result-success-p
+                  (run "fs" "edit"
+                       "path" (namestring target)
+                       "old-text" old-text
+                       "new-text" new-text))
+                 "fs.edit normalizes a unique LF mismatch")
+                (test-assert (string= (uiop:read-file-string target) expected)
+                             "fs.edit preserves LF delimiters"))
+              (let* ((target (merge-pathnames "duplicate-indentation.lisp" root))
+                     (block (format nil "(foo)~%  (bar)~%"))
+                     (original (format nil "~Aseparator~%~A" block block))
+                     (old-text (format nil " (foo)~%   (bar)~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" "replacement"
+                                   "replace-all" t)))
+                  (test-assert
+                   (not (tool-result-success-p result))
+                   "replace-all does not bypass relaxed-match uniqueness")
+                  (test-assert
+                   (search "2 line-wise near matches"
+                           (tool-result-content result))
+                   "fs.edit explains ambiguous relaxed matches")
+                  (test-assert (string= (uiop:read-file-string target) original)
+                               "ambiguous relaxed matching leaves the file unchanged")))
+              (let* ((target (merge-pathnames "overlapping-indentation.lisp" root))
+                     (original (format nil "(foo)~%(foo)~%(foo)~%"))
+                     (old-text (format nil " (foo)~% (foo)~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" "replacement")))
+                  (test-assert
+                   (not (tool-result-success-p result))
+                   "fs.edit counts overlapping relaxed candidate starts")
+                  (test-assert
+                   (search "2 line-wise near matches"
+                           (tool-result-content result))
+                   "overlapping relaxed candidates remain ambiguous")))
+              (let* ((target (merge-pathnames "nonuniform-indentation.lisp" root))
+                     (original (format nil "(foo)~%  (bar)~%"))
+                     (old-text (format nil " (foo)~%    (bar)~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" old-text)))
+                  (test-assert
+                   (not (tool-result-success-p result))
+                   "fs.edit rejects a nonuniform indentation projection")
+                  (test-assert
+                   (and (search "cannot be projected as one uniform"
+                                (tool-result-content result))
+                        (search original (tool-result-content result)))
+                   "fs.edit returns the exact unsafe near match for retry")))
+              (let* ((target (merge-pathnames "unanchored-indentation.lisp" root))
+                     (original (format nil "(foo)~%  (bar)~%"))
+                     (old-text (format nil " (foo)~%   (bar)~%"))
+                     (new-text (format nil " (baz)~%   (quux)~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" new-text)))
+                  (test-assert
+                   (not (tool-result-success-p result))
+                   "fs.edit rejects an unanchored indentation projection")
+                  (test-assert
+                   (and (search "boundary line"
+                                (tool-result-content result))
+                        (search original (tool-result-content result)))
+                   "fs.edit makes an unsafe unique near match actionable")))
+              (let* ((target (merge-pathnames "mixed-endings.txt" root))
+                     (crlf (format nil "~C~C" #\Return #\Newline))
+                     (original (format nil "alpha~Abeta~%gamma~%" crlf))
+                     (old-text (format nil "alpha~%beta~%")))
+                (write-text target original)
+                (let ((result (run "fs" "edit"
+                                   "path" (namestring target)
+                                   "old-text" old-text
+                                   "new-text" "changed")))
+                  (test-assert
+                   (not (tool-result-success-p result))
+                   "fs.edit rejects relaxed matching in mixed-EOL files")
+                  (test-assert
+                   (search "mixed line endings" (tool-result-content result))
+                   "fs.edit explains its mixed-EOL safety boundary")
+                  (test-assert (string= (uiop:read-file-string target) original)
+                               "mixed-EOL rejection leaves the file unchanged")))
              (test-assert (not (tool-result-success-p
                                 (run "fs" "write"
                                      "path" (namestring

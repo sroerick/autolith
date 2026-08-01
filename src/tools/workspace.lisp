@@ -25,7 +25,7 @@
 
 (defclass fs-edit-tool (workspace-tool)
   ()
-  (:documentation "Replace exact text occurrences inside one workspace file."))
+  (:documentation "Replace text occurrences inside one workspace file."))
 
 (defclass shell-run-tool (workspace-tool)
   ()
@@ -495,7 +495,7 @@ is retained whenever the configured maximum can contain the fixed metadata."
 (defmethod tool-execute ((tool fs-edit-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Replace exact occurrences of old-text inside the requested file."
+  "Replace old-text inside the requested file, with conservative line fallback."
   (let ((path (workspace-tool-path
                context
                (tool-argument arguments "path" :required t)))
@@ -518,8 +518,21 @@ is retained whenever the configured maximum can contain the fixed metadata."
               (occurrences (workspace--count-occurrences old-text text)))
          (cond
            ((zerop occurrences)
-            (tool-failure
-             (format nil "The old-text was not found in ~A." path)))
+            (multiple-value-bind (status replacement notice)
+                (workspace--relaxed-edit path old-text new-text text)
+              (ecase status
+                (:success
+                 (with-open-file (stream path
+                                         :direction :output
+                                         :if-exists :supersede
+                                         :external-format :utf-8)
+                   (write-string replacement stream))
+                 (tool-success notice))
+                (:failure
+                 (tool-failure notice))
+                (:none
+                 (tool-failure
+                  (format nil "The old-text was not found in ~A." path))))))
            ((and (> occurrences 1) (not replace-all))
             (tool-failure
              (format nil "The old-text matches ~D times in ~A; include more ~

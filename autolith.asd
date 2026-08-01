@@ -71,6 +71,7 @@
                              (:file "tools/agenda")
                              (:file "tools/plan")
                              (:file "tools/seatbelt")
+                             (:file "tools/workspace-edit")
                              (:file "tools/workspace")
                              (:file "tools/search")
                              (:file "workers/search")

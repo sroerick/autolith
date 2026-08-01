@@ -95,17 +95,17 @@
         (list
          'fs-edit-tool
          "fs" "edit"
-         "Replace one exact text occurrence inside a workspace file. Indentation and newlines must match the file exactly; do not copy line numbers from fs.read."
+         "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read."
          (tool-object-schema
           (json-object
            "path" (tool-string-property
                    "The file path, absolute or workspace-relative.")
            "old-text" (tool-string-property
-                       "The exact existing text to replace, including its original indentation and newlines. Include enough context to be unique. Never include fs.read line-number prefixes.")
+                       "The existing text to replace. Preserve exact indentation and newlines when possible, include enough context to be unique, and never include fs.read line-number prefixes.")
            "new-text" (tool-string-property
                        "The replacement text, using the file's exact indentation style.")
            "replace-all" (tool-boolean-property
-                          "Replace every occurrence instead of requiring a unique match."))
+                          "Replace every exact occurrence. Relaxed multiline matching always requires one unique candidate."))
           '("path" "old-text" "new-text")))))
     (default-tools--register registry specification))
   registry)
