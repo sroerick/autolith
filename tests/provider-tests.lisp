@@ -109,7 +109,7 @@
                                (or (provider-error-response error) ""))
                        t)))
               "a streamed failure body reaches both the message and the response"))
-           (dolist (status '(500 502 503 504))
+           (dolist (status '(500 502 503 504 507))
              (let ((transient-condition
                      (make-condition
                       'http-request-failed
@@ -125,7 +125,13 @@
                        provider transient-condition)
                       nil)
                   (provider-retryable-error (error)
-                    (= (provider-error-status error) status)))
+                    (and (= (provider-error-status error) status)
+                         (search "temporary provider failure"
+                                 (or (provider-error-response error) ""))
+                         (search "provider service is having trouble"
+                                 (format nil "~A" error)
+                                 :test #'char-equal)
+                         t)))
                 (format nil "HTTP ~D is eligible for bounded retry" status)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

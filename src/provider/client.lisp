@@ -191,7 +191,7 @@
   "The characters of a provider failure explanation shown in its message.")
 
 (defparameter *provider-retryable-http-statuses*
-    '(500 502 503 504)
+    '(500 502 503 504 507)
   "HTTP statuses eligible for bounded provider retry.")
 
 (defparameter *provider-stream-retry-sleep-function* #'sleep
@@ -909,7 +909,7 @@ are decoded as UTF-8."
         (hint (case status
                 (404 "The requested resource or model is not being served.")
                 (429 "The subscription rate limit was reached; see /status.")
-                ((500 502 503 504) "The provider service is having trouble.")
+                ((500 502 503 504 507) "The provider service is having trouble.")
                 (t nil))))
     (format nil "The provider returned HTTP ~D.~@[ ~A~]~@[~%~A~]"
             status
