@@ -1758,16 +1758,48 @@ newly acquired lease."
     (otherwise
      nil)))
 
+(-> application--command-presentation-entry
+    (application-command-invocation (or string list))
+    terminal-styled-text)
+(defun application--command-presentation-entry (invocation entry)
+  "Return ENTRY beneath a visible heading for its originating INVOCATION."
+  (append
+   (list (terminal-span ':notice "› ")
+         (terminal-span
+          ':code
+          (string-trim
+           *application-command-whitespace*
+           (application-command-invocation-input invocation)))
+         (terminal-span ':plain (string #\Newline))
+         (terminal-span ':notice "└ "))
+   (if (stringp entry)
+       (list (terminal-span ':plain entry))
+       entry)))
+
 (-> application-present (application (or string list)) boolean)
 (defun application-present (application entry)
   "Append non-conversation ENTRY once to APPLICATION's normal scrollback."
-  (let ((ui (application-ui application)))
+  (let* ((ui (application-ui application))
+         (invocation
+           (and *application-command-presentation-pending-p*
+                (typep *application-command-presentation-invocation*
+                       'application-command-invocation)
+                *application-command-presentation-invocation*))
+         (presented-entry
+           (if invocation
+               (application--command-presentation-entry invocation entry)
+               entry)))
     (with-terminal-ui-locked (ui)
-      (let ((identifier (incf (application-presentation-counter application))))
-        (terminal-ui-append-finalized
-         ui
-         (list :presentation identifier)
-         entry)))))
+      (let* ((identifier
+               (incf (application-presentation-counter application)))
+             (emitted-p
+               (terminal-ui-append-finalized
+                ui
+                (list :presentation identifier)
+                presented-entry)))
+        (when (and invocation emitted-p)
+          (setf *application-command-presentation-pending-p* nil))
+        emitted-p))))
 
 (-> application--assistant-message-record-text (list) (option string))
 (defun application--assistant-message-record-text (record)

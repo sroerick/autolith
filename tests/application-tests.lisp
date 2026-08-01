@@ -400,6 +400,56 @@
                  "the command's mandatory tip follows its colored token"))
   nil)
 
+(-> test-application-command-presentations () null)
+(defun test-application-command-presentations ()
+  "Test command feedback is visibly labeled without affecting later notices."
+  (let* ((invocation
+           (application-command-invocation-parse "/timestamps on"))
+         (message "Turn timestamps are enabled and saved.")
+         (entry
+           (application--command-presentation-entry invocation message)))
+    (test-assert
+     (equal entry
+            (list (terminal-span ':notice "› ")
+                  (terminal-span ':code "/timestamps on")
+                  (terminal-span ':plain (string #\Newline))
+                  (terminal-span ':notice "└ ")
+                  (terminal-span ':plain message)))
+     "command feedback carries a colored command heading and marked notice"))
+  (let* ((application (application-tests--ui-application :columns 60))
+         (ui (application-ui application))
+         (terminal (terminal-ui-terminal ui))
+         (invocation
+           (application-command-invocation-parse "/timestamps on")))
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (application-command--call-with-presentation
+            invocation
+            (lambda ()
+              (application-present application "first confirmation")
+              (application-present application "second confirmation")))
+           (let* ((output (recording-terminal-output terminal))
+                  (command-position (search "/timestamps on" output))
+                  (confirmation-position (search "first confirmation" output)))
+             (test-assert
+              (and command-position
+                   confirmation-position
+                   (< command-position confirmation-position))
+              "the originating command is shown above its first confirmation")
+             (test-assert
+              (= (terminal-tests--substring-count "/timestamps on" output) 1)
+              "one command invocation receives one heading"))
+           (recording-terminal-reset terminal)
+           (application-present application "unrelated notice")
+           (let ((output (recording-terminal-output terminal)))
+             (test-assert
+              (and (search "unrelated notice" output)
+                   (not (search "/timestamps on" output)))
+              "later non-command presentations do not inherit command context")))
+      (terminal-ui-stop ui)))
+  nil)
+
 (-> test-application-banner-version () null)
 (defun test-application-banner-version ()
   "Test the Cosmic mark, adjacent metadata, narrow layout, and configured version."
@@ -822,7 +872,9 @@
          (application (application-tests--ui-application :columns 60))
          (ui (application-ui application))
          (terminal (terminal-ui-terminal ui)))
-    (setf (application-configuration application) configuration)
+    (setf (application-configuration application) configuration
+          (application-conversation application)
+          (conversation-create configuration :identifier "timestamp-command"))
     (terminal-ui-start ui)
     (unwind-protect
          (progn
@@ -856,7 +908,21 @@
                   nil)
               (configuration-error ()
                 t))
-            "unsupported timestamp modes signal a typed usage error"))
+            "unsupported timestamp modes signal a typed usage error")
+            (recording-terminal-reset terminal)
+            (test-assert
+             (eq (application--run-command-input
+                  application "/timestamps sometimes")
+                 ':failed)
+             "the normal command boundary presents expected usage errors")
+            (let* ((output (recording-terminal-output terminal))
+                   (command-position (search "/timestamps sometimes" output))
+                   (error-position (search "✗ error" output)))
+              (test-assert
+               (and command-position
+                    error-position
+                    (< command-position error-position))
+               "normal command errors retain their originating command heading")))
       (terminal-ui-stop ui)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
@@ -3277,7 +3343,27 @@
                 (zerop
                  (length
                   (line-editor-text (terminal-ui-editor ui))))
-                "/goal does not return to the editor after inspection")))
+                "/goal does not return to the editor after inspection"))
+              (recording-terminal-reset terminal)
+              (let* ((invocation
+                       (application-command-invocation-parse
+                        "/timestamps sometimes"))
+                     (command
+                       (application-command-invocation-command invocation)))
+                (test-assert
+                 (eq (application-input-controller--run-responsive-command
+                      controller command invocation)
+                     ':failed)
+                 "responsive command errors remain recoverable")
+                (let* ((output (recording-terminal-output terminal))
+                       (command-position
+                         (search "/timestamps sometimes" output))
+                       (error-position (search "✗ error" output)))
+                  (test-assert
+                   (and command-position
+                        error-position
+                        (< command-position error-position))
+                   "responsive command errors retain their command heading"))))
         (when controller
           (application-input-controller-stop controller)))))
   nil)
@@ -3304,10 +3390,14 @@
              (application-input-controller--next-work controller)
              (application-input-controller--handle-submission
               controller "/goal pause")
-             (let ((output (recording-terminal-output terminal)))
+             (let* ((output (recording-terminal-output terminal))
+                    (command-position (search "/goal pause" output))
+                    (scheduled-position (search "command scheduled" output)))
                (test-assert
-                (search "command scheduled" output)
-                "a busy held command announces its scheduling")
+                (and command-position
+                     scheduled-position
+                     (< command-position scheduled-position))
+                "a busy held command labels its scheduling notice")
                (test-assert
                 (zerop (length (line-editor-text (terminal-ui-editor ui))))
                 "a scheduled command does not return to the editor"))
@@ -6053,6 +6143,7 @@
 (defun run-application-tests ()
   "Run focused application presentation tests and return true on success."
   (test-application-command-tips)
+  (test-application-command-presentations)
   (test-application-banner-version)
   (test-startup-update-choice)
   (test-thinking-label-selection)

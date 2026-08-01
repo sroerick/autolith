@@ -751,16 +751,20 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 (defun application-input-controller--schedule-command (controller input)
   "Queue busy command INPUT to run at the first idle opportunity."
   (when (application-input-controller--enqueue controller ':command input)
-    (application-present
-     (application-input-controller-application controller)
-     (list
-      (terminal-span
-       ':hint
-       "∙ command scheduled until the current response finishes")
-      (terminal-span ':plain (string #\Newline))
-      (terminal-span
-       ':dim
-       "  It runs at the first opportunity. Tab with an empty draft edits it."))))
+    (let ((invocation (application-command-invocation-parse input)))
+      (application-command--call-with-presentation
+       invocation
+       (lambda ()
+         (application-present
+          (application-input-controller-application controller)
+          (list
+           (terminal-span
+            ':hint
+            "∙ command scheduled until the current response finishes")
+           (terminal-span ':plain (string #\Newline))
+           (terminal-span
+            ':dim
+            "  It runs at the first opportunity. Tab with an empty draft edits it.")))))))
   nil)
 
 (-> application-input-controller--run-responsive-command
@@ -772,13 +776,16 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   "Execute an immediate COMMAND without converting its errors on the reader."
   (let ((application
           (application-input-controller-application controller)))
-    (handler-case
-        (application-command-execute command application invocation)
-      (autolith-error (condition)
-        (application-present
-         application
-         (application--expected-error-entry application condition))
-        ':failed))))
+    (application-command--call-with-presentation
+     invocation
+     (lambda ()
+       (handler-case
+           (application-command-execute command application invocation)
+         (autolith-error (condition)
+           (application-present
+            application
+            (application--expected-error-entry application condition))
+           ':failed))))))
 
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
@@ -1519,30 +1526,35 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 (-> application--run-command-input (application string) keyword)
 (defun application--run-command-input (application input)
   "Run command INPUT with established expected and fatal handling."
-  (let ((signal-backtrace nil))
-    (handler-bind
-        ((serious-condition
-           (lambda (condition)
-             (declare (ignore condition))
-             (setf signal-backtrace (application-safe-backtrace)))))
-      (handler-case
-          (application-handle-input application input)
-        (application-turn-cancelled (condition)
-          (error condition))
-        (application-input-failed (condition)
-          (error condition))
-        (rollback-requested (condition)
-          (error condition))
-        ((or agent-loop-error
-             conversation-invariant-error
-             active-image-corruption)
-         (condition)
-          (application-raise-fatal application condition signal-backtrace))
-        (autolith-error (condition)
-          (application-handle-expected-error application condition)
-          ':failed)
-        (serious-condition (condition)
-          (application-raise-fatal application condition signal-backtrace))))))
+  (let ((signal-backtrace nil)
+        (invocation (application-command-invocation-parse input)))
+    (application-command--call-with-presentation
+     invocation
+     (lambda ()
+       (handler-bind
+           ((serious-condition
+              (lambda (condition)
+                (declare (ignore condition))
+                (setf signal-backtrace (application-safe-backtrace)))))
+         (handler-case
+             (application-handle-input application input)
+           (application-turn-cancelled (condition)
+             (error condition))
+           (application-input-failed (condition)
+             (error condition))
+           (rollback-requested (condition)
+             (error condition))
+           ((or agent-loop-error
+                conversation-invariant-error
+                active-image-corruption)
+            (condition)
+             (application-raise-fatal application condition signal-backtrace))
+           (autolith-error (condition)
+             (application-handle-expected-error application condition)
+             ':failed)
+           (serious-condition (condition)
+             (application-raise-fatal
+              application condition signal-backtrace))))))))
 
 (-> application-input-controller--run-later
     (application-input-controller later-entry)

@@ -560,6 +560,12 @@ without changing the registry."
 
 ;;;; -- Invocation and Dispatch --
 
+(defvar *application-command-presentation-invocation* nil
+  "The command invocation whose next presentation receives a visible heading.")
+
+(defvar *application-command-presentation-pending-p* nil
+  "Whether the current command invocation still needs its presentation heading.")
+
 (defparameter *application-command-whitespace*
   '(#\Space #\Tab #\Newline #\Return #\Page)
   "Characters separating command tokens and arguments.")
@@ -575,6 +581,15 @@ without changing the registry."
       (if end
           (subseq text 0 end)
           (copy-seq text)))))
+
+(-> application-command--call-with-presentation
+    (application-command-invocation function)
+    t)
+(defun application-command--call-with-presentation (invocation function)
+  "Call FUNCTION with INVOCATION available to label its first presentation."
+  (let ((*application-command-presentation-invocation* invocation)
+        (*application-command-presentation-pending-p* t))
+    (funcall function)))
 
 (-> application-command-invocation-parse
     (string)
@@ -614,16 +629,22 @@ without changing the registry."
      application
      (invocation application-command-invocation))
   "Invoke COMMAND's captured handler and validate its loop action."
-  (let ((result
-          (funcall (application-command-handler command)
-                   application invocation)))
-    (unless (member result '(:continue :quit) :test #'eq)
-      (error 'configuration-error
-             :message
-             (format nil "Application command ~A returned invalid action ~S."
-                     (application-command-name command)
-                     result)))
-    result))
+  (labels ((invoke ()
+             "Invoke COMMAND's handler and validate its result."
+             (let ((result
+                     (funcall (application-command-handler command)
+                              application invocation)))
+               (unless (member result '(:continue :quit) :test #'eq)
+                 (error 'configuration-error
+                        :message
+                        (format nil
+                                "Application command ~A returned invalid action ~S."
+                                (application-command-name command)
+                                result)))
+               result)))
+    (if (eq *application-command-presentation-invocation* invocation)
+        (invoke)
+        (application-command--call-with-presentation invocation #'invoke))))
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation

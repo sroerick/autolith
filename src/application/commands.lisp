@@ -1609,14 +1609,17 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
   "Execute slash command INPUT for APPLICATION and return its loop action."
   (let* ((invocation (application-command-invocation-parse input))
          (command (application-command-invocation-command invocation)))
-    (if command
-        (application-command-execute command application invocation)
-        (progn
-          (application-present
-           application
-           (format nil "Unknown command ~A. Use /help."
-                   (application-command-invocation-name invocation)))
-          ':continue))))
+    (application-command--call-with-presentation
+     invocation
+     (lambda ()
+       (if command
+           (application-command-execute command application invocation)
+           (progn
+             (application-present
+              application
+              (format nil "Unknown command ~A. Use /help."
+                      (application-command-invocation-name invocation)))
+             ':continue))))))
 
 (-> application-handle-input (application string) keyword)
 (defun application-handle-input (application input)
