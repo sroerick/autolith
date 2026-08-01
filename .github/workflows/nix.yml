@@ -74,11 +74,39 @@ jobs:
 
           cat "$temporary_home/stderr"
           cat "$temporary_home/stdout"
-          test "$status" -eq 0
-          test -f "$XDG_DATA_HOME/autolith/recovery/autolith-recovery.core"
-          test -f "$XDG_DATA_HOME/autolith/recovery/manifest.sexp"
-          test -f "$XDG_DATA_HOME/autolith/active/autolith-active.core"
-          test -f "$XDG_DATA_HOME/autolith/active/manifest.sexp"
-          grep -F "Installed pristine recovery image" "$temporary_home/stdout"
-          grep -F "Installed preloaded active image" "$temporary_home/stdout"
-          grep -F "AUTOLITH v" "$temporary_home/stdout"
+
+          fail_smoke()
+          {
+            local title=$1
+            local detail=$2
+            detail=${detail//'%'/'%25'}
+            detail=${detail//$'\r'/'%0D'}
+            detail=${detail//$'\n'/'%0A'}
+            printf '::error title=%s::%s\n' "$title" "$detail"
+            exit 1
+          }
+
+          if [ "$status" -ne 0 ]; then
+            diagnostic=$(printf 'status=%s\nstderr:\n' "$status"
+              tail -c 8000 "$temporary_home/stderr"
+              printf '\nstdout:\n'
+              tail -c 8000 "$temporary_home/stdout")
+            fail_smoke "Autolith first run exited with status $status" "$diagnostic"
+          fi
+          for artifact in \
+            "$XDG_DATA_HOME/autolith/recovery/autolith-recovery.core" \
+            "$XDG_DATA_HOME/autolith/recovery/manifest.sexp" \
+            "$XDG_DATA_HOME/autolith/active/autolith-active.core" \
+            "$XDG_DATA_HOME/autolith/active/manifest.sexp"; do
+            if [ ! -f "$artifact" ]; then
+              fail_smoke "Autolith first run omitted an image artifact" "$artifact"
+            fi
+          done
+          for marker in \
+            "Installed pristine recovery image" \
+            "Installed preloaded active image" \
+            "AUTOLITH v"; do
+            if ! grep -F "$marker" "$temporary_home/stdout" >/dev/null; then
+              fail_smoke "Autolith first run omitted an output marker" "$marker"
+            fi
+          done
