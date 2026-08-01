@@ -336,9 +336,11 @@ emergency terminal input responsive while another thread owns presentation."
   (terminal--write-safe-text terminal (terminal--render-spans terminal spans))
   nil)
 
-(-> terminal-ui--prompt-content (terminal-ui) (values list integer))
+(-> terminal-ui--prompt-content
+    (terminal-ui)
+    (values (or list terminal-rendered-row) integer))
 (defun terminal-ui--prompt-content (ui)
-  "Return UI's multiline prompt spans and cursor character offset."
+  "Return UI's word-wrapped prompt content and cursor character offset."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (terminal-columns terminal))
          (editor (terminal-ui-editor ui))
@@ -354,15 +356,35 @@ emergency terminal input responsive while another thread owns presentation."
           (values spans
                   (min (length safe-prompt)
                        (length (terminal--spans-text spans)))))
-        (let ((content-style
-                (if (uiop:string-prefix-p "/" (line-editor-text editor))
-                    ':user
-                    ':plain)))
-          (values (list (terminal-span ':brand safe-prompt)
-                        (terminal-span content-style
-                                       (line-editor-text editor)))
-                  (+ (length safe-prompt)
-                     (line-editor-cursor editor)))))))
+        (let* ((raw-content (line-editor-text editor))
+               (content (sanitize-text raw-content))
+               (content-cursor
+                 (length
+                  (sanitize-text
+                   (subseq raw-content 0 (line-editor-cursor editor)))))
+               (content-style
+                 (if (uiop:string-prefix-p "/" content)
+                     ':user
+                     ':plain))
+               (prompt-display
+                 (terminal--render-spans
+                  terminal (list (terminal-span ':brand safe-prompt))))
+               (content-display
+                 (terminal--render-spans
+                  terminal (list (terminal-span content-style content)))))
+          (multiple-value-bind
+                (wrapped-content wrapped-display wrapped-cursor)
+              (wrap-styled-editor-text
+               content
+               content-display
+               :cursor content-cursor
+               :columns columns
+               :prompt-width (text-cell-width safe-prompt))
+            (values
+             (terminal--make-rendered-row
+              (concatenate 'string safe-prompt wrapped-content)
+              (concatenate 'string prompt-display wrapped-display))
+             (+ (length safe-prompt) wrapped-cursor)))))))
 
 ;;;; -- Command Completion Suggestions --
 

@@ -361,6 +361,56 @@
 (-> test-terminal-line-editor () null)
 (defun test-terminal-line-editor ()
   "Test Clinedi editing, multiline input, history, and Autolith control policy."
+  (let* ((terminal (make-instance 'recording-terminal :columns 10))
+         (editor (line-editor-create))
+         (ui (terminal-ui-create :terminal terminal
+                                 :editor editor
+                                 :prompt "猫> ")))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-process-event active-ui '(:insert "go lin"))
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore display))
+        (test-assert
+         (string= (subseq text 0 cursor) "猫> go lin")
+         "an exact-width growing input word remains after a wide prompt"))
+      (terminal-ui-process-event active-ui '(:insert "e"))
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (let ((expected (format nil "猫> go ~%line")))
+          (test-assert
+           (string= (subseq text 0 cursor) expected)
+           "a growing live input word moves intact to the next row")
+          (test-assert
+           (not (search (format nil "lin~%e") text))
+           "live input never leaves a partial word on the previous row")
+          (test-assert
+           (string= text (clinedi:ansi-strip display))
+           "word-aware live input wrapping preserves styled presentation")))
+      (line-editor-set-text editor "go line" :cursor 5)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui)
+        (declare (ignore display))
+        (test-assert
+         (string= (subseq text 0 cursor) (format nil "猫> go ~%li"))
+         "a cursor inside a reflowed word follows its source position"))))
+  (let* ((raw-content
+           (format nil "a~Cb~Cc~Cd"
+                   #\Tab #\Return *terminal-escape-character*))
+         (terminal (make-instance 'recording-terminal :columns 40))
+         (editor (line-editor-create :text raw-content))
+         (ui (terminal-ui-create :terminal terminal
+                                 :editor editor)))
+    (multiple-value-bind (text display cursor)
+        (terminal-ui--live-content ui)
+      (let ((expected
+              (format nil "> a    b~%c~Cd" (code-char #xfffd))))
+        (test-assert
+         (string= (subseq text 0 cursor) expected)
+         "externally supplied editor controls are sanitized before wrapping")
+        (test-assert
+         (string= text (clinedi:ansi-strip display))
+         "sanitized external editor text preserves styled presentation"))))
   (let* ((terminal (make-instance 'recording-terminal :columns 12))
          (editor (line-editor-create :history-limit 2))
          (ui (terminal-ui-create :terminal terminal
