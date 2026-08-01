@@ -463,6 +463,9 @@
           (when parts
             (format nil "~{~A~^~2%~}" parts)))))))
 
+(defparameter *provider-hosted-tools-enabled-p* t
+  "Whether the current provider request may advertise hosted provider tools.")
+
 (-> provider-web-search-tool (configuration) (option json-object))
 (defun provider-web-search-tool (configuration)
   "Return the hosted web search tool for CONFIGURATION, or NIL when disabled.
@@ -473,6 +476,8 @@ additional_tools developer item exactly as Codex Responses Lite requests do
 at reference commit 5c19155c."
   (let ((mode (configuration-web-search-mode configuration)))
     (cond
+      ((not *provider-hosted-tools-enabled-p*)
+       nil)
       ((string= mode "disabled")
        nil)
       ((string= mode "live")

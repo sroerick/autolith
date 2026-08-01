@@ -2686,11 +2686,12 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
      &key (:continuation-p boolean)
           (:steering-function (option function))
           (:tools-p boolean)
-          (:single-request-p boolean))
+          (:tool-allowlist (option list))
+          (:tool-restriction-p boolean))
     null)
 (defun application--run-turn
     (application content &key continuation-p steering-function (tools-p t)
-                              (single-request-p nil))
+                              tool-allowlist (tool-restriction-p nil))
   "Persist and run one model turn for CONTENT while retaining editable input."
   (let* ((submission
            (etypecase content
@@ -2713,7 +2714,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                         :continuation-p continuation-p)
              :goal-context (application-goal-context application)
              :tools-p tools-p
-             :single-request-p single-request-p)))
+             :tool-allowlist tool-allowlist
+             :tool-restriction-p tool-restriction-p)))
       (terminal-ui-set-preview-rows ui nil)
       (application-set-activity application nil)
       (terminal-ui-stream-update ui :tail nil)
@@ -2752,12 +2754,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (application (or string user-message-input)
      &key (:steering-function (option function))
           (:tools-p boolean)
-          (:single-request-p boolean)
+          (:tool-allowlist (option list))
+          (:tool-restriction-p boolean)
           (:goal-continuations-p boolean))
     null)
 (defun application-run-message
     (application content &key steering-function (tools-p t)
-                              (single-request-p nil)
+                              tool-allowlist (tool-restriction-p nil)
                               (goal-continuations-p t))
   "Run one user turn for CONTENT with optional tools and goal continuations."
   (let ((goal (application-goal application)))
@@ -2767,7 +2770,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                          content
                          :steering-function steering-function
                          :tools-p tools-p
-                         :single-request-p single-request-p)
+                         :tool-allowlist tool-allowlist
+                         :tool-restriction-p tool-restriction-p)
   (when goal-continuations-p
     (application--run-goal-continuations
      application

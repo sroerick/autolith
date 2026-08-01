@@ -890,11 +890,16 @@ behavior.
 When the launcher supplies a valid bounded crash capsule, the resumed
 application queues one diagnosis turn before ordinary input. The model receives
 the restored conversation history and bounded condition, revision, journal,
-and backtrace context. This turn has no tools and cannot change source, files,
-overlays, generations, or images. It explains the likely cause and safest
-repair, then asks whether to apply that repair to the active image. Autolith
-waits for explicit user agreement before attempting the repair. Starting the
-recovery image manually without crash context does not queue a diagnosis turn.
+and backtrace context. It may inspect workspace files, indexed source, and
+active-image state through an exact read-only native tool allowlist. Filesystem
+reads are confined to the restored workspace and tracked source roots. MCP,
+shell, provider-hosted, image attachment, write, mutation, checkpoint, and
+rollback tools are absent. The model can use bounded read-only tool rounds
+within that one turn, then explains the likely cause and safest repair and asks
+whether to apply that repair to the active image.
+Autolith waits for explicit user agreement before attempting the repair.
+Starting the recovery image manually without crash context does not queue a
+diagnosis turn.
 
 Saved cores are compatible only with the recorded SBCL version, operating system
 build, and architecture. Source remains authoritative for rebuilding the base.

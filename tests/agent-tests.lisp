@@ -163,6 +163,24 @@
        '("value"))))
     registry))
 
+(-> agent-test-restricted-registry () tool-registry)
+(defun agent-test-restricted-registry ()
+  "Return read-only and mutation-labelled deterministic test tools."
+  (let ((registry (agent-test-registry)))
+    (tool-registry-register
+     registry
+     (make-instance
+      'agent-test-echo-tool
+      :namespace "mutation"
+      :name "write"
+      :description "Represent a forbidden mutation tool."
+      :parameters
+      (tool-object-schema
+       (json-object
+        "value" (tool-string-property "The value to echo."))
+       '("value"))))
+    registry))
+
 (-> agent-test-call
     (&key
      (:call-id (option string))
@@ -301,12 +319,7 @@
             (list
              (agent-test-result
               "tool-free"
-              (list (agent-test-message "diagnosis only"))
-              :turn-completion :continue)
-             (agent-test-result
-              "unexpected-follow-up"
-              (list (agent-test-message "must not run"))
-              :turn-completion :end))))
+              (list (agent-test-message "diagnosis only"))))))
          (agent
            (agent-create :configuration configuration
                          :provider provider
@@ -315,18 +328,10 @@
                          :worker ':unused)))
     (unwind-protect
          (progn
-           (setf (conversation-last-total-tokens conversation)
-                 (configuration-compaction-token-limit configuration))
-           (agent-run-user-turn agent
-                                "diagnose the crash"
-                                :tools-p nil
-                                :single-request-p t)
+           (agent-run-user-turn agent "diagnose the crash" :tools-p nil)
            (test-assert
             (equal (scripted-provider-tool-schema-counts provider) '(0))
             "a tool-free turn advertises no tool schemas")
-           (test-assert
-            (= (length (scripted-provider-input-counts provider)) 1)
-            "a single-request turn skips compaction and provider follow-ups")
            (let* ((call-conversation
                     (conversation-create
                      configuration :identifier "agent-tool-free-call"))
@@ -354,8 +359,7 @@
                     (agent-run-user-turn
                      call-agent
                      "do not call tools"
-                     :tools-p nil
-                     :single-request-p t)
+                     :tools-p nil)
                     nil)
                 (agent-loop-error ()
                   t))
@@ -363,6 +367,189 @@
              (test-assert
               (= (length (conversation-input-items call-conversation)) 1)
               "a rejected tool-free call is never persisted or executed")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-agent-read-only-tool-allowlist () null)
+(defun test-agent-read-only-tool-allowlist ()
+  "Test restricted turns advertise and execute only explicitly allowed tools."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-read-only"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "read-only-call"
+              (list
+               (agent-test-call
+                :call-id "read-only-call"
+                :arguments "{\"value\":\"inspect\"}")))
+             (agent-test-result
+              "read-only-answer"
+              (list (agent-test-message "diagnosed"))
+              :turn-completion :end))))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (agent-test-restricted-registry)
+                         :worker ':unused)))
+    (unwind-protect
+         (progn
+           (let ((*agent-restricted-maximum-tool-rounds* 1))
+             (agent-run-user-turn
+              agent
+              "diagnose safely"
+              :tool-allowlist '("test.echo")
+              :tool-restriction-p t))
+           (test-assert
+            (equal (scripted-provider-tool-schema-counts provider) '(0 1))
+            "a restricted turn removes tool schemas after its bounded round")
+           (test-assert
+            (equal (nreverse (scripted-provider-input-counts provider)) '(1 3))
+            "an allowed read-only call executes and returns to the same turn")
+           (let* ((forbidden-conversation
+                    (conversation-create
+                     configuration :identifier "agent-read-only-forbidden"))
+                  (forbidden-provider
+                    (make-instance
+                     'scripted-provider
+                     :results
+                     (list
+                      (agent-test-result
+                       "forbidden-mutation"
+                       (list
+                        (agent-test-call
+                         :call-id "forbidden-mutation"
+                         :namespace "mutation"
+                         :name "write"
+                         :arguments "{\"value\":\"change\"}"))))))
+                  (forbidden-agent
+                    (agent-create
+                     :configuration configuration
+                     :provider forbidden-provider
+                     :conversation forbidden-conversation
+                     :tool-registry (agent-test-restricted-registry)
+                     :worker ':unused)))
+             (test-assert
+              (handler-case
+                  (progn
+                    (agent-run-user-turn
+                     forbidden-agent
+                     "do not mutate"
+                     :tool-allowlist '("test.echo")
+                     :tool-restriction-p t)
+                    nil)
+                (agent-loop-error ()
+                  t))
+              "a restricted turn rejects a non-allowlisted mutation call")
+             (test-assert
+              (= (length (conversation-input-items forbidden-conversation)) 1)
+              "a forbidden mutation call is neither persisted nor executed")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-agent-restricted-tool-round-limit () null)
+(defun test-agent-restricted-tool-round-limit ()
+  "Test restricted turns reject calls returned after their bounded tool rounds."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-tool-limit"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "tool-limit-first"
+              (list
+               (agent-test-call
+                :call-id "tool-limit-first"
+                :arguments "{\"value\":\"first\"}")))
+             (agent-test-result
+              "tool-limit-second"
+              (list
+               (agent-test-call
+                :call-id "tool-limit-second"
+                :arguments "{\"value\":\"second\"}"))))))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (agent-test-restricted-registry)
+                         :worker ':unused)))
+    (unwind-protect
+         (let ((*agent-restricted-maximum-tool-rounds* 1))
+           (test-assert
+            (handler-case
+                (progn
+                  (agent-run-user-turn
+                   agent
+                   "inspect once"
+                   :tool-allowlist '("test.echo")
+                   :tool-restriction-p t)
+                  nil)
+              (agent-loop-error (condition)
+                (search "tool-round limit" (format nil "~A" condition))))
+            "a restricted turn rejects calls beyond its tool-round limit")
+           (test-assert
+            (equal (scripted-provider-tool-schema-counts provider) '(0 1))
+            "the provider sees no tool schemas after the restricted limit")
+           (test-assert
+            (= (length (conversation-input-items conversation)) 3)
+            "the over-limit call is rejected before persistence or execution"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-agent-empty-tool-allowlist () null)
+(defun test-agent-empty-tool-allowlist ()
+  "Test an explicit empty restriction advertises and executes no tools."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-empty-tools"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "empty-allowlist-call"
+              (list
+               (agent-test-call
+                :call-id "empty-allowlist-call"
+                :arguments "{\"value\":\"blocked\"}"))))))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (agent-test-restricted-registry)
+                         :worker ':unused)))
+    (unwind-protect
+         (progn
+           (test-assert
+            (handler-case
+                (progn
+                  (agent-run-user-turn
+                   agent
+                   "inspect nothing"
+                   :tool-allowlist nil
+                   :tool-restriction-p t)
+                  nil)
+              (agent-loop-error ()
+                t))
+            "an explicit empty restriction rejects every function call")
+           (test-assert
+            (equal (scripted-provider-tool-schema-counts provider) '(0))
+            "an explicit empty restriction advertises zero namespaces")
+           (test-assert
+            (= (length (conversation-input-items conversation)) 1)
+            "an empty restriction persists no rejected call or tool result"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -1188,6 +1375,9 @@
   "Run focused agent-loop tests and return true on success."
   (test-agent-tool-loop)
   (test-agent-tool-free-turn)
+  (test-agent-read-only-tool-allowlist)
+  (test-agent-restricted-tool-round-limit)
+  (test-agent-empty-tool-allowlist)
   (test-agent-steering)
   (test-agent-explicit-continuation)
   (test-agent-invalid-call-history)

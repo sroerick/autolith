@@ -721,19 +721,26 @@
   (gethash (format nil "~A.~A" namespace name)
            (tool-registry-index registry)))
 
-(-> tool-registry-provider-schemas (tool-registry) vector)
-(defun tool-registry-provider-schemas (registry)
-  "Return REGISTRY grouped into Responses API namespace schemas."
+(-> tool-registry-provider-schemas
+    (tool-registry &key (:canonical-names (option list)))
+    vector)
+(defun tool-registry-provider-schemas
+    (registry &key (canonical-names nil canonical-names-supplied-p))
+  "Return REGISTRY grouped into provider schemas, optionally filtered by name."
   (let ((namespace-order nil)
         (namespace-tools (make-hash-table :test #'equal)))
     (dolist (tool (tool-registry-tools registry))
-      (unless (gethash (tool-namespace tool) namespace-tools)
-        (setf (gethash (tool-namespace tool) namespace-tools) nil)
-        (setf namespace-order
-              (nconc namespace-order (list (tool-namespace tool)))))
-      (setf (gethash (tool-namespace tool) namespace-tools)
-            (nconc (gethash (tool-namespace tool) namespace-tools)
-                   (list (tool-provider-schema tool)))))
+      (when (or (not canonical-names-supplied-p)
+                (member (tool-canonical-name tool)
+                        canonical-names
+                        :test #'string=))
+        (unless (gethash (tool-namespace tool) namespace-tools)
+          (setf (gethash (tool-namespace tool) namespace-tools) nil)
+          (setf namespace-order
+                (nconc namespace-order (list (tool-namespace tool)))))
+        (setf (gethash (tool-namespace tool) namespace-tools)
+              (nconc (gethash (tool-namespace tool) namespace-tools)
+                     (list (tool-provider-schema tool))))))
     (coerce
      (mapcar
       (lambda (namespace)

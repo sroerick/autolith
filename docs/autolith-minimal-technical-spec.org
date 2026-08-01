@@ -1153,12 +1153,17 @@ ordinary resume behavior.
 
 When a valid bounded crash capsule is available, startup queues exactly one
 model diagnosis turn before ordinary input. The turn receives the restored
-conversation history and bounded capsule evidence, advertises no tools, and
-runs no goal continuations. It must explain the likely failure, supporting
-evidence, confidence, and safest proposed repair, then ask whether the user
-wants that repair applied to the active image. It must not modify source,
-files, overlays, generations, or images before explicit user agreement. Manual
-recovery without valid crash context does not queue this diagnosis turn.
+conversation history and bounded capsule evidence. It advertises only an exact
+native allowlist of read-only filesystem, search, source, and active-state
+inspection tools. Filesystem reads are confined to the restored workspace and
+tracked source roots. The turn excludes shell, MCP, provider-hosted, image
+attachment, and mutation tools, and runs no goal continuations. The model may
+use bounded read-only tool rounds within that one turn. It must explain the
+likely failure, supporting evidence, confidence, and
+safest proposed repair, then ask whether the user wants that repair applied to
+the active image. It must not modify source, files, overlays, generations, or
+images before explicit user agreement. Manual recovery without valid crash
+context does not queue this diagnosis turn.
 
 The recovery image may:
 

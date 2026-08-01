@@ -1490,13 +1490,14 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
     (application (or string user-message-input)
      &key (:steering-function (option function))
           (:tools-p boolean)
-          (:single-request-p boolean)
+          (:tool-allowlist (option list))
+          (:tool-restriction-p boolean)
           (:goal-continuations-p boolean)
           (:fatal-agent-loop-errors-p boolean))
     keyword)
 (defun application--run-message-input
     (application input &key steering-function (tools-p t)
-                            (single-request-p nil)
+                            tool-allowlist (tool-restriction-p nil)
                             (goal-continuations-p t)
                             (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling."
@@ -1513,7 +1514,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              input
              :steering-function steering-function
              :tools-p tools-p
-             :single-request-p single-request-p
+             :tool-allowlist tool-allowlist
+             :tool-restriction-p tool-restriction-p
              :goal-continuations-p goal-continuations-p)
             ':continue)
         (application-turn-cancelled (condition)
@@ -1718,8 +1720,9 @@ provider reset deadline, or a five-minute fallback when no reset is known."
        (application--run-message-input
         application
         (second work)
-        :tools-p nil
-        :single-request-p t
+        :tools-p t
+        :tool-allowlist *application-recovery-diagnostic-tool-names*
+        :tool-restriction-p t
         :goal-continuations-p nil
         :fatal-agent-loop-errors-p nil))
       (:command

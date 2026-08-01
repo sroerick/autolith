@@ -118,6 +118,13 @@
 
 ;;;; -- Recovered Diagnosis --
 
+(defparameter *application-recovery-diagnostic-tool-names*
+  '("fs.list" "fs.read"
+    "search.files" "search.glob" "search.content" "search.multi-content"
+    "self.inspect" "self.source" "self.status" "self.diff"
+    "self.generations")
+  "Read-only native tools available to the recovered diagnosis turn.")
+
 (defparameter *application-recovery-pointer-byte-limit* 4096
   "Maximum crash-pointer file size accepted during recovered startup.")
 
@@ -349,7 +356,7 @@
     (configuration)
     (option string))
 (defun application-recovery-diagnosis-prompt (configuration)
-  "Return one tool-free crash diagnosis prompt for CONFIGURATION, when recovered."
+  "Return one read-only crash diagnosis prompt for CONFIGURATION, when recovered."
   (let ((record
           (application--recovery-crash-capsule-record configuration)))
     (when record
@@ -361,8 +368,11 @@
          "Autolith recovered this conversation after its active process ~
           crashed. Diagnose the likely cause from the bounded crash context ~
           below and the recent conversation history. This is a diagnosis-only ~
-          turn: no tools are available, and you must not modify source, files, ~
-          overlays, generations, or the active image. Explain the failure, the ~
+           turn. Only bounded read-only diagnostic tool rounds are available ~
+           for inspecting the restored workspace, tracked source, and active ~
+           state. Filesystem reads are confined to the workspace and source ~
+           roots. Do not modify source, files, overlays, ~
+          generations, or the active image. Explain the failure, the ~
           supporting evidence, your confidence, and the safest specific repair. ~
           End by asking the user whether you should apply that repair to the ~
           active image. Do not apply any repair until the user explicitly agrees.~

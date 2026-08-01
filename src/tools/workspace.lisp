@@ -76,17 +76,43 @@
 (defparameter *shell-maximum-output-characters* 65536
   "The maximum combined output characters returned by shell.run.")
 
+(defparameter *workspace-tool-readable-roots* nil
+  "Optional pathname roots confining workspace-tool reads for the current call.")
+
 
 ;;;; -- Path Resolution --
 
+(-> workspace-tool--read-path-allowed-p (pathname list) boolean)
+(defun workspace-tool--read-path-allowed-p (path roots)
+  "Return true when PATH resolves beneath one of the readable ROOTS."
+  (let ((candidate (or (ignore-errors (truename path)) path)))
+    (not
+     (null
+      (some (lambda (root)
+              (uiop:subpathp candidate
+                             (or (ignore-errors (truename root)) root)))
+            roots)))))
+
 (-> workspace-tool-path (tool-context (option string)) pathname)
 (defun workspace-tool-path (context path)
-  "Return PATH resolved against CONTEXT's working directory."
-  (let ((working-directory (configuration-working-directory
-                            (tool-context-configuration context))))
-    (if (non-empty-string-p path)
-        (merge-pathnames (pathname path) working-directory)
-        working-directory)))
+  "Return PATH resolved against CONTEXT's working directory.
+
+When *WORKSPACE-TOOL-READABLE-ROOTS* is non-NIL, reject paths outside those
+roots after resolving existing symlinks."
+  (let* ((working-directory (configuration-working-directory
+                             (tool-context-configuration context)))
+         (resolved (if (non-empty-string-p path)
+                       (merge-pathnames (pathname path) working-directory)
+                       working-directory)))
+    (when (and *workspace-tool-readable-roots*
+               (not (workspace-tool--read-path-allowed-p
+                     resolved *workspace-tool-readable-roots*)))
+      (error 'tool-error
+             :message
+             (format nil "Path ~A is outside the readable workspace and source roots."
+                     resolved)
+             :tool-name "fs"))
+    resolved))
 
 (-> workspace-tool-protected-path-p (tool-context pathname) boolean)
 (defun workspace-tool-protected-path-p (context path)

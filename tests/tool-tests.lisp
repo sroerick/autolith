@@ -460,6 +460,29 @@
                             "fs.list marks subdirectories")
                (test-assert (search "sample.txt" (tool-result-content result))
                             "fs.list shows files with their sizes"))
+             (let ((*workspace-tool-readable-roots*
+                     (list root (configuration-source-root configuration))))
+               (test-assert
+                (not (tool-result-success-p
+                      (run "fs" "list"
+                           "path" (namestring (user-homedir-pathname)))))
+                "restricted workspace reads reject absolute paths outside their roots"))
+             (let ((escape (merge-pathnames "outside-link" root)))
+               (unwind-protect
+                    (progn
+                      (sb-posix:symlink
+                       (namestring (user-homedir-pathname))
+                       (namestring escape))
+                      (let ((*workspace-tool-readable-roots*
+                              (list root
+                                    (configuration-source-root configuration))))
+                        (test-assert
+                         (not (tool-result-success-p
+                               (run "fs" "list"
+                                    "path" (namestring escape))))
+                         "restricted workspace reads reject symlink escapes")))
+                 (when (probe-file escape)
+                   (sb-posix:unlink (namestring escape)))))
              (let* ((image-path (merge-pathnames "tool-image.png" root))
                     (image (test-conversation--write-tiny-png image-path))
                     (result (run "fs" "view-image"

@@ -2716,6 +2716,8 @@
              (test-assert
               (and prompt
                    (search "diagnosis-only" prompt)
+                    (search "bounded read-only diagnostic tool rounds" prompt)
+                    (search "workspace and source" prompt)
                    (search "Injected recovery failure" prompt)
                    (search "FRAME-ONE" prompt)
                    (search "ask" prompt)
@@ -3715,6 +3717,47 @@
    (equal (application--initial-work-items nil "diagnose" nil)
           (list (list ':recovery-diagnosis "diagnose")))
    "automatic crash recovery queues exactly one diagnostic model turn")
+  nil)
+
+(-> test-recovery-diagnosis-tool-surface () null)
+(defun test-recovery-diagnosis-tool-surface ()
+  "Test recovered diagnosis work receives only the read-only native allowlist."
+  (let* ((application (make-instance 'application))
+         (controller
+           (make-instance 'application-input-controller
+                          :application application))
+         (observed nil))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application--run-message-input
+       (lambda (active-application input
+                &key steering-function tools-p tool-allowlist
+                     tool-restriction-p goal-continuations-p
+                     fatal-agent-loop-errors-p)
+         (declare (ignore steering-function))
+         (setf observed
+               (list active-application input tools-p tool-allowlist
+                     tool-restriction-p goal-continuations-p
+                     fatal-agent-loop-errors-p))
+         ':continue)))
+     (lambda ()
+       (application-input-controller--run-work
+        controller (list ':recovery-diagnosis "diagnose"))))
+    (test-assert
+     (and (eq (first observed) application)
+          (string= (second observed) "diagnose")
+          (third observed)
+          (equal (fourth observed)
+                 '("fs.list" "fs.read"
+                   "search.files" "search.glob" "search.content"
+                   "search.multi-content"
+                   "self.inspect" "self.source" "self.status" "self.diff"
+                   "self.generations"))
+          (fifth observed)
+          (null (sixth observed))
+          (null (seventh observed)))
+     "recovery diagnosis enables only its read-only tool surface"))
   nil)
 
 (-> test-late-steering-promotion () null)
@@ -6510,6 +6553,7 @@
   (test-responsive-model-input)
   (test-responsive-goal-inspection)
   (test-responsive-command-scheduling)
+  (test-recovery-diagnosis-tool-surface)
   (test-input-reader-quiescence)
   (test-late-steering-promotion)
   (test-conversation-picker)

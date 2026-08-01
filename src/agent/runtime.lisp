@@ -77,6 +77,9 @@
     :documentation "The lock preventing concurrent mutation of conversation turn state."))
   (:documentation "A model-driven conversation loop with namespaced Common Lisp tools."))
 
+(defparameter *agent-restricted-maximum-tool-rounds* 4
+  "Maximum executed tool rounds within one restricted agent turn.")
+
 
 ;;;; -- Agent Conditions --
 
@@ -268,10 +271,11 @@
 (-> agent-run-user-turn
     (agent (or string user-message-input) &key (:observer agent-observer)
            (:goal-context (option string)) (:tools-p boolean)
-           (:single-request-p boolean))
+           (:tool-allowlist (option list)) (:tool-restriction-p boolean))
     provider-result)
 (defgeneric agent-run-user-turn
-    (agent content &key observer goal-context tools-p single-request-p)
+    (agent content
+     &key observer goal-context tools-p tool-allowlist tool-restriction-p)
   (:documentation
    "Persist user CONTENT, run model and optional tool rounds, and return the final provider result."))
 
@@ -298,19 +302,20 @@
 (defmethod agent-run-user-turn
     ((agent agent) (content string)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          (single-request-p nil))
+          tool-allowlist (tool-restriction-p nil))
   "Normalize a textual user turn before running it through AGENT."
   (agent-run-user-turn agent
                        (user-message-input-create :text content)
                        :observer observer
                        :goal-context goal-context
                        :tools-p tools-p
-                       :single-request-p single-request-p))
+                       :tool-allowlist tool-allowlist
+                       :tool-restriction-p tool-restriction-p))
 
 (defmethod agent-run-user-turn
     ((agent agent) (content user-message-input)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          (single-request-p nil))
+          tool-allowlist (tool-restriction-p nil))
   "Run one serialized user turn through AGENT while presenting events to OBSERVER."
   (unless (or (non-empty-string-p (user-message-input-text content))
               (user-message-input-image-pathnames content))
@@ -325,9 +330,11 @@
        (let ((conversation (agent-conversation agent)))
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
-         (when (and (not single-request-p)
-                    (agent--should-compact-p agent))
-           (agent-compact-conversation agent observer))
+         (when (agent--should-compact-p agent)
+           (agent-compact-conversation
+            agent observer
+            :tool-allowlist tool-allowlist
+            :tool-restriction-p tool-restriction-p))
          (multiple-value-bind (item record)
              (conversation-append-user-message conversation content)
            (declare (ignore item))
@@ -341,7 +348,8 @@
                agent observer
                :goal-context goal-context
                :tools-p tools-p
-               :single-request-p single-request-p)
+               :tool-allowlist tool-allowlist
+               :tool-restriction-p tool-restriction-p)
            (conversation-clear-ephemeral-input-items conversation)
            (setf (conversation-turn-state conversation) nil)))))))
 
@@ -504,6 +512,36 @@
              round-identifiers))
   nil)
 
+(-> agent--tool-call-allowed-p (json-object list) boolean)
+(defun agent--tool-call-allowed-p (call allowlist)
+  "Return true when CALL's canonical name appears in ALLOWLIST."
+  (not
+   (null
+    (member (function-call-canonical-name call)
+            allowlist
+            :test #'string=))))
+
+(-> agent--validate-tool-call-allowlist
+    (agent list list &key (:request-number integer))
+    null)
+(defun agent--validate-tool-call-allowlist
+    (agent calls allowlist &key request-number)
+  "Reject CALLS outside ALLOWLIST before persistence or execution."
+  (dolist (call calls)
+    (unless (and (json-object-p call)
+                 (agent--tool-call-allowed-p call allowlist))
+      (error 'agent-loop-error
+             :message
+             (format nil
+                     "Tool ~A is unavailable during this restricted turn."
+                     (if (json-object-p call)
+                         (function-call-canonical-name call)
+                         "unknown"))
+             :conversation-id
+             (conversation-identifier (agent-conversation agent))
+             :request-number request-number)))
+  nil)
+
 (-> agent--reject-tool-call-plans
     (agent list agent-observer
      &key (:tool-round integer) (:message string))
@@ -534,10 +572,12 @@
 
 (-> agent--execute-tool-calls
     (agent list provider-result
-     &key (:observer agent-observer) (:tool-round integer))
+     &key (:observer agent-observer) (:tool-round integer)
+          (:tool-allowlist (option list)) (:tool-restriction-p boolean))
     null)
 (defun agent--execute-tool-calls
-    (agent call-plans provider-result &key observer tool-round)
+    (agent call-plans provider-result
+     &key observer tool-round tool-allowlist (tool-restriction-p nil))
   "Execute planned calls sequentially, respecting terminal and barrier states."
   (loop for remaining on call-plans
         for plan = (first remaining)
@@ -552,6 +592,16 @@
              :message
              "This call was not executed because a preceding tool requires a provider round trip. Retry it after inspecting that tool's result and the refreshed instructions.")
             (return))
+          (when (and tool-restriction-p
+                     (not (agent--tool-call-allowed-p call tool-allowlist)))
+            (error 'agent-loop-error
+                   :message
+                   (format nil
+                           "Tool ~A is unavailable during this restricted turn."
+                           (function-call-canonical-name call))
+                   :conversation-id
+                   (conversation-identifier (agent-conversation agent))
+                   :request-number nil))
           (let* ((call-id   (json-get call "call_id"))
                  (tool-name (function-call-canonical-name call))
                  (context
@@ -578,7 +628,14 @@
              (list :tool-round tool-round
                    :call-id call-id
                    :tool tool-name))
-            (let* ((real-start (get-internal-real-time))
+            (let* ((*workspace-tool-readable-roots*
+                     (and tool-restriction-p
+                          (list
+                           (configuration-working-directory
+                            (agent-configuration agent))
+                           (configuration-source-root
+                            (agent-configuration agent)))))
+                   (real-start (get-internal-real-time))
                    (cpu-start  (get-internal-run-time))
                    (result
                      (tool-registry-execute-call
@@ -659,8 +716,12 @@
   (>= (conversation-last-total-tokens (agent-conversation agent))
       (configuration-compaction-token-limit (agent-configuration agent))))
 
-(-> agent-compact-conversation (agent agent-observer) null)
-(defun agent-compact-conversation (agent observer)
+(-> agent-compact-conversation
+    (agent agent-observer &key (:tool-allowlist (option list))
+                               (:tool-restriction-p boolean))
+    null)
+(defun agent-compact-conversation
+    (agent observer &key tool-allowlist (tool-restriction-p nil))
   "Compact AGENT's conversation with native state when the provider supports it.
 
 The summarization request remains a side channel. Its durable text is the
@@ -671,13 +732,19 @@ checkpoint preserves the current model's opaque reasoning state."
      observer
      :compaction-started
      (list :total-tokens (conversation-last-total-tokens conversation)))
-    (let* ((provider (agent-provider agent))
+    (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
+           (provider (agent-provider agent))
            (native-item
              (provider-native-compact-conversation
               provider
               conversation
               :tool-namespaces
-              (tool-registry-provider-schemas (agent-tool-registry agent))
+              (if tool-restriction-p
+                  (tool-registry-provider-schemas
+                   (agent-tool-registry agent)
+                   :canonical-names tool-allowlist)
+                  (tool-registry-provider-schemas
+                   (agent-tool-registry agent)))
               :event-callback
               (lambda (event)
                 (declare (ignore event))
@@ -713,20 +780,24 @@ checkpoint preserves the current model's opaque reasoning state."
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))
                           (:tools-p boolean)
-                          (:single-request-p boolean))
+                          (:tool-allowlist (option list))
+                          (:tool-restriction-p boolean))
     provider-result)
 (defun agent--run-provider-loop
-    (agent observer &key goal-context (tools-p t) (single-request-p nil))
+    (agent observer
+     &key goal-context (tools-p t) tool-allowlist (tool-restriction-p nil))
   "Run provider and optional tool rounds until AGENT's turn completes."
   (let ((seen-call-identifiers (make-hash-table :test #'equal))
         (request-number 0)
         (tool-rounds 0)
         (tool-calls 0))
     (loop
-      (when (and (not single-request-p)
-                 (agent--should-compact-p agent))
-        (agent-compact-conversation agent observer))
-      (when tools-p
+      (when (agent--should-compact-p agent)
+        (agent-compact-conversation
+         agent observer
+         :tool-allowlist tool-allowlist
+         :tool-restriction-p tool-restriction-p))
+      (when (and tools-p (not tool-restriction-p))
         (mcp-tool-registry-refresh
          (agent-tool-registry agent)
          :only-dirty-p t))
@@ -737,20 +808,32 @@ checkpoint preserves the current model's opaque reasoning state."
        (list :request-number request-number
              :tool-rounds tool-rounds))
       (let* ((conversation (agent-conversation agent))
+             (tool-schemas-p
+               (and tools-p
+                    (or (not tool-restriction-p)
+                        (< tool-rounds
+                           *agent-restricted-maximum-tool-rounds*))))
              (result
                (handler-case
-                   (let ((*context-request-contributions*
+                   (let ((*provider-hosted-tools-enabled-p*
+                            (not tool-restriction-p))
+                          (*context-request-contributions*
                            (and
                             tools-p
+                            (not tool-restriction-p)
                             (mcp-tool-registry-context-contributions
                              (agent-tool-registry agent)))))
                      (provider-stream-turn
                       (agent-provider agent)
                       conversation
                       :tool-namespaces
-                      (if tools-p
-                          (tool-registry-provider-schemas
-                           (agent-tool-registry agent))
+                      (if tool-schemas-p
+                          (if tool-restriction-p
+                              (tool-registry-provider-schemas
+                               (agent-tool-registry agent)
+                               :canonical-names tool-allowlist)
+                              (tool-registry-provider-schemas
+                               (agent-tool-registry agent)))
                           #())
                       :event-callback (agent--provider-event-callback observer)
                       :goal-context goal-context))
@@ -767,6 +850,17 @@ checkpoint preserves the current model's opaque reasoning state."
                  :message "A tool-free model turn returned function calls."
                  :conversation-id (conversation-identifier conversation)
                  :request-number request-number))
+        (when (and calls tool-restriction-p (not tool-schemas-p))
+          (error 'agent-loop-error
+                 :message
+                 (format nil
+                         "A restricted turn exceeded its ~D tool-round limit."
+                         *agent-restricted-maximum-tool-rounds*)
+                 :conversation-id (conversation-identifier conversation)
+                 :request-number request-number))
+        (when (and calls tool-restriction-p)
+          (agent--validate-tool-call-allowlist
+           agent calls tool-allowlist :request-number request-number))
         (conversation-clear-ephemeral-input-items conversation)
         (agent--validate-tool-call-identifiers
          agent
@@ -791,10 +885,7 @@ checkpoint preserves the current model's opaque reasoning state."
                  (length (provider-result-output-items result))
                  :tool-call-count (length calls)
                  :turn-completion (provider-result-turn-completion result)))
-          (when single-request-p
-            (setf (conversation-turn-state conversation) nil))
-          (when (or single-request-p
-                    (agent-turn-complete-p agent result))
+          (when (agent-turn-complete-p agent result)
             (agent-observer-status
              observer
              :turn-completed
@@ -816,7 +907,9 @@ checkpoint preserves the current model's opaque reasoning state."
              (incf tool-calls (length calls))
              (agent--execute-tool-calls agent call-plans result
                                         :observer observer
-                                        :tool-round tool-rounds)
+                                        :tool-round tool-rounds
+                                        :tool-allowlist tool-allowlist
+                                        :tool-restriction-p tool-restriction-p)
              (if (agent-turn-complete-p agent result)
                  (progn
                    (agent-observer-status
