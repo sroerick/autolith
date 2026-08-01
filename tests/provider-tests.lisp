@@ -363,14 +363,16 @@
             "native compaction preserves enabled reasoning summaries")
            (setf (provider-reasoning-summaries-p provider) nil)
            (let ((captured-url nil)
-                 (captured-headers nil))
+                 (captured-headers nil)
+                 (captured-content nil))
              (test-call-with-function-replacements
               (list
                (list
                 'dexador:post
-                (lambda (url &key headers &allow-other-keys)
+                (lambda (url &key headers content &allow-other-keys)
                   (setf captured-url url
-                        captured-headers headers)
+                        captured-headers headers
+                        captured-content content)
                   (values "{\"output\":[]}" 200 nil))))
               (lambda ()
                 (provider-open-native-compaction
@@ -386,6 +388,18 @@
                 "native compaction derives the Responses compact endpoint")
                (test-assert (string= (header "Accept") "application/json")
                             "native compaction requests one JSON response")
+               (test-assert
+                (typep captured-content '(array (unsigned-byte 8) (*)))
+                "native compaction sends JSON as direct UTF-8 octets")
+               (test-assert
+                (string=
+                 (json-get
+                  (json-decode
+                   (sb-ext:octets-to-string
+                    captured-content :external-format ':utf-8))
+                  "model")
+                 *default-model*)
+                "direct UTF-8 request content retains its JSON payload")
                (test-assert
                 (string= (header "Authorization")
                          "Bearer provider-test-access-7f386d")

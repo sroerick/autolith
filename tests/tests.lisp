@@ -81,6 +81,16 @@
                  "JSON object access preserves values")
     (test-assert (vectorp (json-decode "[1,2,3]"))
                  "JSON arrays have one consistent vector representation")
+    (let* ((value (json-object "text" "příliš žluťoučký"))
+           (encoded (json-encode value))
+           (octets (json-encode-utf8 value)))
+      (test-assert
+       (equalp octets
+               (sb-ext:string-to-octets encoded :external-format ':utf-8))
+       "direct UTF-8 JSON encoding preserves the compact wire representation")
+      (test-assert
+       (subtypep (array-element-type octets) '(unsigned-byte 8))
+       "direct UTF-8 JSON encoding returns octets without a wide string body"))
     (test-memory-persistence)
     (test-update-state-and-installation-provenance)
     (test-user-init)

@@ -44,6 +44,19 @@
   (with-output-to-string (stream)
     (yason:encode value stream)))
 
+(-> json-encode-utf8 (json-value) (vector (unsigned-byte 8)))
+(defun json-encode-utf8 (value)
+  "Encode VALUE directly as compact UTF-8 JSON octets."
+  (let* ((octet-stream (make-in-memory-output-stream))
+         (character-stream
+           (make-flexi-stream octet-stream :external-format ':utf-8)))
+    (unwind-protect
+         (progn
+           (yason:encode value character-stream)
+           (finish-output character-stream)
+           (get-output-stream-sequence octet-stream))
+      (close character-stream))))
+
 (-> json-decode (string) json-value)
 (defun json-decode (source)
   "Decode one JSON value from SOURCE."

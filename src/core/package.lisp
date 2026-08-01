@@ -33,6 +33,10 @@
                 #:sandbox-result-timed-out-p
                 #:sandbox-unavailable
                 #:workspace-write-sandbox-policy)
+  (:import-from #:flexi-streams
+                #:get-output-stream-sequence
+                #:make-flexi-stream
+                #:make-in-memory-output-stream)
   (:import-from #:clifff
                 #:clifff-error
                 #:clifff-error-cause

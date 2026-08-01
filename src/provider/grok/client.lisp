@@ -221,7 +221,7 @@ the transport consumes only after a completed response."
     (dexador:post
      (configuration-provider-endpoint configuration)
      :headers headers
-     :content (json-encode request)
+     :content (json-encode-utf8 request)
      :want-stream t
      :force-string t
      :keep-alive nil

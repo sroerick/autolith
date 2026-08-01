@@ -674,7 +674,7 @@ checkpoint."
      (configuration-provider-endpoint configuration)
      :headers (provider--codex-request-headers
                provider credentials conversation :accept "text/event-stream")
-     :content (json-encode request)
+     :content (json-encode-utf8 request)
      :want-stream t
      :force-string t
      :keep-alive nil
@@ -692,7 +692,7 @@ checkpoint."
    (provider--native-compaction-endpoint provider)
    :headers (provider--codex-request-headers
              provider credentials conversation :accept "application/json")
-   :content (json-encode request)
+   :content (json-encode-utf8 request)
    :force-string t
    :keep-alive nil
    :connect-timeout 30

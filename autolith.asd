@@ -13,6 +13,7 @@
                #:colorlisp
                #:closer-mop
                #:dexador
+               #:flexi-streams
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen
