@@ -1390,19 +1390,22 @@ are decoded as UTF-8."
                request
                :credentials credentials
                :conversation conversation)
-            (let ((headers
-                    (provider--sanitize-wire-value raw-headers)))
-              (provider-note-response-headers provider headers)
-              (unless (= status 200)
-                (provider--signal-http-status-failure
-                 provider status :headers headers :raw-body stream))
-              (let ((result
-                      (unwind-protect
-                           (provider--consume-stream
-                            provider stream headers event-callback)
-                        (provider--close-response-stream stream))))
-                (context-delivery-complete delivery)
-                result))))
+            (let* ((headers
+                     (provider--sanitize-wire-value raw-headers))
+                   (result
+                     (unwind-protect
+                          (progn
+                            (provider-note-response-headers provider headers)
+                            (unless (= status 200)
+                              (provider--signal-http-status-failure
+                               provider status
+                               :headers headers
+                               :raw-body stream))
+                            (provider--consume-stream
+                             provider stream headers event-callback))
+                       (provider--close-response-stream stream))))
+              (context-delivery-complete delivery)
+              result)))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)

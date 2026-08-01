@@ -849,16 +849,18 @@
   (declare (ignore request credentials conversation))
   (incf (test-transport-provider-attempt-count provider))
   (let ((outcome (pop (test-transport-provider-outcomes provider))))
-    (case outcome
-      (:syscall
+    (cond
+      ((eq outcome ':syscall)
        (error 'ssl-error-syscall
               :queue nil
               :printed-queue nil
               :ret -1
               :handle nil
               :syscall 'connect))
-      (:tls
+      ((eq outcome ':tls)
        (error 'cl+ssl-error))
+      ((consp outcome)
+       (values-list outcome))
       (t
        (values outcome 200 nil)))))
 
@@ -991,6 +993,42 @@
              (test-assert
               (test-failing-close-stream-close-abort-p stream)
               "interrupted provider streams also close abortively"))
+           (let* ((stream
+                    (make-instance
+                     'test-failing-close-stream
+                     :source "retry buffer failure"))
+                  (provider
+                    (provider-tests--transport-provider
+                     configuration
+                     (list (list stream 507 nil)))))
+             (credential-source-save
+              (credential-manager-primary-source
+               (provider-credential-manager provider))
+              credentials)
+             (test-assert
+              (handler-case
+                  (test-call-with-function-replacements
+                   (list
+                    (list
+                     'provider--signal-http-status-failure
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (error "synthetic status normalization failure"))))
+                   (lambda ()
+                     (provider-attempt-turn
+                      provider
+                      conversation
+                      :tool-namespaces #()
+                      :event-callback #'identity
+                      :force-refresh nil
+                      :goal-context nil
+                      :compaction-p nil)))
+                (simple-error ()
+                  t))
+              "status normalization failures retain their original condition")
+             (test-assert
+              (test-failing-close-stream-close-abort-p stream)
+              "non-success provider responses remain under stream cleanup"))
            (let ((provider
                    (provider-tests--transport-provider
                     configuration
