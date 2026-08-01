@@ -318,6 +318,124 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-lisp-scratchpad-tools () null)
+(defun test-lisp-scratchpad-tools ()
+  "Test conversation-scoped scratchpad files, edits, execution, and cleanup."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (pool          (lisp-worker-pool-create configuration))
+         (registry      (make-default-tool-registry))
+         (conversation  (conversation-create configuration))
+         (other         (conversation-create configuration))
+         (context       (make-instance 'tool-context
+                                       :configuration configuration
+                                       :worker        pool
+                                       :conversation  conversation))
+         (other-context (make-instance 'tool-context
+                                       :configuration configuration
+                                       :worker        pool
+                                       :conversation  other))
+         (write-tool    (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-write"))
+         (edit-tool     (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-edit"))
+         (read-tool     (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-read"))
+         (list-tool     (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-list"))
+         (run-tool      (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-run"))
+         (delete-tool   (tool-registry-find registry
+                                            "lisp"
+                                            "scratchpad-delete")))
+    (unwind-protect
+         (progn
+           (lisp-worker-pool-start pool "scratch" "pristine")
+           (let ((result
+                   (tool-execute
+                    write-tool
+                    context
+                    (json-object
+                     "path" "program.lisp"
+                     "content" (format nil
+                                       "(defparameter *scratchpad-value* 40)~%~
+                                        (incf *scratchpad-value* 2)~%")))))
+             (test-assert (tool-result-success-p result)
+                          "scratchpad.write creates a conversation file"))
+           (test-assert
+            (probe-file (merge-pathnames "program.lisp"
+                                         (lisp-scratchpad-root context)))
+            "scratchpad files live beneath the configured cache root")
+           (let ((result
+                   (tool-execute
+                    edit-tool
+                    context
+                    (json-object "path" "program.lisp"
+                                 "old-text" "40"
+                                 "new-text" "41"))))
+             (test-assert (tool-result-success-p result)
+                          "scratchpad.edit replaces exact source text"))
+           (let ((result
+                   (tool-execute
+                    read-tool
+                    context
+                    (json-object "path" "program.lisp"))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (search "*scratchpad-value* 41"
+                           (tool-result-content result)))
+              "scratchpad.read returns the edited session file"))
+           (let ((result
+                   (tool-execute
+                    run-tool
+                    context
+                    (json-object "path" "program.lisp"
+                                 "repl" "scratch"))))
+             (test-assert (tool-result-success-p result)
+                          "scratchpad.run loads the file into the selected REPL"))
+           (let ((result
+                   (lisp-worker-request
+                    (lisp-worker-pool-worker pool "scratch")
+                    :eval
+                    '(:form "*scratchpad-value*"))))
+             (test-assert (equal (getf (rest result) :values) '("43"))
+                          "scratchpad execution retains definitions in the REPL"))
+           (let ((result (tool-execute list-tool other-context (json-object))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (not (search "program.lisp" (tool-result-content result)))
+                   (not (equal (lisp-scratchpad-root context)
+                               (lisp-scratchpad-root other-context))))
+              "different conversations receive isolated scratchpad folders"))
+           (test-assert
+            (handler-case
+                (progn
+                  (tool-execute
+                   write-tool
+                   context
+                   (json-object "path" "../escape.lisp"
+                                "content" "nil"))
+                  nil)
+              (tool-error ()
+                t))
+            "scratchpad paths cannot escape the session folder")
+           (let ((result (tool-execute delete-tool context (json-object))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (not (uiop:directory-exists-p
+                         (lisp-scratchpad-root context))))
+              "scratchpad.delete clears the conversation folder")))
+      (lisp-worker-pool-stop-all pool)
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-lisp-worker-image-snapshot () null)
 (defun test-lisp-worker-image-snapshot ()
   "Test saving a modified REPL core and starting an independent clone from it."

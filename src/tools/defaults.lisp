@@ -413,6 +413,74 @@
            (default-tools--required-form-schema
             "One readable Common Lisp form."))
           (list
+           'lisp-scratchpad-list-tool
+           "lisp" "scratchpad-list"
+           "List files in the current conversation's disposable scratchpad folder."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "An optional relative scratchpad directory; defaults to the folder root."))
+            nil))
+          (list
+           'lisp-scratchpad-read-tool
+           "lisp" "scratchpad-read"
+           "Read one file from the current conversation's disposable scratchpad folder."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The relative scratchpad file path.")
+             "start-line" (tool-integer-property
+                           "The first line to return, starting at 1.")
+             "line-count" (tool-integer-property
+                           "The number of lines to return; defaults to 400."))
+            '("path")))
+          (list
+           'lisp-scratchpad-write-tool
+           "lisp" "scratchpad-write"
+           "Create or replace one file in the current conversation's disposable scratchpad folder."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The relative scratchpad file path.")
+             "content" (tool-string-property
+                        "The complete new file content."))
+            '("path" "content")))
+          (list
+           'lisp-scratchpad-edit-tool
+           "lisp" "scratchpad-edit"
+           "Replace exact text inside one current-conversation scratchpad file."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The relative scratchpad file path.")
+             "old-text" (tool-string-property
+                         "The exact existing text to replace.")
+             "new-text" (tool-string-property
+                         "The replacement text.")
+             "replace-all" (tool-boolean-property
+                            "Replace every occurrence instead of requiring a unique match."))
+            '("path" "old-text" "new-text")))
+          (list
+           'lisp-scratchpad-run-tool
+           "lisp" "scratchpad-run"
+           "Load one current-conversation scratchpad file into a named persistent REPL."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The relative scratchpad Lisp file path.")
+             "repl" (tool-string-property
+                     "The persistent REPL name; defaults to default."))
+            '("path")))
+          (list
+           'lisp-scratchpad-delete-tool
+           "lisp" "scratchpad-delete"
+           "Delete one scratchpad path, or clear the current conversation's folder when path is omitted."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "An optional relative file or directory to delete."))
+            nil))
+          (list
            'lisp-load-system-tool
            "lisp" "load-system"
            "Load one ASDF or Quicklisp system in a named persistent REPL."
