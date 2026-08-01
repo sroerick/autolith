@@ -282,13 +282,16 @@
         nil)))
 
 (-> application--initial-work-items
-    ((option string) boolean)
+    ((option string) (option string) boolean)
     list)
-(defun application--initial-work-items (initial-command resume-offer-p)
-  "Return ordered controller work for command-line startup behavior."
+(defun application--initial-work-items
+    (initial-command recovery-diagnosis resume-offer-p)
+  "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
      (list (list ':command initial-command)))
+    (recovery-diagnosis
+     (list (list ':recovery-diagnosis recovery-diagnosis)))
     (resume-offer-p
      (list (list ':project-adaptation-offer)))
     (t
@@ -297,10 +300,12 @@
 (-> application-run
     (application &key (:initial-command (option string))
                       (:initial-input (option user-message-input))
+                      (:recovery-diagnosis (option string))
                       (:resume-offer-p boolean))
     null)
 (defun application-run
-    (application &key initial-command initial-input resume-offer-p)
+    (application &key initial-command initial-input recovery-diagnosis
+                      resume-offer-p)
   "Run APPLICATION with responsive input, always restoring terminal and workers."
   (let ((ui (application-ui application))
         (worker (application-worker application))
@@ -349,7 +354,9 @@
                             (application--update-notice application)))
                       (when update-notice
                         (application-present application update-notice)))
-                    (when (and (null initial-command) (null initial-input))
+                    (when (and (null initial-command)
+                               (null initial-input)
+                               (null recovery-diagnosis))
                       (application--offer-startup-update application))
                     (let ((provenance
                             (application-installation-provenance application)))
@@ -378,8 +385,10 @@
                           (application-input-controller-create
                            application
                            :initial-work-items
-                           (application--initial-work-items initial-command
-                                                            resume-offer-p)))
+                           (application--initial-work-items
+                            initial-command
+                            recovery-diagnosis
+                            resume-offer-p)))
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
@@ -611,7 +620,19 @@ Without a SELECTION the configured model chooses the family."
             (resume-selection
               (multiple-value-list (main--resume-selection arguments)))
             (resume-requested-p (first resume-selection))
-            (resume-id (second resume-selection)))
+            (resume-id (second resume-selection))
+            (recovery-state
+              (multiple-value-list
+               (application-recovery-state configuration)))
+            (recovery-conversation-id (first recovery-state))
+            (recovery-diagnosis
+              (and (null resume-id)
+                   (application-recovery-diagnosis-prompt configuration)))
+            (effective-resume-requested-p
+              (and resume-requested-p
+                   (or (not (null resume-id))
+                       (and (null recovery-conversation-id)
+                            (null recovery-diagnosis))))))
        (cond
          ((member "--auth" arguments :test #'string=)
           (main-authenticate configuration
@@ -626,6 +647,7 @@ Without a SELECTION the configured model chooses the family."
                     (application-create configuration
                                           :conversation-id resume-id
                                           :permission-mode permission-mode)))
+          (application--clear-recovery-environment)
           (when (and (member "--simulate-crash" arguments :test #'string=)
                      (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
             (let ((capsule
@@ -639,11 +661,12 @@ Without a SELECTION the configured model chooses the family."
           (handler-case
               (application-run
                *active-application*
-               :initial-command (and resume-requested-p
+               :initial-command (and effective-resume-requested-p
                                      (null resume-id)
                                      "/resume")
                :initial-input (main--initial-image-input arguments)
-               :resume-offer-p resume-requested-p)
+               :recovery-diagnosis recovery-diagnosis
+               :resume-offer-p effective-resume-requested-p)
             (rollback-requested (condition)
               (format *error-output*
                       "Autolith is rolling back to retained generation ~A.~%"

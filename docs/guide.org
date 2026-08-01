@@ -882,8 +882,19 @@ executable, the preloaded active baseline, or the pristine recovery core.
 Automatic recovery forwards the original application arguments while marking
 the resumed process as recovered, restores the capsule's conversation, and
 retains the last rendered sequence so ordinary terminal scrollback is not
-duplicated. An explicit =resume ID= command overrides checkpoint-time
-conversation state.
+duplicated. A forwarded bare =resume= is consumed as part of that restoration
+and does not reopen the conversation picker. An explicit =resume ID= command
+overrides checkpoint-time conversation state and retains ordinary resume
+behavior.
+
+When the launcher supplies a valid bounded crash capsule, the resumed
+application queues one diagnosis turn before ordinary input. The model receives
+the restored conversation history and bounded condition, revision, journal,
+and backtrace context. This turn has no tools and cannot change source, files,
+overlays, generations, or images. It explains the likely cause and safest
+repair, then asks whether to apply that repair to the active image. Autolith
+waits for explicit user agreement before attempting the repair. Starting the
+recovery image manually without crash context does not queue a diagnosis turn.
 
 Saved cores are compatible only with the recorded SBCL version, operating system
 build, and architecture. Source remains authoritative for rebuilding the base.

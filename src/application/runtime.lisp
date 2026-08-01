@@ -237,6 +237,40 @@
       nil))
   nil)
 
+(-> application--recovery-conversation-id () (option string))
+(defun application--recovery-conversation-id ()
+  "Return the conversation selected by automatic recovery, when present."
+  (let ((value (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID")))
+    (and (non-empty-string-p value) value)))
+
+(-> application--recovery-sequence (string) (option integer))
+(defun application--recovery-sequence (name)
+  "Return one nonnegative recovery sequence from environment variable NAME."
+  (handler-case
+      (let ((value (uiop:getenv name)))
+        (and
+         (non-empty-string-p value)
+         (let ((parsed (parse-integer value :junk-allowed nil)))
+           (and (not (minusp parsed)) parsed))))
+    (error ()
+      nil)))
+
+(-> application--selected-conversation-id
+    ((option string) (option string))
+    (option string))
+(defun application--selected-conversation-id
+    (conversation-id recovery-conversation-id)
+  "Return explicit CONVERSATION-ID before automatic recovery selection."
+  (or conversation-id recovery-conversation-id))
+
+(-> application--clear-recovery-environment () null)
+(defun application--clear-recovery-environment ()
+  "Remove one-shot recovery reconnection metadata after successful startup."
+  (sb-posix:unsetenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
+  (sb-posix:unsetenv "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
+  (sb-posix:unsetenv "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
+  nil)
+
 (-> terminal--positive-integer-or-nil ((option string)) (option integer))
 (defun terminal--positive-integer-or-nil (value)
   "Parse VALUE as a positive integer, returning NIL on failure."
@@ -687,7 +721,16 @@ newly acquired lease."
     (configuration-ensure-directories preferred-configuration)
     (conversation-identifier-migrate preferred-configuration)
     (durable-mutations-load preferred-configuration)
-    (let* ((overlay-failures (image-state-load preferred-configuration))
+    (let* ((recovery-state
+             (multiple-value-list
+              (application-recovery-state preferred-configuration)))
+           (recovery-conversation-id (first recovery-state))
+           (selected-conversation-id
+             (application--selected-conversation-id
+              conversation-id recovery-conversation-id))
+           (recovery-rendered-sequence (second recovery-state))
+           (recovery-history-floor-sequence (third recovery-state))
+           (overlay-failures (image-state-load preferred-configuration))
            (mcp-registration-snapshot nil)
            (context-registration-snapshot nil)
            (command-registration-snapshot nil)
@@ -713,9 +756,11 @@ newly acquired lease."
                         (conversation
                          conversation-lease
                          conversation-lease-acquired-p)
-                      (if conversation-id
+                      (if selected-conversation-id
                           (application--conversation-load-owned
-                           nil preferred-configuration conversation-id)
+                           nil
+                           preferred-configuration
+                           selected-conversation-id)
                           (application--conversation-create-owned
                            nil preferred-configuration)))
                     (let* ((reasoning-traces-p
@@ -733,6 +778,15 @@ newly acquired lease."
                              (application--configuration-for-conversation
                               preferred-configuration
                               conversation))
+                           (recovering-conversation-p
+                             (and
+                              (null conversation-id)
+                              recovery-conversation-id
+                              (string=
+                               (conversation-identifier conversation)
+                               (conversation-identifier-migration-resolve
+                                preferred-configuration
+                                recovery-conversation-id))))
                            (installation-provenance
                              (installation-provenance-detect configuration))
                            (update-availability
@@ -775,6 +829,24 @@ newly acquired lease."
                                :update-availability update-availability)
                               (application-overlay-failures application)
                               overlay-failures)
+                        (multiple-value-bind
+                              (restored-rendered-sequence
+                               restored-history-floor-sequence)
+                            (application--normalize-recovery-cursors
+                             conversation
+                             (not (null recovering-conversation-p))
+                             recovery-rendered-sequence
+                             recovery-history-floor-sequence)
+                          (setf
+                           (application-rendered-sequence application)
+                           restored-rendered-sequence
+                           (application-render-position application) 0
+                           (application-render-generation application)
+                           (conversation-log-generation conversation)
+                           (application-transcript-synchronized-p application)
+                           nil
+                           (application-history-floor-sequence application)
+                           restored-history-floor-sequence))
                         (application-connect-task-presentation application)
                         (application--load-goal application)
                         (application-publish-recovery-session application)
@@ -875,25 +947,22 @@ newly acquired lease."
                 (turn-timestamps-p
                   (preferences-turn-timestamps-p prepared-configuration))
                 (permission-state (permissions-load prepared-configuration))
-                (recovery-conversation-id
-                  (let ((value
-                          (uiop:getenv
-                           "AUTOLITH_RECOVERY_CONVERSATION_ID")))
-                    (and (non-empty-string-p value) value)))
+                (recovery-state
+                  (multiple-value-list
+                   (application-recovery-state prepared-configuration)))
+                (recovery-conversation-id (first recovery-state))
+                (selected-conversation-id
+                  (application--selected-conversation-id
+                   conversation-id recovery-conversation-id))
                 (conversation
                   (multiple-value-bind
                       (owned-conversation lease acquired-p)
                       (cond
-                        (recovery-conversation-id
+                        (selected-conversation-id
                          (application--conversation-load-owned
                           application
                           prepared-configuration
-                          recovery-conversation-id))
-                        (conversation-id
-                         (application--conversation-load-owned
-                          application
-                          prepared-configuration
-                          conversation-id))
+                          selected-conversation-id))
                         ((conversation-persisted-p retained-conversation)
                          (application--conversation-load-owned
                           application
@@ -918,32 +987,11 @@ newly acquired lease."
                   (provider-create
                    configuration
                    :reasoning-summaries-p reasoning-traces-p))
-                (recovery-rendered-sequence
-                  (handler-case
-                      (let ((value
-                              (uiop:getenv
-                               "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")))
-                        (and
-                         (non-empty-string-p value)
-                         (let ((parsed
-                                 (parse-integer value :junk-allowed nil)))
-                           (and (not (minusp parsed)) parsed))))
-                    (error ()
-                      nil)))
-                (recovery-history-floor-sequence
-                  (handler-case
-                      (let ((value
-                              (uiop:getenv
-                               "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")))
-                        (and
-                         (non-empty-string-p value)
-                         (let ((parsed
-                                 (parse-integer value :junk-allowed nil)))
-                           (and (not (minusp parsed)) parsed))))
-                    (error ()
-                      nil)))
+                (recovery-rendered-sequence (second recovery-state))
+                (recovery-history-floor-sequence (third recovery-state))
                 (recovering-conversation-p
                   (and
+                   (null conversation-id)
                    recovery-conversation-id
                    (string=
                     (conversation-identifier conversation)
@@ -2636,10 +2684,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 (-> application--run-turn
     (application (or string user-message-input)
      &key (:continuation-p boolean)
-          (:steering-function (option function)))
+          (:steering-function (option function))
+          (:tools-p boolean)
+          (:single-request-p boolean))
     null)
 (defun application--run-turn
-    (application content &key continuation-p steering-function)
+    (application content &key continuation-p steering-function (tools-p t)
+                              (single-request-p nil))
   "Persist and run one model turn for CONTENT while retaining editable input."
   (let* ((submission
            (etypecase content
@@ -2660,7 +2711,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                         :steering-function steering-function
                         :user-message-input submission
                         :continuation-p continuation-p)
-             :goal-context (application-goal-context application))))
+             :goal-context (application-goal-context application)
+             :tools-p tools-p
+             :single-request-p single-request-p)))
       (terminal-ui-set-preview-rows ui nil)
       (application-set-activity application nil)
       (terminal-ui-stream-update ui :tail nil)
@@ -2697,17 +2750,26 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 
 (-> application-run-message
     (application (or string user-message-input)
-     &key (:steering-function (option function)))
+     &key (:steering-function (option function))
+          (:tools-p boolean)
+          (:single-request-p boolean)
+          (:goal-continuations-p boolean))
     null)
-(defun application-run-message (application content &key steering-function)
-  "Run one user turn for CONTENT plus any automatic goal continuation turns."
+(defun application-run-message
+    (application content &key steering-function (tools-p t)
+                              (single-request-p nil)
+                              (goal-continuations-p t))
+  "Run one user turn for CONTENT with optional tools and goal continuations."
   (let ((goal (application-goal application)))
     (when (and goal (eq (getf goal :status) ':active))
       (setf (getf (application-goal application) :continuations) 0)))
   (application--run-turn application
                          content
-                         :steering-function steering-function)
-  (application--run-goal-continuations
-   application
-   :steering-function steering-function)
+                         :steering-function steering-function
+                         :tools-p tools-p
+                         :single-request-p single-request-p)
+  (when goal-continuations-p
+    (application--run-goal-continuations
+     application
+     :steering-function steering-function))
   nil)

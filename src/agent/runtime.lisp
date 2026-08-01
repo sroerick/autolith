@@ -267,11 +267,13 @@
 
 (-> agent-run-user-turn
     (agent (or string user-message-input) &key (:observer agent-observer)
-           (:goal-context (option string)))
+           (:goal-context (option string)) (:tools-p boolean)
+           (:single-request-p boolean))
     provider-result)
-(defgeneric agent-run-user-turn (agent content &key observer goal-context)
+(defgeneric agent-run-user-turn
+    (agent content &key observer goal-context tools-p single-request-p)
   (:documentation
-   "Persist user CONTENT, run model and tool rounds, and return the final provider result."))
+   "Persist user CONTENT, run model and optional tool rounds, and return the final provider result."))
 
 (-> agent-turn-complete-p (agent provider-result) boolean)
 (defgeneric agent-turn-complete-p (agent result)
@@ -295,16 +297,20 @@
 
 (defmethod agent-run-user-turn
     ((agent agent) (content string)
-     &key (observer (make-instance 'agent-observer)) goal-context)
+     &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
+          (single-request-p nil))
   "Normalize a textual user turn before running it through AGENT."
   (agent-run-user-turn agent
                        (user-message-input-create :text content)
                        :observer observer
-                       :goal-context goal-context))
+                       :goal-context goal-context
+                       :tools-p tools-p
+                       :single-request-p single-request-p))
 
 (defmethod agent-run-user-turn
     ((agent agent) (content user-message-input)
-     &key (observer (make-instance 'agent-observer)) goal-context)
+     &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
+          (single-request-p nil))
   "Run one serialized user turn through AGENT while presenting events to OBSERVER."
   (unless (or (non-empty-string-p (user-message-input-text content))
               (user-message-input-image-pathnames content))
@@ -319,7 +325,8 @@
        (let ((conversation (agent-conversation agent)))
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
-         (when (agent--should-compact-p agent)
+         (when (and (not single-request-p)
+                    (agent--should-compact-p agent))
            (agent-compact-conversation agent observer))
          (multiple-value-bind (item record)
              (conversation-append-user-message conversation content)
@@ -330,7 +337,11 @@
             (list :sequence (getf (rest record) :seq)
                   :time (getf (rest record) :time))))
          (unwind-protect
-              (agent--run-provider-loop agent observer goal-context)
+              (agent--run-provider-loop
+               agent observer
+               :goal-context goal-context
+               :tools-p tools-p
+               :single-request-p single-request-p)
            (conversation-clear-ephemeral-input-items conversation)
            (setf (conversation-turn-state conversation) nil)))))))
 
@@ -700,20 +711,25 @@ checkpoint preserves the current model's opaque reasoning state."
   nil)
 
 (-> agent--run-provider-loop
-    (agent agent-observer (option string))
+    (agent agent-observer &key (:goal-context (option string))
+                          (:tools-p boolean)
+                          (:single-request-p boolean))
     provider-result)
-(defun agent--run-provider-loop (agent observer goal-context)
-  "Run provider and tool rounds until AGENT's turn completes."
+(defun agent--run-provider-loop
+    (agent observer &key goal-context (tools-p t) (single-request-p nil))
+  "Run provider and optional tool rounds until AGENT's turn completes."
   (let ((seen-call-identifiers (make-hash-table :test #'equal))
         (request-number 0)
         (tool-rounds 0)
         (tool-calls 0))
     (loop
-      (when (agent--should-compact-p agent)
+      (when (and (not single-request-p)
+                 (agent--should-compact-p agent))
         (agent-compact-conversation agent observer))
-      (mcp-tool-registry-refresh
-       (agent-tool-registry agent)
-       :only-dirty-p t)
+      (when tools-p
+        (mcp-tool-registry-refresh
+         (agent-tool-registry agent)
+         :only-dirty-p t))
       (incf request-number)
       (agent-observer-status
        observer
@@ -724,14 +740,18 @@ checkpoint preserves the current model's opaque reasoning state."
              (result
                (handler-case
                    (let ((*context-request-contributions*
-                           (mcp-tool-registry-context-contributions
-                            (agent-tool-registry agent))))
+                           (and
+                            tools-p
+                            (mcp-tool-registry-context-contributions
+                             (agent-tool-registry agent)))))
                      (provider-stream-turn
                       (agent-provider agent)
                       conversation
                       :tool-namespaces
-                      (tool-registry-provider-schemas
-                       (agent-tool-registry agent))
+                      (if tools-p
+                          (tool-registry-provider-schemas
+                           (agent-tool-registry agent))
+                          #())
                       :event-callback (agent--provider-event-callback observer)
                       :goal-context goal-context))
                  (provider-error (condition)
@@ -742,6 +762,11 @@ checkpoint preserves the current model's opaque reasoning state."
                           (agent--provider-error-metadata condition)))
                    (error condition))))
              (calls (provider-result-tool-calls result)))
+        (when (and calls (not tools-p))
+          (error 'agent-loop-error
+                 :message "A tool-free model turn returned function calls."
+                 :conversation-id (conversation-identifier conversation)
+                 :request-number request-number))
         (conversation-clear-ephemeral-input-items conversation)
         (agent--validate-tool-call-identifiers
          agent
@@ -766,7 +791,10 @@ checkpoint preserves the current model's opaque reasoning state."
                  (length (provider-result-output-items result))
                  :tool-call-count (length calls)
                  :turn-completion (provider-result-turn-completion result)))
-          (when (agent-turn-complete-p agent result)
+          (when single-request-p
+            (setf (conversation-turn-state conversation) nil))
+          (when (or single-request-p
+                    (agent-turn-complete-p agent result))
             (agent-observer-status
              observer
              :turn-completed

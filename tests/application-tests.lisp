@@ -2652,6 +2652,238 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-recovery-diagnosis-prompt () null)
+(defun test-recovery-diagnosis-prompt ()
+  "Test recovered crash context becomes one bounded diagnosis-only prompt."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (state-root (configuration-state-root configuration))
+         (capsule-pathname
+           (merge-pathnames "crashes/diagnosis.sexp" state-root))
+         (pointer-pathname
+           (merge-pathnames "crash-pointers/diagnosis.path" state-root))
+         (session-pathname
+           (merge-pathnames
+            "recovery-session-pointers/diagnosis.sexp" state-root))
+         (recovered-name "AUTOLITH_RECOVERED")
+         (pointer-name "AUTOLITH_CRASH_POINTER")
+         (session-name "AUTOLITH_RECOVERY_SESSION_POINTER")
+         (conversation-name "AUTOLITH_RECOVERY_CONVERSATION_ID")
+         (sequence-name "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
+         (floor-name "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
+         (environment-names
+           (list recovered-name pointer-name session-name conversation-name
+                 sequence-name floor-name))
+         (previous-environment
+           (loop for name in environment-names
+                 collect (cons name (uiop:getenv name)))))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (snapshot-write
+            session-pathname
+            (list :recovery-session
+                  :version 1
+                  :conversation-id "2345678"
+                  :rendered-sequence 4
+                  :history-floor-sequence 2))
+           (snapshot-write
+            capsule-pathname
+            (list :crash
+                  :version 1
+                  :id "diagnosis"
+                  :time 1
+                  :condition-type "SIMPLE-ERROR"
+                  :condition "Injected recovery failure."
+                  :backtrace '("FRAME-ONE" "FRAME-TWO")
+                  :conversation-id "recover1"
+                  :rendered-sequence 2
+                  :history-floor-sequence 1
+                  :git-commit "0123456789abcdef0123456789abcdef01234567"
+                  :journal-position 17))
+           (ensure-directories-exist pointer-pathname)
+           (with-open-file (stream pointer-pathname
+                                   :direction :output
+                                   :if-exists :supersede
+                                   :if-does-not-exist :create
+                                   :external-format :utf-8)
+             (write-line (namestring capsule-pathname) stream))
+           (sb-posix:setenv recovered-name "1" 1)
+           (sb-posix:setenv pointer-name (namestring pointer-pathname) 1)
+           (sb-posix:setenv session-name (namestring session-pathname) 1)
+           (let ((prompt
+                   (application-recovery-diagnosis-prompt configuration)))
+             (test-assert
+              (and prompt
+                   (search "diagnosis-only" prompt)
+                   (search "Injected recovery failure" prompt)
+                   (search "FRAME-ONE" prompt)
+                   (search "ask" prompt)
+                   (search "active image" prompt))
+              "a valid recovered capsule requests diagnosis and user-approved repair"))
+           (snapshot-write capsule-pathname '(:crash))
+           (sb-posix:setenv conversation-name "untrusted-capsule" 1)
+           (sb-posix:setenv sequence-name "99" 1)
+           (sb-posix:setenv floor-name "98" 1)
+           (multiple-value-bind (conversation-id rendered-sequence
+                                history-floor-sequence)
+               (application-recovery-state configuration)
+             (test-assert
+              (and (string= conversation-id "2345678")
+                   (= rendered-sequence 4)
+                   (= history-floor-sequence 2))
+              "an invalid crash capsule falls back to validated session state"))
+           (test-assert
+            (null (application-recovery-diagnosis-prompt configuration))
+            "an invalid crash capsule does not queue diagnosis")
+           (snapshot-write
+            session-pathname
+            (list :recovery-session
+                  :version 1
+                  :version 1
+                  :conversation-id "../bad"
+                  :rendered-sequence 0))
+           (multiple-value-bind (conversation-id rendered-sequence
+                                history-floor-sequence)
+               (application-recovery-state configuration)
+             (test-assert
+              (and (null conversation-id)
+                   (null rendered-sequence)
+                   (null history-floor-sequence))
+              "malformed session state cannot replace invalid crash context"))
+           (sb-posix:setenv pointer-name
+                           (namestring
+                            (merge-pathnames "outside.path" root))
+                           1)
+           (test-assert
+            (null (application-recovery-diagnosis-prompt configuration))
+            "diagnosis rejects a crash pointer outside private state"))
+      (dolist (entry previous-environment)
+        (if (rest entry)
+            (sb-posix:setenv (first entry) (rest entry) 1)
+            (sb-posix:unsetenv (first entry))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-recovery-application-construction () null)
+(defun test-recovery-application-construction ()
+  "Test source and retained recovery restore conversations and cursor state."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (recovered
+           (conversation-create configuration :identifier "recover-source"))
+         (explicit
+           (conversation-create configuration :identifier "explicit-resume"))
+         (conversation-name "AUTOLITH_RECOVERY_CONVERSATION_ID")
+         (sequence-name "AUTOLITH_RECOVERY_RENDERED_SEQUENCE")
+         (floor-name "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE")
+         (environment-names
+           (list conversation-name sequence-name floor-name))
+         (previous-environment
+           (loop for name in environment-names
+                 collect (cons name (uiop:getenv name))))
+         (mcp-registration-snapshot (mcp--registry-snapshot))
+         (context-registration-snapshot (context--registry-snapshot))
+         (command-registration-snapshot
+           (application-command--registry-snapshot))
+         (application nil))
+    (labels ((publish-recovery-context ()
+               "Publish RECOVERED's one-shot cursor handoff."
+               (sb-posix:setenv
+                conversation-name (conversation-identifier recovered) 1)
+               (sb-posix:setenv sequence-name "2" 1)
+               (sb-posix:setenv floor-name "1" 1))
+
+             (close-application ()
+               "Close APPLICATION's owned runtime and conversation lease."
+               (when application
+                 (ignore-errors
+                   (application--discard-connection-resources
+                    application
+                    (application-tool-registry application)
+                    (application-worker application)))
+                 (ignore-errors
+                   (application-release-conversation-lease application))
+                 (setf application nil))))
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (dotimes (index 3)
+               (conversation-append-user-message
+                recovered (format nil "recovery message ~D" index)))
+             (conversation-append-user-message explicit "explicit message")
+             (publish-recovery-context)
+             (test-call-with-function-replacements
+              (list
+               (list 'durable-mutations-load
+                     (lambda (active-configuration)
+                       (declare (ignore active-configuration))
+                       nil))
+               (list 'image-state-load
+                     (lambda (active-configuration)
+                       (declare (ignore active-configuration))
+                       nil))
+               (list 'image-state-reconnect (lambda () nil))
+               (list 'mcp-configuration-load
+                     (lambda (active-configuration)
+                       (declare (ignore active-configuration))
+                       nil))
+               (list 'user-init-load
+                     (lambda (active-configuration)
+                       (declare (ignore active-configuration))
+                       nil))
+               (list 'configuration-create
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       configuration)))
+              (lambda ()
+                (setf application (application-create configuration))
+                (test-assert
+                 (and
+                  (string=
+                   (conversation-identifier
+                    (application-conversation application))
+                   (conversation-identifier recovered))
+                  (= (application-rendered-sequence application) 2)
+                  (= (application-history-floor-sequence application) 1))
+                 "clean-source recovery restores its conversation and cursors")
+                (publish-recovery-context)
+                (setf application
+                      (application-reconnect
+                       application
+                       :conversation-id (conversation-identifier explicit)))
+                (test-assert
+                 (and
+                  (string=
+                   (conversation-identifier
+                    (application-conversation application))
+                   (conversation-identifier explicit))
+                  (zerop (application-rendered-sequence application))
+                  (null (application-history-floor-sequence application)))
+                 "explicit resume overrides recovery conversation and cursor state")
+                (publish-recovery-context)
+                (setf application (application-reconnect application))
+                (test-assert
+                 (and
+                  (string=
+                   (conversation-identifier
+                    (application-conversation application))
+                   (conversation-identifier recovered))
+                  (= (application-rendered-sequence application) 2)
+                  (= (application-history-floor-sequence application) 1))
+                 "retained-generation reconnect restores recovery state"))))
+        (close-application)
+        (dolist (entry previous-environment)
+          (if (rest entry)
+              (sb-posix:setenv (first entry) (rest entry) 1)
+              (sb-posix:unsetenv (first entry))))
+        (mcp--registry-restore mcp-registration-snapshot)
+        (context--registry-restore context-registration-snapshot)
+        (application-command--registry-restore command-registration-snapshot)
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist :ignore))))
+  nil)
+
 (-> test-bounded-transcript-replay () null)
 (defun test-bounded-transcript-replay ()
   "Test startup replays exactly the newest five hundred visible entries."
@@ -3472,13 +3704,17 @@
               "the terminal reader restarts after single-threaded work"))
         (application-input-controller-stop controller))))
   (test-assert
-   (equal (application--initial-work-items nil t)
+   (equal (application--initial-work-items nil nil t)
           (list (list ':project-adaptation-offer)))
    "explicit command-line resume queues interruptible adaptation work")
   (test-assert
-   (equal (application--initial-work-items "/resume" t)
+   (equal (application--initial-work-items "/resume" nil t)
           (list (list ':command "/resume")))
    "bare command-line resume qualifies only after its picker selection")
+  (test-assert
+   (equal (application--initial-work-items nil "diagnose" nil)
+          (list (list ':recovery-diagnosis "diagnose")))
+   "automatic crash recovery queues exactly one diagnostic model turn")
   nil)
 
 (-> test-late-steering-promotion () null)
@@ -3566,6 +3802,15 @@
       (main--resume-selection '("--resume" "saved-conversation"))
     (test-assert (and (not requested-p) (null identifier))
                  "the removed --resume option is not recognized"))
+  (test-assert
+   (string= (application--selected-conversation-id
+             "explicit" "recovered")
+            "explicit")
+   "an explicit resume identifier overrides automatic recovery selection")
+  (test-assert
+   (string= (application--selected-conversation-id nil "recovered")
+            "recovered")
+   "automatic recovery supplies the conversation without an explicit resume")
   (test-assert (search "--immutable" (main-usage))
                "command-line help documents immutable mode")
   (test-assert (search "--from-source" (main-usage))
@@ -3632,6 +3877,90 @@
        (main-dispatch '("--permissions" "full"))))
     (test-assert (eq observed-mode ':full-access)
                  "--permissions sets the initial reconnect mode"))
+  (let* ((environment-names
+           '("AUTOLITH_RECOVERY_CONVERSATION_ID"
+             "AUTOLITH_RECOVERY_RENDERED_SEQUENCE"
+             "AUTOLITH_RECOVERY_HISTORY_FLOOR_SEQUENCE"))
+         (previous-environment
+           (loop for name in environment-names
+                 collect (cons name (uiop:getenv name))))
+         (observed-conversation-id :unset)
+         (observed-initial-command :unset)
+         (observed-recovery-diagnosis :unset)
+         (observed-resume-offer-p :unset)
+         (reconnect-failure-p nil)
+         (*active-application* (make-instance 'application)))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'application-reconnect
+            (lambda (application
+                     &key conversation-id immutable-p permission-mode)
+              (declare (ignore application immutable-p permission-mode))
+              (when reconnect-failure-p
+                (error "reconnect failed"))
+              (setf observed-conversation-id conversation-id)
+              (make-instance 'application)))
+           (list
+            'application-recovery-diagnosis-prompt
+            (lambda (configuration)
+              (declare (ignore configuration))
+              "diagnose"))
+           (list
+            'application-run
+            (lambda (application
+                     &key initial-command initial-input recovery-diagnosis
+                          resume-offer-p)
+              (declare (ignore application initial-input))
+              (setf observed-initial-command initial-command
+                    observed-recovery-diagnosis recovery-diagnosis
+                    observed-resume-offer-p resume-offer-p))))
+          (lambda ()
+            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered" 1)
+            (main-dispatch '("resume"))
+            (test-assert
+             (and (null observed-conversation-id)
+                  (null observed-initial-command)
+                  (string= observed-recovery-diagnosis "diagnose")
+                  (null observed-resume-offer-p))
+             "automatic recovery ignores a replayed bare resume picker request")
+            (test-assert
+             (null (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID"))
+             "successful startup consumes one-shot recovery metadata")
+            (setf observed-conversation-id :unset
+                  observed-initial-command :unset
+                  observed-recovery-diagnosis :unset
+                  observed-resume-offer-p :unset)
+            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered" 1)
+            (main-dispatch '("resume" "explicit"))
+            (test-assert
+             (and (string= observed-conversation-id "explicit")
+                  (null observed-initial-command)
+                  (null observed-recovery-diagnosis)
+                  observed-resume-offer-p)
+             "an explicit recovered resume still overrides crash reconnection")
+            (setf reconnect-failure-p t)
+            (sb-posix:setenv "AUTOLITH_RECOVERY_CONVERSATION_ID"
+                            "recovered" 1)
+            (test-assert
+             (handler-case
+                 (progn
+                   (main-dispatch '("resume"))
+                   nil)
+               (simple-error ()
+                 t))
+             "failed recovery application construction reports its error")
+            (test-assert
+             (string= (uiop:getenv "AUTOLITH_RECOVERY_CONVERSATION_ID")
+                      "recovered")
+             "failed recovery application construction preserves recovery metadata")))
+      (dolist (entry previous-environment)
+        (if (rest entry)
+            (sb-posix:setenv (first entry) (rest entry) 1)
+            (sb-posix:unsetenv (first entry))))))
   (test-assert (null (main--auth-selection '("--auth")))
                "plain --auth defers to the configured provider family")
   (test-assert (string= (main--auth-selection '("--auth" "grok")) "grok")
@@ -6170,6 +6499,8 @@
   (test-plan-update-call-presentation)
   (test-task-run-call-presentation)
   (test-recovery-cursor-normalization)
+  (test-recovery-diagnosis-prompt)
+  (test-recovery-application-construction)
   (test-bounded-transcript-replay)
   (test-hidden-reasoning-does-not-crowd-replay)
   (test-paged-transcript-history)

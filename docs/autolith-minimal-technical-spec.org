@@ -1145,6 +1145,21 @@ A crash capsule may contain:
 - Recently changed definitions.
 - Paths to pending source changes.
 
+Capsule-backed automatic recovery restores the crashed conversation and its
+rendered and history cursors before starting interactive work. A bare =resume=
+forwarded from the failed process must not open the conversation picker again.
+An explicit =resume ID= overrides the recovered conversation and retains
+ordinary resume behavior.
+
+When a valid bounded crash capsule is available, startup queues exactly one
+model diagnosis turn before ordinary input. The turn receives the restored
+conversation history and bounded capsule evidence, advertises no tools, and
+runs no goal continuations. It must explain the likely failure, supporting
+evidence, confidence, and safest proposed repair, then ask whether the user
+wants that repair applied to the active image. It must not modify source,
+files, overlays, generations, or images before explicit user agreement. Manual
+recovery without valid crash context does not queue this diagnosis turn.
+
 The recovery image may:
 
 1. Inspect the crash capsule.

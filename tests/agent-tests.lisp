@@ -287,6 +287,85 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-agent-tool-free-turn () null)
+(defun test-agent-tool-free-turn ()
+  "Test diagnosis-style turns advertise and execute no tools."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-tool-free"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "tool-free"
+              (list (agent-test-message "diagnosis only"))
+              :turn-completion :continue)
+             (agent-test-result
+              "unexpected-follow-up"
+              (list (agent-test-message "must not run"))
+              :turn-completion :end))))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (agent-test-registry)
+                         :worker ':unused)))
+    (unwind-protect
+         (progn
+           (setf (conversation-last-total-tokens conversation)
+                 (configuration-compaction-token-limit configuration))
+           (agent-run-user-turn agent
+                                "diagnose the crash"
+                                :tools-p nil
+                                :single-request-p t)
+           (test-assert
+            (equal (scripted-provider-tool-schema-counts provider) '(0))
+            "a tool-free turn advertises no tool schemas")
+           (test-assert
+            (= (length (scripted-provider-input-counts provider)) 1)
+            "a single-request turn skips compaction and provider follow-ups")
+           (let* ((call-conversation
+                    (conversation-create
+                     configuration :identifier "agent-tool-free-call"))
+                  (call-provider
+                    (make-instance
+                     'scripted-provider
+                     :results
+                     (list
+                      (agent-test-result
+                       "forbidden-call"
+                       (list
+                        (agent-test-call
+                         :call-id "forbidden-call"
+                         :arguments "{\"value\":\"no\"}"))))))
+                  (call-agent
+                    (agent-create
+                     :configuration configuration
+                     :provider call-provider
+                     :conversation call-conversation
+                     :tool-registry (agent-test-registry)
+                     :worker ':unused)))
+             (test-assert
+              (handler-case
+                  (progn
+                    (agent-run-user-turn
+                     call-agent
+                     "do not call tools"
+                     :tools-p nil
+                     :single-request-p t)
+                    nil)
+                (agent-loop-error ()
+                  t))
+              "a tool-free turn rejects provider function calls")
+             (test-assert
+              (= (length (conversation-input-items call-conversation)) 1)
+              "a rejected tool-free call is never persisted or executed")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-agent-steering () null)
 (defun test-agent-steering ()
   "Test pending user input is persisted after a tool round and before its follow-up."
@@ -1108,6 +1187,7 @@
 (defun run-agent-tests ()
   "Run focused agent-loop tests and return true on success."
   (test-agent-tool-loop)
+  (test-agent-tool-free-turn)
   (test-agent-steering)
   (test-agent-explicit-continuation)
   (test-agent-invalid-call-history)

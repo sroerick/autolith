@@ -1488,10 +1488,17 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 
 (-> application--run-message-input
     (application (or string user-message-input)
-     &key (:steering-function (option function)))
+     &key (:steering-function (option function))
+          (:tools-p boolean)
+          (:single-request-p boolean)
+          (:goal-continuations-p boolean)
+          (:fatal-agent-loop-errors-p boolean))
     keyword)
 (defun application--run-message-input
-    (application input &key steering-function)
+    (application input &key steering-function (tools-p t)
+                            (single-request-p nil)
+                            (goal-continuations-p t)
+                            (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling."
   (let ((signal-backtrace nil))
     (handler-bind
@@ -1502,7 +1509,12 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
       (handler-case
           (progn
             (application-run-message
-             application input :steering-function steering-function)
+             application
+             input
+             :steering-function steering-function
+             :tools-p tools-p
+             :single-request-p single-request-p
+             :goal-continuations-p goal-continuations-p)
             ':continue)
         (application-turn-cancelled (condition)
           (error condition))
@@ -1510,8 +1522,14 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (error condition))
         (rollback-requested (condition)
           (error condition))
-        ((or agent-loop-error
-             conversation-invariant-error
+        (agent-loop-error (condition)
+          (if fatal-agent-loop-errors-p
+              (application-raise-fatal
+               application condition signal-backtrace)
+              (progn
+                (application-handle-expected-error application condition)
+                ':failed)))
+        ((or conversation-invariant-error
              active-image-corruption)
          (condition)
           (application-raise-fatal application condition signal-backtrace))
@@ -1696,6 +1714,14 @@ provider reset deadline, or a five-minute fallback when no reset is known."
                   (application-input-controller--take-steering controller)))))
          (when (eq result ':rate-limited)
            (application-input-controller--defer-after-rate-limit controller))))
+      (:recovery-diagnosis
+       (application--run-message-input
+        application
+        (second work)
+        :tools-p nil
+        :single-request-p t
+        :goal-continuations-p nil
+        :fatal-agent-loop-errors-p nil))
       (:command
        (let* ((input (second work))
               (invocation (application-command-invocation-parse input))
