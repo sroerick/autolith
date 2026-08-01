@@ -1782,6 +1782,17 @@
 (-> test-terminal-non-tty-fallback () null)
 (defun test-terminal-non-tty-fallback ()
   "Test line-oriented fallback input and output on a non-TTY descriptor."
+  (let ((terminal
+          (stream-terminal-create
+           :input-stream (make-string-input-stream "")
+           :output-stream (make-string-output-stream)
+           :input-file-descriptor -1)))
+    (terminal-start terminal)
+    (test-assert (terminal-started-p terminal)
+                 "a noninteractive stream starts without inspecting its descriptor")
+    (test-assert (not (terminal-interactive-p terminal))
+                 "a noninteractive stream selects fallback mode")
+    (terminal-stop terminal))
   (multiple-value-bind (read-descriptor write-descriptor)
       (sb-posix:pipe)
     (unwind-protect

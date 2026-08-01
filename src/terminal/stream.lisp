@@ -61,7 +61,9 @@
 
 (-> terminal--terminal-mode-or-nil (stream-terminal) t)
 (defun terminal--terminal-mode-or-nil (terminal)
-  "Return TERMINAL's termios value, or NIL when its input is not a TTY."
+  "Return TERMINAL's termios value, or NIL when its input is not interactive."
+  (unless (interactive-stream-p (stream-terminal-input-stream terminal))
+    (return-from terminal--terminal-mode-or-nil nil))
   (handler-case
       (sb-posix:tcgetattr (stream-terminal-input-file-descriptor terminal))
     (sb-posix:syscall-error (condition)
