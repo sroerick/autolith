@@ -175,6 +175,33 @@
          (configuration-web-search-mode parent-configuration)
          "disabled"))))
 
+(-> task-child-reference-history-p (agent configuration) boolean)
+(defun task-child-reference-history-p (parent child-configuration)
+  "Return true when PARENT and CHILD-CONFIGURATION's provider both opt in."
+  (and (provider-child-reference-history-p (agent-provider parent))
+       (provider-child-reference-history-p
+        (provider-with-configuration
+         (agent-provider parent) child-configuration))))
+
+(-> task-child-reference-history-byte-limit
+    (configuration)
+    (option integer))
+(defun task-child-reference-history-byte-limit (configuration)
+  "Return a conservative inherited-reference wire budget, or NIL when too small.
+
+UTF-8 bytes are an upper bound on tokenizer tokens, so this leaves at least
+three quarters of the child context for instructions, tools, and new work while
+also applying a fixed retention cap. Inheritance is disabled when its mandatory
+boundary cannot fit within that budget."
+  (let ((limit
+          (min *task-inherited-reference-maximum-bytes*
+               (max 1
+                    (floor (configuration-context-window configuration)
+                           *task-inherited-reference-context-divisor*)))))
+    (and (>= limit
+             (conversation--inherited-reference-wire-byte-length nil))
+         limit)))
+
 (defun task-output-definition-text (definition)
   "Return DEFINITION's output contract as prompt text, or NIL."
   (let ((output (task-agent-definition-output definition)))
@@ -480,6 +507,20 @@
           :model model
           :detached (task-job-detached-p job))))
 
+(-> task-child-inherit-reference-history
+    (task-job conversation model-provider)
+    (option list))
+(defun task-child-inherit-reference-history (job conversation provider)
+  "Append JOB's spawn-time parent reference history when PROVIDER supports it."
+  (let ((parent (task-job-parent-agent job)))
+    (when (and (task-job-inherited-reference-p job)
+               (provider-child-reference-history-p (agent-provider parent))
+               (provider-child-reference-history-p provider))
+      (conversation-append-inherited-reference
+       conversation
+       (conversation-identifier (agent-conversation parent))
+       (task-job-inherited-reference-items job)))))
+
 (defun task-run-child (job)
   "Create and run JOB's real in-process child session through terminal yield."
   (let* ((parent (task-job-parent-agent job))
@@ -531,12 +572,14 @@
                                           (task-job-tool-authorization-function
                                            job))))
     (unwind-protect
-         (let ((result
-                 (agent-run-user-turn
-                  child
-                  (getf (task-job-item job) :task)
-                  :observer observer
-                  :goal-context (task-child-goal-context job configuration))))
-           (task--assemble-child-result
-            job result child conversation completion))
+         (progn
+           (task-child-inherit-reference-history job conversation provider)
+           (let ((result
+                   (agent-run-user-turn
+                    child
+                    (getf (task-job-item job) :task)
+                    :observer observer
+                    :goal-context (task-child-goal-context job configuration))))
+             (task--assemble-child-result
+              job result child conversation completion)))
       (ignore-errors (lisp-worker-pool-stop-all worker)))))

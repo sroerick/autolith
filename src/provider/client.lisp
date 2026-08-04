@@ -257,6 +257,25 @@
   (declare (ignore provider))
   ':codex)
 
+(-> provider-child-reference-history-p (model-provider) boolean)
+(defgeneric provider-child-reference-history-p (provider)
+  (:documentation
+   "Return true when child agents should inherit filtered parent reference history."))
+
+(defmethod provider-child-reference-history-p ((provider model-provider))
+  "Leave parent reference-history inheritance disabled by default."
+  (declare (ignore provider))
+  nil)
+
+(defmethod provider-child-reference-history-p
+    ((provider codex-subscription-provider))
+  "Enable Codex multi-agent v2 style inherited reference history.
+
+This mirrors the client-side fork behavior at Codex reference commit
+449f099f1cad470fa4f63dcc198f8d6cb8944cde."
+  (declare (ignore provider))
+  t)
+
 (-> provider-device-authentication-client
     (subscription-provider)
     device-authentication-client)

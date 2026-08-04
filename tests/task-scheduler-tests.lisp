@@ -1421,8 +1421,13 @@
                                        :if-does-not-exist :ignore)))
   nil)
 
-(-> task-tests--run-scheduler-case (task-test-provider json-object) list)
-(defun task-tests--run-scheduler-case (provider arguments)
+(-> task-tests--run-scheduler-case
+    (task-test-provider json-object
+     &key (:parent-reference-p boolean)
+          (:oversized-parent-reference-p boolean))
+    list)
+(defun task-tests--run-scheduler-case
+    (provider arguments &key parent-reference-p oversized-parent-reference-p)
   "Execute one real task tool case and return observations after clean shutdown."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
@@ -1447,31 +1452,46 @@
                          :call-id "task-scheduler-test"))
          (started-at (get-internal-real-time)))
     (unwind-protect
-         (let* ((result (tool-execute tool context arguments))
-                (idle-p
-                  (task-tests--wait-until
-                   (lambda ()
-                     (with-lock-held ((task-orchestrator-lock orchestrator))
-                       (zerop
-                        (task-orchestrator-active-count orchestrator))))
-                   1))
-                (jobs (task-orchestrator-list-jobs orchestrator))
-                (details (tool-result-details result))
-                (content (tool-result-content result))
-                (native-content
-                  (task-tests--read-exact-native-value content))
-                (artifact-forms
-                  (mapcar
-                   (lambda (job)
-                     (task-tests--read-exact-native-value
-                      (uiop:read-file-string
-                       (getf (task-job-result job) :output-path))))
-                   jobs))
-                (workers
-                 (with-lock-held ((task-orchestrator-lock orchestrator))
-                   (copy-list
-                    (task-orchestrator-worker-threads orchestrator)))))
-           (list :success-p (tool-result-success-p result)
+         (progn
+           (when parent-reference-p
+             (conversation-append-user-message
+              conversation
+              (if oversized-parent-reference-p
+                  (make-string 40000 :initial-element #\P)
+                  "Use the parent design constraints."))
+             (conversation-append-provider-item
+              conversation
+              (json-object
+               "type" "message"
+               "role" "assistant"
+               "content" (json-array
+                          (json-object "type" "output_text"
+                                       "text" "Parent design is ready.")))))
+           (let* ((result (tool-execute tool context arguments))
+                  (idle-p
+                    (task-tests--wait-until
+                     (lambda ()
+                       (with-lock-held ((task-orchestrator-lock orchestrator))
+                         (zerop
+                          (task-orchestrator-active-count orchestrator))))
+                     1))
+                  (jobs (task-orchestrator-list-jobs orchestrator))
+                  (details (tool-result-details result))
+                  (content (tool-result-content result))
+                  (native-content
+                    (task-tests--read-exact-native-value content))
+                  (artifact-forms
+                    (mapcar
+                     (lambda (job)
+                       (task-tests--read-exact-native-value
+                        (uiop:read-file-string
+                         (getf (task-job-result job) :output-path))))
+                     jobs))
+                  (workers
+                    (with-lock-held ((task-orchestrator-lock orchestrator))
+                      (copy-list
+                       (task-orchestrator-worker-threads orchestrator)))))
+             (list :success-p (tool-result-success-p result)
                  :content content
                  :native-content native-content
                  :details details
@@ -1481,6 +1501,8 @@
                  :heavy-references-cleared-p
                  (every (lambda (job)
                           (and (null (task-job-parent-agent job))
+                               (not (task-job-inherited-reference-p job))
+                               (null (task-job-inherited-reference-items job))
                                (null
                                 (task-job-command-authorization-function job))
                                (null
@@ -1497,6 +1519,10 @@
                  (with-lock-held ((task-test-provider-lock provider))
                    (copy-list
                     (task-test-provider-conversation-identifiers provider)))
+                 :provider-request-inputs
+                 (with-lock-held ((task-test-provider-lock provider))
+                   (reverse
+                    (copy-tree (task-test-provider-request-inputs provider))))
                  :execution-identifiers
                  (mapcar #'task-job-execution-identifier jobs)
                  :provider-request-count
@@ -1524,7 +1550,7 @@
                  (length (conversation-list configuration))
                  :duration-ms
                  (task--milliseconds-between started-at
-                                             (get-internal-real-time))))
+                                             (get-internal-real-time)))))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore))))
@@ -1679,6 +1705,92 @@
              (test-assert (zerop (getf observation
                                        :public-conversation-count))
                           "private child transcripts stay out of conversation lists"))
+           (let* ((provider (make-instance 'task-test-provider
+                                           :mode :concurrent))
+                  (observation
+                    (task-tests--run-scheduler-case
+                     provider
+                     (json-object "agent" "task"
+                                  "task" "Use the inherited design context.")
+                     :parent-reference-p t))
+                  (inputs (first (getf observation :provider-request-inputs))))
+             (test-assert (getf observation :success-p)
+                          "a child with inherited reference context succeeds")
+             (test-assert
+              (equal (mapcar (lambda (item) (json-get item "role")) inputs)
+                     '("user" "assistant" "developer" "user"))
+              "the real task child receives parent turns, a boundary, and its task")
+             (test-assert
+              (search "inherited reference context"
+                      (json-get (aref (json-get (third inputs) "content") 0)
+                                "text"))
+              "the inherited parent turns end at an explicit developer boundary")
+             (test-assert (= (getf observation :public-conversation-count) 1)
+                          "only the seeded parent appears in public conversations"))
+           (let* ((provider
+                    (make-instance 'task-test-provider :mode :concurrent))
+                  (observation
+                    (task-tests--run-scheduler-case
+                     provider
+                     (json-object "agent" "task"
+                                  "task" "Use bounded inherited context."
+                                  "async" t)
+                     :parent-reference-p t
+                     :oversized-parent-reference-p t))
+                  (inputs (first (getf observation :provider-request-inputs))))
+             (test-assert (getf observation :success-p)
+                          "a detached child with oversized parent history succeeds")
+             (test-assert
+              (equal (mapcar (lambda (item) (json-get item "role")) inputs)
+                     '("assistant" "developer" "user"))
+              "oversized parent history keeps only the newest fitting message")
+             (test-assert
+              (<= (conversation--inherited-reference-wire-byte-length
+                   (list (first inputs)))
+                  *task-inherited-reference-maximum-bytes*)
+              "detached child inheritance stays within the fixed wire budget"))
+           (dolist (capabilities '((nil t "parent") (t nil "child")))
+             (destructuring-bind
+                 (parent-reference-p child-reference-p label)
+                 capabilities
+               (let* ((provider
+                        (make-instance
+                         'task-test-provider
+                         :mode :concurrent
+                         :reference-history-p parent-reference-p
+                         :child-reference-history-p child-reference-p))
+                      (observation
+                        (task-tests--run-scheduler-case
+                         provider
+                         (json-object "agent" "task"
+                                      "task" "Do not inherit parent history.")
+                         :parent-reference-p t))
+                      (inputs
+                        (first (getf observation :provider-request-inputs))))
+                 (test-assert (getf observation :success-p)
+                              "a provider-isolation task succeeds")
+                 (test-assert
+                  (equal (mapcar (lambda (item) (json-get item "role")) inputs)
+                         '("user"))
+                  (format nil
+                          "unsupported ~A provider retains no inherited history"
+                          label)))))
+           (let* ((*task-inherited-reference-context-divisor* 1000000)
+                  (provider
+                    (make-instance 'task-test-provider :mode :concurrent))
+                  (observation
+                    (task-tests--run-scheduler-case
+                     provider
+                     (json-object "agent" "task"
+                                  "task" "Use a tiny child context budget.")
+                     :parent-reference-p t))
+                  (inputs (first (getf observation :provider-request-inputs))))
+             (test-assert (getf observation :success-p)
+                          "a child with a tiny reference budget succeeds")
+             (test-assert
+              (equal (mapcar (lambda (item) (json-get item "role")) inputs)
+                     '("user"))
+              "inheritance is disabled when its boundary exceeds the budget"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1" 1)
            (let* ((provider (make-instance 'task-test-provider :mode :nested))
                   (observation
@@ -1694,6 +1806,13 @@
                           "nested help-join resumes the parent after the leaf")
              (test-assert (= (getf observation :provider-worker-count) 1)
                           "nested synchronous work reuses its parent's worker")
+             (test-assert
+              (find-if
+               (lambda (items)
+                 (equal (mapcar (lambda (item) (json-get item "role")) items)
+                        '("user" "developer" "user")))
+               (getf observation :provider-request-inputs))
+              "a nested child inherits its immediate parent's assignment")
              (test-assert (< (getf observation :duration-ms) 1000)
                           "nested help-join avoids a concurrency-one deadlock"))
            (let* ((provider

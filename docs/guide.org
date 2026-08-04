@@ -467,11 +467,25 @@ a role with =:blocking-p t= always remains synchronous. Every child must end
 with exactly one =yield.submit= carrying =success=, =failed=, or =aborted=. A
 normal model stop without that yield is a failed child run.
 
-On Codex, root and child requests keep distinct thread identities but share one
-provider session prompt-cache key. This uses the server-side subagent cache
-routing optimization without adding the parent's transcript to child request
-input. Codex controls provider-side cache routing and retention. Other providers
-retain their ordinary request behavior.
+On Codex, task admission also snapshots filtered parent history for the child as
+reference context when both parent and selected child providers opt in. Text
+user turns and final assistant answers are retained; reasoning, tool traffic,
+images, request-local items, intermediate assistant phases, and parent developer
+policy are omitted. Autolith keeps the newest complete messages fitting within
+32 KiB and one quarter of the selected child context window; a mixed batch uses
+the narrowest enabled child budget. Inheritance is disabled when the mandatory
+boundary cannot fit within that budget. A developer boundary marks the end of
+inherited context before the child's assignment, even when no parent message
+survives filtering. Detached and queued children see the admission-time
+snapshot, not later parent turns. This is a bounded portable adaptation of
+client-side multi-agent v2 style forking, not shared mutable conversation state.
+The filtered parent text is durably copied into the private child transcript and
+has the same sensitivity and retention.
+
+Separately, root and child requests keep distinct thread identities but share one
+provider session prompt-cache key. That server-side hint improves cache routing
+for common prefixes. Codex controls cache routing and retention. Other providers
+retain their ordinary child-context behavior.
 
 A synchronous =task.run= keeps the primary model at that tool call until every
 synchronous child finishes. Children in one batch may run concurrently through

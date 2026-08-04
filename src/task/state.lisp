@@ -29,6 +29,12 @@
 (defparameter *task-default-maximum-depth* 2
   "The default maximum child-agent depth below the primary agent.")
 
+(defparameter *task-inherited-reference-maximum-bytes* 32768
+  "The maximum UTF-8 wire bytes inherited by one child as parent reference.")
+
+(defparameter *task-inherited-reference-context-divisor* 4
+  "The minimum child-context fraction reserved outside inherited reference.")
+
 (defparameter *task-default-maximum-output-bytes* 500000
   "The default maximum UTF-8 bytes retained from one child result.")
 
@@ -285,6 +291,18 @@
     :accessor task-job-parent-agent
     :type (option agent)
     :documentation "The parent session while this job remains live.")
+   (inherited-reference-p
+    :initarg :inherited-reference-p
+    :initform nil
+    :accessor task-job-inherited-reference-p
+    :type boolean
+    :documentation "Whether this job may receive its captured parent reference.")
+   (inherited-reference-items
+    :initarg :inherited-reference-items
+    :initform nil
+    :accessor task-job-inherited-reference-items
+    :type list
+    :documentation "The filtered parent reference messages captured at admission.")
    (root-conversation-identifier
     :initarg :root-conversation-identifier
     :reader task-job-root-conversation-identifier

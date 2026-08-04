@@ -1167,10 +1167,191 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-conversation-inherited-reference () null)
+(defun test-conversation-inherited-reference ()
+  "Test filtered spawn-time parent history, durable replay, and isolation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (parent (conversation-create configuration :identifier "reference-parent"))
+         (child (conversation-create configuration :identifier "reference-child"))
+         (assistant-part
+           (json-object "type" "output_text" "text" "Parent answer."))
+         (assistant-item
+           (json-object "type" "message"
+                        "role" "assistant"
+                        "content" (json-array assistant-part))))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message parent "Parent question.")
+           (conversation-append-provider-item
+            parent
+            (json-object
+             "type" "message"
+             "role" "assistant"
+             "phase" "commentary"
+             "content" (json-array
+                        (json-object "type" "output_text"
+                                     "text" "Intermediate note."))))
+           (conversation-append-provider-item parent assistant-item)
+           (conversation-append-provider-item
+            parent
+            (json-object "type" "function_call"
+                         "call_id" "parent-tool"
+                         "name" "read"
+                         "namespace" "fs"
+                         "arguments" "{}"))
+           (conversation-append-provider-item
+            parent
+            (json-object
+             "type" "message"
+             "role" "user"
+             "content" (json-array
+                        (json-object "type" "input_image"
+                                     "image_url" "data:image/png;base64,AAAA")
+                        (json-object "type" "input_text"
+                                     "text" "Portable image caption."))))
+           (conversation-append-provider-item
+            parent
+            (json-object "type" "message"
+                         "role" "assistant"
+                         "content" (json-array
+                                    (json-object "type" "output_text"
+                                                 "text" "Ephemeral answer.")))
+            :persistence ':next-response)
+           (let ((snapshot
+                    (conversation-inherited-reference-snapshot parent 1000000)))
+             (setf (gethash "text" assistant-part) "Mutated parent answer.")
+             (test-assert (= (length snapshot) 3)
+                          "reference snapshots retain only portable turn messages")
+             (test-assert
+              (string= (json-get
+                        (aref (json-get (second snapshot) "content") 0)
+                        "text")
+                       "Parent answer.")
+              "reference snapshots do not alias parent provider items")
+             (let* ((newest (third snapshot))
+                    (limit
+                      (conversation--inherited-reference-wire-byte-length
+                       (list newest)))
+                    (bounded
+                      (conversation-inherited-reference-snapshot parent limit)))
+               (test-assert
+                (and (= (length bounded) 1)
+                     (string=
+                      (json-get
+                       (aref (json-get (first bounded) "content") 0)
+                       "text")
+                      "Portable image caption.")
+                     (<= (conversation--inherited-reference-wire-byte-length
+                          bounded)
+                         limit))
+                "bounded snapshots retain the newest complete fitting suffix"))
+             (conversation-append-inherited-reference
+              child (conversation-identifier parent) snapshot)
+             (conversation-append-user-message child "Child assignment.")
+             (let ((items (conversation-input-items child)))
+               (test-assert (= (length items) 5)
+                            "child projection adds one boundary and assignment")
+               (test-assert
+                (equal (mapcar (lambda (item) (json-get item "role")) items)
+                       '("user" "assistant" "user" "developer" "user"))
+                "inherited messages precede a developer boundary and child task")
+               (test-assert
+                (string= (json-get
+                          (aref (json-get (third items) "content") 0)
+                          "text")
+                         "Portable image caption.")
+                "inherited reference history strips inline image data"))
+             (conversation-append-user-message parent "Later parent turn.")
+             (test-assert (= (length (conversation-input-items child)) 5)
+                          "later parent activity cannot mutate the child snapshot")
+             (let ((reloaded
+                     (conversation-load-by-id configuration "reference-child")))
+               (test-assert
+                (equal (mapcar #'json-encode
+                               (conversation-input-items reloaded))
+                       (mapcar #'json-encode
+                               (conversation-input-items child)))
+                "inherited reference history replays exactly from one durable record")
+               (let ((records
+                       (conversation--read-records
+                        (conversation-pathname reloaded))))
+                 (test-assert
+                  (= (count :inherited-reference records :key #'first) 1)
+                  "child history persists one hidden inherited-reference record"))
+               (conversation-append-summary reloaded "Compacted child reference.")
+               (test-assert
+                (and (= (length (conversation-input-items reloaded)) 1)
+                     (search "Compacted child reference."
+                             (json-encode
+                              (first (conversation-input-items reloaded)))))
+                "ordinary compaction replaces inherited reference history")
+               (let ((compacted
+                       (conversation-load-by-id configuration "reference-child")))
+                 (test-assert
+                  (= (length (conversation-input-items compacted)) 1)
+                  "compacted inherited reference history replays as one bridge"))))
+          (let* ((filtered-parent
+                   (conversation-create configuration
+                                        :identifier "filtered-reference-parent"))
+                 (boundary-child
+                   (conversation-create configuration
+                                        :identifier "boundary-reference-child")))
+            (conversation-append-provider-item
+             filtered-parent
+             (json-object "type" "function_call"
+                          "call_id" "filtered-tool"
+                          "name" "read"
+                          "arguments" "{}"))
+            (let ((snapshot
+                    (conversation-inherited-reference-snapshot
+                     filtered-parent 1000000)))
+              (test-assert (null snapshot)
+                           "fully filtered parent history yields no messages")
+              (conversation-append-inherited-reference
+               boundary-child (conversation-identifier filtered-parent) snapshot)
+              (test-assert
+               (and (= (length (conversation-input-items boundary-child)) 1)
+                    (conversation--inherited-reference-boundary-p
+                     (first (conversation-input-items boundary-child))))
+               "empty inherited history still persists its reference boundary")
+              (let ((reloaded
+                      (conversation-load-by-id
+                       configuration "boundary-reference-child")))
+                (test-assert
+                 (and (= (length (conversation-input-items reloaded)) 1)
+                      (conversation--inherited-reference-boundary-p
+                       (first (conversation-input-items reloaded))))
+                 "boundary-only inherited history replays durably"))))
+          (let ((malformed
+                  (conversation-create configuration
+                                       :identifier "malformed-reference")))
+            (test-assert
+             (handler-case
+                 (progn
+                   (conversation--apply-record
+                    malformed
+                    (list :inherited-reference
+                          :seq 1
+                          :source-conversation-id "reference-parent"
+                          :wire-json
+                          (json-encode
+                           (json-array
+                            (json-object "type" "function_call"
+                                         "call_id" "forged")
+                            (conversation--inherited-reference-boundary-item)))))
+                   nil)
+               (conversation-invariant-error ()
+                 t))
+             "replay rejects nonportable inherited-reference items")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-conversation-persistence () null)
 (defun test-conversation-persistence ()
   "Test append-only conversation projection and incomplete-tail recovery."
   (test-conversation-image-input)
+  (test-conversation-inherited-reference)
   (test-conversation-ephemeral-tool-projection)
   (test-conversation-ephemeral-append-interruption)
   (test-conversation-malformed-tool-projections)

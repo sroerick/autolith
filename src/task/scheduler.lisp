@@ -254,6 +254,8 @@
                       (task-job-ended-at job) (get-internal-real-time)
                       (task-job-item job) (task-job--compact-item job)
                       (task-job-parent-agent job) nil
+                      (task-job-inherited-reference-p job) nil
+                       (task-job-inherited-reference-items job) nil
                       (task-job-command-authorization-function job) nil
                       (task-job-tool-authorization-function job) nil
                       (task-job-thread job) nil
@@ -310,6 +312,8 @@
               (task-job-ended-at job) (get-internal-real-time)
               (task-job-item job) (task-job--compact-item job)
               (task-job-parent-agent job) nil
+              (task-job-inherited-reference-p job) nil
+                       (task-job-inherited-reference-items job) nil
               (task-job-command-authorization-function job) nil
               (task-job-tool-authorization-function job) nil
               (task-job-thread job) nil
@@ -440,13 +444,35 @@
         (count (length entries))
         (root-conversation-identifier
           (task-parent-root-conversation-identifier parent-agent))
-        (owner-identifiers (task-parent-owner-identifiers parent-agent)))
+        (owner-identifiers (task-parent-owner-identifiers parent-agent))
+        (reference-enabled-entries (make-hash-table :test #'eq))
+        (reference-byte-limit nil)
+        (inherited-reference-items nil))
     (when (> count (task-orchestrator-maximum-batch-size orchestrator))
       (error 'task-error
              :message
              (format nil "A task batch may contain at most ~D children."
                      (task-orchestrator-maximum-batch-size orchestrator))
              :tool-name "task.run"))
+    (dolist (entry entries)
+      (let* ((definition (getf entry :definition))
+             (child-configuration
+               (task-configuration-for-definition
+                (agent-configuration parent-agent) definition)))
+        (when (task-child-reference-history-p parent-agent child-configuration)
+          (let ((limit
+                  (task-child-reference-history-byte-limit
+                   child-configuration)))
+            (when limit
+              (setf (gethash entry reference-enabled-entries) t
+                    reference-byte-limit
+                    (if reference-byte-limit
+                        (min reference-byte-limit limit)
+                        limit)))))))
+    (when reference-byte-limit
+      (setf inherited-reference-items
+            (conversation-inherited-reference-snapshot
+             (agent-conversation parent-agent) reference-byte-limit)))
     (with-lock-held ((task-orchestrator-lock orchestrator))
       (when (or (task-orchestrator-shutdown-p orchestrator)
                 (not (eq (task-orchestrator-lifecycle-state orchestrator)
@@ -491,6 +517,12 @@
                        :definition definition
                        :item item
                        :parent-agent parent-agent
+                       :inherited-reference-p
+                        (not (null
+                              (gethash entry reference-enabled-entries)))
+                       :inherited-reference-items
+                        (and (gethash entry reference-enabled-entries)
+                             inherited-reference-items)
                        :root-conversation-identifier
                        root-conversation-identifier
                        :owner-identifiers owner-identifiers

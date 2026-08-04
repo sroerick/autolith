@@ -173,6 +173,12 @@
                 (request nil))
            (conversation-append-user-message conversation "hello")
            (setf request (provider-request-object provider conversation schemas))
+           (test-assert (provider-child-reference-history-p provider)
+                        "Codex enables inherited child reference history")
+           (test-assert
+            (not (provider-child-reference-history-p
+                  (make-instance 'model-provider)))
+            "providers opt into inherited child reference history explicitly")
            (test-assert (null (json-get request "service_tier"))
                         "requests never select a provider service tier")
            (let ((input (json-get request "input")))

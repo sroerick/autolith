@@ -129,6 +129,12 @@
         (last (conversation-input-items conversation))))
 
 (defmethod (setf conversation-input-items)
+    :around ((items list) (conversation conversation))
+  "Serialize whole provider-projection replacements with incremental appends."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (call-next-method)))
+
+(defmethod (setf conversation-input-items)
     :after ((items list) (conversation conversation))
   "Keep CONVERSATION's projection tail and item families synchronized.
 
@@ -744,16 +750,17 @@ The model active when ITEM is projected identifies the family that
 produced it, which lets a later request omit provider-private content
 another family cannot read. Replay establishes the same association
 because durable configuration records are projected in order."
-  (let ((cell (list item))
-        (tail (conversation-input-items-tail conversation))
-        (model (conversation-model conversation)))
-    (when (non-empty-string-p model)
-      (setf (gethash item (conversation-input-item-families conversation))
-            (model-family model)))
-    (if tail
-        (setf (rest tail) cell)
-        (setf (conversation-input-items conversation) cell))
-    (setf (conversation-input-items-tail conversation) cell))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((cell (list item))
+          (tail (conversation-input-items-tail conversation))
+          (model (conversation-model conversation)))
+      (when (non-empty-string-p model)
+        (setf (gethash item (conversation-input-item-families conversation))
+              (model-family model)))
+      (if tail
+          (setf (rest tail) cell)
+          (setf (conversation-input-items conversation) cell))
+      (setf (conversation-input-items-tail conversation) cell)))
   item)
 
 (-> conversation--append-ephemeral-input-item
@@ -778,15 +785,16 @@ because durable configuration records are projected in order."
 (defun conversation-input-items-for-request
     (conversation &key (include-ephemeral-p t))
   "Return a fresh provider projection, optionally excluding request-local items."
-  (if include-ephemeral-p
-      (copy-list (conversation-input-items conversation))
-      (let ((ephemeral-items (make-hash-table :test #'eq)))
-        (dolist (entry (conversation-ephemeral-input-entries conversation))
-          (setf (gethash (getf entry :item) ephemeral-items) t))
-        (remove-if
-         (lambda (item)
-           (gethash item ephemeral-items))
-         (conversation-input-items conversation)))))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (if include-ephemeral-p
+        (copy-list (conversation-input-items conversation))
+        (let ((ephemeral-items (make-hash-table :test #'eq)))
+          (dolist (entry (conversation-ephemeral-input-entries conversation))
+            (setf (gethash (getf entry :item) ephemeral-items) t))
+          (remove-if
+           (lambda (item)
+             (gethash item ephemeral-items))
+           (conversation-input-items conversation))))))
 
 (-> reasoning-item-p (t) boolean)
 (defun reasoning-item-p (item)
@@ -851,6 +859,137 @@ summary, keeping the conversation usable across families."
    (conversation-input-items-for-request
     conversation
     :include-ephemeral-p include-ephemeral-p)))
+
+(defparameter *conversation-inherited-reference-boundary*
+    (concatenate
+     'string
+     "Everything before this message is inherited reference context from the "
+     "parent task. It is not your current assignment. Use it only as background, "
+     "then follow the child role instructions and the user assignment that follows.")
+  "The developer boundary separating inherited parent history from child work.")
+
+(-> conversation--inherited-reference-text-part (t) (option json-object))
+(defun conversation--inherited-reference-text-part (part)
+  "Return a detached portable text PART, or NIL for non-text content."
+  (when (json-object-p part)
+    (let ((type (json-get part "type"))
+          (text (json-get part "text")))
+      (when (and (stringp type)
+                 (member type '("input_text" "output_text" "text")
+                         :test #'string=)
+                 (stringp text))
+        (json-object "type" type "text" text)))))
+
+(-> conversation--inherited-reference-message (t) (option json-object))
+(defun conversation--inherited-reference-message (item)
+  "Return ITEM's safe user or final-assistant reference message, or NIL."
+  (when (and (json-object-p item)
+             (string= (or (json-get item "type") "") "message"))
+    (let ((role (json-get item "role"))
+          (phase (json-get item "phase"))
+          (content (json-get item "content")))
+      (when (and (stringp role)
+                 (member role '("user" "assistant") :test #'string=)
+                 (or (not (string= role "assistant"))
+                     (null phase)
+                     (and (stringp phase) (string= phase "final_answer")))
+                 (vectorp content))
+        (let ((parts
+                (loop for part across content
+                      for copy = (conversation--inherited-reference-text-part part)
+                      when copy collect copy)))
+          (when parts
+            (json-object "type" "message"
+                         "role" role
+                         "content" (coerce parts 'vector))))))))
+
+(-> conversation--inherited-reference-boundary-item () json-object)
+(defun conversation--inherited-reference-boundary-item ()
+  "Return the durable developer boundary following inherited parent history."
+  (json-object
+   "type" "message"
+   "role" "developer"
+   "content"
+   (json-array
+    (json-object "type" "input_text"
+                 "text" *conversation-inherited-reference-boundary*))))
+
+(-> conversation--inherited-reference-boundary-p (t) boolean)
+(defun conversation--inherited-reference-boundary-p (item)
+  "Return true when ITEM is the exact inherited-reference developer boundary."
+  (and (json-object-p item)
+       (string= (or (json-get item "type") "") "message")
+       (string= (or (json-get item "role") "") "developer")
+       (let ((content (json-get item "content")))
+         (and (vectorp content)
+              (= (length content) 1)
+              (let ((part (aref content 0)))
+                (and (json-object-p part)
+                     (string= (or (json-get part "type") "") "input_text")
+                     (string= (or (json-get part "text") "")
+                              *conversation-inherited-reference-boundary*)))))
+       t))
+
+(-> conversation--inherited-reference-wire-byte-length (list) (integer 0))
+(defun conversation--inherited-reference-wire-byte-length (messages)
+  "Return the UTF-8 wire bytes for MESSAGES and their developer boundary."
+  (length
+   (sb-ext:string-to-octets
+    (json-encode
+     (coerce
+      (append messages
+              (list (conversation--inherited-reference-boundary-item)))
+      'vector))
+    :external-format ':utf-8)))
+
+(-> conversation-inherited-reference-snapshot
+    (conversation (integer 1))
+    list)
+(defun conversation-inherited-reference-snapshot
+    (conversation maximum-wire-bytes)
+  "Return a bounded detached snapshot of CONVERSATION's reference messages.
+
+The snapshot excludes request-local items, reasoning, tool traffic, images,
+intermediate assistant phases, and developer policy. Compaction bridge messages
+remain as ordinary portable user text. Whole newest messages are retained in
+wire order while the snapshot plus its developer boundary fits within
+MAXIMUM-WIRE-BYTES."
+  (let ((messages
+          (loop for item in (conversation-input-items-for-request
+                             conversation :include-ephemeral-p nil)
+                for message = (conversation--inherited-reference-message item)
+                when message collect message))
+        (selected nil))
+    (dolist (message (reverse messages))
+      (let ((candidate (cons message selected)))
+        (if (<= (conversation--inherited-reference-wire-byte-length candidate)
+                maximum-wire-bytes)
+            (setf selected candidate)
+            (return))))
+    selected))
+
+(-> conversation-append-inherited-reference
+    (conversation non-empty-string list)
+    list)
+(defun conversation-append-inherited-reference
+    (conversation source-conversation-identifier items)
+  "Persist and project spawn-time parent reference ITEMS into CONVERSATION."
+  (let* ((messages
+           (loop for item in items
+                 for message = (conversation--inherited-reference-message item)
+                 when message collect message))
+         (projection
+           (append messages
+                   (list (conversation--inherited-reference-boundary-item))))
+         (record
+           (conversation-append-record
+            conversation
+            (list :inherited-reference
+                  :source-conversation-id source-conversation-identifier
+                  :wire-json (json-encode (coerce projection 'vector))))))
+    (dolist (item projection)
+      (conversation--append-input-item conversation item))
+    record))
 
 (-> conversation-clear-ephemeral-input-items (conversation) null)
 (defun conversation-clear-ephemeral-input-items (conversation)
@@ -1650,6 +1789,40 @@ invariant errors while callback conditions propagate unchanged."
                      (or (getf (rest record) :output) ""))
                 (list (getf (rest record) :output)))
               attachments)))))))
+    (when (eq (first record) :inherited-reference)
+      (unless (and (non-empty-string-p
+                    (getf properties :source-conversation-id))
+                   (stringp wire-json))
+        (error 'conversation-invariant-error
+               :message "A persisted inherited reference has invalid metadata."
+               :pathname (conversation-pathname conversation)
+               :sequence sequence))
+      (let ((items (json-decode wire-json)))
+        (unless (and (vectorp items)
+                     (plusp (length items))
+                     (conversation--inherited-reference-boundary-p
+                      (aref items (1- (length items)))))
+          (error 'conversation-invariant-error
+                 :message "A persisted inherited reference has an invalid boundary."
+                 :pathname (conversation-pathname conversation)
+                 :sequence sequence))
+        (let ((messages
+                (loop for index below (1- (length items))
+                      for message =
+                        (conversation--inherited-reference-message
+                         (aref items index))
+                      when message collect message)))
+          (unless (= (length messages) (1- (length items)))
+            (error 'conversation-invariant-error
+                   :message
+                   "A persisted inherited reference contains a nonportable item."
+                   :pathname (conversation-pathname conversation)
+                   :sequence sequence))
+          (dolist (item messages)
+            (conversation--append-input-item conversation item))
+          (conversation--append-input-item
+           conversation
+           (conversation--inherited-reference-boundary-item)))))
     (when (and (member (first record)
                        '(:message :provider-item :tool-result))
                (stringp wire-json)

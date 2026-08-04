@@ -136,7 +136,19 @@
      (write-string ":TASK-TEST-PUBLICATION-BARRIER" stream))))
 
 (defclass task-test-provider (model-provider)
-  ((lock
+  ((reference-history-p
+    :initarg :reference-history-p
+    :initform t
+    :reader task-test-provider-reference-history-p
+    :type boolean
+    :documentation "Whether the parent provider opts into inherited history.")
+   (child-reference-history-p
+    :initarg :child-reference-history-p
+    :initform t
+    :reader task-test-provider-child-reference-history-p
+    :type boolean
+    :documentation "Whether reconfigured child providers opt into inherited history.")
+   (lock
     :initform (make-lock "Autolith task test provider")
     :reader task-test-provider-lock
     :documentation "The lock protecting deterministic request counters.")
@@ -166,6 +178,11 @@
     :accessor task-test-provider-conversation-identifiers
     :type list
     :documentation "The child conversation identifiers observed by the provider.")
+   (request-inputs
+    :initform nil
+    :accessor task-test-provider-request-inputs
+    :type list
+    :documentation "Detached child provider projections observed in request order.")
    (threads
     :initform nil
     :accessor task-test-provider-threads
@@ -173,11 +190,55 @@
     :documentation "The distinct reusable workers that reached the provider."))
   (:documentation "A thread-safe provider for scheduler integration tests."))
 
+(defclass task-test-child-provider (model-provider)
+  ((parent
+    :initarg :parent
+    :reader task-test-child-provider-parent
+    :type task-test-provider
+    :documentation "The shared provider retaining scripted counters and requests.")
+   (reference-history-p
+    :initarg :reference-history-p
+    :reader task-test-child-provider-reference-history-p
+    :type boolean
+    :documentation "Whether this child provider accepts inherited history."))
+  (:documentation "A reconfigured task test provider with child-specific policy."))
+
 (defmethod provider-with-configuration
     ((provider task-test-provider) (configuration configuration))
-  "Share PROVIDER across test children while ignoring CONFIGURATION."
+  "Return a child view retaining PROVIDER's shared scripted state."
+  (declare (ignore configuration))
+  (make-instance
+   'task-test-child-provider
+   :parent provider
+   :reference-history-p
+   (task-test-provider-child-reference-history-p provider)))
+
+(defmethod provider-with-configuration
+    ((provider task-test-child-provider) (configuration configuration))
+  "Retain PROVIDER across nested test children while ignoring CONFIGURATION."
   (declare (ignore configuration))
   provider)
+
+(defmethod provider-child-reference-history-p ((provider task-test-provider))
+  "Return the test parent provider's inherited-history capability."
+  (task-test-provider-reference-history-p provider))
+
+(defmethod provider-child-reference-history-p ((provider task-test-child-provider))
+  "Return the reconfigured child provider's inherited-history capability."
+  (task-test-child-provider-reference-history-p provider))
+
+(defmethod provider-stream-turn
+    ((provider task-test-child-provider)
+     (conversation conversation)
+     &key tool-namespaces event-callback goal-context compaction-p)
+  "Delegate one child request to PROVIDER's shared scripted parent."
+  (provider-stream-turn
+   (task-test-child-provider-parent provider)
+   conversation
+   :tool-namespaces tool-namespaces
+   :event-callback event-callback
+   :goal-context goal-context
+   :compaction-p compaction-p))
 
 (defmethod provider-stream-turn
     ((provider task-test-provider)
@@ -191,6 +252,10 @@
       (incf (task-test-provider-active-count provider))
       (push (conversation-identifier conversation)
             (task-test-provider-conversation-identifiers provider))
+      (push
+       (mapcar (lambda (item) (json-decode (json-encode item)))
+               (conversation-input-items-for-request conversation))
+       (task-test-provider-request-inputs provider))
       (pushnew (current-thread) (task-test-provider-threads provider) :test #'eq)
       (setf request-number (task-test-provider-request-count provider)
             (task-test-provider-maximum-active-count provider)

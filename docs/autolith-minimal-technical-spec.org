@@ -385,18 +385,41 @@ child uses the ordinary provider, streaming, tool-execution, authorization,
 compaction, and turn-completion path. It does not use a second reduced agent
 loop. Each child receives a separate conversation, provider configuration,
 tool registry, explicit assignment, optional shared context, role instructions,
-and depth. The Codex provider gives every child a distinct thread identity while
-reusing the provider session as its =prompt_cache_key=. This enables the
-provider's root-and-subagent prompt-cache routing optimization without adding
-parent conversation items to the child request. Provider-side cache routing and
-retention remain controlled by Codex. Providers that do not support the hint
-remain unchanged.
+and depth.
+
+When both the parent and selected child provider enable inherited reference
+history, admission captures the parent's provider-visible history at that
+instant. The portable snapshot keeps text user messages and final assistant
+messages, including a compaction bridge, while excluding request-local items,
+reasoning, tool calls and outputs, images, intermediate assistant phases, and
+developer policy. It retains the newest complete-message suffix whose encoded
+history and boundary fit within both 32 KiB and one quarter of the selected
+child context window, using the narrowest enabled child budget for one batch.
+UTF-8 bytes conservatively upper-bound tokenizer tokens. Inheritance is disabled
+for a selected child when the mandatory boundary cannot fit within that budget.
+The child persists the snapshot in one hidden record, appends an explicit
+developer boundary identifying
+it as reference rather than the current assignment, and then appends its own user
+assignment. The boundary is retained even when filtering or the budget leaves no
+parent messages. A nested child snapshots its immediate parent's resulting
+history. Queued and detached children therefore cannot observe parent turns
+added after admission.
+
+The Codex provider enables this multi-agent v2 style fork behavior. Each child
+still has a distinct thread identity while reusing the provider session as its
+=prompt_cache_key= for the separate root-and-subagent prompt-cache routing
+optimization. Provider-side cache routing and retention remain controlled by
+Codex. Providers that do not enable inherited reference history retain empty
+child conversations apart from their explicit assignment and shared context.
 
 Child conversations and result artifacts are private execution records beneath
 the data root. They are not ordinary resumable conversations and never appear
 in conversation selection. Each execution receives a unique artifact directory.
-Terminal publication writes at most one portable result artifact and retains
-its pathname in the parent-facing result.
+An inherited-reference record durably contains the filtered parent text and
+source conversation identifier, so it has the same sensitivity and retention
+boundary as the rest of the private child transcript. Terminal publication
+writes at most one portable result artifact and retains its pathname in the
+parent-facing result.
 
 Role definitions are bounded =*.sexp= files containing exactly one top-level
 Common Lisp property list. Reading binds =*read-eval*= to =nil=, uses a fresh
