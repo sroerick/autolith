@@ -3635,10 +3635,16 @@
                (test-assert
                 (zerop (length (line-editor-text (terminal-ui-editor ui))))
                 "a scheduled command does not return to the editor"))
+             (application-input-controller--handle-submission
+              controller "/model gpt-5.6-luna")
+             (application-input-controller--handle-submission
+              controller "/effort high")
              (test-assert
               (equal (application-input-controller-work-items controller)
-                     (list (list ':command "/goal pause")))
-              "a scheduled command waits in the follow-up queue")
+                     (list (list ':command "/goal pause")
+                           (list ':command "/model gpt-5.6-luna")
+                           (list ':command "/effort high")))
+              "held model and effort changes wait behind the active turn")
              (application-input-controller--finish-work controller)
              (test-assert
               (equal (application-input-controller--next-work controller)

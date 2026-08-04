@@ -1372,7 +1372,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :argument nil
      :description "pick the 5.6 model and reasoning effort"
      :tip "changes both the model and its reasoning effort."
-     :busy-behavior :execute
+     :busy-behavior :hold
      :terminal-behavior :exclusive)
     (application invocation)
   (let ((model
@@ -1402,7 +1402,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :argument nil
      :description "pick the reasoning effort"
      :tip "changes reasoning effort without switching models."
-     :busy-behavior :execute
+     :busy-behavior :hold
      :terminal-behavior :exclusive-without-arguments)
     (application invocation)
   (let ((effort
