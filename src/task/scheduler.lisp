@@ -255,7 +255,7 @@
                       (task-job-item job) (task-job--compact-item job)
                       (task-job-parent-agent job) nil
                       (task-job-inherited-reference-p job) nil
-                       (task-job-inherited-reference-items job) nil
+                      (task-job-inherited-reference-items job) nil
                       (task-job-command-authorization-function job) nil
                       (task-job-tool-authorization-function job) nil
                       (task-job-thread job) nil
@@ -313,7 +313,7 @@
               (task-job-item job) (task-job--compact-item job)
               (task-job-parent-agent job) nil
               (task-job-inherited-reference-p job) nil
-                       (task-job-inherited-reference-items job) nil
+              (task-job-inherited-reference-items job) nil
               (task-job-command-authorization-function job) nil
               (task-job-tool-authorization-function job) nil
               (task-job-thread job) nil

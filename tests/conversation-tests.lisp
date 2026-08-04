@@ -1343,7 +1343,20 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                    nil)
                (conversation-invariant-error ()
                  t))
-             "replay rejects nonportable inherited-reference items")))
+             "replay rejects nonportable inherited-reference items")
+            (test-assert
+             (handler-case
+                 (progn
+                   (conversation--apply-record
+                    malformed
+                    (list :inherited-reference
+                          :seq 2
+                          :source-conversation-id "reference-parent"
+                          :wire-json "{not-json"))
+                   nil)
+               (conversation-invariant-error ()
+                 t))
+             "replay wraps malformed inherited-reference JSON")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 

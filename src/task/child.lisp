@@ -534,6 +534,7 @@ boundary cannot fit within that budget."
           (conversation-create
            configuration
            :identifier (task-job-execution-identifier job)
+           :prompt-cache-key (task-job-root-conversation-identifier job)
            :storage-root (task--artifact-root configuration job)))
          (worker (lisp-worker-pool-create configuration))
          (completion (make-instance 'task-completion))

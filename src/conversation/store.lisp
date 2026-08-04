@@ -8,6 +8,12 @@
     :reader conversation-identifier
     :type non-empty-string
     :documentation "The stable conversation identifier.")
+   (prompt-cache-key
+    :initarg :prompt-cache-key
+    :initform nil
+    :accessor conversation-prompt-cache-key
+    :type (option non-empty-string)
+    :documentation "The root-lineage key shared by provider prompt caches.")
    (pathname
     :initarg :pathname
     :reader conversation-pathname
@@ -125,6 +131,9 @@
 (defmethod initialize-instance
     :after ((conversation conversation) &key &allow-other-keys)
   "Initialize CONVERSATION's constant-time provider projection tail."
+  (unless (conversation-prompt-cache-key conversation)
+    (setf (conversation-prompt-cache-key conversation)
+          (conversation-identifier conversation)))
   (setf (conversation-input-items-tail conversation)
         (last (conversation-input-items conversation))))
 
@@ -652,11 +661,12 @@ reports an operating-system failure."
 
 (-> conversation-create
     (configuration &key (:identifier (option string))
+                        (:prompt-cache-key (option string))
                         (:storage-root (option pathname))
                         (:created-at (option timestamp)))
     conversation)
 (defun conversation-create
-    (configuration &key identifier storage-root created-at)
+    (configuration &key identifier prompt-cache-key storage-root created-at)
   "Create an in-memory conversation that persists under optional STORAGE-ROOT."
   (let* ((created-at (or created-at (get-universal-time)))
          (root (uiop:ensure-directory-pathname
@@ -677,6 +687,7 @@ reports an operating-system failure."
              :sequence nil))
     (make-instance 'conversation
                    :identifier conversation-id
+                   :prompt-cache-key prompt-cache-key
                    :pathname pathname
                    :persisted-p nil
                    :incomplete-tail-p nil
@@ -953,20 +964,34 @@ The snapshot excludes request-local items, reasoning, tool traffic, images,
 intermediate assistant phases, and developer policy. Compaction bridge messages
 remain as ordinary portable user text. Whole newest messages are retained in
 wire order while the snapshot plus its developer boundary fits within
-MAXIMUM-WIRE-BYTES."
-  (let ((messages
-          (loop for item in (conversation-input-items-for-request
-                             conversation :include-ephemeral-p nil)
-                for message = (conversation--inherited-reference-message item)
-                when message collect message))
-        (selected nil))
-    (dolist (message (reverse messages))
-      (let ((candidate (cons message selected)))
-        (if (<= (conversation--inherited-reference-wire-byte-length candidate)
-                maximum-wire-bytes)
-            (setf selected candidate)
-            (return))))
-    selected))
+MAXIMUM-WIRE-BYTES. Only candidate messages within the retained suffix are
+copied."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((items (coerce (conversation-input-items conversation) 'vector))
+          (ephemeral-items (make-hash-table :test #'eq))
+          (selected nil)
+          (wire-bytes
+            (conversation--inherited-reference-wire-byte-length nil)))
+      (dolist (entry (conversation-ephemeral-input-entries conversation))
+        (setf (gethash (getf entry :item) ephemeral-items) t))
+      (loop for index downfrom (1- (length items)) to 0
+            for item = (aref items index)
+            unless (gethash item ephemeral-items)
+              do (let ((message
+                         (conversation--inherited-reference-message item)))
+                   (when message
+                     (let ((candidate-bytes
+                             (+ wire-bytes
+                                1
+                                (length
+                                 (sb-ext:string-to-octets
+                                  (json-encode message)
+                                  :external-format ':utf-8)))))
+                       (if (<= candidate-bytes maximum-wire-bytes)
+                           (setf wire-bytes candidate-bytes
+                                 selected (cons message selected))
+                           (return))))))
+      selected)))
 
 (-> conversation-append-inherited-reference
     (conversation non-empty-string list)
@@ -1482,22 +1507,23 @@ before the repaired projection can be sent to the provider."
 The durable record covers every record before it, so replay reproduces the
 same compacted projection. The provider turn-state token is dropped because
 it described the uncompacted context."
-  (let* ((ephemeral-items
-           (mapcar
-            (lambda (entry)
-              (getf entry :item))
-            (conversation-ephemeral-input-entries conversation)))
-         (record (conversation-append-record
-                  conversation
-                  (list :summary
-                        :through-seq (1- (conversation-next-sequence
-                                          conversation))
-                        :content content))))
-    (setf (conversation-input-items conversation)
-          (cons (conversation-summary-item content) ephemeral-items)
-          (conversation-turn-state conversation) nil
-          (conversation-last-total-tokens conversation) 0)
-    record))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let* ((ephemeral-items
+             (mapcar
+              (lambda (entry)
+                (getf entry :item))
+              (conversation-ephemeral-input-entries conversation)))
+           (record
+             (conversation-append-record
+              conversation
+              (list :summary
+                    :through-seq (1- (conversation-next-sequence conversation))
+                    :content content))))
+      (setf (conversation-input-items conversation)
+            (cons (conversation-summary-item content) ephemeral-items)
+            (conversation-turn-state conversation) nil
+            (conversation-last-total-tokens conversation) 0)
+      record)))
 
 (-> conversation-append-native-compaction
     (conversation json-object &key (:family keyword) (:summary string))
@@ -1518,12 +1544,13 @@ items remain available for the next ordinary request."
            :message "A native compaction checkpoint is invalid."
            :pathname (conversation-pathname conversation)
            :sequence (conversation-next-sequence conversation)))
-  (let* ((ephemeral-items
-           (mapcar
-            (lambda (entry)
-              (getf entry :item))
-            (conversation-ephemeral-input-entries conversation)))
-         (summary-item (conversation-summary-item summary))
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let* ((ephemeral-items
+             (mapcar
+              (lambda (entry)
+                (getf entry :item))
+              (conversation-ephemeral-input-entries conversation)))
+           (summary-item (conversation-summary-item summary))
          (record
            (conversation-append-record
             conversation
@@ -1538,7 +1565,7 @@ items remain available for the next ordinary request."
           (conversation-last-total-tokens conversation) 0
           (gethash item (conversation-input-item-families conversation))
           family)
-    record))
+      record)))
 
 
 ;;;; -- Conversation Loading --
@@ -1797,7 +1824,15 @@ invariant errors while callback conditions propagate unchanged."
                :message "A persisted inherited reference has invalid metadata."
                :pathname (conversation-pathname conversation)
                :sequence sequence))
-      (let ((items (json-decode wire-json)))
+      (let ((items
+              (handler-case
+                  (json-decode wire-json)
+                (error ()
+                  (error 'conversation-invariant-error
+                         :message
+                         "A persisted inherited reference contains invalid JSON."
+                         :pathname (conversation-pathname conversation)
+                         :sequence sequence)))))
         (unless (and (vectorp items)
                      (plusp (length items))
                      (conversation--inherited-reference-boundary-p
