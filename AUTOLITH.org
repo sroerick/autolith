@@ -25,15 +25,18 @@ a user-local init.lisp change, or a private image commit.
   Ctrl-Enter from ordinary submission.
 - Behavior: terminal startup again enables Kitty CSI-u and xterm
   modifyOtherKeys. A narrow Autolith decoder handles bare enhanced Escape,
-  Enter, Tab, and Backspace before delegating all other input to Clinedi, and
-  partial protocol activation performs balanced best-effort cleanup.
+  Enter, Tab, and Backspace before delegating all other input to Clinedi. It
+  also collects a bounded literal Ctrl-V byte burst as one paste event when a
+  terminal fails to wrap its paste in bracketed-paste markers. Partial protocol
+  activation performs balanced best-effort cleanup.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
   =src/terminal/protocol.lisp=, and =src/terminal/stream.lisp=.
-- Verification: modified Enter, bare enhanced keys, legacy input, bracketed
-  paste, protocol ordering, and cleanup regressions pass within the complete
-  3,023-test repository check.
+- Verification: modified Enter, bare enhanced keys, legacy input, bracketed and
+  literal Ctrl-V multiline paste, protocol ordering, and cleanup regressions pass
+  within the complete 3,069-test repository check.
 - Removal condition: Clinedi natively decodes the bare Kitty control reports and
-  Autolith can remove its compatibility reader without losing Escape semantics.
+  terminals reliably bracket Ctrl-V paste, so Autolith can remove its
+  compatibility reader without losing Escape or multiline paste semantics.
 
 ** Conservative line-aware fs.edit fallback
 

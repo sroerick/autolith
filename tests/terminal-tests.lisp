@@ -670,6 +670,22 @@
                  "Kitty keyboard protocol Ctrl-C requests interruption")
     (test-assert (eq (terminal-read-event terminal) :interrupt)
                  "xterm modifyOtherKeys Ctrl-C requests interruption"))
+  (let* ((payload (format nil "first line~%second line"))
+         (terminal
+           (make-instance
+            'stream-terminal
+            :input-stream
+            (make-string-input-stream
+             (concatenate 'string (string (code-char 22)) payload))
+            :output-stream (make-string-output-stream)
+            :input-file-descriptor 0
+            :interactive-p t
+            :columns 40))
+         (event (terminal-read-event terminal)))
+    (test-assert
+     (and (eq (first event) :paste)
+          (string= (second event) payload))
+     "literal Ctrl-V paste bursts retain embedded newlines without submission"))
   (dolist (case
            (list
             (list (string *terminal-escape-character*) ':escape)

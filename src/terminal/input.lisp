@@ -5,6 +5,12 @@
 (defparameter *terminal-escape-delay-seconds* 0.002
   "The seconds allowed for bytes following one terminal Escape character.")
 
+(defparameter *terminal-control-v-paste-idle-seconds* 0.05
+  "The idle gap ending one unbracketed Ctrl-V paste burst.")
+
+(defparameter *terminal-control-v-paste-maximum-characters* 1000000
+  "The maximum characters retained from one unbracketed Ctrl-V paste burst.")
+
 (-> terminal--character-after-escape (stream real) (option character))
 (defun terminal--character-after-escape (stream escape-delay)
   "Return the next STREAM character after Escape, allowing ESCAPE-DELAY seconds."
@@ -13,6 +19,23 @@
         (when (plusp escape-delay)
           (sleep escape-delay))
         (read-char-no-hang stream nil nil))))
+
+(-> terminal--read-control-v-paste (stream) t)
+(defun terminal--read-control-v-paste (stream)
+  "Return one bounded paste event from bytes following literal Ctrl-V."
+  (let ((characters nil)
+        (count 0))
+    (loop while (< count *terminal-control-v-paste-maximum-characters*)
+          for character = (or (read-char-no-hang stream nil nil)
+                              (progn
+                                (sleep *terminal-control-v-paste-idle-seconds*)
+                                (read-char-no-hang stream nil nil)))
+          while character
+          do (push character characters)
+             (incf count))
+    (if characters
+        (list ':paste (coerce (nreverse characters) 'string))
+        ':ignore)))
 
 (-> terminal--csi-final-character-p (character) boolean)
 (defun terminal--csi-final-character-p (character)
@@ -92,6 +115,8 @@
        ':stream-end)
       ((char= character *terminal-escape-character*)
        (terminal--read-escape-event stream escape-delay))
+      ((char= character (code-char 22))
+       (terminal--read-control-v-paste stream))
       (t
        (unread-char character stream)
        (read-event :stream stream :escape-delay escape-delay)))))
