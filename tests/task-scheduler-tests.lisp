@@ -1472,8 +1472,12 @@
                     (task-tests--wait-until
                      (lambda ()
                        (with-lock-held ((task-orchestrator-lock orchestrator))
-                         (zerop
-                          (task-orchestrator-active-count orchestrator))))
+                         (and
+                          (zerop
+                           (task-orchestrator-active-count orchestrator))
+                          (loop for job being the hash-values of
+                                (task-orchestrator-jobs orchestrator)
+                                always (task-job-terminal-p job)))))
                      1))
                   (jobs (task-orchestrator-list-jobs orchestrator))
                   (details (tool-result-details result))
