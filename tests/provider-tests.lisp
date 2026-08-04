@@ -338,11 +338,14 @@
             "the provider request retains encrypted reasoning for replay")
            (test-assert
             (string= (json-get request "prompt_cache_key")
-                     (provider-session-id provider))
-            "the provider session is the stable prompt cache key")
+                     (conversation-identifier conversation))
+            "the root conversation is the stable prompt cache key")
            (let* ((child-conversation
-                    (conversation-create configuration
-                                         :identifier "child-request-shape"))
+                    (conversation-create
+                     configuration
+                     :identifier "child-request-shape"
+                     :prompt-cache-key
+                     (conversation-prompt-cache-key conversation)))
                   (child-provider
                     (provider-with-configuration provider configuration)))
              (conversation-append-user-message child-conversation "inspect")
@@ -357,6 +360,15 @@
                 (string= (json-get child-request "prompt_cache_key")
                          (json-get request "prompt_cache_key"))
                 "reconfigured child providers share the parent prompt cache key")))
+           (let* ((other-conversation
+                    (conversation-create configuration
+                                         :identifier "other-request-shape"))
+                  (other-request
+                    (provider-request-object provider other-conversation schemas)))
+             (test-assert
+              (not (string= (json-get other-request "prompt_cache_key")
+                            (json-get request "prompt_cache_key")))
+              "independent root conversations keep isolated prompt cache keys"))
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
@@ -455,8 +467,8 @@
               "native compaction retains reasoning across its input")
              (test-assert
               (string= (json-get request "prompt_cache_key")
-                       (provider-session-id provider))
-              "native compaction shares the provider session cache key")
+                       (conversation-prompt-cache-key conversation))
+              "native compaction shares the root conversation cache key")
              (dolist (name '("stream" "store" "include" "tool_choice"))
                (multiple-value-bind (value present-p) (gethash name request)
                  (declare (ignore value))
@@ -852,6 +864,35 @@
      "response.failed keeps its response identifier distinct")
     (test-assert (search "Temporary provider failure." (format nil "~A" condition))
                  "response.failed surfaces the provider's explanation"))
+  (let* ((source
+           (test-sse-event-string
+            (json-object
+             "type" "response.incomplete"
+             "response"
+             (json-object
+              "id" "incomplete-response"
+              "incomplete_details"
+              (json-object "reason" "max_output_tokens")))))
+         (condition
+           (handler-case
+               (progn
+                 (provider--consume-stream
+                  (make-instance 'model-provider)
+                  (make-instance 'test-character-input-stream :source source)
+                  nil
+                  #'identity)
+                 nil)
+             (provider-incomplete-response (error)
+               error))))
+    (test-assert
+     (and condition
+          (typep condition 'provider-retryable-error)
+          (string= (provider-incomplete-response-reason condition)
+                   "max_output_tokens")
+          (string= (provider-error-response-id condition)
+                   "incomplete-response")
+          (search "max_output_tokens" (format nil "~A" condition)))
+     "response.incomplete retains its reason and retries as a typed failure"))
   (dolist (code '("server_is_overloaded" "slow_down" "rate_limit_exceeded"))
     (let* ((source
              (test-sse-event-string

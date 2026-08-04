@@ -271,8 +271,9 @@
     ((provider codex-subscription-provider))
   "Enable Codex multi-agent v2 style inherited reference history.
 
-This mirrors the client-side fork behavior at Codex reference commit
-449f099f1cad470fa4f63dcc198f8d6cb8944cde."
+This follows the filtered fork-history behavior in Codex
+=ba42e6866cef4baed7ad92c73e6be8cd42e49d8b= under
+=codex-rs/core/src/agent/control/spawn.rs=."
   (declare (ignore provider))
   t)
 
@@ -520,15 +521,16 @@ The second value is the context delivery that the transport consumes only
 after a completed response, when one participates in the request."))
 
 (-> provider--codex-prompt-cache-key
-    (codex-subscription-provider)
+    (codex-subscription-provider conversation)
     non-empty-string)
-(defun provider--codex-prompt-cache-key (provider)
-  "Return PROVIDER's root-and-child shared prompt-cache routing key.
+(defun provider--codex-prompt-cache-key (provider conversation)
+  "Return CONVERSATION's root-and-child shared prompt-cache routing key.
 
-Codex gives root and child threads distinct thread identifiers while reusing
-one session identifier as their prompt_cache_key. This mirrors Codex reference
-commit 989a0b053e2510ab76ec2033c1a7db5c1e7c8c92."
-  (provider-session-id provider))
+The provider session remains broader than one resumable conversation, so the
+cache key follows the conversation lineage instead. This preserves isolation
+between roots while allowing a root and its task children to share a prefix."
+  (declare (ignore provider))
+  (conversation-prompt-cache-key conversation))
 
 ;; No service_tier field is ever sent. Omitting it selects the provider's
 ;; standard processing path; sending "priority" selects the fast path that
@@ -607,7 +609,7 @@ delivery that the transport consumes only after a completed response."
       "store" false
       "stream" t
       "include" (json-array "reasoning.encrypted_content")
-      "prompt_cache_key" (provider--codex-prompt-cache-key provider)
+      "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
       "text" (json-object "verbosity" "low"))
      delivery)))
 
@@ -651,7 +653,7 @@ checkpoint."
      "input" input
      "parallel_tool_calls" false
      "reasoning" reasoning
-     "prompt_cache_key" (provider--codex-prompt-cache-key provider)
+     "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
      "text" (json-object "verbosity" "low"))))
 
 (-> provider-user-agent () string)
@@ -1248,6 +1250,36 @@ are decoded as UTF-8."
                             :test #'string-equal))))))
        t))
 
+(-> provider--event-incomplete-reason (json-object) non-empty-string)
+(defun provider--event-incomplete-reason (event)
+  "Return EVENT's response.incomplete reason, defaulting to unknown."
+  (let* ((response (json-get event "response"))
+         (details (and (json-object-p response)
+                       (json-get response "incomplete_details")))
+         (reason (and (json-object-p details) (json-get details "reason"))))
+    (if (non-empty-string-p reason) reason "unknown")))
+
+(-> provider--signal-incomplete-response
+    (json-object &key (:data string) (:headers t)
+                 (:response-id (option string)))
+    null)
+(defun provider--signal-incomplete-response
+    (event &key data headers response-id)
+  "Signal retryable EVENT with its structured incomplete reason."
+  (let ((reason (provider--event-incomplete-reason event)))
+    (error 'provider-incomplete-response
+           :message (format nil "The provider returned an incomplete response (~A)."
+                            reason)
+           :reason reason
+           :status nil
+           :code "response_incomplete"
+           :request-id (provider--event-request-id event nil headers)
+           :response-id (provider--event-response-id event response-id)
+           :response
+           (bounded-string
+            (provider--sanitize-wire-string data)
+            :limit 2000))))
+
 (-> provider--signal-event-failure
     (json-object
      &key (:type string)
@@ -1353,9 +1385,14 @@ are decoded as UTF-8."
                                               :response-id response-id
                                               :usage usage
                                               :turn-completion turn-completion))))
+                   ((string= (or type "") "response.incomplete")
+                    (provider--signal-incomplete-response
+                     event
+                     :data data
+                     :headers headers
+                     :response-id response-id))
                    ((and (stringp type)
-                         (member type
-                                 '("response.failed" "response.incomplete" "error")
+                         (member type '("response.failed" "error")
                                  :test #'string=))
                     (provider--signal-event-failure
                      event

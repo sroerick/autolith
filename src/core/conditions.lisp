@@ -188,6 +188,14 @@
   ()
   (:documentation "A transient provider failure eligible for bounded retry."))
 
+(define-condition provider-incomplete-response (provider-retryable-error)
+  ((reason
+    :initarg :reason
+    :reader provider-incomplete-response-reason
+    :type non-empty-string
+    :documentation "The provider's incomplete response reason, or unknown."))
+  (:documentation "A retryable provider response that ended incomplete."))
+
 (define-condition provider-transport-error (provider-retryable-error)
   ()
   (:documentation
