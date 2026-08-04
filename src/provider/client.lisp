@@ -500,6 +500,17 @@ at reference commit 5c19155c."
 The second value is the context delivery that the transport consumes only
 after a completed response, when one participates in the request."))
 
+(-> provider--codex-prompt-cache-key
+    (codex-subscription-provider)
+    non-empty-string)
+(defun provider--codex-prompt-cache-key (provider)
+  "Return PROVIDER's root-and-child shared prompt-cache routing key.
+
+Codex gives root and child threads distinct thread identifiers while reusing
+one session identifier as their prompt_cache_key. This mirrors Codex reference
+commit 989a0b053e2510ab76ec2033c1a7db5c1e7c8c92."
+  (provider-session-id provider))
+
 ;; No service_tier field is ever sent. Omitting it selects the provider's
 ;; standard processing path; sending "priority" selects the fast path that
 ;; drains subscription rate limits much faster (Codex reference commit
@@ -577,7 +588,7 @@ delivery that the transport consumes only after a completed response."
       "store" false
       "stream" t
       "include" (json-array "reasoning.encrypted_content")
-      "prompt_cache_key" (conversation-identifier conversation)
+      "prompt_cache_key" (provider--codex-prompt-cache-key provider)
       "text" (json-object "verbosity" "low"))
      delivery)))
 
@@ -621,7 +632,7 @@ checkpoint."
      "input" input
      "parallel_tool_calls" false
      "reasoning" reasoning
-     "prompt_cache_key" (conversation-identifier conversation)
+     "prompt_cache_key" (provider--codex-prompt-cache-key provider)
      "text" (json-object "verbosity" "low"))))
 
 (-> provider-user-agent () string)

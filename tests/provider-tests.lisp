@@ -331,8 +331,26 @@
                     (json-array "reasoning.encrypted_content"))
             "the provider request retains encrypted reasoning for replay")
            (test-assert
-            (string= (json-get request "prompt_cache_key") "request-shape")
-            "the conversation identifier is the stable prompt cache key")
+            (string= (json-get request "prompt_cache_key")
+                     (provider-session-id provider))
+            "the provider session is the stable prompt cache key")
+           (let* ((child-conversation
+                    (conversation-create configuration
+                                         :identifier "child-request-shape"))
+                  (child-provider
+                    (provider-with-configuration provider configuration)))
+             (conversation-append-user-message child-conversation "inspect")
+             (let ((child-request
+                     (provider-request-object
+                      child-provider child-conversation schemas)))
+               (test-assert
+                (not (string= (conversation-identifier child-conversation)
+                              (conversation-identifier conversation)))
+                "parent and child conversations keep distinct thread identities")
+               (test-assert
+                (string= (json-get child-request "prompt_cache_key")
+                         (json-get request "prompt_cache_key"))
+                "reconfigured child providers share the parent prompt cache key")))
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
@@ -429,6 +447,10 @@
               (string= (json-get (json-get request "reasoning") "context")
                        "all_turns")
               "native compaction retains reasoning across its input")
+             (test-assert
+              (string= (json-get request "prompt_cache_key")
+                       (provider-session-id provider))
+              "native compaction shares the provider session cache key")
              (dolist (name '("stream" "store" "include" "tool_choice"))
                (multiple-value-bind (value present-p) (gethash name request)
                  (declare (ignore value))

@@ -385,7 +385,12 @@ child uses the ordinary provider, streaming, tool-execution, authorization,
 compaction, and turn-completion path. It does not use a second reduced agent
 loop. Each child receives a separate conversation, provider configuration,
 tool registry, explicit assignment, optional shared context, role instructions,
-and depth.
+and depth. The Codex provider gives every child a distinct thread identity while
+reusing the provider session as its =prompt_cache_key=. This enables the
+provider's root-and-subagent prompt-cache routing optimization without adding
+parent conversation items to the child request. Provider-side cache routing and
+retention remain controlled by Codex. Providers that do not support the hint
+remain unchanged.
 
 Child conversations and result artifacts are private execution records beneath
 the data root. They are not ordinary resumable conversations and never appear

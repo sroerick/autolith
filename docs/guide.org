@@ -467,6 +467,12 @@ a role with =:blocking-p t= always remains synchronous. Every child must end
 with exactly one =yield.submit= carrying =success=, =failed=, or =aborted=. A
 normal model stop without that yield is a failed child run.
 
+On Codex, root and child requests keep distinct thread identities but share one
+provider session prompt-cache key. This uses the server-side subagent cache
+routing optimization without adding the parent's transcript to child request
+input. Codex controls provider-side cache routing and retention. Other providers
+retain their ordinary request behavior.
+
 A synchronous =task.run= keeps the primary model at that tool call until every
 synchronous child finishes. Children in one batch may run concurrently through
 the reusable pool; separate provider tool calls are still executed in order.
