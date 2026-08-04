@@ -6511,6 +6511,54 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-hurry-up-mode () null)
+(defun test-hurry-up-mode ()
+  "Test urgent prompt selection, notices, and hard child-agent limits."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation (conversation-create configuration :identifier "hurry-up"))
+         (registry (task-augment-tool-registry (make-default-tool-registry)))
+         (agent (agent-create :configuration configuration
+                              :conversation conversation
+                              :tool-registry registry
+                              :worker ':unused))
+         (terminal (make-instance 'recording-terminal :columns 100))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application
+                                     :configuration configuration
+                                     :conversation conversation
+                                     :tool-registry registry
+                                     :agent agent
+                                     :ui ui))
+         (orchestrator (application--task-orchestrator application)))
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (application-command application "/hurry-up on")
+           (test-assert (and (application-hurry-up-p application)
+                             (agent-hurry-up-p agent)
+                             (task-orchestrator-hurry-up-p orchestrator))
+                        "/hurry-up on synchronizes application, agent, and task state")
+           (test-assert (= (task-orchestrator-maximum-concurrency orchestrator) 2)
+                        "hurry-up caps child concurrency at two")
+           (test-assert (search "HURRY-UP MODE IS ACTIVE"
+                                (system-prompt configuration :hurry-up-p t))
+                        "the urgent system prompt carries strong direct-execution guidance")
+           (test-assert (not (search "HURRY-UP MODE IS ACTIVE"
+                                     (system-prompt configuration)))
+                        "the ordinary system prompt remains unchanged")
+           (test-assert (terminal-ui-notice ui)
+                        "hurry-up presents a transient live notice")
+           (application-command application "/hurry-up off")
+           (test-assert (and (not (application-hurry-up-p application))
+                             (not (agent-hurry-up-p agent))
+                             (not (task-orchestrator-hurry-up-p orchestrator)))
+                        "/hurry-up off restores ordinary session policy"))
+      (ignore-errors (terminal-ui-stop ui))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> run-application-tests () boolean)
 (defun run-application-tests ()
   "Run focused application presentation tests and return true on success."
@@ -6523,6 +6571,7 @@
   (test-reasoning-trace-command)
   (test-compact-view-command)
   (test-turn-timestamps-command)
+  (test-hurry-up-mode)
   (test-command-permission-modes)
   (test-interrupt-resume-instruction)
   (test-repeated-interrupt-forces-exit)

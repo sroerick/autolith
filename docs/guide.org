@@ -316,6 +316,7 @@ prefix from before selection. The commands are:
 /effort         pick the reasoning effort
 /trace on|off   show visible reasoning summaries
 /timestamps on|off show local timestamps beside user and assistant turns
+/hurry-up on|off prioritize direct execution and admit at most two child agents
 /permissions    choose command access for this session
 /later INPUT    run input after rate limits reset
 /goal OBJECTIVE set or view the session goal
@@ -387,6 +388,14 @@ reasoning payloads; these are model-provided summaries, not hidden chain-of-thou
 assistant transcript header. =/timestamps off=, the default, hides those labels.
 This global presentation preference is saved beside =/trace= and =/compact=; it
 does not alter durable history or provider context.
+
+=/hurry-up on= activates a session-only urgent execution profile. It directs
+Autolith down the critical path, suppresses optional audits and reviewer swarms,
+and hard-limits the interval to two admitted child agents with at most two live
+at once. Existing child jobs are not cancelled. The live terminal shows a
+transient urgency notice, but the notice is not written to conversation history.
+=/hurry-up off= restores the ordinary prompt and task limits. Entering
+=/hurry-up= without an argument enables the mode.
 
 ** Child agents and jobs
 

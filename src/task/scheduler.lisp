@@ -441,11 +441,11 @@
         (root-conversation-identifier
           (task-parent-root-conversation-identifier parent-agent))
         (owner-identifiers (task-parent-owner-identifiers parent-agent)))
-    (when (> count *task-maximum-batch-size*)
+    (when (> count (task-orchestrator-maximum-batch-size orchestrator))
       (error 'task-error
              :message
              (format nil "A task batch may contain at most ~D children."
-                     *task-maximum-batch-size*)
+                     (task-orchestrator-maximum-batch-size orchestrator))
              :tool-name "task.run"))
     (with-lock-held ((task-orchestrator-lock orchestrator))
       (when (or (task-orchestrator-shutdown-p orchestrator)
@@ -455,11 +455,21 @@
                :message "The task runtime is shutting down."
                :tool-name "task.run"))
       (when (> (+ (task-orchestrator--live-job-count orchestrator) count)
-               *task-maximum-live-jobs*)
+               (task-orchestrator-maximum-live-jobs orchestrator))
         (error 'task-error
                :message
                (format nil "The task runtime admits at most ~D live jobs."
-                       *task-maximum-live-jobs*)
+                       (task-orchestrator-maximum-live-jobs orchestrator))
+               :tool-name "task.run"))
+      (when (and (task-orchestrator-hurry-up-p orchestrator)
+                 (> (+ (task-orchestrator-hurry-up-admission-count orchestrator)
+                       count)
+                    *task-hurry-up-maximum-agents*))
+        (error 'task-error
+               :message
+               (format nil
+                       "Hurry-up mode permits at most ~D child agents before it is turned off."
+                       *task-hurry-up-maximum-agents*)
                :tool-name "task.run"))
       (handler-case
           (dolist (entry entries)
@@ -509,6 +519,8 @@
                        (task-orchestrator-jobs orchestrator))
               job))
       (incf (task-orchestrator-live-count orchestrator) count)
+      (when (task-orchestrator-hurry-up-p orchestrator)
+        (incf (task-orchestrator-hurry-up-admission-count orchestrator) count))
       (task--condition-broadcast
        (task-orchestrator-condition-variable orchestrator)))
     (values jobs inline)))

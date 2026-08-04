@@ -68,6 +68,12 @@
     :accessor application-turn-timestamps-p
     :type boolean
     :documentation "Whether user and assistant headers show local timestamps.")
+   (hurry-up-p
+    :initarg :hurry-up-p
+    :initform nil
+    :accessor application-hurry-up-p
+    :type boolean
+    :documentation "Whether urgent prompt and child-agent limits are active.")
    (installation-provenance
     :initarg :installation-provenance
     :initform nil
@@ -402,8 +408,14 @@
 (defun application-connect-task-presentation (application)
   "Project task lifecycle and progress events into APPLICATION's active UI."
   (application-disconnect-task-presentation application)
+  (let ((agent (and (slot-boundp application 'agent)
+                    (application-agent application))))
+    (when (typep agent 'agent)
+      (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
   (let ((orchestrator (application--task-orchestrator application)))
     (when orchestrator
+      (task-orchestrator-set-hurry-up
+       orchestrator (application-hurry-up-p application))
       (let ((listener
               (lambda (channel payload)
                 (declare (ignore payload))

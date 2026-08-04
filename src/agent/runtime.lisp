@@ -71,6 +71,12 @@
     :reader agent-worker
     :type t
     :documentation "The disposable Lisp worker supplied to lisp.* calls.")
+   (hurry-up-p
+    :initarg :hurry-up-p
+    :initform nil
+    :accessor agent-hurry-up-p
+    :type boolean
+    :documentation "Whether provider requests use the urgent execution profile.")
    (turn-lock
     :initform (make-lock "Autolith agent turn")
     :reader agent-turn-lock
@@ -727,7 +733,8 @@
 The summarization request remains a side channel. Its durable text is the
 portable handoff for another provider family, while a supported native
 checkpoint preserves the current model's opaque reasoning state."
-  (let ((conversation (agent-conversation agent)))
+  (let ((conversation (agent-conversation agent))
+        (*system-prompt-hurry-up-p* (agent-hurry-up-p agent)))
     (agent-observer-status
      observer
      :compaction-started
@@ -817,6 +824,8 @@ checkpoint preserves the current model's opaque reasoning state."
                (handler-case
                    (let ((*provider-hosted-tools-enabled-p*
                             (not tool-restriction-p))
+                          (*system-prompt-hurry-up-p*
+                            (agent-hurry-up-p agent))
                           (*context-request-contributions*
                            (and
                             tools-p

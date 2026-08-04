@@ -17,6 +17,9 @@
 (defparameter *task-maximum-live-jobs* 64
   "The maximum combined queued and running task jobs.")
 
+(defparameter *task-hurry-up-maximum-agents* 2
+  "The total child-agent admissions allowed during one hurry-up interval.")
+
 (defparameter *task-terminal-retention-limit* 64
   "The maximum terminal task summaries retained in one session.")
 
@@ -152,6 +155,27 @@
     :accessor task-orchestrator-maximum-concurrency
     :type (integer 1)
     :documentation "The maximum child jobs that may execute concurrently.")
+   (maximum-batch-size
+    :initarg :maximum-batch-size
+    :accessor task-orchestrator-maximum-batch-size
+    :type (integer 1)
+    :documentation "The maximum children accepted in one atomic task batch.")
+   (maximum-live-jobs
+    :initarg :maximum-live-jobs
+    :accessor task-orchestrator-maximum-live-jobs
+    :type (integer 1)
+    :documentation "The maximum combined queued and running child jobs.")
+   (hurry-up-p
+    :initarg :hurry-up-p
+    :initform nil
+    :accessor task-orchestrator-hurry-up-p
+    :type boolean
+    :documentation "Whether urgent session limits govern new child work.")
+   (hurry-up-admission-count
+    :initform 0
+    :accessor task-orchestrator-hurry-up-admission-count
+    :type (integer 0)
+    :documentation "The children admitted during the current hurry-up interval.")
    (maximum-depth
     :initarg :maximum-depth
     :accessor task-orchestrator-maximum-depth
@@ -375,6 +399,10 @@
         "The lifecycle and progress record for this child."))
   (:documentation
    "A real in-process agent session that must finish through yield.submit."))
+
+(defmethod agent-hurry-up-p ((agent task-child-agent))
+  "Return the live hurry-up policy shared by AGENT's task orchestrator."
+  (task-orchestrator-hurry-up-p (task-child-agent-orchestrator agent)))
 
 (defvar *task-current-job* nil
   "The task job dynamically owned by the current reusable worker.")

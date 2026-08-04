@@ -1224,6 +1224,44 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
                       window))))))))
   nil)
 
+(-> application-set-hurry-up (application boolean) null)
+(defun application-set-hurry-up (application enabled-p)
+  "Apply ENABLED-P to APPLICATION's prompt and child-agent runtime."
+  (setf (application-hurry-up-p application) enabled-p)
+  (let ((agent (and (slot-boundp application 'agent)
+                    (application-agent application))))
+    (when (typep agent 'agent)
+      (setf (agent-hurry-up-p agent) enabled-p)))
+  (let ((orchestrator (application--task-orchestrator application)))
+    (when orchestrator
+      (task-orchestrator-set-hurry-up orchestrator enabled-p)))
+  (let ((ui (and (slot-boundp application 'ui)
+                 (application-ui application))))
+    (when (typep ui 'terminal-ui)
+      (terminal-ui-set-notice
+       ui
+       (if enabled-p
+           "Time is of the essence. Acting directly with at most two child agents."
+           "Hurry-up mode is off.")
+       :duration-seconds (if enabled-p 8 3))))
+  nil)
+
+(-> application-hurry-up-command (application (option string)) null)
+(defun application-hurry-up-command (application argument)
+  "Show or change APPLICATION's session-scoped hurry-up mode."
+  (let ((mode (and argument (string-downcase argument))))
+    (cond
+      ((null mode)
+       (application-set-hurry-up application t))
+      ((string= mode "on")
+       (application-set-hurry-up application t))
+      ((string= mode "off")
+       (application-set-hurry-up application nil))
+      (t
+       (error 'configuration-error
+              :message "Usage: /hurry-up on or /hurry-up off."))))
+  nil)
+
 ;;;; -- Built-in Interactive Commands --
 
 (define-application-command application--builtin-help-command
@@ -1401,6 +1439,19 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :terminal-behavior :shared)
     (application invocation)
   (application-turn-timestamps-command
+   application
+   (application-command-invocation-argument invocation))
+  ':continue)
+
+(define-application-command application--builtin-hurry-up-command
+    (:name "/hurry-up"
+     :argument "on|off"
+     :description "prioritize speed and cap child-agent spawning"
+     :tip "acts directly and admits at most two child agents until disabled."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (application-hurry-up-command
    application
    (application-command-invocation-argument invocation))
   ':continue)

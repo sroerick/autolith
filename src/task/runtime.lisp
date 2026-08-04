@@ -18,15 +18,52 @@
           (error nil fallback))
         fallback)))
 
+(-> task-orchestrator--apply-limits-locked (task-orchestrator) null)
+(defun task-orchestrator--apply-limits-locked (orchestrator)
+  "Apply environment or hurry-up limits while ORCHESTRATOR is locked."
+  (setf (task-orchestrator-maximum-concurrency orchestrator)
+        (if (task-orchestrator-hurry-up-p orchestrator)
+            *task-hurry-up-maximum-agents*
+            (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
+                                       *task-default-maximum-concurrency*
+                                       :minimum 1
+                                       :maximum *task-maximum-concurrency*))
+        (task-orchestrator-maximum-batch-size orchestrator)
+        (if (task-orchestrator-hurry-up-p orchestrator)
+            *task-hurry-up-maximum-agents*
+            *task-maximum-batch-size*)
+        (task-orchestrator-maximum-live-jobs orchestrator)
+        (if (task-orchestrator-hurry-up-p orchestrator)
+            *task-hurry-up-maximum-agents*
+            *task-maximum-live-jobs*))
+  nil)
+
+(-> task-orchestrator-set-hurry-up (task-orchestrator boolean) task-orchestrator)
+(defun task-orchestrator-set-hurry-up (orchestrator enabled-p)
+  "Apply ENABLED-P and its hard admission limits to ORCHESTRATOR."
+  (with-lock-held ((task-orchestrator-lock orchestrator))
+    (unless (eq (task-orchestrator-hurry-up-p orchestrator) enabled-p)
+      (setf (task-orchestrator-hurry-up-p orchestrator) enabled-p
+            (task-orchestrator-hurry-up-admission-count orchestrator)
+            (if enabled-p (task-orchestrator-live-count orchestrator) 0)))
+    (task-orchestrator--apply-limits-locked orchestrator)
+    (task--condition-broadcast
+     (task-orchestrator-condition-variable orchestrator)))
+  (task-orchestrator--ensure-workers orchestrator)
+  orchestrator)
+
 (-> task-orchestrator-create () task-orchestrator)
 (defun task-orchestrator-create ()
   "Create an orchestrator from the current task environment settings."
-  (make-instance 'task-orchestrator :maximum-concurrency
+  (make-instance 'task-orchestrator
+                 :maximum-concurrency
                  (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
                                             *task-default-maximum-concurrency*
                                             :minimum 1
                                             :maximum
                                             *task-maximum-concurrency*)
+                 :maximum-batch-size *task-maximum-batch-size*
+                 :maximum-live-jobs *task-maximum-live-jobs*
                  :maximum-depth
                  (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
                                             *task-default-maximum-depth*
@@ -72,12 +109,8 @@
              :tool-name "task.run"))
     (when (eq (task-orchestrator-lifecycle-state orchestrator) :closed)
       (setf (task-orchestrator-lifecycle-state orchestrator) :open))
-    (setf (task-orchestrator-maximum-concurrency orchestrator)
-          (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
-                                     *task-default-maximum-concurrency*
-                                     :minimum 1
-                                     :maximum *task-maximum-concurrency*)
-          (task-orchestrator-maximum-depth orchestrator)
+    (task-orchestrator--apply-limits-locked orchestrator)
+    (setf (task-orchestrator-maximum-depth orchestrator)
           (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
                                      *task-default-maximum-depth* :minimum 1)
           (task-orchestrator-maximum-runtime-milliseconds orchestrator)
