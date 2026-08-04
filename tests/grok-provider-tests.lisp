@@ -110,8 +110,11 @@
 (-> grok-provider-test--request-shape () null)
 (defun grok-provider-test--request-shape ()
   "Test the standard Grok Responses request shape without network access."
-  (let* ((configuration (grok-provider-test--configuration))
-         (root (test-configuration-root configuration)))
+  (let* ((base-configuration (grok-provider-test--configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration
+                                 :working-directory root)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
                                                    :identifier "grok-shape"))

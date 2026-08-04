@@ -155,8 +155,11 @@
 (-> test-provider-request () null)
 (defun test-provider-request ()
   "Test the Sol Responses Lite request shape without network access."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration)))
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration
+                                 :working-directory root)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
                                                    :identifier "request-shape"))

@@ -1,0 +1,86 @@
+#+title: Autolith project adaptations
+
+* Purpose
+
+This voluntary file records reusable ways Autolith adapts itself to this
+project. It supplements AGENTS.md and never overrides repository policy, user
+instructions, or capability boundaries. It contains documentation, not
+executable Lisp.
+
+* Project profile
+
+Record project-specific tools, workflows, and recurring friction only when they
+matter to future work.
+
+* Active adaptations
+
+For each adaptation, record its problem, behavior, scope and location,
+verification, and removal condition. State whether it is tracked project work,
+a user-local init.lisp change, or a private image commit.
+
+** Modified Enter terminal compatibility
+
+- Problem: the active-turn cancellation change disabled Kitty CSI-u reporting to
+  preserve plain Escape, leaving Alacritty unable to distinguish Shift-Enter or
+  Ctrl-Enter from ordinary submission.
+- Behavior: terminal startup again enables Kitty CSI-u and xterm
+  modifyOtherKeys. A narrow Autolith decoder handles bare enhanced Escape,
+  Enter, Tab, and Backspace before delegating all other input to Clinedi, and
+  partial protocol activation performs balanced best-effort cleanup.
+- Scope and location: tracked project work in =src/terminal/input.lisp=,
+  =src/terminal/protocol.lisp=, and =src/terminal/stream.lisp=.
+- Verification: modified Enter, bare enhanced keys, legacy input, bracketed
+  paste, protocol ordering, and cleanup regressions pass within the complete
+  3,023-test repository check.
+- Removal condition: Clinedi natively decodes the bare Kitty control reports and
+  Autolith can remove its compatibility reader without losing Escape semantics.
+
+** Conservative line-aware fs.edit fallback
+
+- Problem: 4,552 historical =fs.edit= calls included 773 exact old-text misses.
+  In the longest current session, multiline edits failed at 30-41 percent by
+  size band, and 122 misses were followed by retries whose lines differed only
+  at their leading indentation.
+- Behavior: =fs.edit= still prefers exact replacement. On an exact miss it may
+  normalize one unique multiline LF/CRLF match or rebase one unique uniform
+  leading-space shift when =new-text= retains an unchanged boundary line.
+  Ambiguous, mixed-EOL, tabbed, nonuniform, or unanchored cases remain unchanged
+  and return an exact bounded near match for retry.
+- Scope and location: tracked project work in =src/tools/workspace-edit.lisp=,
+  =src/tools/workspace.lisp=, and the =fs.edit= schema and guide.
+- Verification: focused workspace-tool tests pass, the repository check passes
+  3,010 tests, active and recovery images rebuild successfully, and replay
+  analysis found that 66 of 125 line-trim-equivalent retry pairs passed the
+  uniform-shift, boundary-anchor, and rendering gates.
+- Removal condition: the provider supplies a native structured patch protocol
+  with equal or stronger uniqueness, line-ending, and indentation safeguards.
+
+** Actionable public Nix smoke annotations
+
+- Problem: unauthenticated GitHub Actions logs were unavailable, and generic
+  check annotations hid the persistent macOS first-run failure.
+- Behavior: the Nix smoke step emits bounded stderr, stdout, exit status, and
+  specific missing-artifact or missing-marker failures as check annotations.
+- Scope and location: tracked project work in =.github/workflows/nix.yml=.
+- Verification: run 30700246262 exposed the Darwin terminal-mode failure and
+  its complete first-run phase output through the public annotations API.
+- Removal condition: authenticated logs become reliably available or the Nix
+  smoke path gains equivalent structured diagnostics elsewhere.
+
+* Candidates
+
+Record only concrete improvements with evidence of recurring value. Remove
+discarded or obsolete candidates.
+
+** Bound release-host candidate checks
+
+- Evidence: the v0.21.3 deployment check stopped producing output after its
+  test run began and remained asleep for more than an hour. An older orphaned
+  v0.20.2 check had remained alive for four days. Terminating the v0.21.3 check
+  let activation and archive publication complete, and the stale v0.20.2
+  process was then removed. The v0.21.4 candidate check completed normally in
+  about two and a half minutes, providing a practical baseline for a generous
+  future timeout.
+- Candidate: bound candidate-check runtime, terminate its complete process
+  group on timeout, and preserve enough test progress to identify the hanging
+  regression without blocking future tags or leaking orphaned checks.
