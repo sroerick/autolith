@@ -97,6 +97,7 @@
     (test-directory-user-init)
     (test-memory-tools)
     (test-agenda-persistence-and-transport)
+    (test-agenda-unbounded-item-count)
     (test-agenda-command)
     (test-agenda-version-one-migration)
     (test-agenda-malformed-state)

@@ -647,8 +647,8 @@ background model traffic.
 
 Autolith stores short task and note lists in the readable atomic file
 =${XDG_DATA_HOME:-~/.local/share}/autolith/agendas.sexp=. Each agenda is keyed by
-the canonical workspace directory and contains at most 32 stable-ID items with
-=todo=, =doing=, =blocked=, =done=, or =note= status. The reader disables
+the canonical workspace directory and contains stable-ID items with =todo=,
+=doing=, =blocked=, =done=, or =note= status. The reader disables
 =*read-eval*=, and each successful update publishes the complete versioned state
 atomically with mode 0600.
 

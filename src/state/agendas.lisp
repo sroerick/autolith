@@ -8,9 +8,6 @@
 (defparameter *agenda-legacy-version* 1
   "The agenda format version without persistent-memory links.")
 
-(defparameter *agenda-maximum-items* 32
-  "The maximum number of items retained in one workspace agenda.")
-
 (defparameter *agenda-item-text-limit* 500
   "The maximum character count of one agenda item.")
 
@@ -139,7 +136,6 @@
                   (readable-state-property-present-p properties :items)
                   (non-empty-string-p (getf properties :directory))
                   (listp items)
-                  (<= (length items) *agenda-maximum-items*)
                   (every (lambda (item)
                            (agenda--item-form-p item version))
                          items)
@@ -456,13 +452,6 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
             :require-existing-p t))
          (record (agenda-find state directory))
          (items (and record (workspace-agenda-items record))))
-    (when (>= (length items) *agenda-maximum-items*)
-      (error 'agenda-error
-             :message (format nil "Workspace agenda already has its maximum ~D items."
-                              *agenda-maximum-items*)
-             :pathname (configuration-agenda-path configuration)
-             :operation ':add
-             :cause nil))
     (let* ((item
              (make-instance 'agenda-item
                             :identifier (make-identifier)
@@ -651,14 +640,6 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                                  :test #'string=)
                            (make-identifier)
                            (copy-seq identifier))))))))))
-    (when (> (length result) *agenda-maximum-items*)
-      (error 'agenda-error
-             :message (format nil
-                              "Transport would exceed the ~D-item agenda limit."
-                              *agenda-maximum-items*)
-             :pathname (configuration-agenda-path configuration)
-             :operation ':transport
-             :cause nil))
     result))
 
 (-> agenda-transport
