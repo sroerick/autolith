@@ -96,6 +96,7 @@
                              (:file "task/scheduler")
                              (:file "task/tools")
                              (:file "terminal/protocol")
+                             (:file "terminal/input")
                              (:file "terminal/style")
                              (:file "terminal/syntax-highlighting")
                              (:file "terminal/layout")

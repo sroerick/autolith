@@ -27,20 +27,17 @@
   "Return the trusted control that disables bracketed paste mode."
   (format nil "~C[?2004l" *terminal-escape-character*))
 
-(-> terminal-modified-keys-enable-sequence () string)
-(defun terminal-modified-keys-enable-sequence ()
-  "Return xterm controls enabling distinguishable modified key reports.
+(-> terminal-keyboard-enhancement-enable-sequence () string)
+(defun terminal-keyboard-enhancement-enable-sequence ()
+  "Return Clinedi's trusted keyboard-enhancement enable controls."
+  (with-output-to-string (stream)
+    (enable-keyboard-enhancement :stream stream)))
 
-Autolith deliberately avoids Kitty keyboard disambiguation because its enhanced
-plain Escape report is not portable across the supported input decoder."
-  (format nil "~C[>4;0m~C[>4;2m"
-          *terminal-escape-character*
-          *terminal-escape-character*))
-
-(-> terminal-modified-keys-disable-sequence () string)
-(defun terminal-modified-keys-disable-sequence ()
-  "Return the xterm control restoring ordinary modified key reports."
-  (format nil "~C[>4;0m" *terminal-escape-character*))
+(-> terminal-keyboard-enhancement-disable-sequence () string)
+(defun terminal-keyboard-enhancement-disable-sequence ()
+  "Return Clinedi's trusted keyboard-enhancement disable controls."
+  (with-output-to-string (stream)
+    (disable-keyboard-enhancement :stream stream)))
 
 
 ;;;; -- Terminal Objects --

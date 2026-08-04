@@ -78,6 +78,48 @@
                :cause nil))
       (call-next-method)))
 
+(defclass protocol-recording-stream-terminal (stream-terminal)
+  ((chunks
+    :initform nil
+    :accessor protocol-recording-stream-terminal-chunks
+    :type list
+    :documentation "Protocol writes captured in reverse order.")
+   (write-count
+    :initform 0
+    :accessor protocol-recording-stream-terminal-write-count
+    :type (integer 0)
+    :documentation "The number of attempted protocol writes.")
+   (fail-write-index
+    :initarg :fail-write-index
+    :initform nil
+    :reader protocol-recording-stream-terminal-fail-write-index
+    :type (option integer)
+    :documentation "The optional one-based write attempt that signals failure.")
+   (flush-count
+    :initform 0
+    :accessor protocol-recording-stream-terminal-flush-count
+    :type (integer 0)
+    :documentation "The number of attempted protocol flushes."))
+  (:documentation "A stream terminal recording and optionally failing protocol writes."))
+
+(defmethod terminal--write
+    ((terminal protocol-recording-stream-terminal) (text string))
+  "Capture TEXT or signal the configured protocol-write failure."
+  (let ((index (incf (protocol-recording-stream-terminal-write-count terminal))))
+    (when (eql index
+               (protocol-recording-stream-terminal-fail-write-index terminal))
+      (error 'terminal-error
+             :message "Injected protocol write failure."
+             :operation ':write
+             :cause nil))
+    (push text (protocol-recording-stream-terminal-chunks terminal)))
+  nil)
+
+(defmethod terminal-flush ((terminal protocol-recording-stream-terminal))
+  "Record one protocol flush without external output."
+  (incf (protocol-recording-stream-terminal-flush-count terminal))
+  nil)
+
 (defmethod terminal-read-event ((terminal scripted-terminal))
   "Serve the next scripted event, or end of input when exhausted."
   (let ((callback (scripted-terminal-read-callback terminal)))
@@ -568,6 +610,12 @@
                         (string #\Return)
                         (format nil "~C[13;2u" escape)
                         (format nil "~C[13;5u" escape)
+                        (format nil "~C[27;2;13~~" escape)
+                        (format nil "~C[27;5;13~~" escape)
+                        (format nil "~C[27u" escape)
+                        (format nil "~C[13u" escape)
+                        (format nil "~C[9u" escape)
+                        (format nil "~C[127u" escape)
                         (string (code-char 8))
                         (format nil "~C[127;5u" escape)
                         (format nil "~C[1;5D" escape)
@@ -598,6 +646,18 @@
                  "enhanced Shift-Enter inserts a newline")
     (test-assert (eq (terminal-read-event terminal) :insert-newline)
                  "enhanced Ctrl-Enter inserts a newline")
+    (test-assert (eq (terminal-read-event terminal) :insert-newline)
+                 "xterm Shift-Enter inserts a newline")
+    (test-assert (eq (terminal-read-event terminal) :insert-newline)
+                 "xterm Ctrl-Enter inserts a newline")
+    (test-assert (eq (terminal-read-event terminal) :escape)
+                 "enhanced plain Escape remains an escape event")
+    (test-assert (eq (terminal-read-event terminal) :submit)
+                 "enhanced plain Enter remains a submit event")
+    (test-assert (eq (terminal-read-event terminal) :complete)
+                 "enhanced plain Tab remains a completion event")
+    (test-assert (eq (terminal-read-event terminal) :backspace)
+                 "enhanced plain Backspace remains a deletion event")
     (test-assert (eq (terminal-read-event terminal) :kill-word)
                  "raw Ctrl-Backspace requests word deletion")
     (test-assert (eq (terminal-read-event terminal) :kill-word)
@@ -610,8 +670,15 @@
                  "Kitty keyboard protocol Ctrl-C requests interruption")
     (test-assert (eq (terminal-read-event terminal) :interrupt)
                  "xterm modifyOtherKeys Ctrl-C requests interruption"))
-  (dolist (case (list (list (string *terminal-escape-character*) ':escape)
-                       (list (string (code-char 3)) ':interrupt)))
+  (dolist (case
+           (list
+            (list (string *terminal-escape-character*) ':escape)
+            (list (string (code-char 3)) ':interrupt)
+            (list (string #\Tab) ':complete)
+            (list (string (code-char 127)) ':backspace)
+            (list (format nil "~C[B" *terminal-escape-character*) ':down)
+            (list (format nil "~C[C" *terminal-escape-character*) ':right)
+            (list (format nil "~C[D" *terminal-escape-character*) ':left)))
     (destructuring-bind (input expected) case
       (let ((terminal
               (make-instance 'stream-terminal
@@ -621,28 +688,64 @@
                              :interactive-p t
                              :columns 40)))
         (test-assert (eq (terminal-read-event terminal) expected)
-                     "raw Escape and Ctrl-C retain semantic input events"))))
+                     "ordinary raw and CSI keys retain semantic input events"))))
   (let* ((output (make-string-output-stream))
          (terminal
            (make-instance 'stream-terminal
                           :input-stream (make-string-input-stream "")
                           :output-stream output
-                          :input-file-descriptor 0)))
+                          :input-file-descriptor 0))
+         (expected
+           (concatenate
+            'string
+            (terminal-keyboard-enhancement-enable-sequence)
+            (terminal-bracketed-paste-enable-sequence)
+            (terminal-bracketed-paste-disable-sequence)
+            (terminal-keyboard-enhancement-disable-sequence))))
     (terminal--enable-input-protocols terminal)
     (terminal--disable-input-protocols terminal)
-    (let ((controls (get-output-stream-string output)))
-      (test-assert (search (format nil "~C[>4;2m"
-                                  *terminal-escape-character*)
-                          controls)
-                   "terminal startup requests xterm modified key reports")
-      (test-assert (not (search (format nil "~C[>1u"
-                                       *terminal-escape-character*)
-                               controls))
-                   "terminal startup leaves Kitty Escape reporting disabled")
-      (test-assert (search (format nil "~C[>4;0m"
-                                  *terminal-escape-character*)
-                          controls)
-                   "terminal shutdown restores ordinary modified key reports")))
+    (test-assert (string= (get-output-stream-string output) expected)
+                 "terminal input protocols enable and disable once in order"))
+  (let* ((terminal
+           (make-instance 'protocol-recording-stream-terminal
+                          :input-stream (make-string-input-stream "")
+                          :output-stream (make-string-output-stream)
+                          :input-file-descriptor 0
+                          :fail-write-index 2))
+         (failure nil))
+    (handler-case
+        (terminal--enable-input-protocols terminal)
+      (terminal-error (condition)
+        (setf failure condition)))
+    (let ((controls
+            (format nil "~{~A~}"
+                    (reverse
+                     (protocol-recording-stream-terminal-chunks terminal)))))
+      (test-assert failure
+                   "partial protocol activation preserves its original failure")
+      (test-assert
+       (and (search (terminal-bracketed-paste-disable-sequence) controls)
+            (search (terminal-keyboard-enhancement-disable-sequence) controls)
+            (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+       "partial protocol activation attempts every cleanup control")))
+  (let* ((terminal
+           (make-instance 'protocol-recording-stream-terminal
+                          :input-stream (make-string-input-stream "")
+                          :output-stream (make-string-output-stream)
+                          :input-file-descriptor 0
+                          :fail-write-index 1))
+         (failure nil))
+    (handler-case
+        (terminal--disable-input-protocols terminal)
+      (terminal-error (condition)
+        (setf failure condition)))
+    (test-assert failure
+                 "protocol shutdown reports its first cleanup failure")
+    (test-assert
+     (and (equal (protocol-recording-stream-terminal-chunks terminal)
+                 (list (terminal-keyboard-enhancement-disable-sequence)))
+          (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+     "protocol shutdown continues after one cleanup write fails"))
   nil)
 
 (-> test-terminal-live-region-layout () null)

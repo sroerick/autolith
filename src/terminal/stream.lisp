@@ -38,20 +38,42 @@
   (finish-output (stream-terminal-output-stream terminal))
   nil)
 
-(-> terminal--enable-input-protocols (stream-terminal) null)
-(defun terminal--enable-input-protocols (terminal)
-  "Enable distinguishable modified keys and bracketed paste on TERMINAL."
-  (terminal--write terminal (terminal-modified-keys-enable-sequence))
-  (terminal--write terminal (terminal-bracketed-paste-enable-sequence))
-  (terminal-flush terminal)
-  nil)
-
 (-> terminal--disable-input-protocols (stream-terminal) null)
 (defun terminal--disable-input-protocols (terminal)
-  "Restore ordinary keyboard reporting and paste handling on TERMINAL."
-  (terminal--write terminal (terminal-bracketed-paste-disable-sequence))
-  (terminal--write terminal (terminal-modified-keys-disable-sequence))
-  (terminal-flush terminal)
+  "Best-effort restore ordinary keyboard reporting and paste handling."
+  (let ((failure nil))
+    (labels ((attempt (function)
+               "Run FUNCTION, retaining only the first signaled failure."
+               (handler-case
+                   (funcall function)
+                 (error (condition)
+                   (unless failure
+                     (setf failure condition))))))
+      (attempt
+       (lambda ()
+         (terminal--write terminal
+                          (terminal-bracketed-paste-disable-sequence))))
+      (attempt
+       (lambda ()
+         (terminal--write terminal
+                          (terminal-keyboard-enhancement-disable-sequence))))
+      (attempt (lambda () (terminal-flush terminal))))
+    (when failure
+      (error failure)))
+  nil)
+
+(-> terminal--enable-input-protocols (stream-terminal) null)
+(defun terminal--enable-input-protocols (terminal)
+  "Enable modified keys and bracketed paste, rolling back partial output."
+  (handler-case
+      (progn
+        (terminal--write terminal
+                         (terminal-keyboard-enhancement-enable-sequence))
+        (terminal--write terminal (terminal-bracketed-paste-enable-sequence))
+        (terminal-flush terminal))
+    (error (condition)
+      (ignore-errors (terminal--disable-input-protocols terminal))
+      (error condition)))
   nil)
 
 (defmethod terminal-input-ready-p ((terminal stream-terminal))
@@ -163,7 +185,9 @@
 (defmethod terminal-read-event ((terminal stream-terminal))
   "Read one key, escape sequence, paste, or fallback line from TERMINAL."
   (if (terminal-interactive-p terminal)
-      (let ((event (read-event :stream (stream-terminal-input-stream terminal))))
+      (let ((event
+               (terminal-read-editing-event
+                (stream-terminal-input-stream terminal))))
         (if (eq event :stream-end)
             :end-of-input
             event))

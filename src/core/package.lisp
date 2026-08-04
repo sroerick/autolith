@@ -65,6 +65,8 @@
                 #:selector-set-items
                 #:selector-arrange
                 #:selector-handle-event
+                #:enable-keyboard-enhancement
+                #:disable-keyboard-enhancement
                 #:read-event
                 #:sanitize-text
                 #:text-cell-width
