@@ -25,8 +25,8 @@ mutation, checkpoints, and recovery. It talks directly to the ChatGPT Codex
 and Grok subscription services and does not launch or bundle the Codex CLI
 or Grok Build.
 
-Autolith supports Linux x86-64 and native macOS arm64 source checkouts on
-SBCL. Nix and binary releases remain Linux x86-64. Autolith is dogfoodable,
+Autolith supports Linux x86-64 and native macOS arm64 source checkouts and Nix
+packages on SBCL. Binary releases remain Linux x86-64. Autolith is dogfoodable,
 but it is not a security sandbox: model-generated Lisp runs with the user's
 privileges, and the user can grant commands full access for a session.
 
@@ -57,12 +57,19 @@ privileges, and the user can grant commands full access for a session.
 
 * Install and start
 
-On Linux x86-64, Nix is the recommended installation path. It pins the
-complete runtime and keeps it separate from the host system.
+On Linux x86-64 and macOS arm64, Nix is the recommended installation path. It
+pins the complete runtime and keeps it separate from the host system.
 
 #+BEGIN_SRC sh
 nix run github:luciusmagn/autolith
 #+END_SRC
+
+The first launch builds machine-specific recovery and active images from the
+packaged closure without requiring user-installed Quicklisp, a compiler, or a
+source checkout. Nix keeps each package identity's image pair beneath
+=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=, so upgrades never reuse
+a stale base image. Private image commits remain in Autolith's normal data and
+state roots and survive package upgrades.
 
 The conventional Linux x86-64 installer is shorter, but piping network input
 into a shell deserves suspicion. Inspect [[https://sh.lambda-symbolics.com/autolith][the script]] first if you use it.
@@ -73,18 +80,14 @@ curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 
 The binary release contains its own pinned SBCL, matching SBCL source, locked
 Lisp dependencies, search library, and private sandbox helper. It needs Git,
-OpenSSL, and Bubblewrap from the host. The Nix package carries its pristine
-recovery and base active images in the store, so the first launch does not build
-either image or require Quicklisp, a compiler, or a source checkout. It
-materializes a writable active-image layer
-under =${XDG_DATA_HOME:-~/.local/share}/autolith/nix/active/= while leaving the
-store untouched, so private image commits survive restarts and Nix upgrades.
-Autolith checks published releases periodically and asks before
+OpenSSL, and Bubblewrap from the host. The first launch builds machine-specific
+recovery and active images without requiring Quicklisp, a compiler, or a source
+checkout. Autolith checks published releases periodically and asks before
 installing a newer release. The check runs in the background and never installs
 anything unattended. A prior cached result may place an update notice below the
 next startup banner. Run =autolith --update= to check and update explicitly.
 
-Native macOS arm64 currently runs from a source checkout. Autolith accepts an
+Native macOS arm64 can run through Nix or from a source checkout. Autolith accepts an
 official SBCL release at least the version in =sbcl.version= (currently 2.6.4)
 when its source archive identity is tracked. Install the host toolchain and
 Quicklisp, then let bootstrap install the hash-verified matching SBCL source,

@@ -29,9 +29,8 @@ file boundaries are summarized in [[file:architecture.org][the architecture note
 
 * Requirements and setup
 
-Source checkouts support Linux x86-64 and macOS arm64 on SBCL. Nix and
-binary releases remain Linux x86-64 and require Git, OpenSSL, and Bubblewrap.
-Native macOS operation currently requires a source checkout.
+Source checkouts and Nix packages support Linux x86-64 and macOS arm64 on SBCL.
+Binary releases remain Linux x86-64 and require Git, OpenSSL, and Bubblewrap.
 
 ** Nix package
 
@@ -42,11 +41,15 @@ runtime and native dependencies without borrowing them from the host.
 nix run github:luciusmagn/autolith
 #+END_SRC
 
-The pristine recovery and base active images are carried in the Nix store.
-The first launch materializes a writable active-image layer beneath
-=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/active/= without writing to the
-store. Private image commits and their replay scripts remain in the normal
-Autolith data and state roots, so live changes survive package restarts.
+Nix validates that its complete closure can build and probe both base images,
+but SBCL saved cores are machine-local state rather than reproducible store
+outputs. The first launch builds recovery and active images without network
+access or user-installed Quicklisp, a compiler, or a source checkout. Each exact
+package identity uses its own complete image directory beneath
+=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=. Package upgrades select
+a fresh directory instead of reusing stale cores. Private image commits and
+their replay scripts remain in the normal Autolith data and state roots, so live
+changes survive package restarts and upgrades.
 
 ** Binary release
 
