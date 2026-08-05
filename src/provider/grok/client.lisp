@@ -52,6 +52,7 @@
   "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
   (make-instance 'grok-subscription-provider
                  :configuration configuration
+                 :registration (model-provider-registration provider)
                  :credential-manager (provider-credential-manager provider)
                  :session-id (provider-session-id provider)))
 

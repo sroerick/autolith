@@ -154,6 +154,19 @@
     :documentation "A bounded, non-secret OAuth error response."))
   (:documentation "Refreshing a ChatGPT OAuth access token failed."))
 
+(define-condition provider-model-discovery-error (configuration-error)
+  ((provider-name
+    :initarg :provider-name
+    :reader provider-model-discovery-error-provider-name
+    :type non-empty-string
+    :documentation "The provider whose model list could not be discovered.")
+   (cause
+    :initarg :cause
+    :reader provider-model-discovery-error-cause
+    :type serious-condition
+    :documentation "The underlying request or response failure."))
+  (:documentation "A provider's dynamic model list could not be refreshed."))
+
 (define-condition provider-error (autolith-error)
   ((status
     :initarg :status

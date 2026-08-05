@@ -115,9 +115,15 @@ autolith
 #+END_SRC
 
 =autolith --auth= signs into the provider serving the configured model, and
-=autolith --auth grok= or =autolith --auth chatgpt= selects one explicitly.
-Inside a session, =/model= switches between the GPT and Grok model families
-and =/auth= authenticates the active provider.
+=autolith --auth grok=, =autolith --auth chatgpt=, or another registered provider
+selects one explicitly. Inside a session, =/models= lists registered providers
+and models, =/model= selects one, and =/auth [PROVIDER]= authenticates the active
+or named provider. See [[file:docs/guide.org][the guide]] for registering an
+OpenAI-compatible API-key provider from =init.lisp=. API keys are stored in
+Autolith's private state credential store. Providers may fetch their model list
+from an OpenAI-compatible =GET /models= endpoint when =/models= is requested;
+startup uses static or cached metadata, with static model metadata available when
+a provider needs overrides or a fallback.
 
 List and control local Autolith processes with =autolith localgroup status=,
 =tell=, =attach=, =detach=, =pause=, and =kill=. Attach supports =--read-only=

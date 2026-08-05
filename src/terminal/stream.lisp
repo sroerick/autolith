@@ -91,17 +91,18 @@
 (-> terminal--terminal-mode-or-nil (stream-terminal) t)
 (defun terminal--terminal-mode-or-nil (terminal)
   "Return TERMINAL's termios value, or NIL when its input is not interactive."
-  (unless (interactive-stream-p (stream-terminal-input-stream terminal))
-    (return-from terminal--terminal-mode-or-nil nil))
-  (handler-case
-      (sb-posix:tcgetattr (stream-terminal-input-file-descriptor terminal))
-    (sb-posix:syscall-error (condition)
-      (if (= (sb-posix:syscall-errno condition) sb-posix:enotty)
-          nil
-          (error 'terminal-error
-                 :message "Could not inspect terminal input mode."
-                 :operation ':start
-                 :cause condition)))))
+  (let ((file-descriptor (stream-terminal-input-file-descriptor terminal)))
+    (when (minusp file-descriptor)
+      (return-from terminal--terminal-mode-or-nil nil))
+    (handler-case
+        (sb-posix:tcgetattr file-descriptor)
+      (sb-posix:syscall-error (condition)
+        (if (= (sb-posix:syscall-errno condition) sb-posix:enotty)
+            nil
+            (error 'terminal-error
+                   :message "Could not inspect terminal input mode."
+                   :operation ':start
+                   :cause condition))))))
 
 (-> terminal--configure-input-mode (sb-posix:termios) sb-posix:termios)
 (defun terminal--configure-input-mode (mode)

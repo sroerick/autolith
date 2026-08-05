@@ -77,12 +77,11 @@
                         (readable-state-property-present-p
                          properties :reasoning-effort)
                         (or (null model) (non-empty-string-p model))
+                        ;; Model-specific effort names may come from
+                        ;; executable user initialization. Validate them when
+                        ;; applying preferences to the active model.
                         (or (null effort)
-                            (not
-                             (null
-                              (member effort
-                                      *supported-reasoning-efforts*
-                                      :test #'string=))))
+                            (non-empty-string-p effort))
                         (or (not compact-present-p)
                             (typep (getf properties :compact-view-p)
                                    'boolean))
@@ -206,17 +205,26 @@
 
 (-> preferences-apply-model-selection (configuration) configuration)
 (defun preferences-apply-model-selection (configuration)
-  "Apply saved model choices unless their corresponding environment variables exist."
+  "Apply saved model and reasoning-effort choices when they remain valid.
+
+A saved model that no effective provider registration serves is dropped rather
+than applied, so removing a provider cannot leave the configuration naming a
+model no provider can serve."
   (let* ((preferences (preferences-load configuration))
          (saved-model (preference-state-model preferences))
          (saved-effort (preference-state-reasoning-effort preferences))
          (selected configuration))
     (when (and saved-model
-               (not (non-empty-string-p (uiop:getenv "AUTOLITH_MODEL"))))
-      (setf selected (configuration--clone selected :model saved-model)))
+               (not (non-empty-string-p (uiop:getenv "AUTOLITH_MODEL")))
+               (configuration--model-supported-p saved-model))
+      (setf selected (configuration-with-model selected saved-model)))
     (when (and saved-effort
                (not (non-empty-string-p
-                     (uiop:getenv "AUTOLITH_REASONING_EFFORT"))))
+                     (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
+               (member saved-effort
+                       (configuration--reasoning-efforts-for
+                        (configuration-model selected))
+                       :test #'string=))
       (setf selected
             (configuration-with-reasoning-effort selected saved-effort)))
     selected))

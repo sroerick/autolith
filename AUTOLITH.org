@@ -30,13 +30,19 @@ a user-local init.lisp change, or a private image commit.
   Escape, Enter, Tab, Shift-Tab, and Backspace before delegating all other input
   to Clinedi. It collects bounded literal Ctrl-V and raw multiline byte bursts as
   paste events, while buffering ordinary multi-key bursts for normal decoding.
-  Partial protocol activation performs balanced best-effort cleanup.
+  Partial protocol activation performs balanced best-effort cleanup. Terminal mode
+  detection uses the input file descriptor, so stopping and restarting the UI for
+  line-oriented secret prompts remains interactive even when the Lisp stream
+  wrapper reports noninteractive.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
-  =src/terminal/protocol.lisp=, and =src/terminal/stream.lisp=.
+  =src/terminal/protocol.lisp=, =src/terminal/stream.lisp=, and
+  =src/localgroup/terminal.lisp=.
 - Verification: modified Enter, enhanced Tab and Shift-Tab, legacy input,
   bracketed, literal Ctrl-V, raw string-stream, and OS-pipe multiline paste,
-  ordinary buffered keys, protocol ordering, follow-up cycling, and cleanup
-  regressions pass within the complete 3,172-test repository check.
+  ordinary buffered keys, protocol ordering, follow-up cycling, descriptor-backed
+  terminal restart, and cleanup regressions pass in focused checks. The complete
+  repository check still reaches the environment's existing workspace-write
+  failure at =tests/tool-tests.lisp:591=.
 - Removal condition: Clinedi natively decodes the bare Kitty control reports and
   terminals reliably bracket every paste path, so Autolith can remove its
   compatibility reader without losing Escape or multiline paste semantics.

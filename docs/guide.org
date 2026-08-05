@@ -170,8 +170,13 @@ ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
 
 * Authentication
 
-Autolith stores its own credentials in
-=${XDG_STATE_HOME:-~/.local/state}/autolith/auth.sexp= with mode 0600.
+Autolith stores its own ChatGPT credentials in
+=${XDG_STATE_HOME:-~/.local/state}/autolith/auth.sexp= with mode 0600. It stores
+OpenAI-compatible provider API keys in
+=${XDG_STATE_HOME:-~/.local/state}/autolith/api-keys.sexp= as unencrypted
+plaintext with mode 0600. Mode 0600 limits file access through filesystem
+permissions; it does not encrypt the keys. The last successful provider model lists are cached in
+=${XDG_STATE_HOME:-~/.local/state}/autolith/provider-models.sexp=.
 
 For the initial transition, Autolith may read =~/.codex/auth.json= once as a read-only
 bootstrap source when its private store is absent. It copies only the bounded
@@ -373,8 +378,9 @@ prefix from before selection. The commands are:
 /conversations  list saved conversations
 /history        load the preceding 500 transcript entries
 /cwd PATH       change the active workspace
-/auth           authenticate Autolith with ChatGPT
-/model          pick the 5.6 model and reasoning effort
+/auth [PROVIDER] authenticate the active or named provider
+/model          pick a registered model and reasoning effort
+/models         list registered providers and models
 /effort         pick the reasoning effort
 /trace on|off   show visible reasoning summaries
 /timestamps on|off show local timestamps beside user and assistant turns
@@ -432,15 +438,16 @@ paused goal stays paused, the continuation budget restarts, and a completed
 goal becomes active again. Goals persist with their conversation across
 =/resume=.
 
-=/model= switches between the 5.6 family models (sol, luna, terra), then
-prompts for the reasoning effort to use. =/effort= changes only the effort.
-The available efforts are =none=, =low=, =medium=, =high=, =xhigh=, =max=,
-and =ultra=. Autolith sends the user-visible =ultra= choice as provider effort
-=max=.
+=/model= switches between all registered provider models, then prompts for the
+reasoning effort to use. =/models= lists the effective provider registrations and
+models. =/effort= changes only the effort. The available efforts are =none=,
+=low=, =medium=, =high=, =xhigh=, =max=, and =ultra=. Autolith sends the
+user-visible =ultra= choice as provider effort =max=.
 Both choices become the global defaults for later launches. =AUTOLITH_MODEL=
-and =AUTOLITH_REASONING_EFFORT=
-override the saved defaults when set at startup. Each conversation also records
-its latest model and effort, so =/resume= restores the choices used there.
+and =AUTOLITH_REASONING_EFFORT= override the saved defaults when set at startup.
+Each conversation also records its latest model and effort, so =/resume= restores
+the choices used there. =/auth= authenticates the active provider; =/auth PROVIDER=
+authenticates a named registration.
 
 =/trace on= shows each provider reasoning summary as a bounded, Markdown-styled
 live trace above the status and prompt, then finalizes it once in the transcript.
@@ -668,6 +675,43 @@ therefore use the same definition and registration mechanism. The lowercased
 function name is its stable registry identifier. The lower-level
 =register-context-contributor= function remains available when registration
 must be managed separately.
+
+OpenAI-compatible Chat Completions providers can be registered from the same
+=init.lisp= file. Registration names the provider but does not contain its
+secret:
+
+#+BEGIN_SRC lisp
+(register-openai-compatible-provider
+ :name "my-provider"
+ :description "My OpenAI-compatible provider"
+ :endpoint "https://api.example.com/v1/chat/completions"
+ :models-endpoint "https://api.example.com/v1/models")
+#+END_SRC
+
+Autolith stores API keys in
+=${XDG_STATE_HOME:-~/.local/state}/autolith/api-keys.sexp= as unencrypted
+plaintext with mode 0600. Mode 0600 limits file access through filesystem
+permissions; it does not encrypt the keys. Run =autolith --auth my-provider=
+or =/auth my-provider= to enter or replace the key. Input is hidden. Paste the
+key and press Enter even though no characters appear. The provider name selects the stored key for model discovery and
+requests. Do not put API keys in =init.lisp=, conversations, mutation overlays,
+or saved images.
+
+Authentication can bootstrap a provider before its model list is available.
+The explicit =--auth PROVIDER= path does not refresh remote model lists before
+prompting. After saving the key, startup and reload use static metadata or the
+last successful model cache. Remote discovery runs when you use =/models=. You can
+also supply optional static =:models= metadata to override descriptions, context
+windows, or reasoning efforts, and to keep selected models available when the
+listing endpoint is temporarily unavailable. Optional
+=:headers= values are an alist of additional non-secret HTTP headers. After
+adding or changing the registration, =/mcp reload= rereads =init.lisp= and
+rebuilds the provider path.
+Use =/models=, =/model MODEL=, and =/auth my-provider= to inspect, select, and
+authenticate the registration.
+
+For providers without a working model-list endpoint, omit =:models-endpoint=
+and declare a static =:models= list as before.
 
 Interactive commands use the same live extension model:
 

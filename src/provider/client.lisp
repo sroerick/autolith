@@ -110,7 +110,12 @@
 ;;;; -- Provider Protocol --
 
 (defclass model-provider ()
-  ()
+  ((registration
+    :initarg :registration
+    :initform nil
+    :accessor model-provider-registration
+    :type (option provider-registration)
+    :documentation "The registry metadata that created this provider."))
   (:documentation "The abstract interface between an agent and a model service."))
 
 (defclass subscription-provider (model-provider)
@@ -146,14 +151,61 @@
     :documentation "The most recent portable rate limit snapshot from response headers."))
   (:documentation "A direct ChatGPT subscription client for the Codex Responses service."))
 
-(-> provider-account-label (subscription-provider) string)
+(-> provider-account-label (model-provider) string)
 (defgeneric provider-account-label (provider)
   (:documentation "Return the short user-visible name of PROVIDER's account service."))
+
+(defmethod provider-account-label ((provider model-provider))
+  "Return the registered provider name for a provider without a custom label."
+  (or (and (model-provider-registration provider)
+           (provider-registration-name (model-provider-registration provider)))
+      "provider"))
 
 (defmethod provider-account-label ((provider codex-subscription-provider))
   "Name the ChatGPT account service in user-visible failures."
   (declare (ignore provider))
   "ChatGPT")
+
+(-> provider-authenticate
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defgeneric provider-authenticate (provider &key stream open-browser-p)
+  (:documentation
+   "Authenticate PROVIDER and return a safe user-visible completion message."))
+
+(defmethod provider-authenticate :around
+    ((provider model-provider) &key stream open-browser-p)
+  "Give a registered provider authenticator precedence over protocol defaults."
+  (let ((authenticator
+          (and (model-provider-registration provider)
+               (provider-registration-authenticator
+                (model-provider-registration provider)))))
+    (if authenticator
+        (funcall authenticator provider
+                 :stream stream
+                 :open-browser-p open-browser-p)
+        (call-next-method))))
+
+(defmethod provider-authenticate ((provider model-provider)
+                                  &key stream open-browser-p)
+  "Reject authentication for a provider without an authentication protocol."
+  (declare (ignore stream open-browser-p))
+  (error 'authentication-error
+         :message
+         (format nil
+                 "The ~A provider does not expose an authentication operation."
+                 (provider-account-label provider))))
+
+(defmethod provider-authenticate ((provider subscription-provider)
+                                  &key stream open-browser-p)
+  "Run the device login protocol for a subscription provider."
+  (device-authentication-login
+   (provider-device-authentication-client provider)
+   (provider-credential-manager provider)
+   :stream (or stream *standard-output*)
+   :open-browser-p open-browser-p)
+  (format nil "~A authentication was saved by Autolith."
+          (provider-account-label provider)))
 
 (-> provider-note-response-headers (subscription-provider t) t)
 (defgeneric provider-note-response-headers (provider headers)
@@ -248,9 +300,15 @@
   (declare (ignore provider))
   nil)
 
-(-> provider-family (subscription-provider) keyword)
+(-> provider-family (model-provider) keyword)
 (defgeneric provider-family (provider)
   (:documentation "Return the model family keyword PROVIDER serves."))
+
+(defmethod provider-family ((provider model-provider))
+  "Return the registered family for a provider."
+  (or (and (model-provider-registration provider)
+           (provider-registration-family (model-provider-registration provider)))
+      ':custom))
 
 (defmethod provider-family ((provider codex-subscription-provider))
   "The Codex provider serves the ChatGPT model family."
@@ -292,7 +350,7 @@ This follows the filtered fork-history behavior in Codex
 
 (-> provider-family-create
     (keyword configuration &key (:reasoning-summaries-p boolean))
-    subscription-provider)
+    model-provider)
 (defgeneric provider-family-create (family configuration &key reasoning-summaries-p)
   (:documentation
    "Create the subscription provider serving FAMILY for CONFIGURATION."))
@@ -309,27 +367,119 @@ This follows the filtered fork-history behavior in Codex
                  :reasoning-summaries-p reasoning-summaries-p))
 
 (-> provider-create
-    (configuration &key (:reasoning-summaries-p boolean))
-    subscription-provider)
-(defun provider-create (configuration &key reasoning-summaries-p)
-  "Create the direct subscription provider serving CONFIGURATION's model."
-  (provider-family-create
-   (model-family (configuration-model configuration))
-   configuration
-   :reasoning-summaries-p reasoning-summaries-p))
+    (configuration &key
+                   (:reasoning-summaries-p boolean)
+                   (:registration (option provider-registration)))
+    model-provider)
+(defun provider-create
+    (configuration &key reasoning-summaries-p registration)
+  "Create the provider serving CONFIGURATION's model.
+
+REGISTRATION selects an explicit provider layer for callers such as /auth. When
+it is NIL, the effective registration for CONFIGURATION's model is used."
+  (let* ((model (configuration-model configuration))
+         (effective-registration
+           (or registration (provider-registration-for-model model)))
+         (provider
+           (if effective-registration
+               (progn
+                 (unless (some (lambda (candidate)
+                                 (string= (provider-model-name candidate) model))
+                               (provider-registration-models effective-registration))
+                   (error 'configuration-error
+                          :message
+                          (format nil
+                                  "Provider ~A does not serve model ~A."
+                                  (provider-registration-name effective-registration)
+                                  model)))
+                 (funcall (provider-registration-factory effective-registration)
+                          configuration
+                          :reasoning-summaries-p reasoning-summaries-p))
+               (provider-family-create
+                (model-family model)
+                configuration
+                :reasoning-summaries-p reasoning-summaries-p))))
+    (unless (typep provider 'model-provider)
+      (error 'configuration-error
+             :message
+             (format nil
+                     "Provider factory for model ~A returned ~S instead of a model-provider."
+                     model provider)))
+    (setf (model-provider-registration provider) effective-registration)
+    provider))
+
+(-> provider-authentication-provider
+    (configuration string &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider-authentication-provider
+    (configuration name &key reasoning-summaries-p)
+  "Create NAME's registered provider for authentication.
+
+When an authenticator exists without model metadata, construct the provider directly
+so authentication can bootstrap credentials before model discovery."
+  (let* ((canonical (provider--canonical-name name))
+         (registration (provider-registration-find canonical)))
+    (unless registration
+      (error 'configuration-error
+             :message
+             (format nil "Unknown provider ~A. Registered providers: ~{~A~^, ~}."
+                     name
+                     (mapcar #'provider-registration-name (provider-registrations)))))
+    (if (and (null (provider-registration-models registration))
+             (provider-registration-authenticator registration))
+        (let ((provider
+                (funcall (provider-registration-factory registration)
+                         configuration
+                         :reasoning-summaries-p reasoning-summaries-p)))
+          (unless (typep provider 'model-provider)
+            (error 'configuration-error
+                   :message
+                   (format nil
+                           "Provider factory for ~A returned ~S instead of a model-provider."
+                           (provider-registration-name registration)
+                           provider)))
+          (setf (model-provider-registration provider) registration)
+          provider)
+        (progn
+          (when (and (provider-registration-model-discovery registration)
+                     (null (provider-registration-models registration)))
+            (let ((failures
+                    (provider-refresh-models configuration :provider-name canonical)))
+              (when failures
+                (error (first failures)))))
+          (let ((model (first (provider-registration-models registration))))
+            (unless model
+              (error 'configuration-error
+                     :message (format nil "Provider ~A has no available models."
+                                      (provider-registration-name registration))))
+            (provider-create
+             (configuration-with-model configuration (provider-model-name model))
+             :reasoning-summaries-p reasoning-summaries-p
+             :registration registration))))))
 
 (-> provider-with-configuration (model-provider configuration) model-provider)
 (defgeneric provider-with-configuration (provider configuration)
   (:documentation
    "Return PROVIDER reconfigured for CONFIGURATION while preserving session state."))
 
+(defmethod provider-with-configuration ((provider model-provider)
+                                        (configuration configuration))
+  "Create a fresh registered provider for a generic provider implementation."
+  (declare (ignore provider))
+  (provider-create configuration))
+
 (defmethod provider-with-configuration :around
     ((provider subscription-provider) (configuration configuration))
-  "Create a fresh provider when CONFIGURATION selects another model family."
-  (if (eq (provider-family provider)
-          (model-family (configuration-model configuration)))
-      (call-next-method)
-      (provider-create configuration)))
+  "Create a fresh provider when CONFIGURATION selects another registration."
+  (let ((selected-registration
+          (provider-registration-for-model (configuration-model configuration)))
+        (current-registration (model-provider-registration provider)))
+    (if (and (eq (provider-family provider)
+                 (model-family (configuration-model configuration)))
+             (or (null current-registration)
+                 (eq current-registration selected-registration)))
+        (call-next-method)
+        (provider-create configuration))))
 
 (defmethod provider-with-configuration
     ((provider codex-subscription-provider) (configuration configuration))
@@ -337,6 +487,7 @@ This follows the filtered fork-history behavior in Codex
   (let ((copy
           (make-instance 'codex-subscription-provider
                          :configuration configuration
+                         :registration (model-provider-registration provider)
                          :credential-manager
                          (provider-credential-manager provider)
                          :session-id (provider-session-id provider)
@@ -1325,9 +1476,13 @@ are decoded as UTF-8."
             (provider--sanitize-wire-string data)
             :limit 2000))))
 
-(-> provider--consume-stream (model-provider stream t function) provider-result)
-(defun provider--consume-stream (provider stream headers event-callback)
-  "Consume PROVIDER's STREAM into a provider result while invoking EVENT-CALLBACK."
+(-> provider-consume-stream (model-provider stream t function) provider-result)
+(defgeneric provider-consume-stream (provider stream headers event-callback)
+  (:documentation
+   "Consume PROVIDER's protocol stream while invoking EVENT-CALLBACK."))
+
+(defmethod provider-consume-stream ((provider model-provider) stream headers event-callback)
+  "Consume a Responses protocol STREAM into a provider result."
   (let ((output-items nil)
         (response-id nil)
         (usage nil)
@@ -1484,7 +1639,7 @@ are decoded as UTF-8."
                                provider status
                                :headers headers
                                :raw-body stream))
-                            (provider--consume-stream
+                            (provider-consume-stream
                              provider stream headers event-callback))
                        (provider--close-response-stream stream))))
               (context-delivery-complete delivery)

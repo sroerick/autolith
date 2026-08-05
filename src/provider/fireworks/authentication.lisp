@@ -187,7 +187,7 @@
 
 (-> fireworks-api-key-login
     (fireworks-credential-manager &key (:stream t) (:input t))
-    null)
+    string)
 (defun fireworks-api-key-login (manager
                                 &key (stream *standard-output*)
                                      (input *standard-input*))
@@ -212,5 +212,4 @@
                     :source-path
                     (credential-source-pathname
                      (credential-manager-primary-source manager))))
-    (format stream "~&Fireworks authentication was saved by Autolith.~%")
-    nil))
+    "Fireworks authentication was saved by Autolith."))

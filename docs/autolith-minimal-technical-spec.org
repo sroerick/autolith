@@ -204,6 +204,18 @@ installation's rotating refresh token. The configured model selects the
 serving provider; switching between model families replaces the provider
 while conversations persist in one provider-independent item shape.
 
+OpenAI-compatible API-key providers may be registered from user initialization
+with a Chat Completions endpoint and an optional explicit model-list endpoint.
+The standard =GET /models= response supplies current model identifiers during
+explicit =/models= refreshes. Startup and reload do not perform network
+discovery. They load static metadata and the last successful dynamic model list
+from the private =provider-models.sexp= state cache. Static model entries are
+optional, can override metadata for matching discovered identifiers, and can
+provide a fallback for providers without a usable listing endpoint. A failed
+refresh retains the last successful effective list. Discovery requests load bearer
+credentials from the provider's private API-key store only for request scope;
+request credentials are never retained in the image or conversation state.
+
 Autolith owns:
 
 - System instructions.
@@ -1048,11 +1060,27 @@ condition. The file is separate from legacy mutation overlays and private image
 commits, so mutation rollback never discards user policy.
 
 The user initialization file and trusted directory initialization files may
-register request-local context contributors, interactive commands, and MCP
-servers through the same live registration interfaces used by tracked code and
-self-modifications. Reload replaces their prior registrations atomically, and a
-failure restores the previous registries. This transactional guarantee does not
-extend to arbitrary Lisp side effects performed by full-power initialization.
+register request-local context contributors, interactive commands, MCP servers,
+and OpenAI-compatible Chat Completions providers through the same live
+registration interfaces used by tracked code and self-modifications. Such a
+provider declares its endpoint, an optional model-list endpoint or static model
+metadata, and resolves its API key by provider name from Autolith's private
+=api-keys.sexp= store under the state root. A model-list endpoint returns the
+standard OpenAI-compatible =data= array of model identifiers; static metadata
+overrides matching identifiers and can provide a fallback when discovery fails.
+Startup and reload load the last successful dynamic list from the private
+=provider-models.sexp= cache and do not wait for a remote endpoint. The =/models=
+operation performs the current synchronous refresh. The store is atomically
+written as unencrypted plaintext with mode 0600. Mode 0600 limits file access
+through filesystem permissions; it does not encrypt the keys. API keys are not
+persisted in conversation state, mutation overlays, provider registrations, or
+saved images.
+The =--auth PROVIDER= and =/auth PROVIDER= operations can enter or replace a
+key without echoing it. Users can paste the key and press Enter while the hidden
+input prompt is active.
+Reload replaces their prior registrations atomically, and a failure restores the
+previous registries. This transactional guarantee does not extend to arbitrary
+Lisp side effects performed by full-power initialization.
 
 Executable initialization remains source outside release images. Every startup
 and retained-generation reconnect loads the current applicable files after the

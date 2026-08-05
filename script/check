@@ -31,17 +31,16 @@ constant_pattern='^[[:space:]]*\([[:space:]]*([^[:space:]()]+:)?(define-constant
 
 set +e
 constant_matches=$(
-  git -C "$source_root" grep \
-    --untracked \
-    -nIiE \
+  grep -r -n -I -i -E \
+    --include='*.lisp' \
+    --include='autolith.asd' \
     "$constant_pattern" \
-    -- \
-    autolith.asd \
-    ':(glob)src/**/*.lisp' \
-    ':(glob)recovery/**/*.lisp' \
-    ':(glob)server/**/*.lisp' \
-    ':(glob)script/**/*.lisp' \
-    ':(glob)tests/**/*.lisp' 2>&1
+    "$source_root/autolith.asd" \
+    "$source_root/src" \
+    "$source_root/recovery" \
+    "$source_root/server" \
+    "$source_root/script" \
+    "$source_root/tests" 2>&1
 )
 constant_status=$?
 set -e

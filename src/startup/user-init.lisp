@@ -44,6 +44,7 @@ not generally have reversible semantics."
           (context-registrations (context--registry-snapshot))
           (command-registrations (application-command--registry-snapshot))
           (mcp-registrations (mcp--registry-snapshot))
+          (provider-registrations (provider--registry-snapshot))
           (loaded-pathname nil)
           (current-pathname nil))
       (handler-case
@@ -51,6 +52,7 @@ not generally have reversible semantics."
             (context--remove-registration-source ':user)
             (application-command--remove-registration-source ':user)
             (mcp--remove-registration-source ':user)
+            (provider--remove-registration-source ':user)
             (dolist (pathname pathnames loaded-pathname)
               (setf current-pathname pathname)
               (let ((*package* (find-package '#:autolith))
@@ -63,6 +65,7 @@ not generally have reversible semantics."
           (context--registry-restore context-registrations)
           (application-command--registry-restore command-registrations)
           (mcp--registry-restore mcp-registrations)
+          (provider--registry-restore provider-registrations)
           (let ((pathname (or current-pathname
                               (first pathnames)
                               (configuration-user-init-path configuration))))

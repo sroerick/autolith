@@ -686,7 +686,7 @@
                            "usage" (json-object "input_tokens" 5))))))
          (events nil)
          (result
-           (provider--consume-stream
+           (provider-consume-stream
             (make-instance 'model-provider)
             (make-instance 'test-character-input-stream :source source)
             '(("x-codex-turn-state" . "turn-state-1"))
@@ -755,7 +755,7 @@
     (test-assert
      (handler-case
          (progn
-           (provider--consume-stream
+           (provider-consume-stream
             (make-instance 'model-provider)
             (make-instance 'test-character-input-stream :source source)
             nil
@@ -785,7 +785,7 @@
          (condition
            (handler-case
                (progn
-                 (provider--consume-stream
+                 (provider-consume-stream
                   (make-instance 'model-provider)
                   (make-instance 'test-character-input-stream :source source)
                   nil
@@ -817,7 +817,7 @@
          (condition
            (handler-case
                (progn
-                 (provider--consume-stream
+                 (provider-consume-stream
                   (make-instance 'model-provider)
                   (make-instance 'test-character-input-stream :source source)
                   nil
@@ -850,7 +850,7 @@
            (condition
              (handler-case
                  (progn
-                   (provider--consume-stream
+                   (provider-consume-stream
                     (make-instance 'model-provider)
                     (make-instance 'test-character-input-stream :source source)
                     nil
@@ -877,7 +877,7 @@
          (condition
            (handler-case
                (progn
-                 (provider--consume-stream
+                 (provider-consume-stream
                   (make-instance 'model-provider)
                   (make-instance 'test-character-input-stream :source source)
                   '(("x-request-id" . "request-from-header"))
@@ -906,7 +906,7 @@
          (condition
            (handler-case
                (progn
-                 (provider--consume-stream
+                 (provider-consume-stream
                   (make-instance 'model-provider)
                   (make-instance 'test-character-input-stream :source source)
                   nil

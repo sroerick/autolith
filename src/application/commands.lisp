@@ -457,10 +457,12 @@
 
 (-> application--effort-items (application) list)
 (defun application--effort-items (application)
-  "Return picker items for the supported reasoning efforts."
-  (let ((current (configuration-reasoning-effort
-                  (application-configuration application))))
-    (loop for effort in *supported-reasoning-efforts*
+  "Return picker items for the active model's supported reasoning efforts."
+  (let* ((configuration (application-configuration application))
+         (current (configuration-reasoning-effort configuration)))
+    (loop for effort in
+          (configuration--reasoning-efforts-for
+           (configuration-model configuration))
           collect (list :name effort
                         :argument nil
                         :description (if (string= effort current)
@@ -652,15 +654,62 @@
 
 (-> application--model-items (application) list)
 (defun application--model-items (application)
-  "Return picker items for the supported models."
+  "Return picker items for all effective registered provider models."
   (let ((current (configuration-model
                   (application-configuration application))))
-    (loop for model in *supported-models*
+    (loop for model in (provider-model-identifiers)
+          for provider-name = (provider-model-provider-name model)
+          for metadata = (provider-model-for model)
           collect (list :name model
                         :argument nil
-                        :description (if (string= model current)
-                                         "current"
-                                         "")))))
+                        :group provider-name
+                        :description
+                        (format nil
+                                "~A~@[; ~A~]"
+                                (if (string= model current)
+                                    "current"
+                                    "")
+                                (and metadata
+                                     (non-empty-string-p
+                                      (provider-model-description metadata))))))))
+
+(-> application--models-description (application) string)
+(defun application--models-description (application)
+  "Return a readable listing of effective registered provider models."
+  (let ((current (configuration-model
+                  (application-configuration application))))
+    (if (null (provider-model-identifiers))
+        "No registered provider models exist."
+        (format nil
+                "Available models:~%~{~A~%~}"
+                (loop for model in (provider-model-identifiers)
+                      for provider-name = (provider-model-provider-name model)
+                      for metadata = (provider-model-for model)
+                      collect
+                      (format nil "- ~A / ~A~:[~; (current)~]~@[ - ~A~]"
+                              provider-name
+                              model
+                              (string= model current)
+                              (and metadata
+                                   (non-empty-string-p
+                                    (provider-model-description metadata)))))))))
+
+(-> application-models-command (application) null)
+(defun application-models-command (application)
+  "Refresh and show the effective registered providers and their model identifiers."
+  (let* ((failures
+           (provider-refresh-models
+            (application-configuration application)))
+         (description (application--models-description application)))
+    (application-present
+     application
+     (if failures
+         (format nil
+                 "~A~%~%Model discovery warnings:~%~{~A~%~}"
+                 description
+                 (mapcar #'autolith-error-message failures))
+         description)))
+  nil)
 
 (-> application-set-model (application string) null)
 (defun application-set-model (application model)
@@ -1123,29 +1172,30 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
 
 ;;;; -- Authentication and Checkpoint Commands --
 
-(-> application-authenticate (application) null)
-(defun application-authenticate (application)
-  "Run Autolith-owned provider authentication outside raw terminal mode."
+(-> application--authentication-provider (application (option string)) model-provider)
+(defun application--authentication-provider (application provider-name)
+  "Return APPLICATION's active or named provider for authentication."
+  (if provider-name
+      (provider-authentication-provider
+       (application-configuration application)
+       provider-name
+       :reasoning-summaries-p (application-reasoning-traces-p application))
+      (application-provider application)))
+
+(-> application-authenticate (application &optional provider-name) null)
+(defun application-authenticate (application &optional provider-name)
+  "Authenticate APPLICATION's active or named provider."
   (let* ((ui (application-ui application))
-         (provider (application-provider application)))
-    (unless (typep provider 'subscription-provider)
-      (error 'authentication-error
-             :message "The active provider does not support direct login."))
+         (provider (application--authentication-provider application provider-name))
+         (message nil))
     (terminal-ui-stop ui)
     (unwind-protect
-         (if (eq (provider-family provider) ':fireworks)
-             (fireworks-api-key-login (provider-credential-manager provider)
-                                      :stream *standard-output*)
-             (device-authentication-login
-              (provider-device-authentication-client provider)
-              (provider-credential-manager provider)
-              :stream *standard-output*
-              :open-browser-p t))
+         (setf message
+               (provider-authenticate provider
+                                      :stream *standard-output*
+                                      :open-browser-p t))
       (terminal-ui-start ui))
-    (application-present
-     application
-     (format nil "~A authentication was saved by Autolith."
-             (provider-account-label provider))))
+    (application-present application message))
   nil)
 
 (-> application-checkpoint (application) null)
@@ -1463,20 +1513,22 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
-     :argument nil
-     :description "authenticate Autolith with the active provider"
+     :argument "PROVIDER"
+     :description "authenticate the active or named provider"
      :tip "starts direct provider authentication when credentials need attention."
      :busy-behavior :hold
      :terminal-behavior :exclusive)
     (application invocation)
-  (declare (ignore invocation))
-  (application-authenticate application)
+  (application-authenticate
+   application
+   (let ((remainder (application-command-invocation-remainder invocation)))
+     (and (non-empty-string-p remainder) remainder)))
   ':continue)
 
 (define-application-command application--builtin-model-command
     (:name "/model"
-     :argument nil
-     :description "pick the 5.6 model and reasoning effort"
+     :argument "MODEL"
+     :description "pick a registered provider model and reasoning effort"
      :tip "changes both the model and its reasoning effort."
      :busy-behavior :hold
      :terminal-behavior :exclusive)
@@ -1488,7 +1540,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
                :title "pick the model"
                :items (application--model-items application)
                :usage "Usage: /model NAME"
-               :empty-notice "No supported models exist."))))
+               :empty-notice "No registered provider models exist."))))
     (when model
       (application-set-model application model)
       (let ((effort (application--pick-reasoning-effort application)))
@@ -1501,6 +1553,18 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
                   (application-configuration application))
                  (configuration-reasoning-effort
                   (application-configuration application)))))))
+  ':continue)
+
+(define-application-command application--builtin-models-command
+    (:name "/models"
+     :argument nil
+     :description "list registered providers and models"
+     :tip "shows every effective provider registration and its models."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (application-models-command application)
   ':continue)
 
 (define-application-command application--builtin-effort-command

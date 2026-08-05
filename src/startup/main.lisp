@@ -469,7 +469,7 @@
        autolith localgroup detach SESSION-ID
        autolith localgroup pause SESSION-ID
        autolith localgroup kill SESSION-ID
-       autolith --auth [chatgpt | grok | fireworks]
+       autolith --auth [PROVIDER]
        autolith --version
        autolith --recovery [--generation ID | --list]")
 
@@ -501,25 +501,6 @@
                                          "Unknown --permissions mode ~S. The choices are ask, sandbox, and full."
                                          selection))))))))
 
-(-> main--auth-family (configuration (option string)) keyword)
-(defun main--auth-family (configuration selection)
-  "Return the provider family requested by the --auth SELECTION argument.
-
-Without a SELECTION the configured model chooses the family."
-  (cond
-    ((null selection)
-     (model-family (configuration-model configuration)))
-    ((string-equal selection "grok")
-     ':grok)
-    ((string-equal selection "fireworks")
-     ':fireworks)
-    ((member selection '("chatgpt" "codex" "openai") :test #'string-equal)
-     ':codex)
-    (t
-     (error 'configuration-error
-            :message (format nil "Unknown --auth provider ~S. The choices are chatgpt, grok, and fireworks."
-                             selection)))))
-
 (-> main--auth-selection (list) (option string))
 (defun main--auth-selection (arguments)
   "Return the optional provider name following --auth in ARGUMENTS."
@@ -530,25 +511,22 @@ Without a SELECTION the configured model chooses the family."
              (not (uiop:string-prefix-p "-" candidate))
              candidate)))))
 
+(-> main--authentication-provider (configuration (option string)) model-provider)
+(defun main--authentication-provider (configuration selection)
+  "Return a provider for the active or explicitly selected registration."
+  (if selection
+      (provider-authentication-provider configuration selection)
+      (provider-create configuration)))
+
 (-> main-authenticate (configuration (option string)) null)
 (defun main-authenticate (configuration selection)
-  "Run Autolith-owned provider authentication without starting the conversation UI."
+  "Authenticate a registered provider without starting the conversation UI."
   (configuration-ensure-directories configuration)
-  (let ((provider
-          (provider-family-create
-           (main--auth-family configuration selection)
-           configuration)))
-    (if (eq (provider-family provider) ':fireworks)
-        (fireworks-api-key-login (provider-credential-manager provider)
-                                 :stream *standard-output*)
-        (progn
-          (device-authentication-login
-           (provider-device-authentication-client provider)
-           (provider-credential-manager provider)
-           :stream *standard-output*
-           :open-browser-p t)
-          (format t "~&~A authentication was saved by Autolith.~%"
-                  (provider-account-label provider)))))
+  (let ((provider (main--authentication-provider configuration selection)))
+    (format t "~&~A~%"
+            (provider-authenticate provider
+                                   :stream *standard-output*
+                                   :open-browser-p t)))
   nil)
 
 (-> main--resume-selection (list) (values boolean (option string)))
@@ -660,6 +638,10 @@ Without a SELECTION the configured model chooses the family."
             (fresh-handoff-p
               (and handoff-record
                    (getf (rest handoff-record) :fresh-conversation-p)))
+            (configuration
+               (configuration-create
+                :immutable-p immutable-p
+                :defer-provider-validation-p t))
             (resume-selection
               (multiple-value-list (main--resume-selection arguments)))
             (resume-requested-p
@@ -685,6 +667,7 @@ Without a SELECTION the configured model chooses the family."
                             (null recovery-diagnosis))))))
        (cond
          ((member "--auth" arguments :test #'string=)
+          (user-init-load configuration)
           (main-authenticate configuration
                              (main--auth-selection arguments)))
          (t

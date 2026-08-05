@@ -86,14 +86,31 @@
 
 (-> model-family (string) keyword)
 (defun model-family (model)
-  "Return the service family serving MODEL: :codex, :grok, or :fireworks."
-  (cond
-    ((uiop:string-prefix-p "grok" model)
-     ':grok)
-    ((uiop:string-prefix-p "accounts/fireworks/models/" model)
-     ':fireworks)
-    (t
-     ':codex)))
+  "Return the provider family serving MODEL.
+
+Registered providers take precedence over built-in model fallbacks so
+configuration can be created before executable user initialization loads."
+  (or (and (fboundp 'provider-model-family)
+           (provider-model-family model))
+      (cond
+        ((uiop:string-prefix-p "grok" model)
+         ':grok)
+        ((uiop:string-prefix-p "accounts/fireworks/models/" model)
+         ':fireworks)
+        (t
+         ':codex))))
+
+(-> configuration--reasoning-efforts-for (string) list)
+(defun configuration--reasoning-efforts-for (model)
+  "Return the reasoning efforts supported by MODEL, or the global defaults."
+  (or (and (fboundp 'provider-model-reasoning-efforts-for)
+           (provider-model-reasoning-efforts-for model))
+      (copy-list *supported-reasoning-efforts*)))
+
+(-> configuration--model-supported-p (string) boolean)
+(defun configuration--model-supported-p (model)
+  "Return true when an effective provider registration serves MODEL."
+  (not (null (member model *supported-models* :test #'string=))))
 
 (defparameter *default-context-window* 272000
   "The conservative context window assumed for unknown models.")
@@ -218,29 +235,42 @@
 
 (-> configuration--provider-endpoint-for (string) string)
 (defun configuration--provider-endpoint-for (model)
-  "Return MODEL's streaming Responses endpoint from the environment or defaults.
+  "Return MODEL's registered endpoint or its built-in family endpoint.
 
-AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint and
-AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint.
+AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
+AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint, and
 AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
-  (ecase (model-family model)
-    (:codex
-     (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
-         *codex-responses-endpoint*))
-    (:grok
-     (or (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT")
-         *grok-responses-endpoint*))
-    (:fireworks
-     (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
-         *fireworks-responses-endpoint*))))
+  (or (and (fboundp 'provider-model-endpoint)
+           (provider-model-endpoint model))
+      (case (model-family model)
+        (:codex
+         (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
+             *codex-responses-endpoint*))
+        (:grok
+         (or (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT")
+             *grok-responses-endpoint*))
+        (:fireworks
+         (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
+             *fireworks-responses-endpoint*))
+        (otherwise
+         (error 'configuration-error
+                :message
+                (format nil
+                        "Registered provider ~A did not declare an endpoint for model ~A."
+                        (or (and (fboundp 'provider-model-provider-name)
+                                 (provider-model-provider-name model))
+                            (model-family model))
+                        model))))))
 
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
-  "Return MODEL's context window from the environment, table, or fallback."
+  "Return MODEL's context window from the environment, registry, or fallback."
   (let ((override (uiop:getenv "AUTOLITH_CONTEXT_WINDOW")))
     (or (and (non-empty-string-p override)
              (let ((parsed (parse-integer override :junk-allowed t)))
                (and parsed (plusp parsed) parsed)))
+        (and (fboundp 'provider-model-context-window-for)
+             (provider-model-context-window-for model))
         (rest (assoc model *model-context-windows* :test #'string=))
         *default-context-window*)))
 
@@ -270,11 +300,16 @@ AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
                            (:working-directory (option pathname))
                            (:model (option string))
                            (:reasoning-effort (option string))
-                           (:immutable-p boolean))
+                           (:immutable-p boolean)
+                           (:defer-provider-validation-p boolean))
     configuration)
 (defun configuration-create
-    (&key source-root working-directory model reasoning-effort immutable-p)
-  "Create validated runtime configuration from explicit values and the environment."
+    (&key source-root working-directory model reasoning-effort immutable-p
+          defer-provider-validation-p)
+  "Create runtime configuration from explicit values and the environment.
+
+Provider-specific validation can be deferred until executable user
+initialization registers the selected model."
   (let* ((home (user-homedir-pathname))
            (config-home (environment-directory
                          "XDG_CONFIG_HOME"
@@ -300,9 +335,12 @@ AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
                                   (if (non-empty-string-p mode)
                                       (string-downcase mode)
                                       "cached"))))
-    (unless (member selected-effort *supported-reasoning-efforts* :test #'string=)
-      (error 'configuration-error
-             :message (format nil "Unsupported reasoning effort ~S." selected-effort)))
+    (unless defer-provider-validation-p
+      (unless (member selected-effort
+                      (configuration--reasoning-efforts-for selected-model)
+                      :test #'string=)
+        (error 'configuration-error
+               :message (format nil "Unsupported reasoning effort ~S." selected-effort))))
     (unless (member selected-web-search *supported-web-search-modes*
                     :test #'string=)
       (error 'configuration-error
@@ -343,45 +381,58 @@ AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
     configuration)
 (defun configuration--clone
     (configuration
-     &key working-directory model reasoning-effort
+     &key working-directory model
+       (reasoning-effort nil reasoning-effort-supplied-p)
        (immutable-p nil immutable-p-supplied-p)
        (web-search-mode nil web-search-mode-supplied-p))
   "Copy CONFIGURATION, replacing only supplied workspace or model choices.
 
-Selecting a different model recomputes the context window for that model."
-  (make-instance 'configuration
-                 :source-root (configuration-source-root configuration)
-                 :working-directory (or working-directory
-                                        (configuration-working-directory
-                                         configuration))
-                 :config-root (configuration-config-root configuration)
-                 :data-root (configuration-data-root configuration)
-                 :state-root (configuration-state-root configuration)
-                 :cache-root (configuration-cache-root configuration)
-                 :codex-auth-path (configuration-codex-auth-path configuration)
-                 :grok-bootstrap-auth-path
-                 (configuration-grok-bootstrap-auth-path configuration)
-                 :model (or model (configuration-model configuration))
-                 :reasoning-effort (or reasoning-effort
-                                       (configuration-reasoning-effort
+Selecting a different model recomputes its context window and preserves the old
+reasoning effort only when that effort is supported by the selected model."
+  (let* ((selected-model (or model (configuration-model configuration)))
+         (supported-efforts (configuration--reasoning-efforts-for selected-model))
+         (selected-effort
+           (if reasoning-effort-supplied-p
+               reasoning-effort
+               (let ((previous-effort (configuration-reasoning-effort configuration)))
+                 (if (member previous-effort supported-efforts :test #'string=)
+                     previous-effort
+                     (first supported-efforts)))))
+         (effective-working-directory
+           (or working-directory (configuration-working-directory configuration))))
+    (unless (member selected-effort supported-efforts :test #'string=)
+      (error 'configuration-error
+             :message (format nil "Unsupported reasoning effort ~S for model ~A."
+                              selected-effort selected-model)))
+    (make-instance 'configuration
+                   :source-root (configuration-source-root configuration)
+                   :working-directory effective-working-directory
+                   :config-root (configuration-config-root configuration)
+                   :data-root (configuration-data-root configuration)
+                   :state-root (configuration-state-root configuration)
+                   :cache-root (configuration-cache-root configuration)
+                   :codex-auth-path (configuration-codex-auth-path configuration)
+                   :grok-bootstrap-auth-path
+                   (configuration-grok-bootstrap-auth-path configuration)
+                   :model selected-model
+                   :reasoning-effort selected-effort
+                   :immutable-p (if immutable-p-supplied-p
+                                    immutable-p
+                                    (configuration-immutable-p configuration))
+                   :web-search-mode
+                   (if web-search-mode-supplied-p
+                       web-search-mode
+                       (configuration-web-search-mode configuration))
+                   :context-window (if model
+                                       (configuration--context-window-for model)
+                                       (configuration-context-window
                                         configuration))
-                 :immutable-p (if immutable-p-supplied-p
-                                  immutable-p
-                                  (configuration-immutable-p configuration))
-                 :web-search-mode
-                 (if web-search-mode-supplied-p
-                     web-search-mode
-                     (configuration-web-search-mode configuration))
-                 :context-window (if model
-                                     (configuration--context-window-for model)
-                                     (configuration-context-window
-                                      configuration))
-                 :compaction-threshold-percent
-                 (configuration-compaction-threshold-percent configuration)
-                 :provider-endpoint
-                 (if model
-                     (configuration--provider-endpoint-for model)
-                     (configuration-provider-endpoint configuration))))
+                   :compaction-threshold-percent
+                   (configuration-compaction-threshold-percent configuration)
+                   :provider-endpoint
+                   (if model
+                       (configuration--provider-endpoint-for model)
+                       (configuration-provider-endpoint configuration)))))
 
 (-> configuration--expanded-working-directory
     ((or pathname string))
@@ -446,16 +497,21 @@ Selecting a different model recomputes the context window for that model."
 (-> configuration-with-reasoning-effort (configuration string) configuration)
 (defun configuration-with-reasoning-effort (configuration reasoning-effort)
   "Copy CONFIGURATION with only its REASONING-EFFORT changed."
-  (unless (member reasoning-effort *supported-reasoning-efforts* :test #'string=)
+  (unless (member reasoning-effort
+                  (configuration--reasoning-efforts-for
+                   (configuration-model configuration))
+                  :test #'string=)
     (error 'configuration-error
-           :message (format nil "Unsupported reasoning effort ~S."
-                            reasoning-effort)))
+           :message
+           (format nil "Unsupported reasoning effort ~S for model ~A."
+                   reasoning-effort
+                   (configuration-model configuration))))
   (configuration--clone configuration :reasoning-effort reasoning-effort))
 
 (-> configuration-with-model (configuration string) configuration)
 (defun configuration-with-model (configuration model)
   "Copy CONFIGURATION with only its MODEL changed."
-  (unless (member model *supported-models* :test #'string=)
+  (unless (configuration--model-supported-p model)
     (error 'configuration-error
            :message (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
                             model
@@ -590,7 +646,7 @@ Selecting a different model recomputes the context window for that model."
 
 (-> configuration-auth-path (configuration) pathname)
 (defun configuration-auth-path (configuration)
-  "Return Autolith's private ChatGPT OAuth credential pathname."
+  "Return Autolith's private provider credential pathname."
   (merge-pathnames "auth.sexp" (configuration-state-root configuration)))
 
 (-> configuration-grok-auth-path (configuration) pathname)
@@ -598,10 +654,20 @@ Selecting a different model recomputes the context window for that model."
   "Return Autolith's private Grok OAuth credential pathname."
   (merge-pathnames "grok-auth.sexp" (configuration-state-root configuration)))
 
+(-> configuration-api-keys-path (configuration) pathname)
+(defun configuration-api-keys-path (configuration)
+  "Return Autolith's private OpenAI-compatible API-key pathname."
+  (merge-pathnames "api-keys.sexp" (configuration-state-root configuration)))
+
 (-> configuration-fireworks-auth-path (configuration) pathname)
 (defun configuration-fireworks-auth-path (configuration)
   "Return Autolith's private Fireworks API key credential pathname."
   (merge-pathnames "fireworks-auth.sexp" (configuration-state-root configuration)))
+
+(-> configuration-provider-model-cache-path (configuration) pathname)
+(defun configuration-provider-model-cache-path (configuration)
+  "Return the private cache of successful provider model discovery results."
+  (merge-pathnames "provider-models.sexp" (configuration-state-root configuration)))
 
 (-> configuration-journal-path (configuration) pathname)
 (defun configuration-journal-path (configuration)

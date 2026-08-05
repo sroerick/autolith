@@ -2153,6 +2153,43 @@ sources keeps the tests deterministic under an interactive terminal."
       (sb-posix:close write-descriptor)))
   nil)
 
+(-> test-terminal-descriptor-tty-detection () null)
+(defun test-terminal-descriptor-tty-detection ()
+  "Test TTY detection from the file descriptor rather than stream class."
+  (let ((process nil)
+        (terminal nil))
+    (unwind-protect
+         (progn
+           (setf process
+                 (sb-ext:run-program "/bin/sh"
+                                     '("-c" "sleep 10")
+                                     :pty t
+                                     :wait nil))
+           (let ((pty (sb-ext:process-pty process)))
+             (setf terminal
+                   (stream-terminal-create
+                    :input-stream (make-string-input-stream "")
+                    :output-stream pty
+                    :input-file-descriptor (sb-sys:fd-stream-fd pty)))
+             (test-assert
+              (not (interactive-stream-p
+                    (stream-terminal-input-stream terminal)))
+              "a wrapped input stream can be noninteractive while its descriptor is a TTY")
+             (terminal-start terminal)
+             (test-assert (terminal-interactive-p terminal)
+                          "a TTY descriptor selects interactive mode")
+             (terminal-stop terminal)
+             (terminal-start terminal)
+             (test-assert (terminal-interactive-p terminal)
+                          "restarting preserves descriptor-based interactive mode")
+             (terminal-stop terminal)))
+      (when (and terminal (terminal-started-p terminal))
+        (terminal-stop terminal))
+      (when process
+        (ignore-errors (sb-ext:process-kill process 15))
+        (ignore-errors (sb-ext:process-wait process)))))
+  nil)
+
 (-> run-terminal-tests () boolean)
 (defun run-terminal-tests ()
   "Run focused terminal seam tests and return true when every assertion succeeds."
@@ -2182,6 +2219,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-application-read-resize)
   (test-terminal-styling-primitives)
   (test-terminal-non-tty-fallback)
+  (test-terminal-descriptor-tty-detection)
   t)
 
 (-> test-terminal-status-worked-time () null)

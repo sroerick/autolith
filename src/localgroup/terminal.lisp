@@ -289,7 +289,7 @@
   terminal)
 
 (defmethod terminal-stop ((terminal localgroup-terminal))
-  "Stop every TERMINAL transport and close all attachments."
+  "Stop TERMINAL's transports and close attachments, retaining direct transport."
   (let ((direct nil)
         (attachments nil))
     (with-lock-held ((localgroup-terminal-lock terminal))
@@ -302,7 +302,6 @@
                        (list (localgroup-terminal-controller terminal)))
                      (localgroup-terminal-observers terminal))
              :test #'eq)
-            (localgroup-terminal-direct-terminal terminal) nil
             (localgroup-terminal-controller terminal) nil
             (localgroup-terminal-observers terminal) nil
             (localgroup-terminal-input-events terminal) nil

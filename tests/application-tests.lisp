@@ -4203,7 +4203,7 @@
                "command-line help omits the removed --resume option")
   (test-assert (search "--image" (main-usage))
                "command-line help documents initial local images")
-  (test-assert (search "--auth [chatgpt | grok | fireworks]" (main-usage))
+  (test-assert (search "--auth [PROVIDER]" (main-usage))
                "command-line help documents provider authentication choices")
   (test-assert (search "--permissions MODE" (main-usage))
                "command-line help documents initial permission mode")
@@ -4349,29 +4349,6 @@
                "plain --auth defers to the configured provider family")
   (test-assert (string= (main--auth-selection '("--auth" "grok")) "grok")
                "--auth accepts an explicit provider name")
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration)))
-    (unwind-protect
-         (progn
-           (test-assert (eq (main--auth-family configuration nil) ':codex)
-                        "the default model authenticates against ChatGPT")
-           (test-assert (eq (main--auth-family configuration "grok") ':grok)
-                        "--auth grok selects the Grok family")
-           (test-assert
-            (eq (main--auth-family
-                 (configuration-with-model configuration "grok-4.5")
-                 nil)
-                ':grok)
-            "a configured Grok model authenticates against Grok")
-           (test-assert
-            (handler-case
-                (progn
-                  (main--auth-family configuration "bogus")
-                  nil)
-              (configuration-error ()
-                t))
-            "unknown --auth providers are rejected"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   (test-assert
    (equal (main--image-values
            '("-i" "one.png,two.png" "--image=three.png"
@@ -5697,8 +5674,10 @@
                       (list
                        'configuration-create
                        (lambda (&key source-root working-directory model
-                                    reasoning-effort immutable-p)
-                         (declare (ignore source-root))
+                                    reasoning-effort immutable-p
+                                    defer-provider-validation-p)
+                         (declare (ignore source-root
+                                    defer-provider-validation-p))
                          (configuration--clone
                           configuration
                           :working-directory working-directory

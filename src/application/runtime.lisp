@@ -355,11 +355,26 @@
     (configuration conversation)
     configuration)
 (defun application--configuration-for-conversation (configuration conversation)
-  "Restore CONVERSATION's model selection over CONFIGURATION when present."
-  (configuration--clone
-   configuration
-   :model (conversation-model conversation)
-   :reasoning-effort (conversation-reasoning-effort conversation)))
+  "Restore CONVERSATION's model selection over CONFIGURATION when it remains valid.
+
+A recorded model that no effective provider registration serves falls back to
+CONFIGURATION's own model, so removing a provider cannot block reopening a
+conversation. Omitting an unsupported recorded effort leaves the selected
+model's effort choice to CONFIGURATION--CLONE."
+  (let* ((recorded-model (conversation-model conversation))
+         (model (if (and recorded-model
+                         (configuration--model-supported-p recorded-model))
+                    recorded-model
+                    (configuration-model configuration)))
+         (recorded-effort (conversation-reasoning-effort conversation)))
+    (if (and recorded-effort
+             (member recorded-effort
+                     (configuration--reasoning-efforts-for model)
+                     :test #'string=))
+        (configuration--clone configuration
+                              :model model
+                              :reasoning-effort recorded-effort)
+        (configuration--clone configuration :model model))))
 
 (-> application--task-orchestrator
     (application)
@@ -468,10 +483,11 @@
 
 (-> application--extension-registry-snapshot () list)
 (defun application--extension-registry-snapshot ()
-  "Return exact MCP, context, and command registration snapshots."
+  "Return exact MCP, context, command, and provider snapshots."
   (list :mcp (mcp--registry-snapshot)
         :context (context--registry-snapshot)
-        :command (application-command--registry-snapshot)))
+        :command (application-command--registry-snapshot)
+        :provider (provider--registry-snapshot)))
 
 (-> application--extension-registry-restore (list) null)
 (defun application--extension-registry-restore (snapshot)
@@ -479,6 +495,7 @@
   (mcp--registry-restore (getf snapshot :mcp))
   (context--registry-restore (getf snapshot :context))
   (application-command--registry-restore (getf snapshot :command))
+  (provider--registry-restore (getf snapshot :provider))
   nil)
 
 (-> application--load-extension-configuration (configuration) null)
@@ -553,17 +570,41 @@
    :cause cause
    :rollback-causes rollback-causes))
 
+(-> application--validate-provider-registration (model-provider configuration) null)
+(defun application--validate-provider-registration (provider configuration)
+  "Reject a reload that loses the provider serving the active model."
+  (let* ((previous-registration (model-provider-registration provider))
+         (selected-registration
+           (provider-registration-for-model (configuration-model configuration))))
+    (when (and previous-registration
+               (or (null selected-registration)
+                   (not (and
+                         (string= (provider-registration-name previous-registration)
+                                  (provider-registration-name selected-registration))
+                         (eq (provider-registration-source previous-registration)
+                             (provider-registration-source selected-registration))))))
+      (error 'configuration-error
+             :message
+             (format nil
+                     "Provider ~A no longer serves active model ~A after configuration reload."
+                     (provider-registration-name previous-registration)
+                     (configuration-model configuration)))))
+  nil)
+
 (-> application-reload-mcp (application) null)
 (defun application-reload-mcp (application)
-  "Reload native and user MCP registrations and install a fresh tool registry."
+  "Reload native extensions and user init registrations into a fresh runtime."
   (let* ((configuration (application-configuration application))
-         (mcp-registration-snapshot nil)
-         (context-registration-snapshot nil)
-         (command-registration-snapshot nil)
+         (extension-registry-snapshot nil)
+         (old-configuration configuration)
+         (old-provider
+           (and (slot-boundp application 'provider)
+                (application-provider application)))
          (old-registry (application-tool-registry application))
          (old-agent
            (and (slot-boundp application 'agent)
                 (application-agent application)))
+         (new-provider nil)
          (new-registry nil)
          (new-agent nil)
          (application-swapped-p nil)
@@ -575,21 +616,29 @@
          (rollback-failures nil)
          (committed-p nil))
     (with-extension-registry-transaction
-      (setf mcp-registration-snapshot (mcp--registry-snapshot)
-            context-registration-snapshot (context--registry-snapshot)
-            command-registration-snapshot
-            (application-command--registry-snapshot))
+      (setf extension-registry-snapshot
+            (application--extension-registry-snapshot))
       (unwind-protect
            (handler-case
                (progn
                  (mcp-configuration-load configuration)
                  (user-init-load configuration)
-                 (setf new-registry
+                 (setf configuration
+                       (provider-bootstrap-configuration configuration))
+                 (when old-provider
+                   (application--validate-provider-registration
+                    old-provider configuration))
+                 (setf new-provider
+                       (provider-create
+                        configuration
+                        :reasoning-summaries-p
+                        (application-reasoning-traces-p application))
+                       new-registry
                        (application--create-tool-registry configuration))
                  (setf new-agent
                        (agent-create
                         :configuration configuration
-                        :provider (application-provider application)
+                        :provider new-provider
                         :conversation (application-conversation application)
                         :tool-registry new-registry
                         :worker (application-worker application))
@@ -604,6 +653,8 @@
                      (error retirement-failure)))
                  (setf failure-stage ':install
                        application-swapped-p t
+                       (application-configuration application) configuration
+                       (application-provider application) new-provider
                        (application-tool-registry application) new-registry
                        (application-agent application) new-agent)
                  (application-connect-task-presentation application)
@@ -618,12 +669,12 @@
               (serious-condition (condition)
                 (push condition rollback-failures))))
           (when application-swapped-p
-            (setf (application-tool-registry application) old-registry
+            (setf (application-configuration application) old-configuration
+                  (application-provider application) old-provider
+                  (application-tool-registry application) old-registry
                   (application-agent application) old-agent))
-          (mcp--registry-restore mcp-registration-snapshot)
-          (context--registry-restore context-registration-snapshot)
-          (application-command--registry-restore
-           command-registration-snapshot)
+          (application--extension-registry-restore
+           extension-registry-snapshot)
           (when new-registry
             (handler-case
                 (tool-registry-close-runtime-state new-registry)
@@ -735,8 +786,7 @@ newly acquired lease."
 (defun application-create
     (configuration &key conversation-id (permission-mode ':ask))
   "Create a connected application, loading CONVERSATION-ID with PERMISSION-MODE."
-  (let ((preferred-configuration
-          (preferences-apply-model-selection configuration)))
+  (let ((preferred-configuration configuration))
     (context-runtime-reset)
     (configuration-ensure-directories preferred-configuration)
     (conversation-identifier-migrate preferred-configuration)
@@ -751,9 +801,7 @@ newly acquired lease."
            (recovery-rendered-sequence (second recovery-state))
            (recovery-history-floor-sequence (third recovery-state))
            (overlay-failures (image-state-load preferred-configuration))
-           (mcp-registration-snapshot nil)
-           (context-registration-snapshot nil)
-           (command-registration-snapshot nil)
+           (extension-registry-snapshot nil)
            (registry nil)
            (worker nil)
            (conversation nil)
@@ -763,15 +811,18 @@ newly acquired lease."
            (completed-p nil))
       (unwind-protect
            (with-extension-registry-transaction
-             (setf mcp-registration-snapshot (mcp--registry-snapshot)
-                   context-registration-snapshot
-                   (context--registry-snapshot)
-                   command-registration-snapshot
-                   (application-command--registry-snapshot))
+             (setf extension-registry-snapshot
+                   (application--extension-registry-snapshot))
              (unwind-protect
                   (progn
                     (mcp-configuration-load preferred-configuration)
                     (user-init-load preferred-configuration)
+                    (setf preferred-configuration
+                          (provider-bootstrap-configuration
+                           preferred-configuration))
+                    (setf preferred-configuration
+                          (preferences-apply-model-selection
+                           preferred-configuration))
                     (multiple-value-setq
                         (conversation
                          conversation-lease
@@ -873,10 +924,8 @@ newly acquired lease."
                         (setf completed-p t)
                         application)))
                (unless completed-p
-                 (mcp--registry-restore mcp-registration-snapshot)
-                 (context--registry-restore context-registration-snapshot)
-                 (application-command--registry-restore
-                  command-registration-snapshot))))
+                 (application--extension-registry-restore
+                  extension-registry-snapshot))))
         (unless completed-p
           (application--discard-connection-resources
            application registry worker)
@@ -922,9 +971,7 @@ newly acquired lease."
          (retained-conversation-lease
            (and (slot-boundp application 'conversation-lease)
                 (application-conversation-lease application)))
-         (mcp-registration-snapshot nil)
-         (context-registration-snapshot nil)
-         (command-registration-snapshot nil)
+         (extension-registry-snapshot nil)
          (registry nil)
          (worker nil)
          (selected-conversation-lease nil)
@@ -940,11 +987,8 @@ newly acquired lease."
     (handler-case
         (unwind-protect
              (with-extension-registry-transaction
-           (setf mcp-registration-snapshot (mcp--registry-snapshot)
-                 context-registration-snapshot
-                 (context--registry-snapshot)
-                 command-registration-snapshot
-                 (application-command--registry-snapshot))
+           (setf extension-registry-snapshot
+                 (application--extension-registry-snapshot))
            (unwind-protect
                 (let* ((retained-configuration
                   (configuration-create
@@ -952,13 +996,17 @@ newly acquired lease."
                    :model (configuration-model previous)
                    :reasoning-effort
                    (configuration-reasoning-effort previous)
-                   :immutable-p effective-immutable-p))
+                   :immutable-p effective-immutable-p
+                   :defer-provider-validation-p t))
                 (prepared-configuration
                   (progn
                     (configuration-ensure-directories retained-configuration)
                     (conversation-identifier-migrate retained-configuration)
                     (mcp-configuration-load retained-configuration)
                     (user-init-load retained-configuration)
+                    (setf retained-configuration
+                          (provider-bootstrap-configuration
+                           retained-configuration))
                     retained-configuration))
                 (reasoning-traces-p
                   (preferences-reasoning-traces-p prepared-configuration))
@@ -1004,9 +1052,15 @@ newly acquired lease."
                   (update-availability-current
                    configuration installation-provenance))
                 (provider
-                  (provider-create
-                   configuration
-                   :reasoning-summaries-p reasoning-traces-p))
+                  (progn
+                    (when (and (slot-boundp application 'provider)
+                               (application-provider application))
+                      (application--validate-provider-registration
+                       (application-provider application)
+                       configuration))
+                    (provider-create
+                     configuration
+                     :reasoning-summaries-p reasoning-traces-p)))
                 (recovery-rendered-sequence (second recovery-state))
                 (recovery-history-floor-sequence (third recovery-state))
                 (recovering-conversation-p
@@ -1092,10 +1146,8 @@ newly acquired lease."
                   (application-worker application))))
              new-application))
              (unless completed-p
-               (mcp--registry-restore mcp-registration-snapshot)
-               (context--registry-restore context-registration-snapshot)
-               (application-command--registry-restore
-                command-registration-snapshot))))
+               (application--extension-registry-restore
+                extension-registry-snapshot))))
           (unless completed-p
             (setf rollback-failures
                   (application--discard-connection-resources
@@ -1292,6 +1344,10 @@ newly acquired lease."
                        *default-pathname-defaults* directory)
                  (setf failure-stage ':tools)
                  (application--load-extension-configuration configuration)
+                 (setf configuration
+                       (provider-bootstrap-configuration configuration))
+                 (application--validate-provider-registration
+                  previous-provider configuration)
                  (multiple-value-setq (provider registry agent)
                    (application--prepare-runtime-replacement
                     application configuration previous-conversation))

@@ -48,6 +48,30 @@
            (list :mode mode :rows 31 :columns 91 :styled-p nil)))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> test-localgroup-terminal-restart () null)
+(defun test-localgroup-terminal-restart ()
+  "Test that stopping a relay retains its direct terminal for restart."
+  (let* ((direct
+           (stream-terminal-create
+            :input-stream (make-string-input-stream "")
+            :output-stream (make-string-output-stream)
+            :input-file-descriptor -1))
+         (relay (localgroup-terminal-create direct)))
+    (terminal-start relay)
+    (test-assert (terminal-started-p direct)
+                 "a direct relay starts its direct terminal")
+    (terminal-stop relay)
+    (test-assert
+     (eq (localgroup-terminal-direct-terminal relay) direct)
+     "stopping a relay retains its direct transport")
+    (test-assert (not (terminal-started-p direct))
+                 "stopping a relay stops its direct terminal")
+    (terminal-start relay)
+    (test-assert (terminal-started-p direct)
+                 "a stopped direct relay restarts its direct terminal")
+    (terminal-stop relay))
+  nil)
+
 (-> test-localgroup-protocol () null)
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
