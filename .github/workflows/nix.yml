@@ -105,9 +105,9 @@ jobs:
             fail_smoke "Autolith first run exited with status $status" "$diagnostic"
           fi
 
-          system_path=$(nix eval --raw '.#autolith.autolithSystem.outPath')
-          image_directory="$XDG_DATA_HOME/autolith/nix/images/$(basename "$system_path")"
-          if [ "$(cat "$image_directory/identity")" != "$system_path" ]; then
+          image_identity=$(nix eval --raw '.#autolith.imageIdentity.outPath')
+          image_directory="$XDG_DATA_HOME/autolith/nix/images/$(basename "$image_identity")"
+          if [ "$(cat "$image_directory/identity")" != "$image_identity" ]; then
             fail_smoke "Autolith first run selected the wrong Nix image identity" \
               "$image_directory"
           fi

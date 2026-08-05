@@ -1,4 +1,4 @@
-{ pkgs, src, imageIdentitySuffix ? "" }:
+{ pkgs, src }:
 
 let
   lib = pkgs.lib;
@@ -287,7 +287,6 @@ let
 
   imageIdentity = pkgs.writeText "autolith-image-identity" ''
     ${autolithSystem}
-    ${imageIdentitySuffix}
   '';
 
   runtime = pkgs.sbcl.withPackages (_: [ autolithSystem ]);

@@ -25,10 +25,15 @@
             inherit pkgs;
             src = inputs.self;
           };
+          upgradeSource = pkgs.runCommand "autolith-upgrade-regression-source" {} ''
+            cp -R ${inputs.self}/. "$out"
+            chmod -R u+w "$out"
+            printf '%s\n' ';; Nix package upgrade regression source.' >> \
+              "$out/src/core/time.lisp"
+          '';
           upgradeAutolith = import ./nix/package.nix {
             inherit pkgs;
-            src = inputs.self;
-            imageIdentitySuffix = "upgrade-regression";
+            src = upgradeSource;
           };
           imageIdentity = builtins.baseNameOf (toString autolith.imageIdentity);
           upgradeImageIdentity =
