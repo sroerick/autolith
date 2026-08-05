@@ -81,6 +81,7 @@
                  "JSON object access preserves values")
     (test-assert (vectorp (json-decode "[1,2,3]"))
                  "JSON arrays have one consistent vector representation")
+    (test-bounded-character-reads)
     (let* ((value (json-object "text" "příliš žluťoučký"))
            (encoded (json-encode value))
            (octets (json-encode-utf8 value)))

@@ -33,6 +33,7 @@
                              (:file "core/json")
                              (:file "core/time")
                              (:file "core/source-files")
+                             (:file "core/streams")
                              (:file "configuration/settings")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")
@@ -133,6 +134,7 @@
   :components ((:module "tests"
                 :serial t
                 :components ((:file "test-support")
+                             (:file "stream-tests")
                              (:file "memory-tests")
                              (:file "update-tests")
                              (:file "agenda-tests")
