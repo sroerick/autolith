@@ -927,6 +927,82 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-simple-technical-english-command () null)
+(defun test-simple-technical-english-command ()
+  "Test persistent opt-in Simple Technical English response guidance."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (application-tests--ui-application :columns 72))
+         (ui (application-ui application))
+         (terminal (terminal-ui-terminal ui)))
+    (setf (application-configuration application) configuration)
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (test-assert
+            (not (preferences-simple-technical-english-p configuration))
+            "Simple Technical English defaults to disabled")
+           (test-assert
+            (not (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
+                         (system-prompt configuration)))
+            "ordinary prompts omit Simple Technical English guidance")
+           (application-simple-technical-english-command application nil)
+           (test-assert
+            (search "disabled" (recording-terminal-output terminal))
+            "/ste reports its disabled default")
+           (recording-terminal-reset terminal)
+           (test-assert
+            (eq (application-command application "/ste on") ':continue)
+            "/ste on remains a nonmodal command")
+           (test-assert
+            (preferences-simple-technical-english-p configuration)
+            "/ste on persists its enabled state")
+           (let ((prompt (system-prompt configuration)))
+             (test-assert
+              (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE" prompt)
+              "enabled prompts include Simple Technical English guidance")
+             (test-assert
+              (search "Preserve exact code, commands, identifiers" prompt)
+              "Simple Technical English preserves exact technical content"))
+           (test-assert
+            (search "Future replies will use it"
+                    (recording-terminal-output terminal))
+            "/ste on confirms when the new response style takes effect")
+           (test-assert (search "/ste" (application-help))
+                        "the command reference includes /ste")
+           (recording-terminal-reset terminal)
+           (application-simple-technical-english-command application nil)
+           (test-assert
+            (search "enabled" (recording-terminal-output terminal))
+            "/ste reports its enabled state")
+           (recording-terminal-reset terminal)
+           (test-assert
+            (eq (application-command application "/ste off") ':continue)
+            "/ste off remains a nonmodal command")
+           (test-assert
+            (not (preferences-simple-technical-english-p configuration))
+            "/ste off persists its disabled state")
+           (test-assert
+            (not (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
+                         (system-prompt configuration)))
+            "disabled prompts omit Simple Technical English guidance again")
+           (test-assert
+            (search "disabled and saved"
+                    (recording-terminal-output terminal))
+            "/ste off confirms persistence")
+           (test-assert
+            (handler-case
+                (progn
+                  (application-simple-technical-english-command
+                   application "sometimes")
+                  nil)
+              (configuration-error ()
+                t))
+            "unsupported response styles signal a typed usage error"))
+      (terminal-ui-stop ui)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-command-permission-modes () null)
 (defun test-command-permission-modes ()
   "Test session permission commands and fail-closed command authorization."
@@ -6577,6 +6653,7 @@
   (test-reasoning-trace-command)
   (test-compact-view-command)
   (test-turn-timestamps-command)
+  (test-simple-technical-english-command)
   (test-hurry-up-mode)
   (test-command-permission-modes)
   (test-interrupt-resume-instruction)

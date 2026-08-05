@@ -516,6 +516,36 @@
               :message "Usage: /timestamps on or /timestamps off."))))
   nil)
 
+(-> application-simple-technical-english-command
+    (application (option string))
+    null)
+(defun application-simple-technical-english-command (application argument)
+  "Show or change APPLICATION's Simple Technical English response style."
+  (let* ((configuration (application-configuration application))
+         (mode (and argument (string-downcase argument))))
+    (cond
+      ((null mode)
+       (application-present
+        application
+        (format nil
+                "Simple Technical English is ~:[disabled~;enabled~]. This ~
+                 setting persists across restarts."
+                (preferences-simple-technical-english-p configuration))))
+      ((string= mode "on")
+       (preferences-set-simple-technical-english configuration t)
+       (application-present
+        application
+        "Simple Technical English is enabled and saved. Future replies will use it."))
+      ((string= mode "off")
+       (preferences-set-simple-technical-english configuration nil)
+       (application-present
+        application
+        "Simple Technical English is disabled and saved."))
+      (t
+       (error 'configuration-error
+              :message "Usage: /ste on or /ste off."))))
+  nil)
+
 (-> application-compact-view-command (application string) null)
 (defun application-compact-view-command (application argument)
   "Persist and apply APPLICATION's compact tool presentation mode."
@@ -1439,6 +1469,19 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
      :terminal-behavior :shared)
     (application invocation)
   (application-turn-timestamps-command
+   application
+   (application-command-invocation-argument invocation))
+  ':continue)
+
+(define-application-command application--builtin-simple-technical-english-command
+    (:name "/ste"
+     :argument "on|off"
+     :description "use Simple Technical English for replies"
+     :tip "toggles short, direct Simple Technical English replies."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (application-simple-technical-english-command
    application
    (application-command-invocation-argument invocation))
   ':continue)
