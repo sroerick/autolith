@@ -1360,6 +1360,23 @@ both its function binding and exact registry layer, and private replay
 reconstructs both. User initialization uses the same registration protocol and
 remains the final command layer.
 
+=/ste on= enables a global, opt-in Simple Technical English response style, and
+=/ste off= restores the ordinary style. The default is off. =/ste= without an
+argument reports the current state. The choice is stored in the private global
+preferences file and is read while each provider system prompt is built, so a
+change applies to the next provider request without replacing the provider or
+rewriting conversation history.
+
+When enabled, the prompt requires common, concrete words, consistent terms,
+short direct sentences, active voice, one action or main idea per sentence, and
+imperative wording for instructions. It avoids idioms, slang, metaphors, vague
+words, unnecessary jargon, and long noun groups, and defines unavoidable
+technical terms. Exact code, commands, identifiers, paths, quotations,
+diagnostics, tool arguments, structured output, and necessary technical detail
+remain unchanged. These rules are practical style guidance and do not claim
+formal ASD-STE100 conformance. For a user-requested language other than English,
+Autolith applies the same clarity rules where practical.
+
 Decorative animations, excessive transitions, and visual spectacle are
 out of scope.
 

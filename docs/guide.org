@@ -320,6 +320,7 @@ prefix from before selection. The commands are:
 /effort         pick the reasoning effort
 /trace on|off   show visible reasoning summaries
 /timestamps on|off show local timestamps beside user and assistant turns
+/ste on|off     use Simple Technical English for replies
 /hurry-up on|off prioritize direct execution and admit at most two child agents
 /permissions    choose command access for this session
 /later INPUT    run input after rate limits reset
@@ -392,6 +393,17 @@ reasoning payloads; these are model-provided summaries, not hidden chain-of-thou
 assistant transcript header. =/timestamps off=, the default, hides those labels.
 This global presentation preference is saved beside =/trace= and =/compact=; it
 does not alter durable history or provider context.
+
+=/ste on= enables an opt-in Simple Technical English response style. Autolith
+uses common, concrete words, short direct sentences, active voice, consistent
+terms, and imperative instructions. It avoids idioms, slang, metaphors, vague
+words, unnecessary jargon, and long noun groups. Exact code, commands,
+identifiers, paths, quotations, diagnostics, tool arguments, structured output,
+and necessary technical detail remain unchanged. The style is practical
+guidance, not a claim of formal ASD-STE100 conformance. =/ste off= restores the
+ordinary style, and =/ste= reports the current state. The global choice is saved
+in =preferences.sexp= and affects future provider requests without rewriting
+conversation history.
 
 =/hurry-up on= activates a session-only urgent execution profile. It directs
 Autolith down the critical path, suppresses optional audits and reviewer swarms,

@@ -38,6 +38,7 @@ privileges, and the user can grant commands full access for a session.
 - Input remains editable while model responses and tools are running.
 - Local PNG, JPEG, GIF, and WebP input with numbered composer labels.
 - Persistent, opt-in provider-visible reasoning summaries with =/trace on=.
+- Opt-in Simple Technical English replies with =/ste on=.
 - Append-only portable conversation files with exact resume commands.
 - Optional root =AUTOLITH.org= notes for documented project adaptations.
 - Native Skills with explicit, request-local instruction loading.
