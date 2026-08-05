@@ -18,7 +18,7 @@ jobs:
   package:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +43,15 @@ jobs:
       - name: Check flake
         run: nix flake check --no-update-lock-file --print-build-logs
 
+      - name: Rebuild deterministic image validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          validation_drv=$(nix eval --raw \
+            '.#autolith.imageValidation.drvPath')
+          nix build "$validation_drv^*" --rebuild --no-link \
+            --no-update-lock-file --print-build-logs
+
       - name: Build package
         run: nix build .#autolith --no-update-lock-file --print-build-logs
 
@@ -55,6 +64,8 @@ jobs:
           export XDG_CONFIG_HOME="$temporary_home/config"
           export XDG_DATA_HOME="$temporary_home/data"
           export XDG_STATE_HOME="$temporary_home/state"
+          mkdir -p "$XDG_STATE_HOME/autolith"
+          printf '%s\n' preserved > "$XDG_STATE_HOME/autolith/private-state"
 
           status=0
           ./result/bin/autolith </dev/null \
@@ -93,21 +104,51 @@ jobs:
               tail -c 8000 "$temporary_home/stdout")
             fail_smoke "Autolith first run exited with status $status" "$diagnostic"
           fi
-          for artifact in \
-            "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" \
-            "$XDG_DATA_HOME/autolith/nix/active/manifest.sexp"; do
-            if [ ! -f "$artifact" ]; then
-              fail_smoke "Autolith first run omitted the writable Nix image layer" "$artifact"
-            fi
-          done
-          if [ -L "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" ] || \
-             [ ! -w "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" ]; then
-            fail_smoke "Autolith Nix image layer is not writable" \
-              "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
+
+          system_path=$(nix eval --raw '.#autolith.autolithSystem.outPath')
+          image_directory="$XDG_DATA_HOME/autolith/nix/images/$(basename "$system_path")"
+          if [ "$(cat "$image_directory/identity")" != "$system_path" ]; then
+            fail_smoke "Autolith first run selected the wrong Nix image identity" \
+              "$image_directory"
           fi
-          for marker in \
-            "AUTOLITH v"; do
-            if ! grep -F "$marker" "$temporary_home/stdout" >/dev/null; then
-              fail_smoke "Autolith first run omitted an output marker" "$marker"
+          for artifact in \
+            active/autolith-active.core active/manifest.sexp \
+            recovery/autolith-recovery.core recovery/manifest.sexp; do
+            if [ ! -f "$image_directory/$artifact" ] || \
+               [ -L "$image_directory/$artifact" ]; then
+              fail_smoke "Autolith first run omitted a local Nix image artifact" \
+                "$image_directory/$artifact"
             fi
           done
+          if [ ! -w "$image_directory/active/autolith-active.core" ]; then
+            fail_smoke "Autolith Nix active image is not writable" \
+              "$image_directory/active/autolith-active.core"
+          fi
+          if [ "$(cat "$XDG_STATE_HOME/autolith/private-state")" != preserved ]; then
+            fail_smoke "Autolith Nix image setup changed private state" \
+              "$XDG_STATE_HOME/autolith/private-state"
+          fi
+
+          active_hash=$(nix hash file \
+            "$image_directory/active/autolith-active.core")
+          recovery_hash=$(nix hash file \
+            "$image_directory/recovery/autolith-recovery.core")
+          ./result/bin/autolith --version > "$temporary_home/second-output"
+          if [ "$active_hash" != "$(nix hash file \
+               "$image_directory/active/autolith-active.core")" ] || \
+             [ "$recovery_hash" != "$(nix hash file \
+               "$image_directory/recovery/autolith-recovery.core")" ]; then
+            fail_smoke "Autolith rebuilt a valid Nix image cache" \
+              "$image_directory"
+          fi
+          if grep -F 'Installed preloaded active image' \
+               "$temporary_home/second-output" >/dev/null || \
+             grep -F 'Installed pristine recovery image' \
+               "$temporary_home/second-output" >/dev/null; then
+            fail_smoke "Autolith rebuilt Nix images on its second launch" \
+              "$(cat "$temporary_home/second-output")"
+          fi
+          if ! grep -F 'AUTOLITH v' "$temporary_home/stdout" >/dev/null; then
+            fail_smoke "Autolith first run omitted its startup marker" \
+              "AUTOLITH v"
+          fi

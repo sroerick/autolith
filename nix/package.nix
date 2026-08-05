@@ -1,4 +1,4 @@
-{ pkgs, src }:
+{ pkgs, src, imageIdentitySuffix ? "" }:
 
 let
   lib = pkgs.lib;
@@ -285,6 +285,11 @@ let
     '';
   };
 
+  imageIdentity = pkgs.writeText "autolith-image-identity" ''
+    ${autolithSystem}
+    ${imageIdentitySuffix}
+  '';
+
   runtime = pkgs.sbcl.withPackages (_: [ autolithSystem ]);
 
   sbclSource = pkgs.runCommand "autolith-sbcl-${expectedSbclVersion}-source" {
@@ -302,33 +307,23 @@ let
     test -f "$out/src/code/list.lisp"
   '';
 
-  recoveryImage = pkgs.runCommand "autolith-recovery-${expectedSbclVersion}" {
-    nativeBuildInputs = [ pkgs.git ];
-  } ''
-    export HOME="$TMPDIR/home"
-    export XDG_DATA_HOME="$TMPDIR/data"
-    export AUTOLITH_SBCL="${runtime}/bin/sbcl"
-    export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
-    export AUTOLITH_ASDF_CACHE="$TMPDIR/asdf-cache"
-    export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
-    export AUTOLITH_INSTALLATION_KIND=nix
-    export GIT_CONFIG_COUNT=1
-    export GIT_CONFIG_KEY_0=safe.directory
-    export GIT_CONFIG_VALUE_0="${autolithSystem}"
-    export GIT_OPTIONAL_LOCKS=0
-
-    mkdir -p "$HOME" "$AUTOLITH_ASDF_CACHE" "$out/recovery"
-    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-recovery.lisp" \
-      "$out/recovery/autolith-recovery.core"
-    test -f "$out/recovery/autolith-recovery.core"
-    test -f "$out/recovery/manifest.sexp"
+  # Sandboxing uses Bubblewrap and the private helper on Linux; other
+  # platforms fall back to the portable unsandboxed path in cl-exec-sandbox.
+  sandboxEnvironment = lib.optionalString pkgs.stdenv.isLinux ''
+    export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
+    export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
   '';
 
-  activeImage = pkgs.runCommand "autolith-active-${expectedSbclVersion}" {
+  # SBCL saved cores are intentionally transient here. Their bytes are not
+  # reproducible, so the derivation publishes only a deterministic proof that
+  # the complete Nix closure can build and probe both required images.
+  imageValidation = pkgs.runCommand "autolith-image-validation-${expectedSbclVersion}" {
     nativeBuildInputs = [ pkgs.git ];
   } ''
     export HOME="$TMPDIR/home"
+    export XDG_CONFIG_HOME="$TMPDIR/config"
     export XDG_DATA_HOME="$TMPDIR/data"
+    export XDG_STATE_HOME="$TMPDIR/state"
     export AUTOLITH_SBCL="${runtime}/bin/sbcl"
     export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
     export AUTOLITH_ASDF_CACHE="$TMPDIR/asdf-cache"
@@ -342,18 +337,142 @@ let
     export GIT_CONFIG_VALUE_0="${autolithSystem}"
     export GIT_OPTIONAL_LOCKS=0
 
-    mkdir -p "$HOME" "$AUTOLITH_ASDF_CACHE" "$out/active"
+    image_root="$TMPDIR/images"
+    mkdir -p "$HOME" "$AUTOLITH_ASDF_CACHE" \
+      "$image_root/active" "$image_root/recovery"
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-recovery.lisp" \
+      "$image_root/recovery/autolith-recovery.core"
     "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-active.lisp" \
-      "$out/active/autolith-active.core"
-    test -f "$out/active/autolith-active.core"
-    test -f "$out/active/manifest.sexp"
+      "$image_root/active/autolith-active.core"
+    test -f "$image_root/recovery/autolith-recovery.core"
+    test -f "$image_root/recovery/manifest.sexp"
+    test -f "$image_root/active/autolith-active.core"
+    test -f "$image_root/active/manifest.sexp"
+
+    mkdir -p "$out"
+    printf '%s\n' validated > "$out/image-validation"
   '';
 
-  # Sandboxing uses Bubblewrap and the private helper on Linux; other
-  # platforms fall back to the portable unsandboxed path in cl-exec-sandbox.
-  sandboxEnvironment = lib.optionalString pkgs.stdenv.isLinux ''
-    export CL_EXEC_SANDBOX_BWRAP="${pkgs.bubblewrap}/bin/bwrap"
-    export CL_EXEC_SANDBOX_HELPER="${sandboxHelper}/libexec/cl-exec-sandbox-helper"
+  imageLockRunner = pkgs.writeText "autolith-image-lock.pl" ''
+    use strict;
+    use warnings;
+    use Fcntl qw(LOCK_EX);
+
+    my $lock_path = shift @ARGV;
+    open my $lock, '>>', $lock_path or die "$lock_path: $!\n";
+    flock($lock, LOCK_EX) or die "$lock_path: $!\n";
+    my $status = system @ARGV;
+    die "Could not start image materializer: $!\n" if $status == -1;
+    exit(128 + ($status & 127)) if $status & 127;
+    exit($status >> 8);
+  '';
+
+  imageMaterializer = pkgs.writeShellScript "autolith-materialize-nix-images" ''
+    set -eu
+
+    image_root=$1
+    final=$2
+    expected_identity='${imageIdentity}'
+    stage=
+    work=
+    previous=
+
+    image_set_valid()
+    {
+      directory=$1
+      [ -d "$directory" ] &&
+        [ ! -L "$directory" ] &&
+        [ -f "$directory/identity" ] &&
+        [ ! -L "$directory/identity" ] &&
+        [ "$(cat "$directory/identity")" = "$expected_identity" ] &&
+        [ -d "$directory/active" ] &&
+        [ ! -L "$directory/active" ] &&
+        [ -d "$directory/recovery" ] &&
+        [ ! -L "$directory/recovery" ] &&
+        [ -f "$directory/active/autolith-active.core" ] &&
+        [ ! -L "$directory/active/autolith-active.core" ] &&
+        [ -f "$directory/active/manifest.sexp" ] &&
+        [ ! -L "$directory/active/manifest.sexp" ] &&
+        [ -f "$directory/recovery/autolith-recovery.core" ] &&
+        [ ! -L "$directory/recovery/autolith-recovery.core" ] &&
+        [ -f "$directory/recovery/manifest.sexp" ] &&
+        [ ! -L "$directory/recovery/manifest.sexp" ] &&
+        [ -r "$directory/identity" ] &&
+        [ -r "$directory/active/autolith-active.core" ] &&
+        [ -r "$directory/active/manifest.sexp" ] &&
+        [ -r "$directory/recovery/autolith-recovery.core" ] &&
+        [ -r "$directory/recovery/manifest.sexp" ]
+    }
+
+    image_set_usable()
+    {
+      directory=$1
+      image_set_valid "$directory" &&
+        ${pkgs.gnugrep}/bin/grep -Eq \
+          '^\(:ACTIVE-IMAGE :VERSION 1([[:space:]]|$)' \
+          "$directory/active/manifest.sexp" &&
+        ${pkgs.gnugrep}/bin/grep -Eq \
+          '^\(:RECOVERY-IMAGE :VERSION 2([[:space:]]|$)' \
+          "$directory/recovery/manifest.sexp" &&
+        "$AUTOLITH_SBCL" --noinform \
+          --core "$directory/recovery/autolith-recovery.core" \
+          --end-runtime-options "${autolithSystem}/" --probe \
+          >/dev/null 2>&1 &&
+        "$AUTOLITH_SBCL" --noinform \
+          --core "$directory/active/autolith-active.core" \
+          --end-runtime-options "${autolithSystem}/" \
+          --autolith-internal-active-image-probe >/dev/null 2>&1
+    }
+
+    cleanup()
+    {
+      if [ -n "$stage" ] && [ -d "$stage" ]; then
+        rm -rf "$stage"
+      fi
+      if [ -n "$work" ] && [ -d "$work" ]; then
+        rm -rf "$work"
+      fi
+      if [ -n "$previous" ] && \
+         { [ -e "$previous" ] || [ -L "$previous" ]; }; then
+        rm -rf "$previous"
+      fi
+    }
+    trap cleanup EXIT
+    trap 'exit 1' HUP INT TERM
+
+    if image_set_usable "$final"; then
+      exit 0
+    fi
+
+    stage=$(mktemp -d "$image_root/.stage.XXXXXXXX")
+    work=$(mktemp -d "$image_root/.work.XXXXXXXX")
+    mkdir -p "$stage/active" "$stage/recovery" \
+      "$work/home" "$work/config" "$work/data" "$work/state"
+    export HOME="$work/home"
+    export XDG_CONFIG_HOME="$work/config"
+    export XDG_DATA_HOME="$work/data"
+    export XDG_STATE_HOME="$work/state"
+
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-recovery.lisp" \
+      "$stage/recovery/autolith-recovery.core"
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-active.lisp" \
+      "$stage/active/autolith-active.core"
+    printf '%s\n' "$expected_identity" > "$stage/identity"
+    image_set_valid "$stage"
+    chmod u+w "$stage/active/autolith-active.core" \
+      "$stage/active/manifest.sexp"
+
+    if [ -e "$final" ] || [ -L "$final" ]; then
+      previous=$(mktemp -d "$image_root/.invalid.XXXXXXXX")
+      rmdir "$previous"
+      mv "$final" "$previous"
+    fi
+    mv "$stage" "$final"
+    stage=
+    if [ -n "$previous" ]; then
+      rm -rf "$previous"
+      previous=
+    fi
   '';
 
 in
@@ -367,6 +486,7 @@ pkgs.writeShellApplication {
     pkgs.coreutils
     pkgs.git
     pkgs.gnugrep
+    pkgs.perl
     runtime
   ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
   text = ''
@@ -386,39 +506,28 @@ pkgs.writeShellApplication {
     export GIT_OPTIONAL_LOCKS=0
 
     # Keep Nix-managed image and ASDF state separate from source installs while
-    # retaining the user's conversations and other application data.
+    # retaining the user's conversations and private mutation history.
     nix_root="$data_home/autolith/nix"
-    asdf_cache="$nix_root/asdf-cache/${builtins.baseNameOf (toString autolithSystem)}"
-    active_root="$nix_root/active"
-    active_core="$active_root/autolith-active.core"
-    active_manifest="$active_root/manifest.sexp"
-    mkdir -p "$asdf_cache" "$active_root"
+    identity_name="${builtins.baseNameOf (toString imageIdentity)}"
+    image_root="$nix_root/images"
+    image_directory="$image_root/$identity_name"
+    asdf_cache="$nix_root/asdf-cache/$identity_name"
+    mkdir -p "$image_root" "$asdf_cache"
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
     export AUTOLITH_INSTALLATION_KIND=nix
 
-    # Nix store images are immutable. Materialize the packaged active image in
-    # a user-owned upper layer once, so a later image save or replacement never
-    # attempts to write into /nix/store. Keep the existing layer across package
-    # upgrades; private replay commits remain the source of durable mutations.
-    if [ ! -f "$active_core" ] || [ -L "$active_core" ]; then
-      temporary_core="$active_root/.autolith-active.core.$$"
-      cp "${activeImage}/active/autolith-active.core" "$temporary_core"
-      chmod u+w "$temporary_core"
-      mv -f "$temporary_core" "$active_core"
-    fi
-    if [ ! -f "$active_manifest" ] || [ -L "$active_manifest" ]; then
-      temporary_manifest="$active_root/.manifest.sexp.$$"
-      cp "${activeImage}/active/manifest.sexp" "$temporary_manifest"
-      chmod u+w "$temporary_manifest"
-      mv -f "$temporary_manifest" "$active_manifest"
-    fi
-    # An older writable copy may have retained the store's read-only mode.
-    chmod u+w "$active_core" "$active_manifest"
+    # Nix validates image construction at package-build time, but SBCL cores
+    # are machine-local mutable state rather than reproducible store outputs.
+    # Serialize first-use construction and publish each package identity as one
+    # complete directory so upgrades never expose or reuse a partial image pair.
+    test -f "${imageValidation}/image-validation"
+    ${pkgs.perl}/bin/perl "${imageLockRunner}" \
+      "$image_root/.materialize.lock" \
+      "${imageMaterializer}" "$image_root" "$image_directory"
 
-    recovery_core="${recoveryImage}/recovery/autolith-recovery.core"
-    export AUTOLITH_RECOVERY_CORE="$recovery_core"
-    export AUTOLITH_ACTIVE_CORE="$active_core"
+    export AUTOLITH_ACTIVE_CORE="$image_directory/active/autolith-active.core"
+    export AUTOLITH_RECOVERY_CORE="$image_directory/recovery/autolith-recovery.core"
 
     exec ${pkgs.bash}/bin/bash "${autolithSystem}/bin/autolith" "$@"
   '';
@@ -432,8 +541,8 @@ pkgs.writeShellApplication {
   };
 
   passthru = {
-    inherit activeImage autolithSystem clColorist clExecSandbox clifff clinedi
-      colorlisp colorlispNativeLibrary fffLibrary recoveryImage runtime
-      sandboxHelper sbclSource mcparen sbclWorkers sexpStore;
+    inherit autolithSystem clColorist clExecSandbox clifff clinedi colorlisp
+      colorlispNativeLibrary fffLibrary imageIdentity imageValidation runtime sandboxHelper
+      sbclSource mcparen sbclWorkers sexpStore;
   };
 }
