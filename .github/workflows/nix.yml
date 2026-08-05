@@ -94,17 +94,18 @@ jobs:
             fail_smoke "Autolith first run exited with status $status" "$diagnostic"
           fi
           for artifact in \
-            "$XDG_DATA_HOME/autolith/recovery/autolith-recovery.core" \
-            "$XDG_DATA_HOME/autolith/recovery/manifest.sexp" \
-            "$XDG_DATA_HOME/autolith/active/autolith-active.core" \
-            "$XDG_DATA_HOME/autolith/active/manifest.sexp"; do
+            "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" \
+            "$XDG_DATA_HOME/autolith/nix/active/manifest.sexp"; do
             if [ ! -f "$artifact" ]; then
-              fail_smoke "Autolith first run omitted an image artifact" "$artifact"
+              fail_smoke "Autolith first run omitted the writable Nix image layer" "$artifact"
             fi
           done
+          if [ -L "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" ] || \
+             [ ! -w "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core" ]; then
+            fail_smoke "Autolith Nix image layer is not writable" \
+              "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
+          fi
           for marker in \
-            "Installed pristine recovery image" \
-            "Installed preloaded active image" \
             "AUTOLITH v"; do
             if ! grep -F "$marker" "$temporary_home/stdout" >/dev/null; then
               fail_smoke "Autolith first run omitted an output marker" "$marker"

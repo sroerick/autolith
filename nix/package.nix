@@ -389,13 +389,34 @@ pkgs.writeShellApplication {
     # retaining the user's conversations and other application data.
     nix_root="$data_home/autolith/nix"
     asdf_cache="$nix_root/asdf-cache/${builtins.baseNameOf (toString autolithSystem)}"
-    mkdir -p "$asdf_cache"
+    active_root="$nix_root/active"
+    active_core="$active_root/autolith-active.core"
+    active_manifest="$active_root/manifest.sexp"
+    mkdir -p "$asdf_cache" "$active_root"
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
     export AUTOLITH_INSTALLATION_KIND=nix
 
+    # Nix store images are immutable. Materialize the packaged active image in
+    # a user-owned upper layer once, so a later image save or replacement never
+    # attempts to write into /nix/store. Keep the existing layer across package
+    # upgrades; private replay commits remain the source of durable mutations.
+    if [ ! -f "$active_core" ] || [ -L "$active_core" ]; then
+      temporary_core="$active_root/.autolith-active.core.$$"
+      cp "${activeImage}/active/autolith-active.core" "$temporary_core"
+      chmod u+w "$temporary_core"
+      mv -f "$temporary_core" "$active_core"
+    fi
+    if [ ! -f "$active_manifest" ] || [ -L "$active_manifest" ]; then
+      temporary_manifest="$active_root/.manifest.sexp.$$"
+      cp "${activeImage}/active/manifest.sexp" "$temporary_manifest"
+      chmod u+w "$temporary_manifest"
+      mv -f "$temporary_manifest" "$active_manifest"
+    fi
+    # An older writable copy may have retained the store's read-only mode.
+    chmod u+w "$active_core" "$active_manifest"
+
     recovery_core="${recoveryImage}/recovery/autolith-recovery.core"
-    active_core="${activeImage}/active/autolith-active.core"
     export AUTOLITH_RECOVERY_CORE="$recovery_core"
     export AUTOLITH_ACTIVE_CORE="$active_core"
 

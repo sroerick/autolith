@@ -42,8 +42,11 @@ runtime and native dependencies without borrowing them from the host.
 nix run github:luciusmagn/autolith
 #+END_SRC
 
-The first launch creates private recovery and active images without network
-access.
+The pristine recovery and base active images are carried in the Nix store.
+The first launch materializes a writable active-image layer beneath
+=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/active/= without writing to the
+store. Private image commits and their replay scripts remain in the normal
+Autolith data and state roots, so live changes survive package restarts.
 
 ** Binary release
 

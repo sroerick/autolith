@@ -59,7 +59,10 @@
             test -f "${autolith.activeImage}/active/autolith-active.core"
             test -f "${autolith.activeImage}/active/manifest.sexp"
             test ! -e "$XDG_DATA_HOME/autolith/recovery/autolith-recovery.core"
-            test ! -e "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
+            test -f "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
+            test -f "$XDG_DATA_HOME/autolith/nix/active/manifest.sexp"
+            test ! -L "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
+            test -w "$XDG_DATA_HOME/autolith/nix/active/autolith-active.core"
 
             export COLORLISP_NATIVE_LIBRARY="${autolith.colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"
             "${autolith.runtime}/bin/sbcl" \
