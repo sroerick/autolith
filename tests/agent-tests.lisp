@@ -824,6 +824,8 @@
                           "provider failure metadata retains its request number")
              (test-assert (string= (getf failure :code) "invalid_prompt")
                           "provider failure metadata retains its error code")
+             (test-assert (null (getf failure :incomplete-reason))
+                          "ordinary provider failures have no incomplete reason")
              (test-assert
               (string= (getf failure :request-id) "request-invalid")
               "provider failure metadata retains its request identifier")
@@ -841,6 +843,72 @@
                                  "role")
                        "user")
               "replayed input retains the user message that failed")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-agent-incomplete-provider-failure-persistence () null)
+(defun test-agent-incomplete-provider-failure-persistence ()
+  "Test incomplete provider reasons survive durable failure recording."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create
+            configuration
+            :identifier "provider-incomplete-failure"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (make-condition
+              'provider-incomplete-response
+              :message
+              "The provider returned an incomplete response (max_output_tokens)."
+              :reason "max_output_tokens"
+              :status nil
+              :code "response_incomplete"
+              :request-id "request-incomplete"
+              :response-id "response-incomplete"
+              :response nil))))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry (agent-test-registry)
+                         :worker ':unused)))
+    (unwind-protect
+         (progn
+           (test-assert
+            (handler-case
+                (progn
+                  (agent-run-user-turn agent "persist this incomplete failure")
+                  nil)
+              (provider-incomplete-response ()
+                t))
+            "incomplete provider failures still reach the caller")
+           (let* ((records
+                    (conversation--read-records
+                     (conversation-pathname conversation)))
+                  (provider-record
+                    (find-if (lambda (record)
+                               (eq (first record) ':provider))
+                             records))
+                  (metadata (getf (rest provider-record) :metadata))
+                  (failure (getf metadata :failure)))
+             (test-assert
+              (string= (getf failure :code) "response_incomplete")
+              "incomplete failure metadata retains its stable error code")
+             (test-assert
+              (string= (getf failure :incomplete-reason) "max_output_tokens")
+              "incomplete failure metadata retains its structured reason")
+             (test-assert (getf failure :retryable-p)
+                          "incomplete failure metadata remains retryable")
+             (test-assert
+              (string= (getf failure :request-id) "request-incomplete")
+              "incomplete failure metadata retains its request identifier")
+             (test-assert
+              (string= (getf failure :response-id) "response-incomplete")
+              "incomplete failure metadata retains its response identifier")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -1383,6 +1451,7 @@
   (test-agent-invalid-call-history)
   (test-agent-tool-failures)
   (test-agent-provider-failure-persistence)
+  (test-agent-incomplete-provider-failure-persistence)
   (test-agent-provider-credential-failure-containment)
   (test-agent-long-tool-turn)
   (test-agent-unbounded-tool-calls)

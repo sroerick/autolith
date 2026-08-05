@@ -478,6 +478,9 @@
   (list :message (bounded-string (format nil "~A" condition) :limit 2000)
         :status (provider-error-status condition)
         :code (provider-error-code condition)
+        :incomplete-reason
+        (and (typep condition 'provider-incomplete-response)
+             (provider-incomplete-response-reason condition))
         :request-id (provider-error-request-id condition)
         :response-id (provider-error-response-id condition)
         :response (provider-error-response condition)

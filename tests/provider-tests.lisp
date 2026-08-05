@@ -887,6 +887,7 @@
     (test-assert
      (and condition
           (typep condition 'provider-retryable-error)
+          (string= (provider-error-code condition) "response_incomplete")
           (string= (provider-incomplete-response-reason condition)
                    "max_output_tokens")
           (string= (provider-error-response-id condition)
