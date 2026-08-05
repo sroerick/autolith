@@ -1311,7 +1311,12 @@ provider context.
 
 While a turn is active, Enter steers its next tool boundary and Tab queues a
 later follow-up. Pending inputs are previewed in the live region, and an empty
-Tab recalls the newest follow-up for editing. While idle, Tab submits like Enter.
+Tab recalls the newest follow-up for editing. While that recalled follow-up
+remains in the composer, including after the active turn ends, Shift-Tab cycles
+backward through eligible queued messages and commands, wrapping from the oldest
+to the newest. Edited content returns to the selected item's original FIFO
+position. Command completion keeps precedence when matching commands are visible.
+While idle without a recalled follow-up, Tab submits like Enter.
 
 =/later INPUT= persists INPUT with its current workspace and dispatches it after
 the provider's relevant rate-limit reset. An exhausted longer window governs;

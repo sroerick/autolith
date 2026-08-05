@@ -3879,6 +3879,8 @@
   (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
+         (image (merge-pathnames "follow-up-cycle.png"
+                                 (uiop:temporary-directory)))
          (controller nil))
     (with-terminal-ui (active-ui ui)
       (declare (ignore active-ui))
@@ -3891,22 +3893,279 @@
              (application-input-controller--enqueue
               controller ':message "first queued thought")
              (application-input-controller--enqueue
+              controller ':message "middle queued thought")
+             (application-input-controller--enqueue
               controller ':message "newest queued thought")
+             (application-input-controller--process-event
+              controller ':complete-previous)
              (test-assert
-              (application-input-controller--recall-follow-up controller)
-              "empty Tab can recall the newest queued follow-up")
+              (= (length (application-input-controller-work-items controller)) 3)
+              "shift-tab leaves the queue alone before a follow-up is recalled")
+             (application-input-controller--process-event controller ':complete)
              (test-assert
               (string= (line-editor-text (terminal-ui-editor ui))
                        "newest queued thought")
-              "a recalled follow-up becomes ordinary editable input")
+              "empty Tab recalls the newest queued follow-up")
              (test-assert
               (equal (application-input-controller-work-items controller)
-                     '((:message "first queued thought")))
-              "recalling a follow-up preserves earlier queue order")
+                     '((:message "first queued thought")
+                       (:message "middle queued thought")))
+              "recalling the newest follow-up preserves earlier FIFO order")
+             (application-input-controller--enqueue
+              controller ':message "arrived while editing")
+             (terminal-ui-set-input ui "edited newest thought")
+             (application-input-controller--process-event
+              controller ':complete-previous)
              (test-assert
-              (search "follow-up 1/2  first queued thought"
-                      (recording-terminal-output terminal))
-              "the live queue shows message previews before editing"))
+              (string= (line-editor-text (terminal-ui-editor ui))
+                       "middle queued thought")
+              "shift-tab moves to the immediately older follow-up")
+             (test-assert
+              (equal (application-input-controller-work-items controller)
+                     '((:message "first queued thought")
+                       (:message "edited newest thought")
+                       (:message "arrived while editing")))
+              "cycling preserves edited content and concurrent FIFO appends")
+             (terminal-ui-set-input ui "/status")
+             (application-input-controller--process-event
+              controller ':complete-previous)
+             (test-assert
+              (string= (line-editor-text (terminal-ui-editor ui))
+                       "first queued thought")
+              "repeated shift-tab continues toward older follow-ups")
+             (test-assert
+              (equal (application-input-controller-work-items controller)
+                     '((:command "/status")
+                       (:message "edited newest thought")
+                       (:message "arrived while editing")))
+              "cycling reclassifies an edited slash command in place")
+             (terminal-ui-set-input ui "edited first thought")
+             (application-input-controller--process-event
+              controller ':complete-previous)
+             (test-assert
+              (string= (line-editor-text (terminal-ui-editor ui))
+                       "arrived while editing")
+              "shift-tab wraps from the oldest follow-up to the newest")
+             (application-input-controller--process-event
+              controller ':complete-previous)
+             (test-assert
+              (string= (line-editor-text (terminal-ui-editor ui))
+                       "edited newest thought")
+              "shift-tab continues backward after wrapping")
+             (terminal-ui-set-input
+              ui
+              (user-message-input-create
+               :text "[Image #1] edited newest thought"
+               :image-pathnames (list image)))
+             (application-input-controller--process-event
+              controller ':complete-previous)
+             (let ((queued
+                     (application-input-controller-work-items controller)))
+               (test-assert
+                (and (equal (first queued)
+                            '(:message "edited first thought"))
+                     (typep (second (second queued)) 'user-message-input)
+                     (equal
+                      (user-message-input-image-pathnames
+                       (second (second queued)))
+                      (list image))
+                     (equal (third queued)
+                            '(:message "arrived while editing")))
+                "cycling preserves image follow-ups at their FIFO position"))
+             (terminal-ui-set-input ui "edited command")
+             (application-input-controller--process-event
+              controller ':complete-previous)
+             (terminal-ui-set-input ui "edited first again")
+             (application-input-controller--process-event controller ':complete)
+             (test-assert
+              (and
+               (equal (first
+                       (application-input-controller-work-items controller))
+                      '(:message "edited first again"))
+               (not
+                (application-input-controller--follow-up-editing-p controller)))
+              "Tab returns the edited follow-up to its original FIFO position")
+             (application-input-controller--process-event controller ':complete)
+             (line-editor-clear (terminal-ui-editor ui))
+             (let ((before
+                     (copy-list
+                      (application-input-controller-work-items controller))))
+               (application-input-controller--process-event controller ':complete)
+               (test-assert
+                (and
+                 (equal (application-input-controller-work-items controller) before)
+                 (equal
+                  (application-input-controller-follow-up-edit-work controller)
+                  '(:message "arrived while editing")))
+                "empty Tab keeps a blank recalled follow-up selected")
+               (application-input-controller--process-event
+                controller ':complete-previous)
+               (test-assert
+                (and
+                 (equal (application-input-controller-work-items controller) before)
+                 (equal
+                  (application-input-controller-follow-up-edit-work controller)
+                  '(:message "arrived while editing")))
+                "blank recalled drafts do not remove another follow-up"))
+             (application-input-controller--finish-work controller)
+             (test-assert
+              (application-input-controller--follow-up-editing-p controller)
+              "finishing the active turn preserves recalled follow-up selection"))
+        (when controller
+          (application-input-controller-stop controller)))))
+  (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller nil))
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (setf controller (application-input-controller-create application))
+      (unwind-protect
+           (progn
+             (application-input-controller--enqueue
+              controller ':message "active turn")
+             (application-input-controller--next-work controller)
+             (application-input-controller--enqueue
+              controller ':message "older follow-up")
+             (application-input-controller--enqueue
+              controller ':message "newer follow-up")
+             (application-input-controller--process-event controller ':complete)
+             (terminal-ui-set-input ui "edited newer follow-up")
+             (application-input-controller--finish-work controller)
+             (application-input-controller--process-event controller ':complete)
+             (test-assert
+              (and
+               (equal (application-input-controller-work-items controller)
+                      '((:message "older follow-up")
+                        (:message "edited newer follow-up")))
+               (not
+                (application-input-controller--follow-up-editing-p controller)))
+              "Tab after turn completion restores the recalled FIFO position"))
+        (when controller
+          (application-input-controller-stop controller)))))
+  (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller nil))
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (setf controller (application-input-controller-create application))
+      (unwind-protect
+           (progn
+             (application-input-controller--enqueue
+              controller ':message "active turn")
+             (application-input-controller--next-work controller)
+             (application-input-controller--enqueue
+              controller ':message "older follow-up")
+             (application-input-controller--enqueue
+              controller ':message "selected message")
+             (application-input-controller--process-event controller ':complete)
+             (terminal-ui-set-input ui "edited selected message")
+             (application-input-controller--process-event controller ':submit)
+             (test-assert
+              (and
+               (equal (application-input-controller-steering-items controller)
+                      '("edited selected message"))
+               (equal (application-input-controller-work-items controller)
+                      '((:message "older follow-up")))
+               (not
+                (application-input-controller--follow-up-editing-p controller)))
+              "recalled Enter messages use active-turn steering policy")
+             (application-input-controller--enqueue
+              controller ':command "/goal pause")
+             (application-input-controller--process-event controller ':complete)
+             (terminal-ui-set-input ui "/goal pause")
+             (application-input-controller--process-event controller ':submit)
+             (test-assert
+              (and
+               (equal (application-input-controller-work-items controller)
+                      '((:message "older follow-up")
+                        (:command "/goal pause")))
+               (not
+                (application-input-controller--follow-up-editing-p controller)))
+              "recalled Enter commands use active-turn busy policy"))
+        (when controller
+          (application-input-controller-stop controller)))))
+  (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller nil)
+         (waiter nil)
+         (waiter-started-p nil)
+         (waited-work ':waiting))
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (setf controller (application-input-controller-create application))
+      (unwind-protect
+           (progn
+             (application-input-controller--enqueue
+              controller ':message "active turn")
+             (application-input-controller--next-work controller)
+             (application-input-controller--enqueue
+              controller ':message "older follow-up")
+             (application-input-controller--enqueue
+              controller ':message "held follow-up")
+             (application-input-controller--process-event controller ':complete)
+             (line-editor-clear (terminal-ui-editor ui))
+             (application-input-controller--process-event controller ':complete)
+             (test-assert
+              (equal
+               (application-input-controller-follow-up-edit-work controller)
+               '(:message "held follow-up"))
+              "blank Tab does not replace the held follow-up")
+             (application-input-controller--finish-work controller)
+             (test-assert
+              (= (application-input-controller-follow-up-edit-index controller) 1)
+              "turn completion preserves the held virtual FIFO index")
+             (test-assert
+              (equal (application-input-controller--next-work controller)
+                     '(:message "older follow-up"))
+              "work older than the held follow-up remains runnable")
+             (test-assert
+              (zerop
+               (application-input-controller-follow-up-edit-index controller))
+              "consuming older work advances the held follow-up to the FIFO head")
+             (application-input-controller--finish-work controller)
+             (application-input-controller--enqueue
+              controller ':message "later follow-up")
+             (setf waiter
+                   (make-thread
+                    (lambda ()
+                      (setf waiter-started-p t)
+                      (setf waited-work
+                            (application-input-controller--next-work controller)))
+                    :name "Autolith held follow-up FIFO test"))
+             (test-assert
+              (task-tests--wait-until (lambda () waiter-started-p) 2)
+              "the FIFO waiter starts before the blocking assertion")
+             (test-assert
+              (eq waited-work ':waiting)
+              "a held FIFO head blocks newer queued work")
+             (application-input-controller--process-event controller ':interrupt)
+             (test-assert
+              (task-tests--wait-until
+               (lambda () (not (thread-alive-p waiter)))
+               2)
+              "Ctrl-C wakes the blocked FIFO consumer")
+             (join-thread waiter)
+             (setf waiter nil)
+             (test-assert
+              (and
+               (equal waited-work '(:message "later follow-up"))
+               (not
+                (application-input-controller--follow-up-editing-p controller)))
+              "Ctrl-C discards the held follow-up and unblocks newer work"))
+        (when (and waiter (thread-alive-p waiter))
+          (when controller
+            (application-input-controller-stop controller)
+            (setf controller nil))
+          (unless
+              (task-tests--wait-until
+               (lambda () (not (thread-alive-p waiter)))
+               2)
+            (destroy-thread waiter)))
+        (when waiter
+          (join-thread waiter))
         (when controller
           (application-input-controller-stop controller)))))
   nil)
@@ -6327,6 +6586,14 @@
            (application-input-controller--next-work controller)
            (application-input-controller--enqueue-steering controller "steer later")
            (application-input-controller--enqueue controller ':message "follow later")
+           (test-assert
+            (application-input-controller--recall-follow-up controller)
+            "pending persistence can hold one recalled follow-up")
+           (test-assert
+            (not
+             (application-input-controller--cycle-follow-up
+              controller "edited follow later"))
+            "cycling a lone recalled follow-up only updates its durable content")
            (application-input-controller-stop controller)
            (setf controller nil)
            (test-assert
@@ -6383,8 +6650,8 @@
             "steering is restored for the same conversation")
            (test-assert
             (equal (application-input-controller-work-items restored)
-                   '((:message "follow later")))
-            "follow-ups are restored for the same conversation")
+                   '((:message "edited follow later")))
+            "a recalled follow-up is restored at its virtual FIFO position")
            ;; Reproduce an enqueue publisher delayed until ordinary shutdown
            ;; has persisted and cleared the process-local queues.
            (application-input-controller--prepare-shutdown restored ':interrupt)
@@ -6402,7 +6669,7 @@
            (test-assert
             (equal
              (application-input-controller-work-items restored-after-shutdown)
-             '((:message "follow later")))
+             '((:message "edited follow later")))
             "a delayed publisher cannot erase shutdown follow-ups"))
       (when restored-after-shutdown
         (application-input-controller-stop restored-after-shutdown))

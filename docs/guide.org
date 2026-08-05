@@ -245,7 +245,10 @@ The prompt remains editable while Autolith streams a response or runs tools.
 Enter steers the active turn at its next tool boundary. Tab queues the draft as
 a later follow-up; the live region shows bounded previews of steering and queued
 messages. With an empty draft, Tab recalls the newest follow-up for editing.
-When Autolith is idle, Tab submits like Enter. On styled terminals, active
+While a recalled follow-up remains in the composer, including after the active
+turn ends, Shift-Tab cycles backward through the queued follow-ups and wraps from
+the oldest to the newest. Edits stay at the selected follow-up's FIFO position.
+When Autolith is idle without a recalled follow-up, Tab submits like Enter. On styled terminals, active
 status uses a neutral full-width background and colors the current model,
 reasoning effort, and enclosing Git worktree branch with the basic palette.
 Branch discovery occurs when the activity phase changes, not during the

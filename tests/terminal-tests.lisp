@@ -615,6 +615,8 @@
                         (format nil "~C[27u" escape)
                         (format nil "~C[13u" escape)
                         (format nil "~C[9u" escape)
+                        (format nil "~C[Z" escape)
+                        (format nil "~C[9;2u" escape)
                         (format nil "~C[127u" escape)
                         (string (code-char 8))
                         (format nil "~C[127;5u" escape)
@@ -656,6 +658,10 @@
                  "enhanced plain Enter remains a submit event")
     (test-assert (eq (terminal-read-event terminal) :complete)
                  "enhanced plain Tab remains a completion event")
+    (test-assert (eq (terminal-read-event terminal) :complete-previous)
+                 "legacy Shift-Tab remains a backward completion event")
+    (test-assert (eq (terminal-read-event terminal) :complete-previous)
+                 "enhanced Shift-Tab becomes a backward completion event")
     (test-assert (eq (terminal-read-event terminal) :backspace)
                  "enhanced plain Backspace remains a deletion event")
     (test-assert (eq (terminal-read-event terminal) :kill-word)
@@ -1491,9 +1497,13 @@
         (terminal-ui-process-event active-ui :complete)
         (test-assert (string= (line-editor-text editor) "/resume ")
                      "repeated tab cycles through command completions")
-        (terminal-ui-process-event active-ui :complete-previous)
+        (terminal-ui-process-event
+         active-ui
+         :complete-previous
+         :queue-completion-p t
+         :queue-editing-p t)
         (test-assert (string= (line-editor-text editor) "/rollback ")
-                     "shift-tab cycles backward through command completions")
+                     "command completions take precedence over follow-up cycling")
         (terminal-ui-process-event active-ui :complete)
         (terminal-ui-process-event active-ui '(:insert "draft"))
         (test-assert (string= (line-editor-text editor) "/resume draft")
@@ -1536,7 +1546,51 @@
              active-ui :complete :queue-completion-p t)
           (declare (ignore payload))
           (test-assert (eq action ':edit-queue)
-                       "empty active-turn tab requests queued follow-up editing")))))
+                       "empty active-turn tab requests queued follow-up editing"))
+        (multiple-value-bind (action payload)
+            (terminal-ui-process-event
+             active-ui :complete-previous :queue-completion-p t)
+          (declare (ignore payload))
+          (test-assert
+           (not (eq action ':cycle-queue))
+           "shift-tab does not cycle without a recalled follow-up"))
+        (terminal-ui-set-input active-ui "")
+        (multiple-value-bind (action payload)
+            (terminal-ui-process-event
+             active-ui :complete :queue-editing-p t)
+          (declare (ignore payload))
+          (test-assert
+           (eq action ':kept)
+           "empty tab keeps an already recalled follow-up selected"))
+        (terminal-ui-set-input active-ui "edited follow-up")
+        (multiple-value-bind (action payload)
+            (terminal-ui-process-event
+             active-ui
+             :complete-previous
+             :queue-editing-p t)
+          (test-assert (eq action ':cycle-queue)
+                       "shift-tab requests recalled follow-up cycling")
+          (test-assert (string= payload "edited follow-up")
+                       "follow-up cycling snapshots the edited draft"))
+        (let ((image
+                (merge-pathnames "follow-up-cycle.png"
+                                 (uiop:temporary-directory))))
+          (terminal-ui-set-input
+           active-ui
+           (user-message-input-create
+            :text "[Image #1] revise"
+            :image-pathnames (list image)))
+          (multiple-value-bind (action payload)
+              (terminal-ui-process-event
+               active-ui
+               :complete-previous
+               :queue-editing-p t)
+            (test-assert
+             (and (eq action ':cycle-queue)
+                  (typep payload 'user-message-input)
+                  (equal (user-message-input-image-pathnames payload)
+                         (list image)))
+             "follow-up cycling preserves image attachments"))))))
   (let* ((terminal (make-instance 'recording-terminal :columns 60))
          (completions
            '((:name "/help" :argument nil :description "show this reference")))

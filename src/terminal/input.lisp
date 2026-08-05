@@ -55,7 +55,7 @@
 
 (-> terminal--kitty-key-event (string) (values boolean t))
 (defun terminal--kitty-key-event (body)
-  "Return a semantic event for one bare Kitty CSI-u BODY when recognized."
+  "Return a semantic event for one supported Kitty CSI-u BODY."
   (cond
     ((member body '("10u" "13u") :test #'string=)
      (values t ':submit))
@@ -67,6 +67,8 @@
      (values t ':insert-newline))
     ((string= body "9u")
      (values t ':complete))
+    ((string= body "9;2u")
+     (values t ':complete-previous))
     ((string= body "27u")
      (values t ':escape))
     ((string= body "127u")

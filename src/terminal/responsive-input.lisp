@@ -65,6 +65,17 @@
     :accessor application-input-controller-steering-items
     :type list
     :documentation "FIFO user messages waiting for the active turn's next tool boundary.")
+   (follow-up-edit-index
+    :initform nil
+    :accessor application-input-controller-follow-up-edit-index
+    :type (option (integer 0))
+    :documentation
+    "The recalled draft's position in the virtual queue that still includes it.")
+   (follow-up-edit-work
+    :initform nil
+    :accessor application-input-controller-follow-up-edit-work
+    :type (option list)
+    :documentation "The queued work item currently recalled into the draft.")
    (later-state
     :initarg :later-state
     :reader application-input-controller-later-state
@@ -307,8 +318,10 @@ second reports whether shutdown was prepared."
         (application-input-controller--persist-pending controller)
         (setf (application-input-controller-stopping-p controller) t
               (application-input-controller-work-items controller) nil
-              (application-input-controller-steering-items controller) nil)
-        (condition-notify
+              (application-input-controller-steering-items controller) nil
+              (application-input-controller-follow-up-edit-index controller) nil
+              (application-input-controller-follow-up-edit-work controller) nil)
+        (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller)))
       (values active-p prepared-p))))
 
@@ -358,6 +371,54 @@ second reports whether shutdown was prepared."
       (t
        (application-input--copy input)))))
 
+(-> application-input-controller--follow-up-work-p (t) boolean)
+(defun application-input-controller--follow-up-work-p (work)
+  "Return true when WORK is an editable queued message or command."
+  (and (consp work)
+       (member (first work) '(:message :command) :test #'eq)
+       (consp (rest work))
+       (typep (second work) '(or string user-message-input))))
+
+(-> application-input-controller--input-work
+    ((or string user-message-input))
+    (option list))
+(defun application-input-controller--input-work (input)
+  "Return queued work for INPUT, or NIL when INPUT has no effective content."
+  (let ((message (application--message-input input))
+        (text (application-input--text input)))
+    (cond
+      (message
+       (list ':message message))
+      ((non-empty-string-p text)
+       (list ':command (copy-seq text)))
+      (t
+       nil))))
+
+(-> application-input-controller--insert-work-at (list integer list) list)
+(defun application-input-controller--insert-work-at (work-items index work)
+  "Insert WORK at bounded INDEX in WORK-ITEMS without changing item identity."
+  (let ((position (min index (length work-items))))
+    (append (subseq work-items 0 position)
+            (list work)
+            (nthcdr position work-items))))
+
+(-> application-input-controller--virtual-work-items
+    (application-input-controller)
+    list)
+(defun application-input-controller--virtual-work-items (controller)
+  "Return CONTROLLER's FIFO work including its recalled follow-up.
+
+The caller must hold CONTROLLER's lock."
+  (let ((work-items
+          (application-input-controller-work-items controller))
+        (index
+          (application-input-controller-follow-up-edit-index controller))
+        (work
+          (application-input-controller-follow-up-edit-work controller)))
+    (if (and index work)
+        (application-input-controller--insert-work-at work-items index work)
+        work-items)))
+
 (-> application-input-controller--pending-work-form (list) list)
 (defun application-input-controller--pending-work-form (work-items)
   "Return durable forms for WORK-ITEMS that can be restored after restart."
@@ -401,7 +462,8 @@ second reports whether shutdown was prepared."
                             controller)))
                  (work
                    (application-input-controller--pending-work-form
-                    (application-input-controller-work-items controller)))
+                    (application-input-controller--virtual-work-items
+                     controller)))
                  (form
                    (list :pending-inputs
                          :version 1
@@ -515,7 +577,31 @@ snapshot after shutdown cleared the process-local queues."
    (null
     (with-lock-held ((application-input-controller-lock controller))
       (or (application-input-controller-active-p controller)
-          (application-input-controller-work-items controller))))))
+          (application-input-controller-work-items controller)
+          (application-input-controller-follow-up-edit-work controller))))))
+
+(-> application-input-controller--follow-up-editing-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller--follow-up-editing-p (controller)
+  "Return true when CONTROLLER has recalled one queued follow-up into the draft."
+  (not
+   (null
+    (with-lock-held ((application-input-controller-lock controller))
+      (application-input-controller-follow-up-edit-index controller)))))
+
+(-> application-input-controller--clear-follow-up-edit
+    (application-input-controller)
+    null)
+(defun application-input-controller--clear-follow-up-edit (controller)
+  "Discard CONTROLLER's recalled follow-up without changing its draft."
+  (with-lock-held ((application-input-controller-lock controller))
+    (setf (application-input-controller-follow-up-edit-index controller) nil
+          (application-input-controller-follow-up-edit-work controller) nil)
+    (sb-thread:condition-broadcast
+     (application-input-controller-condition-variable controller)))
+  (application-input-controller--publish-counts controller)
+  nil)
 
 (-> application-input-controller--interrupt-main
     (application-input-controller condition)
@@ -571,13 +657,15 @@ snapshot after shutdown cleared the process-local queues."
               (application-input-controller-failure-backtrace controller) backtrace
               (application-input-controller-work-items controller) nil
               (application-input-controller-steering-items controller) nil
+              (application-input-controller-follow-up-edit-index controller) nil
+              (application-input-controller-follow-up-edit-work controller) nil
               (application-input-controller-stopping-p controller) t)
         ;; Reader failure deliberately discards queued work, unlike ordinary
         ;; shutdown, so finalize an empty durable snapshot before publishers
         ;; begin skipping stopping controllers.
         (application-input-controller--persist-pending controller))
       (setf active-p (application-input-controller-active-p controller))
-      (condition-notify
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (application-input-controller--publish-counts controller)
     (when active-p
@@ -604,9 +692,38 @@ snapshot after shutdown cleared the process-local queues."
               (nconc (application-input-controller-work-items controller)
                      (list (list kind (application-input--copy input))))
               queued-p t)
-        (condition-notify
+        (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
     (application-input-controller--publish-counts controller)
+    queued-p))
+
+(-> application-input-controller--queue-input
+    (application-input-controller (or string user-message-input))
+    boolean)
+(defun application-input-controller--queue-input (controller input)
+  "Queue INPUT, restoring a recalled follow-up to its virtual FIFO position."
+  (let ((work (application-input-controller--input-work input))
+        (queued-p nil))
+    (when work
+      (with-lock-held ((application-input-controller-lock controller))
+        (unless (application-input-controller-stopping-p controller)
+          (let ((index
+                  (application-input-controller-follow-up-edit-index controller)))
+            (setf (application-input-controller-work-items controller)
+                  (if index
+                      (application-input-controller--insert-work-at
+                       (application-input-controller-work-items controller)
+                       index
+                       work)
+                      (nconc
+                       (application-input-controller-work-items controller)
+                       (list work)))
+                  (application-input-controller-follow-up-edit-index controller) nil
+                  (application-input-controller-follow-up-edit-work controller) nil
+                  queued-p t))
+          (sb-thread:condition-broadcast
+           (application-input-controller-condition-variable controller))))
+      (application-input-controller--publish-counts controller))
     queued-p))
 
 (-> application-input-controller--enqueue-steering
@@ -620,9 +737,14 @@ snapshot after shutdown cleared the process-local queues."
           (setf (application-input-controller-steering-items controller)
                 (nconc (application-input-controller-steering-items controller)
                        (list (application-input--copy input))))
-          (push (list ':message (application-input--copy input))
-                (application-input-controller-work-items controller)))
-      (condition-notify
+          (progn
+            (push (list ':message (application-input--copy input))
+                  (application-input-controller-work-items controller))
+            (when (application-input-controller-follow-up-edit-index controller)
+              (incf
+               (application-input-controller-follow-up-edit-index
+                controller)))))
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller))))
   (application-input-controller--publish-counts controller)
   nil)
@@ -745,26 +867,34 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                       message)
                 ':hint)))))))
 
+(-> application-input-controller--present-scheduled-command
+    (application-input-controller string)
+    null)
+(defun application-input-controller--present-scheduled-command (controller input)
+  "Present the busy-command scheduling result for INPUT."
+  (let ((invocation (application-command-invocation-parse input)))
+    (application-command--call-with-presentation
+     invocation
+     (lambda ()
+       (application-present
+        (application-input-controller-application controller)
+        (list
+         (terminal-span
+          ':hint
+          "∙ command scheduled until the current response finishes")
+         (terminal-span ':plain (string #\Newline))
+         (terminal-span
+          ':dim
+          "  It runs at the first opportunity. Empty Tab edits it; Shift-Tab cycles."))))))
+  nil)
+
 (-> application-input-controller--schedule-command
     (application-input-controller string)
     null)
 (defun application-input-controller--schedule-command (controller input)
   "Queue busy command INPUT to run at the first idle opportunity."
   (when (application-input-controller--enqueue controller ':command input)
-    (let ((invocation (application-command-invocation-parse input)))
-      (application-command--call-with-presentation
-       invocation
-       (lambda ()
-         (application-present
-          (application-input-controller-application controller)
-          (list
-           (terminal-span
-            ':hint
-            "∙ command scheduled until the current response finishes")
-           (terminal-span ':plain (string #\Newline))
-           (terminal-span
-            ':dim
-            "  It runs at the first opportunity. Tab with an empty draft edits it.")))))))
+    (application-input-controller--present-scheduled-command controller input))
   nil)
 
 (-> application-input-controller--run-responsive-command
@@ -786,6 +916,81 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             application
             (application--expected-error-entry application condition))
            ':failed))))))
+
+(-> application-input-controller--handle-recalled-submission
+    (application-input-controller (or string user-message-input))
+    boolean)
+(defun application-input-controller--handle-recalled-submission
+    (controller input)
+  "Atomically route recalled INPUT and report whether recalled work handled it.
+
+Blank input keeps the recalled work selected. Active messages commit to the
+current turn's steering queue before its completion can race. Active commands
+commit their busy policy before the recalled work is removed."
+  (let* ((message (application--message-input input))
+         (text (application-input--text input))
+         (work (application-input-controller--input-work input))
+         (invocation
+           (and (null message)
+                (non-empty-string-p text)
+                (application-command-invocation-parse text)))
+         (command
+           (and invocation
+                (application-command-invocation-command invocation)))
+         (busy-action
+           (and invocation
+                (if command
+                    (application-command-busy-action command invocation)
+                    ':hold)))
+         (handled-p nil)
+         (changed-p nil)
+         (post-action nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (let ((index
+              (application-input-controller-follow-up-edit-index controller))
+            (held-work
+              (application-input-controller-follow-up-edit-work controller)))
+        (when (and index held-work)
+          (setf handled-p t)
+          (when work
+            (if (application-input-controller-active-p controller)
+                (cond
+                  (message
+                   (setf (application-input-controller-steering-items controller)
+                         (nconc
+                          (application-input-controller-steering-items controller)
+                          (list (application-input--copy message)))))
+                  ((eq busy-action ':hold)
+                   (setf (application-input-controller-work-items controller)
+                         (nconc
+                          (application-input-controller-work-items controller)
+                          (list work))
+                         post-action ':hold))
+                  (t
+                   (setf post-action busy-action)))
+                (setf (application-input-controller-work-items controller)
+                      (application-input-controller--insert-work-at
+                       (application-input-controller-work-items controller)
+                       index
+                       work)))
+            (setf (application-input-controller-follow-up-edit-index controller) nil
+                  (application-input-controller-follow-up-edit-work controller) nil
+                  changed-p t)
+            (sb-thread:condition-broadcast
+             (application-input-controller-condition-variable controller))))))
+    (when changed-p
+      (application-input-controller--publish-counts controller))
+    (case post-action
+      (:cancel
+       (application-input-controller--request-exit controller ':quit))
+      (:execute
+       (when (eq (application-input-controller--run-responsive-command
+                  controller command invocation)
+                 ':quit)
+         (application-input-controller--request-exit controller ':quit)))
+      (:hold
+       (application-input-controller--present-scheduled-command controller text)))
+    handled-p))
 
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
@@ -829,14 +1034,8 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (application-input-controller (or string user-message-input))
     null)
 (defun application-input-controller--handle-queue-submission (controller input)
-  "Queue INPUT as post-turn message or command work."
-  (let ((message (application--message-input input))
-        (text (application-input--text input)))
-    (cond
-      (message
-       (application-input-controller--enqueue controller ':message message))
-      ((non-empty-string-p text)
-       (application-input-controller--enqueue controller ':command text))))
+  "Queue INPUT as post-turn work, preserving a recalled follow-up's position."
+  (application-input-controller--queue-input controller input)
   nil)
 
 (-> application-input-controller--recall-follow-up
@@ -849,20 +1048,35 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
         (queued-inputs nil))
     (with-lock-held ((application-input-controller-lock controller))
       (when (and (application-input-controller-active-p controller)
+                 (null
+                  (application-input-controller-follow-up-edit-index controller)))
+        (let* ((work-items
                  (application-input-controller-work-items controller))
-        (setf work (first (last
-                           (application-input-controller-work-items controller)))
-              (application-input-controller-work-items controller)
-              (butlast (application-input-controller-work-items controller))
-              steering-inputs
-              (copy-list
-               (application-input-controller-steering-items controller))
-              queued-inputs
-              (loop for queued-work
-                      in (application-input-controller-work-items controller)
-                    for input = (second queued-work)
-                    when (typep input '(or string user-message-input))
-                      collect (application-input--preview input)))))
+               (index
+                 (position-if
+                  #'application-input-controller--follow-up-work-p
+                  work-items
+                  :from-end t)))
+          (when index
+            (setf work (nth index work-items)
+                  (application-input-controller-work-items controller)
+                  (loop for queued-work in work-items
+                        for position from 0
+                        unless (= position index)
+                          collect queued-work)
+                  (application-input-controller-follow-up-edit-index controller)
+                  index
+                  (application-input-controller-follow-up-edit-work controller)
+                  work
+                  steering-inputs
+                  (copy-list
+                   (application-input-controller-steering-items controller))
+                  queued-inputs
+                  (loop for queued-work
+                          in (application-input-controller-work-items controller)
+                        for input = (second queued-work)
+                        when (typep input '(or string user-message-input))
+                          collect (application-input--preview input)))))))
     (when work
       (terminal-ui-recall-follow-up
        (application-ui (application-input-controller-application controller))
@@ -871,6 +1085,78 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
        :queued-inputs queued-inputs))
     (not (null work))))
 
+(-> application-input-controller--cycle-follow-up
+    (application-input-controller (or string user-message-input))
+    boolean)
+(defun application-input-controller--cycle-follow-up (controller input)
+  "Move CONTROLLER's recalled draft to the previous queued follow-up, wrapping."
+  (let ((current-work (application-input-controller--input-work input))
+        (selected-work nil)
+        (steering-inputs nil)
+        (queued-inputs nil))
+    (when current-work
+      (with-lock-held ((application-input-controller-lock controller))
+        (let ((index
+                (application-input-controller-follow-up-edit-index controller)))
+          (when (and index
+                     (application-input-controller-follow-up-edit-work controller))
+            (let* ((work-items
+                     (application-input-controller-work-items controller))
+                   (current-position (min index (length work-items)))
+                   (full-work-items
+                     (application-input-controller--insert-work-at
+                      work-items current-position current-work))
+                   (eligible-positions
+                     (loop for work in full-work-items
+                           for position from 0
+                           when (and
+                                 (/= position current-position)
+                                 (application-input-controller--follow-up-work-p
+                                  work))
+                             collect position))
+                   (selected-position
+                     (or
+                      (find-if (lambda (position)
+                                 (< position current-position))
+                               eligible-positions
+                               :from-end t)
+                      (first (last eligible-positions)))))
+              (if selected-position
+                  (setf selected-work (nth selected-position full-work-items)
+                        (application-input-controller-work-items controller)
+                        (loop for work in full-work-items
+                              for position from 0
+                              unless (= position selected-position)
+                                collect work)
+                        (application-input-controller-follow-up-edit-index controller)
+                        selected-position
+                        (application-input-controller-follow-up-edit-work controller)
+                        selected-work
+                        steering-inputs
+                        (copy-list
+                         (application-input-controller-steering-items controller))
+                        queued-inputs
+                        (loop for queued-work
+                                in (application-input-controller-work-items controller)
+                              for queued-input = (second queued-work)
+                              when (typep queued-input
+                                          '(or string user-message-input))
+                                collect
+                                (application-input--preview queued-input)))
+                  (setf (application-input-controller-follow-up-edit-work controller)
+                        current-work))
+              (sb-thread:condition-broadcast
+               (application-input-controller-condition-variable controller))))))
+    (when selected-work
+      (terminal-ui-recall-follow-up
+       (application-ui (application-input-controller-application controller))
+       (second selected-work)
+       :steering-inputs steering-inputs
+       :queued-inputs queued-inputs))
+    (when current-work
+      (application-input-controller--publish-counts controller))
+    (not (null selected-work)))))
+
 (-> application-input-controller--process-event
     (application-input-controller t)
     null)
@@ -878,47 +1164,68 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   "Apply terminal EVENT and publish any resulting work or exit request."
   (let ((ui (application-ui
              (application-input-controller-application controller)))
-        (active-interrupt-action
-          (and (eq event ':interrupt)
-               (application-input-controller--active-turn-interrupt-action
-                controller))))
-    (cond
-      ((eq active-interrupt-action ':force)
-       (application-input-controller--force-interrupt-exit controller))
-      ((eq active-interrupt-action ':hint)
-       nil)
-      ((and (eq event ':interrupt)
-            (application-input-controller--request-active-turn-cancellation
-             controller :force-exit-window-p t))
-       nil)
-      ((and (eq event ':escape)
-            (or
-             (application-input-controller--turn-cancellation-active-p
-              controller)
-             (application-input-controller--request-active-turn-cancellation
-              controller)))
-       nil)
-      (t
-       (let ((turn-active-p
-               (application-input-controller-turn-active-p controller)))
-         (multiple-value-bind (action payload)
-             (terminal-ui-process-event
-              ui event :queue-completion-p turn-active-p)
-           (case action
-             (:submit
-              (application-input-controller--handle-submission
-               controller payload :steer-p turn-active-p))
-             (:queue
-              (application-input-controller--handle-queue-submission
-               controller payload))
-             (:edit-queue
-              (application-input-controller--recall-follow-up controller))
-             (:end-of-input
-              (application-input-controller--request-exit
-               controller ':end-of-input))
-             (:interrupt
-              (application-input-controller--request-exit
-               controller ':interrupt))))))))
+        (follow-up-editing-p
+          (application-input-controller--follow-up-editing-p controller)))
+    (if (and (eq event ':interrupt) follow-up-editing-p)
+        (progn
+          (terminal-ui-process-event
+           ui event :queue-editing-p follow-up-editing-p)
+          (application-input-controller--clear-follow-up-edit controller))
+        (let ((active-interrupt-action
+                (and (eq event ':interrupt)
+                     (application-input-controller--active-turn-interrupt-action
+                      controller))))
+          (cond
+            ((eq active-interrupt-action ':force)
+             (application-input-controller--force-interrupt-exit controller))
+            ((eq active-interrupt-action ':hint)
+             nil)
+            ((and (eq event ':interrupt)
+                  (application-input-controller--request-active-turn-cancellation
+                   controller :force-exit-window-p t))
+             nil)
+            ((and (eq event ':escape)
+                  (or
+                   (application-input-controller--turn-cancellation-active-p
+                    controller)
+                   (application-input-controller--request-active-turn-cancellation
+                    controller)))
+             nil)
+            (t
+             (let ((turn-active-p
+                     (application-input-controller-turn-active-p controller)))
+               (multiple-value-bind (action payload)
+                   (terminal-ui-process-event
+                    ui
+                    event
+                    :queue-completion-p turn-active-p
+                    :queue-editing-p follow-up-editing-p)
+                 (case action
+                   (:cleared
+                    (application-input-controller--clear-follow-up-edit controller))
+                   (:submit
+                    (unless
+                        (application-input-controller--handle-recalled-submission
+                         controller payload)
+                      (application-input-controller--handle-submission
+                       controller
+                       payload
+                       :steer-p
+                       (application-input-controller-turn-active-p controller))))
+                   (:queue
+                    (application-input-controller--handle-queue-submission
+                     controller payload))
+                   (:edit-queue
+                    (application-input-controller--recall-follow-up controller))
+                   (:cycle-queue
+                    (application-input-controller--cycle-follow-up
+                     controller payload))
+                   (:end-of-input
+                    (application-input-controller--request-exit
+                     controller ':end-of-input))
+                   (:interrupt
+                    (application-input-controller--request-exit
+                     controller ':interrupt))))))))))
   nil)
 
 (-> application-input-controller--input-ready-p
@@ -1029,7 +1336,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (with-lock-held ((application-input-controller-lock controller))
       (setf (application-input-controller-reader-paused-p controller) t
             thread (application-input-controller-reader-thread controller))
-      (condition-notify
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (when thread
       (join-thread thread)
@@ -1241,7 +1548,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
              (append
               (application-input-controller-pending-later-entries controller)
               (list entry))))
-      (condition-notify
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     entry))
 
@@ -1264,7 +1571,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                        controller)
                       :key #'later-entry-identifier
                       :test #'string=))
-        (condition-notify
+        (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
     cancelled-p))
 
@@ -1333,7 +1640,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                  (append
                   (application-input-controller-pending-later-entries controller)
                   (list replacement))))
-          (condition-notify
+          (sb-thread:condition-broadcast
            (application-input-controller-condition-variable controller)))
         (application-present
          application
@@ -1380,7 +1687,11 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
         do (application-input-controller--promote-due-later
             controller (get-universal-time))
         while (and
-               (null (application-input-controller-work-items controller))
+               (or
+                (null (application-input-controller-work-items controller))
+                (eql
+                 (application-input-controller-follow-up-edit-index controller)
+                 0))
                (null (application-input-controller-failure controller))
                (not (application-input-controller-stopping-p controller)))
         do (let ((wait-seconds
@@ -1401,7 +1712,10 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
          :backtrace (application-input-controller-failure-backtrace controller)))
       (unless (application-input-controller-stopping-p controller)
         (setf work (pop (application-input-controller-work-items controller))
-              (application-input-controller-active-p controller) t)))
+              (application-input-controller-active-p controller) t)
+        (when (application-input-controller-follow-up-edit-index controller)
+          (decf
+           (application-input-controller-follow-up-edit-index controller)))))
     (application-input-controller--publish-counts controller)
     work))
 
@@ -1420,8 +1734,12 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                   (append (mapcar (lambda (input)
                                     (list ':message input))
                                   steering-items)
-                          (application-input-controller-work-items controller)))))
-        (setf (application-input-controller-steering-items controller) nil))
+                          (application-input-controller-work-items controller)))
+            (when (application-input-controller-follow-up-edit-index controller)
+              (incf
+               (application-input-controller-follow-up-edit-index controller)
+               (length steering-items))))
+        (setf (application-input-controller-steering-items controller) nil)))
       (setf clear-notice-p
             (or (application-input-controller-turn-cancellation-p controller)
                 (application-input-controller-interrupt-deadline controller))
@@ -1432,7 +1750,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             nil
             (application-input-controller-interrupt-deadline controller) nil
             (application-input-controller-interrupt-hint-time controller) nil)
-      (condition-notify
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (when clear-notice-p
       (terminal-ui-set-notice
@@ -1452,6 +1770,8 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             (application-input-controller-steering-items controller) nil
             (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
+            (application-input-controller-follow-up-edit-index controller) nil
+            (application-input-controller-follow-up-edit-work controller) nil
             (application-input-controller-turn-cancellation-p controller) nil
             (application-input-controller-turn-cancellation-delivery-pending-p
              controller)
@@ -1459,7 +1779,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             (application-input-controller-interrupt-deadline controller) nil
             (application-input-controller-interrupt-hint-time controller) nil
             thread (application-input-controller-reader-thread controller))
-      (condition-notify
+      (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
     (when thread
       (join-thread thread)
@@ -1683,7 +2003,7 @@ provider reset deadline, or a five-minute fallback when no reset is known."
                               (application-input-controller-pending-later-entries
                                controller)
                               (list entry))))
-                      (condition-notify
+                      (sb-thread:condition-broadcast
                        (application-input-controller-condition-variable
                         controller)))
                     (incf deferred-count))

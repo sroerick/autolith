@@ -1047,7 +1047,7 @@ content; a narrow row drops it before any activity detail."
                 (terminal--clip-spans
                  (list
                   (terminal-span ':hint
-                                 "  Empty Tab edits the newest follow-up."))
+                                 "  Empty Tab edits newest; Shift-Tab cycles."))
                  row-width))))))
     (when rows
       (setf rows (append rows (list nil))))
@@ -1704,7 +1704,7 @@ frames, so this function never paints directly from a child thread."
 
 (-> terminal-ui--apply-editor-event
     (terminal-ui t)
-    (values keyword (option string)))
+    (values keyword (option (or string user-message-input))))
 (defun terminal-ui--apply-editor-event (ui event)
   "Apply EVENT through Clinedi while preserving Autolith interaction policy."
   (let ((editor (terminal-ui-editor ui)))
@@ -1724,6 +1724,12 @@ frames, so this function never paints directly from a child thread."
        (values :changed nil))
       ((eq event :edit-queue)
        (values :edit-queue nil))
+      ((eq event :keep-queue-edit)
+       (values :kept nil))
+      ((eq event :cycle-queue)
+       (values :cycle-queue
+               (terminal-ui--submission-input
+                ui (line-editor-text editor))))
       ((member event '(:up :down))
        (let* ((terminal (terminal-ui-terminal ui))
               (prompt-width
@@ -1759,9 +1765,10 @@ frames, so this function never paints directly from a child thread."
                  payload))))))
 
 (-> terminal-ui-process-event
-    (terminal-ui t &key (:queue-completion-p boolean))
+    (terminal-ui t &key (:queue-completion-p boolean) (:queue-editing-p boolean))
     (values keyword (option (or string user-message-input))))
-(defun terminal-ui-process-event (ui event &key queue-completion-p)
+(defun terminal-ui-process-event
+    (ui event &key queue-completion-p queue-editing-p)
   "Apply EVENT to UI's suggestions or editor and return its action and payload."
   (with-terminal-ui-locked (ui)
     (let* ((editor (terminal-ui-editor ui))
@@ -1770,19 +1777,28 @@ frames, so this function never paints directly from a child thread."
              (terminal-ui--copy-image-attachments
               (terminal-ui-image-attachments ui)))
            (completion-items
-             (and (eq event :complete)
+             (and (member event '(:complete :complete-previous))
                   (terminal-ui--reconcile-completions ui)))
            (effective-event
-             (if (and (eq event :complete)
-                      (null completion-items))
-                 (cond
-                   ((not queue-completion-p)
-                    ':submit)
-                   ((plusp (length (line-editor-text editor)))
-                    ':queue-submit)
-                   (t
-                    ':edit-queue))
-                 event)))
+             (cond
+               ((and (eq event :complete)
+                     (null completion-items))
+                (cond
+                  ((and queue-editing-p
+                        (zerop (length (line-editor-text editor))))
+                   ':keep-queue-edit)
+                  ((not queue-completion-p)
+                   ':submit)
+                  ((plusp (length (line-editor-text editor)))
+                   ':queue-submit)
+                  (t
+                   ':edit-queue)))
+               ((and (eq event :complete-previous)
+                     queue-editing-p
+                     (null completion-items))
+                ':cycle-queue)
+               (t
+                event))))
       (multiple-value-bind (completion-action completion-payload)
           (terminal-ui--handle-completion-event ui effective-event)
         (if completion-action
