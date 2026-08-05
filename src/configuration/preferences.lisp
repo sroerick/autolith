@@ -36,7 +36,13 @@
     :initform nil
     :reader preference-state-turn-timestamps-p
     :type boolean
-    :documentation "Whether transcript turn headers include local timestamps."))
+    :documentation "Whether transcript turn headers include local timestamps.")
+   (simple-technical-english-p
+    :initarg :simple-technical-english-p
+    :initform nil
+    :reader preference-state-simple-technical-english-p
+    :type boolean
+    :documentation "Whether natural-language replies use Simple Technical English."))
   (:documentation "Validated global choices restored across Autolith processes."))
 
 (-> preferences--form-p (t) boolean)
@@ -62,7 +68,10 @@
                               properties :compact-view-p))
                            (turn-timestamps-present-p
                              (readable-state-property-present-p
-                              properties :turn-timestamps-p)))
+                              properties :turn-timestamps-p))
+                           (simple-technical-english-present-p
+                             (readable-state-property-present-p
+                              properties :simple-technical-english-p)))
                        (and
                         (readable-state-property-present-p properties :model)
                         (readable-state-property-present-p
@@ -80,6 +89,10 @@
                         (or (not turn-timestamps-present-p)
                             (typep (getf properties :turn-timestamps-p)
                                    'boolean))
+                        (or (not simple-technical-english-present-p)
+                            (typep
+                             (getf properties :simple-technical-english-p)
+                             'boolean))
                         (or (= version 2) compact-present-p))))
                     (otherwise
                      nil)))))
@@ -97,7 +110,9 @@
                    (getf properties :reasoning-traces-p)
                    :compact-view-p (getf properties :compact-view-p t)
                    :turn-timestamps-p
-                   (getf properties :turn-timestamps-p nil))))
+                   (getf properties :turn-timestamps-p nil)
+                   :simple-technical-english-p
+                   (getf properties :simple-technical-english-p nil))))
 
 (-> preferences--state-form (preference-state) list)
 (defun preferences--state-form (preferences)
@@ -112,7 +127,9 @@
         :compact-view-p
         (preference-state-compact-view-p preferences)
         :turn-timestamps-p
-        (preference-state-turn-timestamps-p preferences)))
+        (preference-state-turn-timestamps-p preferences)
+        :simple-technical-english-p
+        (preference-state-simple-technical-english-p preferences)))
 
 (-> preferences--read
     (configuration)
@@ -181,6 +198,12 @@
   "Return the persisted turn-timestamp setting, defaulting to false."
   (preference-state-turn-timestamps-p (preferences-load configuration)))
 
+(-> preferences-simple-technical-english-p (configuration) boolean)
+(defun preferences-simple-technical-english-p (configuration)
+  "Return the persisted Simple Technical English setting, defaulting to false."
+  (preference-state-simple-technical-english-p
+   (preferences-load configuration)))
+
 (-> preferences-apply-model-selection (configuration) configuration)
 (defun preferences-apply-model-selection (configuration)
   "Apply saved model choices unless their corresponding environment variables exist."
@@ -231,7 +254,9 @@
       :compact-view-p
       (preference-state-compact-view-p previous)
       :turn-timestamps-p
-      (preference-state-turn-timestamps-p previous))))
+      (preference-state-turn-timestamps-p previous)
+      :simple-technical-english-p
+      (preference-state-simple-technical-english-p previous))))
   nil)
 
 (-> preferences-set-reasoning-traces (configuration boolean) null)
@@ -247,7 +272,9 @@
       :reasoning-traces-p enabled-p
       :compact-view-p (preference-state-compact-view-p previous)
       :turn-timestamps-p
-      (preference-state-turn-timestamps-p previous))))
+      (preference-state-turn-timestamps-p previous)
+      :simple-technical-english-p
+      (preference-state-simple-technical-english-p previous))))
   nil)
 
 (-> preferences-set-compact-view (configuration boolean) null)
@@ -264,7 +291,9 @@
       (preference-state-reasoning-traces-p previous)
       :compact-view-p enabled-p
       :turn-timestamps-p
-      (preference-state-turn-timestamps-p previous))))
+      (preference-state-turn-timestamps-p previous)
+      :simple-technical-english-p
+      (preference-state-simple-technical-english-p previous))))
   nil)
 
 (-> preferences-set-turn-timestamps (configuration boolean) null)
@@ -280,5 +309,25 @@
       :reasoning-traces-p
       (preference-state-reasoning-traces-p previous)
       :compact-view-p (preference-state-compact-view-p previous)
-      :turn-timestamps-p enabled-p)))
+      :turn-timestamps-p enabled-p
+      :simple-technical-english-p
+      (preference-state-simple-technical-english-p previous))))
+  nil)
+
+(-> preferences-set-simple-technical-english (configuration boolean) null)
+(defun preferences-set-simple-technical-english (configuration enabled-p)
+  "Atomically persist ENABLED-P without discarding other global choices."
+  (let ((previous (preferences-load configuration)))
+    (preferences--write
+     configuration
+     (make-instance
+      'preference-state
+      :model (preference-state-model previous)
+      :reasoning-effort (preference-state-reasoning-effort previous)
+      :reasoning-traces-p
+      (preference-state-reasoning-traces-p previous)
+      :compact-view-p (preference-state-compact-view-p previous)
+      :turn-timestamps-p
+      (preference-state-turn-timestamps-p previous)
+      :simple-technical-english-p enabled-p)))
   nil)

@@ -46,7 +46,10 @@
               "missing preferences default to compact tool presentation")
              (test-assert
               (not (preference-state-turn-timestamps-p preferences))
-              "missing preferences default turn timestamps to hidden"))
+              "missing preferences default turn timestamps to hidden")
+             (test-assert
+              (not (preference-state-simple-technical-english-p preferences))
+              "missing preferences default Simple Technical English to disabled"))
            (ensure-directories-exist pathname)
            (snapshot-write
             pathname
@@ -64,6 +67,9 @@
              (test-assert
               (preference-state-turn-timestamps-p preferences)
               "version three turn-timestamp preferences remain readable")
+             (test-assert
+              (not (preference-state-simple-technical-english-p preferences))
+              "version three preferences default Simple Technical English to disabled")
              (multiple-value-bind (form sole-form-p)
                  (snapshot-read pathname)
                (test-assert sole-form-p
@@ -75,7 +81,10 @@
                 "normalizing preferences preserves compact presentation")
                (test-assert
                 (getf (rest form) :turn-timestamps-p)
-                "normalizing preferences preserves turn-timestamp presentation")))
+                "normalizing preferences preserves turn-timestamp presentation")
+               (test-assert
+                (not (getf (rest form) :simple-technical-english-p))
+                "normalizing preferences adds the disabled response style")))
            (with-open-file (stream pathname
                                    :direction :output
                                    :if-exists :supersede
@@ -97,7 +106,10 @@
               "version one preferences default to compact tool presentation")
              (test-assert
               (not (preference-state-turn-timestamps-p legacy))
-              "version one preferences default turn timestamps to hidden"))
+              "version one preferences default turn timestamps to hidden")
+             (test-assert
+              (not (preference-state-simple-technical-english-p legacy))
+              "version one preferences default Simple Technical English to disabled"))
            (let* ((selected
                     (configuration-with-reasoning-effort
                      (configuration-with-model configuration "gpt-5.6-luna")
@@ -175,6 +187,37 @@
              (test-assert
               (not (preference-state-reasoning-traces-p preferences))
               "changing turn timestamps preserves trace mode"))
+           (preferences-set-simple-technical-english configuration t)
+           (test-assert
+            (preferences-simple-technical-english-p configuration)
+            "Simple Technical English survives a preference reload")
+           (preferences-set-reasoning-traces configuration t)
+           (preferences-set-compact-view configuration t)
+           (preferences-set-turn-timestamps configuration nil)
+           (preferences-set-model-selection
+            (configuration-with-reasoning-effort
+             (configuration-with-model configuration "gpt-5.6-luna")
+             "high"))
+           (let ((preferences (preferences-load configuration)))
+             (test-assert
+              (preference-state-simple-technical-english-p preferences)
+              "other preference setters preserve Simple Technical English")
+             (test-assert
+              (preference-state-reasoning-traces-p preferences)
+              "changing the response style preserves trace mode")
+             (test-assert
+              (preference-state-compact-view-p preferences)
+              "changing the response style preserves compact presentation")
+             (test-assert
+              (not (preference-state-turn-timestamps-p preferences))
+              "changing the response style preserves hidden turn timestamps")
+             (test-assert
+              (string= (preference-state-model preferences) "gpt-5.6-luna")
+              "changing the response style preserves the selected model"))
+           (preferences-set-simple-technical-english configuration nil)
+           (test-assert
+            (not (preferences-simple-technical-english-p configuration))
+            "Simple Technical English can be disabled durably")
            (with-open-file (stream pathname
                                    :direction :output
                                    :if-exists :supersede
