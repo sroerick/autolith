@@ -21,11 +21,17 @@
 
 (-> release-server-tests--git (pathname list) string)
 (defun release-server-tests--git (directory arguments)
-  "Run a quiet Git fixture command in DIRECTORY and return trimmed output."
+  "Run an isolated quiet Git fixture command in DIRECTORY and return output."
   (string-trim
    '(#\Space #\Tab #\Newline #\Return)
    (uiop:run-program
-    (append (list "git" "-C" (namestring directory)) arguments)
+    (append (list "env"
+                  "GIT_CONFIG_NOSYSTEM=1"
+                  "GIT_CONFIG_GLOBAL=/dev/null"
+                  "GIT_CONFIG_COUNT=0"
+                  "GIT_CONFIG_PARAMETERS="
+                  "git" "-C" (namestring directory))
+            arguments)
     :output :string
     :error-output :output)))
 
@@ -64,6 +70,43 @@
       (values deployment
               (release-server-tests--source-tag tag commit)))))
 
+(-> release-server-tests--test-git-configuration-isolation () null)
+(defun release-server-tests--test-git-configuration-isolation ()
+  "Verify release Git fixtures ignore every inherited configuration channel."
+  (let* ((root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-release-git-isolation-tests-~A/"
+                     (make-identifier))
+             (uiop:temporary-directory))))
+         (environment
+           '(("GIT_CONFIG_COUNT" . "1")
+             ("GIT_CONFIG_KEY_0" . "commit.gpgSign")
+             ("GIT_CONFIG_VALUE_0" . "true")
+             ("GIT_CONFIG_PARAMETERS" . "'commit.gpgSign=true'")))
+         (previous
+           (mapcar (lambda (entry)
+                     (cons (first entry) (uiop:getenv (first entry))))
+                   environment)))
+    (unwind-protect
+         (progn
+           (dolist (entry environment)
+             (sb-posix:setenv (first entry) (rest entry) 1))
+           (multiple-value-bind (deployment source-tag)
+               (release-server-tests--git-deployment root "0.0.1")
+             (declare (ignore deployment))
+             (test-assert
+              (= (length (release-source-tag-commit source-tag)) 40)
+              "release Git fixtures ignore inherited signing configuration")))
+      (dolist (entry previous)
+        (if (rest entry)
+            (sb-posix:setenv (first entry) (rest entry) 1)
+            (sb-posix:unsetenv (first entry))))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-release-server () null)
 (defun test-release-server ()
   "Test semantic release selection and strict HTTP routing."
@@ -75,6 +118,7 @@
                "release tags reject extra components")
   (test-assert (release-tag< "v0.9.12" "v0.10.1")
                "release tags compare numeric components")
+  (release-server-tests--test-git-configuration-isolation)
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
