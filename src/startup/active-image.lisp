@@ -127,8 +127,6 @@
                       (lisp-implementation-version))
              (string= (getf (rest record) :operating-system)
                       (software-type))
-             (string= (getf (rest record) :operating-system-version)
-                      (software-version))
              (string= (getf (rest record) :architecture)
                       (machine-type))
              (equal (mapcar #'first source-files)

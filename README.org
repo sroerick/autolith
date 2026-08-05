@@ -73,9 +73,10 @@ curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 
 The binary release contains its own pinned SBCL, matching SBCL source, locked
 Lisp dependencies, search library, and private sandbox helper. It needs Git,
-OpenSSL, and Bubblewrap from the host. The first launch builds machine-specific
-recovery and active images without requiring Quicklisp, a compiler, or a source
-checkout. Autolith checks published releases periodically and asks before
+OpenSSL, and Bubblewrap from the host. The Nix package carries its pristine
+recovery and preloaded active images in the store, so the first launch does not
+build either image or require Quicklisp, a compiler, or a source checkout.
+Autolith checks published releases periodically and asks before
 installing a newer release. The check runs in the background and never installs
 anything unattended. A prior cached result may place an update notice below the
 next startup banner. Run =autolith --update= to check and update explicitly.

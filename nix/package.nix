@@ -302,6 +302,53 @@ let
     test -f "$out/src/code/list.lisp"
   '';
 
+  recoveryImage = pkgs.runCommand "autolith-recovery-${expectedSbclVersion}" {
+    nativeBuildInputs = [ pkgs.git ];
+  } ''
+    export HOME="$TMPDIR/home"
+    export XDG_DATA_HOME="$TMPDIR/data"
+    export AUTOLITH_SBCL="${runtime}/bin/sbcl"
+    export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
+    export AUTOLITH_ASDF_CACHE="$TMPDIR/asdf-cache"
+    export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
+    export AUTOLITH_INSTALLATION_KIND=nix
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=safe.directory
+    export GIT_CONFIG_VALUE_0="${autolithSystem}"
+    export GIT_OPTIONAL_LOCKS=0
+
+    mkdir -p "$HOME" "$AUTOLITH_ASDF_CACHE" "$out/recovery"
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-recovery.lisp" \
+      "$out/recovery/autolith-recovery.core"
+    test -f "$out/recovery/autolith-recovery.core"
+    test -f "$out/recovery/manifest.sexp"
+  '';
+
+  activeImage = pkgs.runCommand "autolith-active-${expectedSbclVersion}" {
+    nativeBuildInputs = [ pkgs.git ];
+  } ''
+    export HOME="$TMPDIR/home"
+    export XDG_DATA_HOME="$TMPDIR/data"
+    export AUTOLITH_SBCL="${runtime}/bin/sbcl"
+    export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
+    export AUTOLITH_ASDF_CACHE="$TMPDIR/asdf-cache"
+    export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
+    export AUTOLITH_INSTALLATION_KIND=nix
+    export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"
+    export AUTOLITH_FFF_LIBRARY="${fffLibrary}/lib/libfff_c${sharedLibrary}"
+    ${sandboxEnvironment}
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0=safe.directory
+    export GIT_CONFIG_VALUE_0="${autolithSystem}"
+    export GIT_OPTIONAL_LOCKS=0
+
+    mkdir -p "$HOME" "$AUTOLITH_ASDF_CACHE" "$out/active"
+    "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-active.lisp" \
+      "$out/active/autolith-active.core"
+    test -f "$out/active/autolith-active.core"
+    test -f "$out/active/manifest.sexp"
+  '';
+
   # Sandboxing uses Bubblewrap and the private helper on Linux; other
   # platforms fall back to the portable unsandboxed path in cl-exec-sandbox.
   sandboxEnvironment = lib.optionalString pkgs.stdenv.isLinux ''
@@ -338,52 +385,19 @@ pkgs.writeShellApplication {
     export GIT_CONFIG_VALUE_0="${autolithSystem}"
     export GIT_OPTIONAL_LOCKS=0
 
-    runtime_root="$data_home/autolith/runtimes/${expectedSbclVersion}"
-    asdf_cache="$data_home/autolith/asdf-cache/${builtins.baseNameOf (toString autolithSystem)}"
-    mkdir -p "$runtime_root"
+    # Keep Nix-managed image and ASDF state separate from source installs while
+    # retaining the user's conversations and other application data.
+    nix_root="$data_home/autolith/nix"
+    asdf_cache="$nix_root/asdf-cache/${builtins.baseNameOf (toString autolithSystem)}"
     mkdir -p "$asdf_cache"
     export AUTOLITH_ASDF_CACHE="$asdf_cache"
     export AUTOLITH_NIX_SOURCE_ROOT="${autolithSystem}/"
     export AUTOLITH_INSTALLATION_KIND=nix
 
-    if [ "$(readlink "$runtime_root/source" 2>/dev/null || true)" != "${sbclSource}" ]; then
-      rm -rf "$runtime_root/source"
-      ln -s "${sbclSource}" "$runtime_root/source"
-    fi
-    printf '%s %s\n' \
-      "${expectedSbclVersion}" \
-      "${expectedSbclSourceHash}" > "$runtime_root/source.identity"
-    # The Nix runtime needs companion libraries and environment from this
-    # wrapper. Its bare persisted SBCL path would poison source-based tooling.
-    recorded_runtime=
-    if [ -r "$runtime_root/command" ]; then
-      IFS= read -r recorded_runtime < "$runtime_root/command" || recorded_runtime=
-    fi
-    case "$recorded_runtime" in
-      /nix/store/*-sbcl-with-packages*/bin/sbcl)
-        rm -f "$runtime_root/command"
-        ;;
-    esac
-
-    recovery_core="$data_home/autolith/recovery/autolith-recovery.core"
-    active_core="$data_home/autolith/active/autolith-active.core"
-
-    # Build the fast recovery + active images whenever the packaged Autolith
-    # changes (its store path is the upgrade signal) or an image is missing.
-    # Upstream's own bootstrap fetches SBCL and deps over the network, so we
-    # drive the offline build scripts directly with the Nix-provided runtime.
-    # We gate on the store path rather than re-deriving upstream's image-
-    # manifest validity check: a core that is corrupt without a version change
-    # is caught by the launcher we exec below, which re-validates and falls
-    # back to a (slower) source load.
-    build_marker="$data_home/autolith/images.built-for"
-    if [ ! -f "$recovery_core" ] || [ ! -f "$active_core" ] ||
-       [ "$(cat "$build_marker" 2>/dev/null || true)" != "${autolithSystem}" ]; then
-      echo "Building Autolith images (first run or package upgrade)..." >&2
-      "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-recovery.lisp"
-      "$AUTOLITH_SBCL" --script "${autolithSystem}/script/build-active.lisp"
-      printf '%s\n' "${autolithSystem}" > "$build_marker"
-    fi
+    recovery_core="${recoveryImage}/recovery/autolith-recovery.core"
+    active_core="${activeImage}/active/autolith-active.core"
+    export AUTOLITH_RECOVERY_CORE="$recovery_core"
+    export AUTOLITH_ACTIVE_CORE="$active_core"
 
     exec ${pkgs.bash}/bin/bash "${autolithSystem}/bin/autolith" "$@"
   '';
@@ -397,8 +411,8 @@ pkgs.writeShellApplication {
   };
 
   passthru = {
-    inherit autolithSystem clColorist clExecSandbox clifff clinedi colorlisp
-      colorlispNativeLibrary fffLibrary runtime sandboxHelper sbclSource
-      mcparen sbclWorkers sexpStore;
+    inherit activeImage autolithSystem clColorist clExecSandbox clifff clinedi
+      colorlisp colorlispNativeLibrary fffLibrary recoveryImage runtime
+      sandboxHelper sbclSource mcparen sbclWorkers sexpStore;
   };
 }
