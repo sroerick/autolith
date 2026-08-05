@@ -93,6 +93,7 @@
        (subtypep (array-element-type octets) '(unsigned-byte 8))
        "direct UTF-8 JSON encoding returns octets without a wide string body"))
     (test-memory-persistence)
+    (test-papercuts)
     (test-update-state-and-installation-provenance)
     (test-user-init)
     (test-directory-user-init)

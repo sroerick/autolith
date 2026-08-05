@@ -384,6 +384,8 @@ prefix from before selection. The commands are:
 /later INPUT    run input after rate limits reset
 /goal OBJECTIVE set or view the session goal
 /agenda         show workspace agenda entries
+/papercuts      show workspace papercut reports
+/papercut ID    show one complete papercut report
 /checkpoint     save a retained live generation
 /generations    list retained generations
 /rollback       start a retained generation through recovery
@@ -762,6 +764,22 @@ repository that moved before transport remains recoverable. Copy and move
 preserve target items and memory attachments, combine attachments on exact
 text-and-status duplicates, and give copied items fresh IDs only when an ID
 collides.
+
+* Papercut reports
+
+The model can record a concrete complaint with =papercut.report= when an
+Autolith limitation, broken tool, repeated friction, or blocker is preventing
+reliable work. The report is stored in the readable append-only
+=${XDG_DATA_HOME:-~/.local/share}/autolith/papercuts.sexp= file, partitioned by
+the current workspace, and its successful tool result is always shown
+prominently, including when compact presentation is enabled. Papercuts are
+reports for the user, not ordinary progress updates or a replacement for the
+final answer.
+
+Use =/papercuts= to list the newest reports. Each row shows a short stable ID and
+an exact =/papercut ID= expansion command. Use =/papercut ID= to display the
+complete title and report body. Unique prefixes are accepted; the command reports
+ambiguous prefixes instead of guessing.
 
 * Workspace, search, memory, agenda, Lisp, and self tools
 

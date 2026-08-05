@@ -221,6 +221,22 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
   (application--generic-tool-call-entry application call))
 
 
+(defmethod application-tool-call-entry
+    ((tool papercut-report-tool) (application application) (call hash-table))
+  "Present papercut.report's title without duplicating its complete body."
+  (declare (ignore tool))
+  (let* ((arguments (application--function-call-arguments call))
+         (title (and arguments (json-get arguments "title"))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ papercut.report"
+     :rows (when title
+             (list (list (terminal-span
+                          ':strong
+                          (sanitize-text title :single-line-p t))))))))
+
+
 ;;; Tool call specializations
 
 (-> application--lisp-call-entry (application json-object string) list)
@@ -1527,6 +1543,61 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
   "Present an unregistered tool result using the generic readable layout."
   (declare (ignore tool))
   (application--generic-tool-result-entry application record))
+
+(-> application--papercut-result-identifier (string) (option string))
+(defun application--papercut-result-identifier (output)
+  "Return the papercut identifier encoded in successful tool OUTPUT."
+  (let ((line (first (application--display-lines output))))
+    (when (and line (uiop:string-prefix-p "papercut-id: " line))
+      (let ((identifier (string-trim
+                         '(#\Space #\Tab)
+                         (subseq line (length "papercut-id: ")))))
+        (and (non-empty-string-p identifier) identifier)))))
+
+(defmethod application-tool-result-entry
+    ((tool papercut-report-tool) (application application) record)
+  "Present a successful papercut report as a prominent persistent alert."
+  (if (application--tool-result-success-p record)
+      (let* ((output (or (getf (rest record) :output) ""))
+             (identifier (application--papercut-result-identifier output))
+             (papercut
+               (and identifier
+                    (papercut-find
+                     (application-configuration application)
+                     identifier)))
+             (rows
+               (if papercut
+                   (append
+                    (list (list
+                           (terminal-span
+                            ':strong
+                            (sanitize-text (papercut-title papercut)
+                                           :single-line-p t))))
+                    (application--preview-rows
+                     (papercut-content papercut)
+                     ':plain
+                     *application-tool-output-lines*
+                     :gutter "│ ")
+                    (list (list
+                           (terminal-span
+                            ':hint
+                            (format nil
+                                    "Read full: /papercut ~A"
+                                    (papercut-short-identifier papercut))))))
+                   (application--preview-rows
+                    output
+                    ':plain
+                    *application-tool-output-lines*
+                    :gutter "│ "))))
+        (application--tool-entry
+         application
+         :style ':failure
+         :header "! PAPERCUT RECORDED"
+         :detail (and papercut
+                      (format nil "id ~A"
+                              (papercut-short-identifier papercut)))
+         :rows rows))
+      (call-next-method)))
 
 (defmethod application-tool-result-entry
     ((tool fs-read-tool) (application application) record)

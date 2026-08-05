@@ -478,6 +478,11 @@ Selecting a different model recomputes the context window for that model."
   "Return the append-only persistent memory pathname."
   (merge-pathnames "memories.sexp" (configuration-data-root configuration)))
 
+(-> configuration-papercut-path (configuration) pathname)
+(defun configuration-papercut-path (configuration)
+  "Return the append-only persistent papercut pathname."
+  (merge-pathnames "papercuts.sexp" (configuration-data-root configuration)))
+
 (-> configuration-agenda-path (configuration) pathname)
 (defun configuration-agenda-path (configuration)
   "Return the atomic workspace-agenda pathname."

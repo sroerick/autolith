@@ -2468,6 +2468,22 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
            *application-thinking-words*)
       "pondering"))
 
+(-> application--present-transient-tool-result (application list) boolean)
+(defun application--present-transient-tool-result (application details)
+  "Present one tool result carried only through observer DETAILS."
+  (let* ((tool-name (getf details :tool))
+         (tool (and (stringp tool-name)
+                    (application--find-tool application tool-name)))
+         (record
+           (list :tool-result
+                 :tool tool-name
+                 :status (if (getf details :success-p) ':ok ':error)
+                 :output (or (getf details :output) ""))))
+    (and tool
+         (application-present
+          application
+          (application-tool-result-entry tool application record)))))
+
 (-> application-agent-observer
     (application
      &key (:steering-function (option function))
@@ -2651,6 +2667,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
              (format nil "running ~A" (getf details :tool))))
            (:tool-call-completed
             (application-render-records application)
+            (when (string= (or (getf details :tool) "")
+                           "papercut.report")
+              (application--present-transient-tool-result application details))
             (application-set-activity application activity-label))
            (:steering-applied
             (application-render-records application)

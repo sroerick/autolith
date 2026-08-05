@@ -486,6 +486,20 @@
     :documentation "The memory identifier involved in the failure, when known."))
   (:documentation "Persistent memory data is invalid or cannot be updated."))
 
+(define-condition papercut-error (autolith-error)
+  ((pathname
+    :initarg :pathname
+    :reader papercut-error-pathname
+    :type pathname
+    :documentation "The persistent papercut file being processed.")
+   (identifier
+    :initarg :identifier
+    :initform nil
+    :reader papercut-error-identifier
+    :type (option string)
+    :documentation "The papercut identifier involved in the failure, when known."))
+  (:documentation "Persistent papercut data is invalid or cannot be updated."))
+
 (define-condition tool-error (autolith-error)
   ((tool-name
     :initarg :tool-name

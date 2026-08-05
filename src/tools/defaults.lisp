@@ -277,6 +277,24 @@
     (default-tools--register registry specification))
   registry)
 
+(-> default-tools--register-papercut (tool-registry) tool-registry)
+(defun default-tools--register-papercut (registry)
+  "Register the model-facing papercut report tool in REGISTRY."
+  (default-tools--register
+   registry
+   (list
+    'papercut-report-tool
+    "papercut" "report"
+    "Report a concrete Autolith limitation, broken behavior, repeated friction, or blocker to the user. Use this only for a real problem that deserves prominent user attention, not routine progress or ordinary uncertainty. Include enough diagnostic context for the user to understand and reproduce the problem."
+    (tool-object-schema
+     (json-object
+      "title" (tool-string-property
+                "A concise description of the problem, at most 200 characters.")
+      "content" (tool-string-property
+                  "The complete concrete report for the user, at most 8000 characters."))
+     '("title" "content"))))
+  registry)
+
 (-> default-tools--register-agenda (tool-registry) tool-registry)
 (defun default-tools--register-agenda (registry)
   "Register workspace agenda tools in REGISTRY."
@@ -723,6 +741,7 @@
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)
     (default-tools--register-memory registry)
+    (default-tools--register-papercut registry)
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry)
     (default-tools--register-lisp registry)

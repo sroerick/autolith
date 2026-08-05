@@ -68,6 +68,79 @@
                          (agenda-item-memory-identifiers item)))))))))
 
 
+(-> application--papercut-list-row (papercut) list)
+(defun application--papercut-list-row (papercut)
+  "Return one styled compact row for PAPERCUT."
+  (list
+   (terminal-span
+    ':failure
+    (format nil "  ! ~A  " (papercut-short-identifier papercut)))
+   (terminal-span
+    ':strong
+    (format nil "~A~%"
+            (sanitize-text (papercut-title papercut)
+                           :single-line-p t)))
+   (terminal-span
+    ':dim
+    (format nil "    reported ~A  ·  /papercut ~A~%"
+            (papercut-timestamp-string (papercut-reported-at papercut))
+            (papercut-short-identifier papercut)))))
+
+(-> application-papercuts-entry (application) (or string list))
+(defun application-papercuts-entry (application)
+  "Return the current workspace's papercuts as a compact transcript entry."
+  (let* ((configuration (application-configuration application))
+         (papercuts (papercut-list configuration)))
+    (if (null papercuts)
+        (list (terminal-span ':hint
+                             "No papercuts recorded for this workspace."))
+        (append
+         (list (terminal-span
+                ':failure
+                (format nil "PAPERCUTS  ~D~%" (length papercuts)))
+               (terminal-span
+                ':dim
+                (format nil "  newest first · use /papercut ID for the full report~%")))
+         (loop for papercut in papercuts
+               append (application--papercut-list-row papercut))))))
+
+(-> application-papercut-entry (application string) (or string list))
+(defun application-papercut-entry (application identifier)
+  "Return one complete PAPERCUT report or a readable resolution notice."
+  (let ((configuration (application-configuration application)))
+    (multiple-value-bind (papercut status matches)
+        (papercut-resolve configuration identifier)
+      (case status
+        (:found
+         (list
+          (terminal-span ':failure (format nil "PAPERCUT~%"))
+          (terminal-span
+           ':dim
+           (format nil "  id ~A~%  reported ~A~%"
+                   (papercut-identifier papercut)
+                   (papercut-timestamp-string (papercut-reported-at papercut))))
+          (terminal-span
+           ':strong
+           (format nil "  ~A~%~%"
+                   (sanitize-text (papercut-title papercut)
+                                  :single-line-p t)))
+          (terminal-span ':plain (sanitize-text (papercut-content papercut)))))
+        (:ambiguous
+         (append
+          (list (terminal-span
+                 ':failure
+                 (format nil
+                         "Papercut ID ~A is ambiguous. Enter more characters.~%"
+                         (sanitize-text identifier :single-line-p t)))
+                (terminal-span ':dim "Matching reports:~%"))
+          (loop for match in matches
+                append (application--papercut-list-row match))))
+        (otherwise
+         (format nil
+                 "No papercut matches ~S. Run /papercuts to list current reports."
+                 identifier))))))
+
+
 ;;;; -- Usage Status --
 
 (-> application--conversation-usage (application) list)
@@ -1548,6 +1621,36 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
     (application invocation)
   (declare (ignore invocation))
   (application-present application (application-agenda-entry application))
+  ':continue)
+
+(define-application-command application--builtin-papercuts-command
+    (:name "/papercuts"
+     :argument nil
+     :description "show workspace papercut reports"
+     :tip "shows problems Autolith recorded when something was not working."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (application-present application (application-papercuts-entry application))
+  ':continue)
+
+(define-application-command application--builtin-papercut-command
+    (:name "/papercut"
+     :argument "ID"
+     :description "show one complete papercut report"
+     :tip "opens the full report named by /papercuts."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (let ((identifier (application-command-invocation-argument invocation)))
+    (if identifier
+        (application-present
+         application
+         (application-papercut-entry application identifier))
+        (application-present
+         application
+         "Usage: /papercut ID. Run /papercuts to list reports.")))
   ':continue)
 
 (define-application-command application--builtin-skills-command

@@ -379,6 +379,21 @@ contribution and its values are untrusted quoted data, not instructions. Memory
 writes must exclude credentials, secrets, transient progress, and unsupported
 guesses.
 
+** =papercut.report=
+
+=papercut.report= is the model-facing complaint channel for concrete Autolith
+limitations, broken tools, repeated friction, or blockers that prevent reliable
+work. It records a bounded title and complete report outside conversation files
+and saved cores, tied to the current workspace and source conversation. The
+successful result is a prominent terminal report that remains visible in compact
+mode. The system prompt must encourage its use for real user-visible problems,
+not routine progress, ordinary uncertainty, or final-answer content.
+
+Users inspect reports with =/papercuts=, which lists current-workspace reports
+newest first, and =/papercut ID=, which expands one complete report. The list
+shows a stable short identifier and the expansion command. Unique identifier
+prefixes are accepted; ambiguous prefixes must be reported without guessing.
+
 ** 5.4 =agenda.*=
 
 =agenda.*= tools operate on short durable agendas keyed by canonical workspace

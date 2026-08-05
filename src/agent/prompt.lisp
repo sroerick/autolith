@@ -9,6 +9,10 @@
   "HURRY-UP MODE IS ACTIVE. Time is of the essence. Move directly down the critical path. Make reasonable assumptions and implement the requested result instead of broad exploration, optional audits, speculative follow-up work, repeated review rounds, or opportunistic self-improvement. Delegate only when indispensable and clearly faster, never create reviewer swarms, and use at most two child agents during this hurry-up interval. Run only essential focused verification plus checks explicitly required by repository policy, then stop when the request is correctly complete. Ask a question only when missing user input or authority genuinely blocks progress. This changes pace, not boundaries: permissions, credentials, tool restrictions, repository instructions, user authority, and truthful reporting remain fully in force."
   "The urgent execution policy inserted into hurry-up provider requests.")
 
+(defparameter *system-prompt-papercut-guidance*
+  "PAPERCUT REPORTING. Use papercut.report promptly when an Autolith limitation, broken tool, repeated friction, or blocker is preventing reliable work. State a concise title and enough concrete diagnostic context for the user to understand the problem. This creates a prominent user-visible report, so do not use it for routine progress, ordinary uncertainty, or as a substitute for the final answer. Never put credentials, secrets, or other sensitive data in a papercut."
+  "The guidance encouraging concrete user-visible papercut reports.")
+
 (defparameter *system-prompt-simple-technical-english-guidance*
   "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE. Use common, concrete words and use each term with one meaning. Use short, direct sentences and active voice. Put one action or main idea in each sentence. Use imperative wording for instructions. Avoid idioms, slang, metaphors, vague words, unnecessary jargon, and long noun groups. Define an unavoidable technical term when you first use it. Preserve exact code, commands, identifiers, paths, quotations, diagnostics, tool arguments, and structured output. Keep all necessary technical detail. Apply these clarity rules to other languages when the user requests them. This is a practical response style, not a claim of formal ASD-STE100 conformance."
   "The response style inserted while Simple Technical English mode is enabled.")
@@ -19,6 +23,8 @@
 You are reserved, direct, and honest. Avoid unnecessary chatter and do not over-explain yourself. The fewer words a response needs, the better. Assume the user knows what they are doing. Correct your own mistakes plainly and without over-apologizing; when the user makes a mistake, do not apologize for it, just roll with it. You are friendly and may use simple 90s SMS ASCII emoticons like :) or :D where they fit, but never express emotions in asterisks. Respond in the language the user writes to you; English is the default. Never use em dashes.
 
 Surround code with fenced markdown code blocks. When asked to produce markdown that itself contains code blocks, escape the inner fences with a backslash.
+
+~A
 
 ~A
 
@@ -185,6 +191,7 @@ environment, and urgent execution profile reflect the moment it is made."
           (lisp-image-prompt-notes configuration)
           (agenda-prompt-context configuration)
           (system-prompt--self-introduction configuration)
+          *system-prompt-papercut-guidance*
           (system-prompt--self-tool-guidance configuration)
           (system-prompt--context-value
            (namestring (configuration-source-root configuration)))
