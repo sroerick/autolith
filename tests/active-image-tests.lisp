@@ -37,7 +37,12 @@
       (setf (getf (rest wrong-runtime) :sbcl-version) "0.0.0")
       (test-assert
        (not (active-image-build-record-compatible-p wrong-runtime source-root))
-       "active-image compatibility rejects another SBCL runtime")))
+       "active-image compatibility rejects another SBCL runtime"))
+    (let ((wrong-os-version (copy-tree record)))
+      (setf (getf (rest wrong-os-version) :operating-system-version) "0.0.0")
+      (test-assert
+       (not (active-image-build-record-compatible-p wrong-os-version source-root))
+       "active-image compatibility rejects another OS version")))
   nil)
 
 (-> test-image-commit-replay-probe () null)
