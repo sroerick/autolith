@@ -595,7 +595,7 @@
 
 (-> test-terminal-input-decoding () null)
 (defun test-terminal-input-decoding ()
-  "Test production escape decoding and complete bracketed paste collection."
+  "Test production key decoding and bracketed or raw paste collection."
   (let* ((escape *terminal-escape-character*)
          (paste-start (format nil "~C[200~~" escape))
          (paste-end (format nil "~C[201~~" escape))
@@ -692,6 +692,85 @@
      (and (eq (first event) :paste)
           (string= (second event) payload))
      "literal Ctrl-V paste bursts retain embedded newlines without submission"))
+  (let* ((payload (format nil "first line~%second line"))
+         (terminal
+           (make-instance
+            'stream-terminal
+            :input-stream (make-string-input-stream payload)
+            :output-stream (make-string-output-stream)
+            :input-file-descriptor 0
+            :interactive-p t
+            :columns 40))
+         (event (terminal-read-event terminal))
+         (editor (line-editor-create)))
+    (test-assert
+     (and (eq (first event) :paste)
+          (string= (second event) payload))
+     "an unbracketed multiline terminal burst becomes one paste event")
+    (multiple-value-bind (action submitted)
+        (line-editor-handle-event editor event)
+      (test-assert
+       (and (eq action :continue)
+            (null submitted)
+            (string= (line-editor-text editor) payload))
+       "an unbracketed multiline terminal paste never submits input")))
+  (multiple-value-bind (read-descriptor write-descriptor)
+      (sb-posix:pipe)
+    (let ((input nil)
+          (output nil))
+      (unwind-protect
+           (let ((payload (format nil "pipe first~%pipe second")))
+             (setf input
+                   (sb-sys:make-fd-stream
+                    read-descriptor
+                    :input t
+                    :element-type 'character
+                    :external-format :utf-8
+                    :buffering ':none
+                    :auto-close nil)
+                   output
+                   (sb-sys:make-fd-stream
+                    write-descriptor
+                    :output t
+                    :element-type 'character
+                    :external-format :utf-8
+                    :buffering ':none
+                    :auto-close nil))
+             (write-string payload output)
+             (finish-output output)
+             (let* ((terminal
+                      (make-instance
+                       'stream-terminal
+                       :input-stream input
+                       :output-stream (make-string-output-stream)
+                       :input-file-descriptor read-descriptor
+                       :interactive-p t
+                       :columns 40))
+                    (event (terminal-read-event terminal)))
+               (test-assert
+                (and (eq (first event) :paste)
+                     (string= (second event) payload))
+                "one OS-level multiline input write never becomes submission")))
+        (when input
+          (close input))
+        (when output
+          (close output))
+        (ignore-errors (sb-posix:close read-descriptor))
+        (ignore-errors (sb-posix:close write-descriptor)))))
+  (let ((terminal
+          (make-instance
+           'stream-terminal
+           :input-stream (make-string-input-stream "ab")
+           :output-stream (make-string-output-stream)
+           :input-file-descriptor 0
+           :interactive-p t
+           :columns 40)))
+    (test-assert
+     (equal (terminal-read-event terminal) '(:insert "a"))
+     "a buffered ordinary burst retains its first editing event")
+    (test-assert
+     (equal (terminal-read-event terminal) '(:insert "b"))
+     "a buffered ordinary burst retains its remaining editing events"))
   (dolist (case
            (list
             (list (string *terminal-escape-character*) ':escape)

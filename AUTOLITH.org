@@ -22,21 +22,23 @@ a user-local init.lisp change, or a private image commit.
 
 - Problem: the active-turn cancellation change disabled Kitty CSI-u reporting to
   preserve plain Escape, leaving Alacritty unable to distinguish Shift-Enter or
-  Ctrl-Enter from ordinary submission.
+  Ctrl-Enter from ordinary submission. Some Ctrl-Shift-V paste paths also arrive
+  without bracketed-paste markers or a literal Ctrl-V byte, so embedded newlines
+  were interpreted as submission.
 - Behavior: terminal startup again enables Kitty CSI-u and xterm
   modifyOtherKeys. A narrow Autolith decoder handles supported Kitty reports for
   Escape, Enter, Tab, Shift-Tab, and Backspace before delegating all other input
-  to Clinedi. It also collects a bounded literal Ctrl-V byte burst as one paste
-  event when a terminal fails to wrap its paste in bracketed-paste markers.
+  to Clinedi. It collects bounded literal Ctrl-V and raw multiline byte bursts as
+  paste events, while buffering ordinary multi-key bursts for normal decoding.
   Partial protocol activation performs balanced best-effort cleanup.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
   =src/terminal/protocol.lisp=, and =src/terminal/stream.lisp=.
 - Verification: modified Enter, enhanced Tab and Shift-Tab, legacy input,
-  bracketed and literal Ctrl-V multiline paste, protocol ordering, follow-up
-  cycling, and cleanup regressions pass within the complete 3,166-test repository
-  check.
+  bracketed, literal Ctrl-V, raw string-stream, and OS-pipe multiline paste,
+  ordinary buffered keys, protocol ordering, follow-up cycling, and cleanup
+  regressions pass within the complete 3,172-test repository check.
 - Removal condition: Clinedi natively decodes the bare Kitty control reports and
-  terminals reliably bracket Ctrl-V paste, so Autolith can remove its
+  terminals reliably bracket every paste path, so Autolith can remove its
   compatibility reader without losing Escape or multiline paste semantics.
 
 ** Conservative line-aware fs.edit fallback

@@ -80,6 +80,11 @@
     :reader stream-terminal-input-stream
     :type stream
     :documentation "The character stream carrying terminal input.")
+   (pending-input-stream
+    :initform nil
+    :accessor stream-terminal-pending-input-stream
+    :type (or null stream)
+    :documentation "Buffered terminal bytes awaiting semantic event decoding.")
    (output-stream
     :initarg :output-stream
     :reader stream-terminal-output-stream

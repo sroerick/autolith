@@ -78,8 +78,15 @@
 
 (defmethod terminal-input-ready-p ((terminal stream-terminal))
   "Return true when TERMINAL input can be consumed without blocking."
-  (or (not (terminal-interactive-p terminal))
-      (listen (stream-terminal-input-stream terminal))))
+  (let ((pending (stream-terminal-pending-input-stream terminal)))
+    (when (and pending (not (listen pending)))
+      (setf (stream-terminal-pending-input-stream terminal) nil
+            pending nil))
+    (not
+     (null
+      (or (not (terminal-interactive-p terminal))
+          pending
+          (listen (stream-terminal-input-stream terminal)))))))
 
 (-> terminal--terminal-mode-or-nil (stream-terminal) t)
 (defun terminal--terminal-mode-or-nil (terminal)
@@ -186,8 +193,7 @@
   "Read one key, escape sequence, paste, or fallback line from TERMINAL."
   (if (terminal-interactive-p terminal)
       (let ((event
-               (terminal-read-editing-event
-                (stream-terminal-input-stream terminal))))
+               (terminal-read-editing-event terminal)))
         (if (eq event :stream-end)
             :end-of-input
             event))
