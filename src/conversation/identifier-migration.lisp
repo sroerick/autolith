@@ -404,18 +404,25 @@ shared structure. An incomplete final form remains ignored, as in log-read."
 
 Read bounded text blocks before parsing durable data. This keeps startup fast for
 large conversations that contain no legacy reference."
-  (let ((identifiers (mapcar (lambda (entry) (getf entry :old)) entries))
+  (let ((identifiers (make-hash-table :test #'equal))
         (buffer (make-string 65571))
         (carry-length 0))
+    (dolist (entry entries)
+      (setf (gethash (getf entry :old) identifiers) t))
     (with-open-file (stream pathname :direction :input :external-format :utf-8)
       (loop
         for end = (read-sequence buffer stream :start carry-length)
         do (when (= end carry-length)
              (return nil))
-           (when (some (lambda (identifier)
-                         (search identifier buffer :end2 end :test #'char=))
-                       identifiers)
-             (return t))
+           (loop for index from 0 to (- end 36)
+                 when (and (char= (char buffer (+ index 8)) #\-)
+                           (char= (char buffer (+ index 13)) #\-)
+                           (char= (char buffer (+ index 18)) #\-)
+                           (char= (char buffer (+ index 23)) #\-)
+                           (gethash (subseq buffer index (+ index 36))
+                                    identifiers))
+                   do (return-from conversation-identifier-migration--file-needs-rewrite-p
+                        t))
            (setf carry-length (min 35 end))
            (replace buffer buffer
                     :start1 0
