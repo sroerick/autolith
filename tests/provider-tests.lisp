@@ -952,10 +952,30 @@
               :syscall 'connect))
       ((eq outcome ':tls)
        (error 'cl+ssl-error))
+      ((eq outcome ':name-service)
+       (error 'sb-bsd-sockets:name-service-error
+              :errno 1
+              :symbol 'getaddrinfo
+              :syscall 'getaddrinfo))
       ((consp outcome)
        (values-list outcome))
       (t
        (values outcome 200 nil)))))
+
+(defmethod provider-open-native-compaction
+    ((provider test-transport-provider)
+     (request hash-table)
+     &key credentials conversation)
+  "Signal the next scripted transport outcome for native compaction."
+  (declare (ignore request credentials conversation))
+  (incf (test-transport-provider-attempt-count provider))
+  (let ((outcome (pop (test-transport-provider-outcomes provider))))
+    (if (eq outcome ':name-service)
+        (error 'sb-bsd-sockets:name-service-error
+               :errno 1
+               :symbol 'getaddrinfo
+               :syscall 'getaddrinfo)
+        (values outcome 200 nil))))
 
 (-> provider-tests--completed-sse-source (string) string)
 (defun provider-tests--completed-sse-source (response-id)
@@ -1024,8 +1044,54 @@
                            "transport-retry-success")
                   "an open-time TLS syscall failure reconnects successfully")
                  (test-assert
-                  (= (test-transport-provider-attempt-count provider) 2)
+                 (= (test-transport-provider-attempt-count provider) 2)
                   "a transient open failure consumes one bounded retry"))))
+           (let* ((success-stream
+                    (make-instance
+                     'test-character-input-stream
+                     :source
+                     (provider-tests--completed-sse-source
+                      "name-service-retry-success")))
+                  (provider
+                    (provider-tests--transport-provider
+                     configuration
+                     (list ':name-service success-stream))))
+             (credential-source-save
+              (credential-manager-primary-source
+               (provider-credential-manager provider))
+              credentials)
+             (let ((*provider-stream-retry-sleep-function*
+                     (lambda (seconds)
+                       (declare (ignore seconds)))))
+               (let ((result
+                       (provider-stream-turn
+                        provider
+                        conversation
+                        :tool-namespaces #()
+                        :event-callback #'identity)))
+                 (test-assert
+                  (string= (provider-result-response-id result)
+                           "name-service-retry-success")
+                  "an SBCL name-service error reconnects successfully")
+                 (test-assert
+                  (= (test-transport-provider-attempt-count provider) 2)
+                  "an SBCL name-service error remains inside the retry boundary"))))
+           (let ((provider
+                   (provider-tests--transport-provider
+                    configuration
+                    (list ':name-service))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider--open-native-compaction
+                     provider
+                     (json-object)
+                     :credentials credentials
+                     :conversation conversation)
+                    nil)
+                (provider-transport-error ()
+                  t))
+              "native compaction normalizes an SBCL name-service error"))
            (let* ((stream
                     (make-instance
                      'test-failing-close-stream

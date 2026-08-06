@@ -1096,6 +1096,10 @@ are decoded as UTF-8."
       (provider--signal-transport-failure
        "The provider connection failed before a response was received."
        :retryable-p t))
+    (sb-bsd-sockets:name-service-error ()
+      (provider--signal-transport-failure
+       "The provider address could not be resolved."
+       :retryable-p t))
     (ns-error ()
       (provider--signal-transport-failure
        "The provider address could not be resolved."
@@ -1122,6 +1126,10 @@ are decoded as UTF-8."
     (socket-error ()
       (provider--signal-transport-failure
        "The provider connection failed before compaction began."
+       :retryable-p t))
+    (sb-bsd-sockets:name-service-error ()
+      (provider--signal-transport-failure
+       "The provider address could not be resolved."
        :retryable-p t))
     (ns-error ()
       (provider--signal-transport-failure
