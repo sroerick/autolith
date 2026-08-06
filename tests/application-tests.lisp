@@ -4203,7 +4203,7 @@
                "command-line help omits the removed --resume option")
   (test-assert (search "--image" (main-usage))
                "command-line help documents initial local images")
-  (test-assert (search "--auth [chatgpt | grok]" (main-usage))
+  (test-assert (search "--auth [chatgpt | grok | fireworks]" (main-usage))
                "command-line help documents provider authentication choices")
   (test-assert (search "--permissions MODE" (main-usage))
                "command-line help documents initial permission mode")

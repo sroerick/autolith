@@ -149,6 +149,7 @@
     (test-provider-authentication-retries)
     (test-provider-stream-retries)
     (test-grok-provider)
+    (test-fireworks-provider)
     (test-tool-registry)
     (test-workspace-tools)
     (test-search-tools)
