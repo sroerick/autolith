@@ -21,6 +21,7 @@
                #:quri
                #:serapeum
                #:sb-posix
+               #:sb-bsd-sockets
                #:sbcl-workers
                #:sexp-store
                #:usocket
@@ -30,6 +31,7 @@
                 :components ((:file "core/package")
                              (:file "core/types")
                              (:file "core/conditions")
+                             (:file "localgroup/protocol")
                              (:file "core/json")
                              (:file "core/time")
                              (:file "core/source-files")
@@ -109,6 +111,9 @@
                              (:file "application/recovery")
                              (:file "application/commands")
                              (:file "terminal/responsive-input")
+                             (:file "localgroup/runtime")
+                             (:file "localgroup/checkpoint")
+                             (:file "localgroup/client")
                              (:file "startup/main")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
@@ -173,6 +178,7 @@
                              (:file "task-execution-tests")
                              (:file "task-scheduler-tests")
                              (:file "terminal-tests")
+                             (:file "localgroup-tests")
                              (:file "layout-tests")
                              (:file "markdown-tests")
                              (:file "release-script-tests")

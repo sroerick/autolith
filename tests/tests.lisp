@@ -195,6 +195,7 @@
     (test-task-run-native-manifest)
     (test-task-scheduler)
     (run-terminal-tests)
+    (test-localgroup-protocol)
     (run-layout-tests)
     (run-markdown-tests)
     (test-release-scripts)

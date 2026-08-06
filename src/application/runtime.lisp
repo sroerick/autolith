@@ -126,6 +126,11 @@
     :accessor application-input-controller
     :type t
     :documentation "The active responsive input controller, when one is running.")
+   (localgroup-session
+    :initform nil
+    :accessor application-localgroup-session
+    :type t
+    :documentation "The process-local discovery and control endpoint, when running.")
    (overlay-failures
     :initform nil
     :accessor application-overlay-failures

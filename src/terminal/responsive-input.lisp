@@ -999,6 +999,8 @@ commit their busy policy before the recalled work is removed."
 (defun application-input-controller--handle-submission
     (controller input &key steer-p)
   "Route submitted INPUT to model work, command work, or busy-command policy."
+  (application-localgroup-resume
+   (application-input-controller-application controller))
   (let ((message (application--message-input input))
         (text (application-input--text input)))
     (cond
@@ -1688,6 +1690,8 @@ commit their busy policy before the recalled work is removed."
             controller (get-universal-time))
         while (and
                (or
+                (application-localgroup-paused-p
+                 (application-input-controller-application controller))
                 (null (application-input-controller-work-items controller))
                 (eql
                  (application-input-controller-follow-up-edit-index controller)

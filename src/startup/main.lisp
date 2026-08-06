@@ -314,6 +314,7 @@
         (worker-stopped-p nil))
     (labels ((close-runtime-resources ()
                "Close APPLICATION's external runtimes at most once."
+               (ignore-errors (localgroup-stop application))
                (unless tool-runtimes-closed-p
                  (unwind-protect
                       (ignore-errors
@@ -389,6 +390,7 @@
                             initial-command
                             recovery-diagnosis
                             resume-offer-p)))
+                    (localgroup-start application)
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
@@ -397,7 +399,8 @@
                                input-controller
                                (lambda ()
                                  (application--quiesce-update-check application)
-                                 (funcall function)))))
+                                 (application-call-with-localgroup-quiesced
+                                  application function)))))
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))
@@ -460,6 +463,10 @@
   "Usage: autolith [--from-source] [--immutable] [--permissions MODE]
        autolith [--from-source] [--immutable] [--permissions MODE] [-i FILE | --image FILE]...
        autolith [--from-source] [--immutable] [--permissions MODE] resume [ID]
+       autolith localgroup status [--sexp]
+       autolith localgroup tell SESSION-ID MESSAGE
+       autolith localgroup pause SESSION-ID
+       autolith localgroup kill SESSION-ID
        autolith --auth [chatgpt | grok]
        autolith --version
        autolith --recovery [--generation ID | --list]")
@@ -612,6 +619,8 @@ Without a SELECTION the configured model chooses the family."
     ((or (member "--help" arguments :test #'string=)
          (member "-h" arguments :test #'string=))
      (format t "~A~%" (main-usage)))
+    ((and arguments (string= (first arguments) "localgroup"))
+     (main-localgroup (configuration-create) (rest arguments)))
     (t
      (let* ((immutable-p (not (null (member "--immutable" arguments
                                             :test #'string=))))
