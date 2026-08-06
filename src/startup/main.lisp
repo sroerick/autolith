@@ -465,6 +465,8 @@
        autolith [--from-source] [--immutable] [--permissions MODE] resume [ID]
        autolith localgroup status [--sexp]
        autolith localgroup tell SESSION-ID MESSAGE
+       autolith localgroup attach SESSION-ID [--read-only | --take-over]
+       autolith localgroup detach SESSION-ID
        autolith localgroup pause SESSION-ID
        autolith localgroup kill SESSION-ID
        autolith --auth [chatgpt | grok]

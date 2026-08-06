@@ -5,7 +5,7 @@
 (defparameter *localgroup-protocol-version* 1
   "The local loopback control protocol version.")
 
-(defparameter *localgroup-packet-character-limit* (* 1024 1024)
+(defparameter *localgroup-packet-character-limit* (* 8 1024 1024)
   "The maximum characters accepted in one localgroup packet.")
 
 (defparameter *localgroup-connect-timeout-seconds* 2

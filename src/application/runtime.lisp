@@ -343,7 +343,9 @@
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (terminal-ui-create
-     :terminal (stream-terminal-create :rows rows :columns columns)
+     :terminal
+     (localgroup-terminal-create
+      (stream-terminal-create :rows rows :columns columns))
      :prompt *application-prompt*
      :placeholder *application-placeholder*
      :completion-function #'application-command-completion-entries)))

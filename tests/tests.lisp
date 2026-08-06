@@ -196,6 +196,7 @@
     (test-task-scheduler)
     (run-terminal-tests)
     (test-localgroup-protocol)
+    (test-localgroup-attachments)
     (run-layout-tests)
     (run-markdown-tests)
     (test-release-scripts)

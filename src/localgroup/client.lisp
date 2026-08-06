@@ -131,6 +131,163 @@
           (getf (rest response) :session-id))
   nil)
 
+;;;; -- Localgroup Attach Client --
+
+(-> localgroup--attachment-request-mode (list) keyword)
+(defun localgroup--attachment-request-mode (arguments)
+  "Return the attach mode selected by command-line ARGUMENTS."
+  (let ((read-only-count (count "--read-only" arguments :test #'string=))
+        (take-over-count (count "--take-over" arguments :test #'string=)))
+    (when (or (> read-only-count 1)
+              (> take-over-count 1)
+              (and (plusp read-only-count) (plusp take-over-count)))
+      (error 'localgroup-error
+             :message "Choose at most one of --read-only and --take-over."
+             :operation ':arguments))
+    (cond ((plusp read-only-count) ':read-only)
+          ((plusp take-over-count) ':take-over)
+          (t ':control))))
+
+(-> localgroup--attach-receiver
+    (stream stream function)
+    null)
+(defun localgroup--attach-receiver (socket-stream output-stream stop-function)
+  "Copy attachment output packets to OUTPUT-STREAM until closure."
+  (unwind-protect
+       (handler-case
+           (loop for packet = (localgroup-read-packet socket-stream)
+                 while packet
+                 do (case (first packet)
+                      (:output
+                       (let ((text (second packet)))
+                         (when (stringp text)
+                           (write-string text output-stream)
+                           (finish-output output-stream))))
+                      ((:detached :revoked)
+                       (return))))
+         (error () nil))
+    (funcall stop-function))
+  nil)
+
+(-> localgroup--attach-terminal-loop
+    (stream stream-terminal keyword)
+    null)
+(defun localgroup--attach-terminal-loop (socket-stream terminal mode)
+  "Relay local terminal events to SOCKET-STREAM until the attachment ends."
+  (let ((lock (make-lock "Autolith localgroup attach client"))
+        (stopped-p nil)
+        (receiver nil))
+    (labels ((stop ()
+               "Mark the local attachment client stopped."
+               (with-lock-held (lock)
+                 (setf stopped-p t))
+               nil)
+
+             (stopped-p ()
+               "Return true when the attachment receiver has ended."
+               (with-lock-held (lock)
+                 stopped-p)))
+      (unwind-protect
+           (progn
+             (setf receiver
+                   (make-thread
+                    (lambda ()
+                      (localgroup--attach-receiver
+                       socket-stream *standard-output* #'stop))
+                    :name "Autolith localgroup attach input"))
+             (loop until (stopped-p)
+                   do (when *terminal-resize-pending-p*
+                        (setf *terminal-resize-pending-p* nil)
+                        (multiple-value-bind (rows columns)
+                            (terminal-current-size)
+                          (localgroup-write-packet
+                           socket-stream
+                           (list :resize
+                                 :rows rows
+                                 :columns columns
+                                 :styled-p
+                                 (terminal-environment-styling-p)))))
+                      (when (terminal-input-ready-p terminal)
+                        (let ((event (terminal-read-event terminal)))
+                          (cond
+                            ((and (eq mode ':read-only)
+                                  (member event '(:interrupt :end-of-input)))
+                             (return))
+                            ((eq event ':end-of-input)
+                             (return))
+                            ((not (eq mode ':read-only))
+                             (localgroup-write-packet
+                              socket-stream (list :event event))))))
+                      (sleep 0.01)))
+        (ignore-errors
+          (localgroup-write-packet socket-stream '(:detach)))
+        (ignore-errors (close socket-stream))
+        (when (and receiver (thread-alive-p receiver))
+          (ignore-errors (join-thread receiver))))))
+  nil)
+
+(-> localgroup-attach-record (cons keyword) null)
+(defun localgroup-attach-record (entry mode)
+  "Attach the current terminal to endpoint ENTRY with MODE."
+  (let* ((record (rest entry))
+         (socket nil)
+         (socket-stream nil)
+         (terminal nil)
+         (signal-installed-p nil))
+    (unwind-protect
+         (progn
+           (multiple-value-setq (socket socket-stream)
+             (localgroup-connect (localgroup--record-port record)))
+           (multiple-value-bind (rows columns)
+               (terminal-current-size)
+             (localgroup-write-packet
+              socket-stream
+              (list :localgroup-request
+                    :version *localgroup-protocol-version*
+                    :token (localgroup--record-token record)
+                    :operation ':attach
+                    :arguments
+                    (list :mode mode
+                          :rows rows
+                          :columns columns
+                          :styled-p (terminal-environment-styling-p)))))
+           (let ((response (localgroup-read-packet socket-stream)))
+             (unless (and response (eq (first response) ':attached))
+               (error 'localgroup-error
+                      :message (or (and response
+                                        (getf (rest response) :message))
+                                   "The localgroup attachment was rejected.")
+                      :operation ':attach
+                      :session-id (localgroup--record-session-id record)))
+             (let ((history (getf (rest response) :history)))
+               (when (stringp history)
+                 (write-string history *standard-output*)
+                 (finish-output *standard-output*))))
+           (setf terminal
+                 (stream-terminal-create
+                  :rows *terminal-default-rows*
+                  :columns *terminal-default-columns*))
+           (terminal-start terminal)
+           (sb-sys:enable-interrupt
+            sb-unix:sigwinch
+            (lambda (signal code context)
+              (declare (ignore signal code context))
+              (setf *terminal-resize-pending-p* t)))
+           (setf signal-installed-p t)
+           (localgroup--attach-terminal-loop socket-stream terminal mode))
+      (when signal-installed-p
+        (sb-sys:enable-interrupt sb-unix:sigwinch :default))
+      (when terminal
+        (ignore-errors (terminal-stop terminal)))
+      (when socket-stream
+        (ignore-errors (close socket-stream)))
+      (when (and socket (null socket-stream))
+        (ignore-errors (sb-bsd-sockets:socket-close socket)))))
+  nil)
+
+
+;;;; -- Localgroup Command Entry --
+
 (-> main-localgroup (configuration list) null)
 (defun main-localgroup (configuration arguments)
   "Run one noninteractive localgroup command described by ARGUMENTS."
@@ -144,7 +301,25 @@
                (write status :stream *standard-output* :readably t)
                (terpri))
              (localgroup-print-statuses statuses))))
-      ((member operation '("tell" "pause" "kill") :test #'string=)
+      ((string= operation "attach")
+       (let* ((session-id (second arguments))
+              (options (cddr arguments)))
+         (unless session-id
+           (error 'localgroup-error
+                  :message "localgroup attach requires a session identifier."
+                  :operation ':arguments))
+         (when (some (lambda (option)
+                       (not (member option '("--read-only" "--take-over")
+                                    :test #'string=)))
+                     options)
+           (error 'localgroup-error
+                  :message "localgroup attach accepts only --read-only or --take-over."
+                  :operation ':arguments
+                  :session-id session-id))
+         (localgroup-attach-record
+          (localgroup--find-record configuration session-id)
+          (localgroup--attachment-request-mode options))))
+      ((member operation '("tell" "pause" "detach" "kill") :test #'string=)
        (let* ((session-id (second arguments))
               (entry
                 (and session-id
@@ -167,6 +342,8 @@
                        entry ':tell (list :message message))))
                    ((string= operation "pause")
                     (localgroup-query-record entry ':pause))
+                   ((string= operation "detach")
+                    (localgroup-query-record entry ':detach))
                    (t
                     (localgroup-query-record entry ':kill)))))
            (localgroup--print-response response *standard-output*))))

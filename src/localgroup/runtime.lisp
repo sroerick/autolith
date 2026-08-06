@@ -294,11 +294,171 @@
             :task-live-count task-live-count
             :task-active-count task-active-count
             :terminal-attached-p
-            (not
-             (null
-              (terminal-interactive-p
-               (terminal-ui-terminal (application-ui application)))))
+            (let ((terminal
+                    (terminal-ui-terminal (application-ui application))))
+              (if (typep terminal 'localgroup-terminal)
+                  (localgroup-terminal-attached-p terminal)
+                  (not (null (terminal-interactive-p terminal)))))
+            :terminal-attachment
+            (let ((terminal
+                    (terminal-ui-terminal (application-ui application))))
+              (if (typep terminal 'localgroup-terminal)
+                  (localgroup-terminal-attachment-kind terminal)
+                  (if (terminal-interactive-p terminal)
+                      ':foreground
+                      ':detached)))
+            :observer-count
+            (let ((terminal
+                    (terminal-ui-terminal (application-ui application))))
+              (if (typep terminal 'localgroup-terminal)
+                  (localgroup-terminal-observer-count terminal)
+                  0))
             :created-at (localgroup-session-created-at session)))))
+
+
+;;;; -- Localgroup Terminal Ownership --
+
+(-> localgroup--terminal (localgroup-session) localgroup-terminal)
+(defun localgroup--terminal (session)
+  "Return SESSION's attachable relay terminal."
+  (let ((terminal
+          (terminal-ui-terminal
+           (application-ui (localgroup-session-application session)))))
+    (unless (typep terminal 'localgroup-terminal)
+      (error 'localgroup-error
+             :message "This Autolith session has no attachable terminal relay."
+             :operation ':attach
+             :session-id (localgroup-session-identifier session)))
+    terminal))
+
+(-> localgroup--release-launcher () boolean)
+(defun localgroup--release-launcher ()
+  "Ask the exact stable launcher parent to release its foreground caller."
+  (let* ((text (uiop:getenv "AUTOLITH_LAUNCHER_PID"))
+         (pid
+           (and (non-empty-string-p text)
+                (every #'digit-char-p text)
+                (parse-integer text))))
+    (when (and pid (= pid (sb-posix:getppid)))
+      (handler-case
+          (progn
+            (sb-posix:kill pid sb-posix:sigusr1)
+            t)
+        (error () nil)))))
+
+(-> localgroup--attachment-mode (list) keyword)
+(defun localgroup--attachment-mode (arguments)
+  "Return the validated attachment mode selected by ARGUMENTS."
+  (let ((mode (or (getf arguments :mode) ':control)))
+    (unless (member mode '(:read-only :control :take-over))
+      (error 'localgroup-error
+             :message "The localgroup attachment mode is invalid."
+             :operation ':attach))
+    mode))
+
+(-> localgroup--terminal-event-p (t) boolean)
+(defun localgroup--terminal-event-p (event)
+  "Return true when EVENT is one supported terminal semantic event."
+  (or (keywordp event)
+      (characterp event)
+      (and (localgroup--proper-list-p event)
+           (= (length event) 2)
+           (member (first event) '(:insert :paste :line))
+           (stringp (second event)))))
+
+(-> localgroup--attachment-read-loop
+    (localgroup-terminal localgroup-attachment)
+    null)
+(defun localgroup--attachment-read-loop (terminal attachment)
+  "Relay input packets from ATTACHMENT until detach or end of stream."
+  (loop
+    for packet =
+      (handler-case
+          (localgroup-read-packet (localgroup-attachment-stream attachment))
+        (error () nil))
+    while packet
+    do (case (first packet)
+         (:detach
+          (return))
+         (:event
+          (when (and (not (eq (localgroup-attachment-mode attachment)
+                              ':read-only))
+                     (= (length packet) 2)
+                     (localgroup--terminal-event-p (second packet)))
+            (localgroup-terminal-enqueue-event
+             terminal attachment (second packet))))
+         (:resize
+          (when (not (eq (localgroup-attachment-mode attachment) ':read-only))
+            (let ((rows (getf (rest packet) :rows))
+                  (columns (getf (rest packet) :columns))
+                  (styled-p (getf (rest packet) :styled-p)))
+              (when (and (typep rows '(integer 1 10000))
+                         (typep columns '(integer 1 10000))
+                         (typep styled-p 'boolean))
+                (localgroup-terminal-resize
+                 terminal rows columns styled-p)))))))
+  nil)
+
+(-> localgroup--serve-attachment
+    (localgroup-session sb-bsd-sockets:socket stream list)
+    null)
+(defun localgroup--serve-attachment (session socket stream request)
+  "Authenticate REQUEST, attach its persistent SOCKET, and relay terminal packets."
+  (unless (localgroup--valid-request-p request session)
+    (localgroup-write-packet
+     stream (list :error :message "The localgroup request was rejected."))
+    (return-from localgroup--serve-attachment nil))
+  (let* ((arguments (localgroup--request-field request :arguments))
+         (mode (localgroup--attachment-mode arguments))
+         (rows (or (getf arguments :rows) *terminal-default-rows*))
+         (columns (or (getf arguments :columns) *terminal-default-columns*))
+         (styled-p (not (null (getf arguments :styled-p))))
+         (application (localgroup-session-application session))
+         (controller (application-input-controller application))
+         (terminal (localgroup--terminal session))
+         (attachment (localgroup-attachment-create socket stream mode)))
+    (unwind-protect
+         (multiple-value-bind (history released-direct-p)
+             (if (eq mode ':read-only)
+                 (localgroup-terminal-attach
+                  terminal attachment rows columns styled-p)
+                 (application-input-controller-call-with-reader-paused
+                  controller
+                  (lambda ()
+                    (localgroup-terminal-attach
+                     terminal attachment rows columns styled-p))))
+           (unless
+               (localgroup-attachment-send
+                attachment
+                (list :attached
+                      :mode mode
+                      :session-id (localgroup-session-identifier session)
+                      :history history
+                      :rows (terminal-rows terminal)
+                      :columns (terminal-columns terminal)))
+             (return-from localgroup--serve-attachment nil))
+           (when released-direct-p
+             (localgroup--release-launcher))
+           (localgroup--attachment-read-loop terminal attachment))
+      (localgroup-terminal-detach terminal attachment)
+      (localgroup-attachment-close attachment)))
+  nil)
+
+(-> localgroup--detach-terminal (localgroup-session) list)
+(defun localgroup--detach-terminal (session)
+  "Release SESSION's current controlling terminal and return a response."
+  (let* ((application (localgroup-session-application session))
+         (controller (application-input-controller application))
+         (terminal (localgroup--terminal session))
+         (released-direct-p
+           (application-input-controller-call-with-reader-paused
+            controller
+            (lambda ()
+              (localgroup-terminal-release-control terminal)))))
+    (when released-direct-p
+      (localgroup--release-launcher))
+    (list :ok :operation :detach
+          :session-id (localgroup-session-identifier session))))
 
 
 ;;;; -- Localgroup Request Handling --
@@ -355,6 +515,8 @@
         (localgroup-session-application session))
        (list :ok :operation :pause
              :session-id (localgroup-session-identifier session)))
+      (:detach
+       (localgroup--detach-terminal session))
       (:kill
        (let ((controller
                (application-input-controller
@@ -373,19 +535,27 @@
     null)
 (defun localgroup--handle-client (session socket)
   "Read, answer, and close one localgroup client SOCKET."
-  (let ((stream nil))
+  (let ((stream nil)
+        (attachment-p nil))
     (unwind-protect
          (handler-case
              (progn
                (setf stream (localgroup--socket-stream socket))
                (let ((request (localgroup-read-packet stream)))
-                 (localgroup-write-packet
-                  stream
-                  (if request
-                      (localgroup--dispatch-request session request)
-                      (list :error :message "The localgroup request was empty.")))))
+                 (cond
+                   ((null request)
+                    (localgroup-write-packet
+                     stream
+                     (list :error :message "The localgroup request was empty.")))
+                   ((eq (localgroup--request-field request :operation) ':attach)
+                    (setf attachment-p t)
+                    (localgroup--serve-attachment session socket stream request))
+                   (t
+                    (localgroup-write-packet
+                     stream
+                     (localgroup--dispatch-request session request))))))
            (error (condition)
-             (when stream
+             (when (and stream (not attachment-p))
                (ignore-errors
                  (localgroup-write-packet
                   stream
@@ -480,6 +650,18 @@ Optional identity values preserve one process session across checkpoint quiescen
                       (localgroup-registry-pathname configuration identifier)
                       :created-at created-at)
                      (application-localgroup-session application) session)
+               (let ((terminal
+                       (terminal-ui-terminal (application-ui application)))
+                     (controller (application-input-controller application)))
+                 (when (and controller (typep terminal 'localgroup-terminal))
+                   (localgroup-terminal-set-wake-function
+                    terminal
+                    (lambda ()
+                      (with-lock-held
+                          ((application-input-controller-lock controller))
+                        (sb-thread:condition-broadcast
+                         (application-input-controller-condition-variable
+                          controller)))))))
                (localgroup--publish-registry session)
                (setf (localgroup-session-server-thread session)
                      (make-thread

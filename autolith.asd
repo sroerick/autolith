@@ -105,6 +105,7 @@
                              (:file "terminal/layout")
                              (:file "terminal/markdown")
                              (:file "terminal/stream")
+                             (:file "localgroup/terminal")
                              (:file "terminal/ui")
                              (:file "application/runtime")
                              (:file "application/tool-presentation")

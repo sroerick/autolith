@@ -22,6 +22,32 @@
     (setf (application-input-controller application) controller)
     (values application controller)))
 
+(-> test-localgroup--read-packet (stream) list)
+(defun test-localgroup--read-packet (stream)
+  "Return one packet after a bounded wait for STREAM input."
+  (test-assert
+   (task-tests--wait-until (lambda () (listen stream)) 2)
+   "the localgroup attachment produces its next packet promptly")
+  (or (localgroup-read-packet stream)
+      (error "The localgroup attachment closed before its next packet.")))
+
+(-> test-localgroup--attach
+    (localgroup-session keyword)
+    (values sb-bsd-sockets:socket stream list))
+(defun test-localgroup--attach (session mode)
+  "Open one test attachment to SESSION with MODE."
+  (multiple-value-bind (socket stream)
+      (localgroup-connect (localgroup-session-port session))
+    (localgroup-write-packet
+     stream
+     (list :localgroup-request
+           :version *localgroup-protocol-version*
+           :token (localgroup-session-token session)
+           :operation ':attach
+           :arguments
+           (list :mode mode :rows 31 :columns 91 :styled-p nil)))
+    (values socket stream (test-localgroup--read-packet stream))))
+
 (-> test-localgroup-protocol () null)
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
@@ -138,6 +164,126 @@
                         "localgroup kill requests ordinary graceful shutdown"))
       (when application
         (localgroup-stop application))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-localgroup-attachments () null)
+(defun test-localgroup-attachments ()
+  "Test read-only observation and controlling terminal handoff over the endpoint."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (output (make-string-output-stream))
+         (direct
+           (stream-terminal-create
+            :input-stream (make-string-input-stream "")
+            :output-stream output
+            :input-file-descriptor 0
+            :rows 24
+            :columns 80))
+         (relay (localgroup-terminal-create direct))
+         (conversation (conversation-create configuration))
+         (ui (terminal-ui-create :terminal relay))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (controller
+           (make-instance 'application-input-controller
+                          :application application
+                          :later-state (make-instance 'later-state)
+                          :pending-later-entries nil
+                          :main-thread (current-thread)))
+         (session nil)
+         (socket nil)
+         (stream nil))
+    (setf (application-input-controller application) controller)
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (terminal-start relay)
+           (terminal--write relay "before attachment\n")
+           (setf session (localgroup-start application))
+           (multiple-value-bind (read-only-socket read-only-stream response)
+               (test-localgroup--attach session ':read-only)
+             (unwind-protect
+                  (progn
+                    (test-assert
+                     (and (eq (first response) ':attached)
+                          (search "before attachment"
+                                  (getf (rest response) :history)))
+                     "read-only attach receives bounded existing terminal output")
+                    (terminal--write relay "observer output\n")
+                    (let ((packet
+                            (test-localgroup--read-packet read-only-stream)))
+                      (test-assert
+                       (and (eq (first packet) ':output)
+                            (string= (second packet) "observer output\n"))
+                       "read-only attach receives live terminal output"))
+                    (localgroup-write-packet
+                     read-only-stream (list :event (list :insert "ignored")))
+                    (sleep 0.05)
+                    (test-assert
+                     (string= (line-editor-text (terminal-ui-editor ui)) "")
+                     "read-only attachment cannot inject terminal input")
+                    (localgroup-write-packet read-only-stream '(:detach)))
+               (ignore-errors (close read-only-stream))
+               (ignore-errors
+                 (sb-bsd-sockets:socket-close read-only-socket))))
+           (multiple-value-setq (socket stream)
+             (multiple-value-bind (control-socket control-stream response)
+                 (test-localgroup--attach session ':take-over)
+               (test-assert
+                (and (eq (first response) ':attached)
+                     (eq (localgroup-terminal-attachment-kind relay) ':remote)
+                     (= (terminal-rows relay) 31)
+                     (= (terminal-columns relay) 91))
+                "take-over atomically replaces the foreground terminal")
+               (values control-socket control-stream)))
+           (localgroup-write-packet stream (list :event (list :insert "remote")))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (string= (line-editor-text (terminal-ui-editor ui)) "remote"))
+             2)
+            "controlling attachment input reaches the ordinary line editor")
+           (localgroup-write-packet stream (list :event ':submit))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (with-lock-held ((application-input-controller-lock controller))
+                 (equal
+                  (application-input-controller-work-items controller)
+                  (list (list ':message "remote")))))
+             2)
+            "controlling attachment submission uses the ordinary input queue")
+           (localgroup-write-packet
+            stream (list :resize :rows 44 :columns 120 :styled-p t))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (and (= (terminal-rows relay) 44)
+                    (= (terminal-columns relay) 120)
+                    (terminal-styled-p relay)))
+             2)
+            "controlling attachment resize updates the live terminal")
+           (localgroup-write-packet stream '(:detach))
+           (test-assert
+            (task-tests--wait-until
+             (lambda ()
+               (eq (localgroup-terminal-attachment-kind relay) ':detached))
+             2)
+            "attachment detach leaves the application running without a terminal"))
+      (when stream
+        (ignore-errors (close stream)))
+      (when (and socket (null stream))
+        (ignore-errors (sb-bsd-sockets:socket-close socket)))
+      (when session
+        (localgroup-stop application))
+      (application-input-controller-stop controller)
+      (ignore-errors (terminal-stop relay))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist :ignore)))
