@@ -195,7 +195,7 @@ let
 
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
-    version = "0.23.3";
+    version = "0.23.4";
     inherit src;
     systems = [ "autolith" "autolith/tests" ];
     lispLibs = with pkgs.sbclPackages; [
