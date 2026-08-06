@@ -147,7 +147,9 @@ the transport consumes only after a completed response."
               tool-namespaces)))
          (prefix (append
                   (list (responses-lite-developer-message
-                         (system-prompt configuration)))
+                         (let ((*system-prompt-hosted-web-search-p*
+                                 (not (null web-search-tool))))
+                           (system-prompt configuration))))
                   (when (and goal-context
                              (not compaction-p))
                     (list (responses-lite-developer-message goal-context)))))

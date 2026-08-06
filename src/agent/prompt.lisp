@@ -5,6 +5,9 @@
 (defvar *system-prompt-hurry-up-p* nil
   "Whether the current provider request uses hurry-up guidance.")
 
+(defvar *system-prompt-hosted-web-search-p* nil
+  "Whether the current provider request offers hosted web search.")
+
 (defparameter *system-prompt-hurry-up-guidance*
   "HURRY-UP MODE IS ACTIVE. Time is of the essence. Move directly down the critical path. Make reasonable assumptions and implement the requested result instead of broad exploration, optional audits, speculative follow-up work, repeated review rounds, or opportunistic self-improvement. Delegate only when indispensable and clearly faster, never create reviewer swarms, and use at most two child agents during this hurry-up interval. Run only essential focused verification plus checks explicitly required by repository policy, then stop when the request is correctly complete. Ask a question only when missing user input or authority genuinely blocks progress. This changes pace, not boundaries: permissions, credentials, tool restrictions, repository instructions, user authority, and truthful reporting remain fully in force."
   "The urgent execution policy inserted into hurry-up provider requests.")
@@ -163,6 +166,14 @@ The current date is ~A.~@[~2%~A~]"
       *system-prompt-simple-technical-english-guidance*
       ""))
 
+(-> system-prompt--hosted-web-search-guidance (configuration) string)
+(defun system-prompt--hosted-web-search-guidance (configuration)
+  "Return guidance for an available hosted web-search provider tool."
+  (if (and *system-prompt-hosted-web-search-p*
+           (not (string= (configuration-web-search-mode configuration) "disabled")))
+      "HOSTED WEB SEARCH IS AVAILABLE. Use it when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless the provider returns a web_search_call."
+      ""))
+
 (-> system-prompt--self-introduction (configuration) string)
 (defun system-prompt--self-introduction (configuration)
   "Return capability-accurate active-image guidance for CONFIGURATION."
@@ -185,7 +196,9 @@ The prompt is rebuilt for every provider request, so the embedded date,
 environment, and urgent execution profile reflect the moment it is made."
   (format nil
           *system-prompt-template*
-          (system-prompt--response-style configuration)
+          (format nil "~A~%~A"
+                  (system-prompt--response-style configuration)
+                  (system-prompt--hosted-web-search-guidance configuration))
           (if hurry-up-p *system-prompt-hurry-up-guidance* "")
           (system-prompt--environment)
           (lisp-image-prompt-notes configuration)

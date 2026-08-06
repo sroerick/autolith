@@ -137,6 +137,11 @@
              (test-assert
               (string= (json-get (aref input 0) "role") "developer")
               "the Autolith system prompt is the first input item")
+             (test-assert
+              (search "HOSTED WEB SEARCH IS AVAILABLE"
+                      (json-get (aref (json-get (aref input 0) "content") 0)
+                                "text"))
+              "enabled hosted web search is named in the Grok system prompt")
              (test-assert (string= (json-get (aref input 1) "role") "user")
                           "conversation history follows the developer prefix")
              (test-assert
