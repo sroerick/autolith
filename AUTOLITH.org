@@ -41,6 +41,31 @@ a user-local init.lisp change, or a private image commit.
   terminals reliably bracket every paste path, so Autolith can remove its
   compatibility reader without losing Escape or multiline paste semantics.
 
+** Authenticated local session control
+
+- Problem: long-running Autolith processes exposed no reliable external view of
+  session identity, strict idleness, queued work, cancellation, or live child
+  jobs. Operators therefore could not safely inspect, message, attach to, pause,
+  or stop another local session, and releasing a foreground terminal risked
+  losing accepted input or conversation ownership.
+- Behavior: each process publishes a private authenticated loopback endpoint
+  with strict idle-state reporting and bounded local control. Read-only and
+  controlling terminal relays support observation and live take-over. Foreground
+  detach and take-over use an atomic, supervised process handoff that preserves
+  the localgroup identity, capability, durable conversation, permissions, and
+  composer draft. Cancellation positively stops the replacement process group
+  before the old process restores its conversation lease.
+- Scope and location: tracked project work in =src/localgroup/=,
+  =src/application/=, =src/startup/main.lisp=, and the stable-launcher command
+  dispatch in =src/launcher/main.lisp=.
+- Verification: protocol, privacy, status, command, relay, queue-admission,
+  snapshot, lease-transfer, cancellation-interleaving, fresh-conversation, and
+  supervised process-group regressions pass within the complete 3,220-test
+  repository check.
+- Removal condition: the supported runtime gains an equivalent authenticated
+  local process/session protocol and atomic foreground handoff with the same
+  state, ownership, and rollback guarantees.
+
 ** Conservative line-aware fs.edit fallback
 
 - Problem: 4,552 historical =fs.edit= calls included 773 exact old-text misses.

@@ -143,6 +143,49 @@ generations.
 
 It is not the normal execution environment.
 
+** 3.5 Local Session Control
+
+Every interactive active process publishes one authenticated loopback control
+endpoint beneath =${XDG_STATE_HOME:-~/.local/state}/autolith/localgroup/=. The
+registry directory has mode 0700 and each capability record has mode 0600. A
+record contains a random process-session identifier, loopback port, process ID,
+creation time, and random 256-bit capability token. The bounded one-line
+S-expression protocol reads with =*read-eval*= disabled and never exposes the
+token in status output.
+
+=autolith localgroup status= lists live sessions and prunes a record only after
+its recorded endpoint is unreachable and the record still has the exact stale
+contents. =tell= submits ordinary responsive input, =pause= requests active-turn
+cancellation and holds queued primary work, =kill= requests graceful shutdown,
+and =detach= releases the controlling terminal. =attach= supports ordinary
+control, =--read-only= observation, and =--take-over= control transfer. Read-only
+observers receive bounded replay and live terminal output but cannot inject
+input or resize events.
+
+Strict idle means that the application is waiting for input with no active,
+queued, steering, recalled, cancelling, failed, or stopping primary work, no
+pause, and no live child job. A pending detach or foreground take-over is also
+not idle. Status reports the workspace, conversation, model, effort, permission
+mode, queue and child counts, terminal ownership, and this strict idle state.
+
+A foreground detach or take-over never forks the multithreaded active image and
+never modifies the stable launcher. It waits for queued primary work and live
+children to finish, pauses terminal input, snapshots the composer draft and
+process-session identity, releases the conversation lease, and starts a new
+stable-launcher process behind a private gated process-group supervisor. The
+replacement atomically claims the handoff, creates a new OS session, resumes the
+explicit durable conversation or creates a fresh empty one, restores the draft,
+reuses the same endpoint identifier and capability, and publishes an
+authenticated replacement endpoint before the old process exits. Take-over then
+reconnects to that endpoint. On startup timeout, cancellation invalidates the
+claim, positively terminates the supervised launcher group and any detached
+replacement PID, and restores the old lease only after those processes are gone.
+
+Checkpoint quiescence stops the endpoint and restarts it with the same
+process-session identity after the checkpoint boundary. Endpoint shutdown
+removes a registry record only while it still exactly describes that endpoint,
+so an old process cannot delete a replacement record.
+
 * 4. Model Access
 
 Autolith implements its own model client and agent loop.

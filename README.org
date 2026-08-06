@@ -40,6 +40,7 @@ privileges, and the user can grant commands full access for a session.
 - Persistent, opt-in provider-visible reasoning summaries with =/trace on=.
 - Opt-in Simple Technical English replies with =/ste on=.
 - Append-only portable conversation files with exact resume commands.
+- Authenticated local multi-session status, messaging, attach, detach, pause, and kill.
 - Optional root =AUTOLITH.org= notes for documented project adaptations.
 - Native Skills with explicit, request-local instruction loading.
 - MCP 2025-11-25 and 2025-06-18 over standard I/O or Streamable HTTP,
@@ -117,6 +118,12 @@ autolith
 =autolith --auth grok= or =autolith --auth chatgpt= selects one explicitly.
 Inside a session, =/model= switches between the GPT and Grok model families
 and =/auth= authenticates the active provider.
+
+List and control local Autolith processes with =autolith localgroup status=,
+=tell=, =attach=, =detach=, =pause=, and =kill=. Attach supports =--read-only=
+and =--take-over=. Foreground detach and take-over preserve the conversation and
+composer draft through a safe detached-process handoff. See the guide for the
+strict idle definition and lifecycle details.
 
 If a development checkout has no current fast startup image, the launcher asks
 whether to run its bootstrap. Use =autolith --from-source= to deliberately load

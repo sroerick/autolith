@@ -271,6 +271,19 @@ fork still occurs with exactly one live Lisp thread. The reader restarts after
 the modal or checkpoint operation. This controller is lexical to one
 application run and is never captured in a retained generation.
 
+** =localgroup/protocol.lisp=, =localgroup/runtime.lisp=, and =localgroup/handoff.lisp=
+
+Own the private authenticated loopback endpoint, strict idle snapshots, terminal
+relay attachments, and detached process handoff. Registry records are atomic
+private S-expressions containing a random capability. Foreground detach and
+take-over become main-thread work only after ordinary queues and live child jobs
+are empty. The handoff pauses input, transfers the conversation lease through a
+gated supervised launcher process group, and requires an authenticated
+replacement endpoint before old-process shutdown. Atomic claim and cancellation
+records plus launcher-group and replacement-PID acknowledgements prevent a late
+replacement from racing lease restoration. Checkpoint quiescence reuses the same
+endpoint identity without carrying runtime threads into a generation.
+
 ** =agent.lisp=
 
 Coordinates one turn at a time: persist user input, stream a response, append

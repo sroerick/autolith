@@ -208,6 +208,55 @@ approval for unknown commands, =sandbox= permits workspace-scoped commands in
 the host command sandbox, and =full= grants the process full user privileges.
 The selection is not persisted.
 
+** Local session control
+
+Each interactive Autolith process publishes a private authenticated endpoint on
+=127.0.0.1=. List the local sessions with:
+
+#+BEGIN_SRC sh
+autolith localgroup status
+#+END_SRC
+
+The table shows each session ID, state, conversation, queued and child activity,
+and workspace. Use =--sexp= for complete readable status records. =idle= is
+strict: the process is waiting for input, has no active, queued, steering,
+recalled, cancelling, failed, or stopping primary work, is not paused or
+handing off, and has no live subagent.
+
+Control a session with:
+
+#+BEGIN_SRC sh
+autolith localgroup tell SESSION-ID "message"
+autolith localgroup pause SESSION-ID
+autolith localgroup attach SESSION-ID
+autolith localgroup attach SESSION-ID --read-only
+autolith localgroup attach SESSION-ID --take-over
+autolith localgroup detach SESSION-ID
+autolith localgroup kill SESSION-ID
+#+END_SRC
+
+=tell= uses the ordinary responsive input path and resumes a paused session.
+=pause= requests cancellation of an active turn and holds queued primary work
+until new input arrives. =kill= requests graceful shutdown. A read-only attach
+receives bounded terminal replay and live output without input authority.
+Ordinary attach requires the session to have no controlling terminal.
+=--take-over= replaces a remote controller immediately.
+
+Detaching or taking over a foreground session uses a safe process handoff rather
+than forking the active image or changing the stable launcher. Existing queued
+work and live subagents finish first. Autolith preserves a durable conversation
+when one exists, preserves an empty session as a fresh conversation, restores
+the composer draft, keeps the same localgroup session ID, and starts a detached
+replacement in the same working directory and permission mode. The old process
+returns its original shell only after the replacement endpoint authenticates.
+If replacement startup fails, Autolith terminates it and restores the old
+conversation lease before continuing.
+
+Private discovery records live under
+=${XDG_STATE_HOME:-~/.local/state}/autolith/localgroup/=. The directory is mode
+0700, each record is mode 0600, and stale records are pruned only after an
+unreachable endpoint is confirmed.
+
 The interface stays on the primary screen. Completed transcript rows are emitted
 once and remain in ordinary terminal scrollback. Only the bounded live region,
 holding unfinished trace previews, status, the full-width prompt, and command
