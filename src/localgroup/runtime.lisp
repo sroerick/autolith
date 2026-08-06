@@ -439,25 +439,26 @@
       (return-from localgroup--serve-attachment nil))
     (let ((attachment (localgroup-attachment-create socket stream mode)))
       (unwind-protect
-           (multiple-value-bind (history released-direct-p)
+           (multiple-value-bind (attached-p released-direct-p)
                (if (eq mode ':read-only)
                    (localgroup-terminal-attach
-                    terminal attachment rows columns styled-p)
+                    terminal attachment
+                    :rows rows
+                    :columns columns
+                    :styled-p styled-p
+                    :session-id (localgroup-session-identifier session))
                    (application-input-controller-call-with-reader-paused
                     controller
                     (lambda ()
                       (localgroup-terminal-attach
-                       terminal attachment rows columns styled-p))))
+                       terminal attachment
+                       :rows rows
+                       :columns columns
+                       :styled-p styled-p
+                       :session-id
+                       (localgroup-session-identifier session)))))
              (declare (ignore released-direct-p))
-             (unless
-                 (localgroup-attachment-send
-                  attachment
-                  (list :attached
-                        :mode mode
-                        :session-id (localgroup-session-identifier session)
-                        :history history
-                        :rows (terminal-rows terminal)
-                        :columns (terminal-columns terminal)))
+             (unless attached-p
                (return-from localgroup--serve-attachment nil))
              (localgroup--attachment-read-loop terminal attachment))
         (localgroup-terminal-detach terminal attachment)

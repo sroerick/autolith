@@ -149,9 +149,9 @@ Every interactive active process publishes one authenticated loopback control
 endpoint beneath =${XDG_STATE_HOME:-~/.local/state}/autolith/localgroup/=. The
 registry directory has mode 0700 and each capability record has mode 0600. A
 record contains a random process-session identifier, loopback port, process ID,
-creation time, and random 256-bit capability token. The bounded one-line
-S-expression protocol reads with =*read-eval*= disabled and never exposes the
-token in status output.
+creation time, and random 256-bit capability token. The bounded
+length-prefixed S-expression protocol reads with =*read-eval*= disabled and
+never exposes the token in status output.
 
 =autolith localgroup status= lists live sessions and prunes a record only after
 its recorded endpoint is unreachable and the record still has the exact stale

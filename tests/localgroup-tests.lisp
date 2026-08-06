@@ -51,19 +51,74 @@
 (-> test-localgroup-protocol () null)
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
-  (let ((executed-p nil))
+  (let* ((text
+           (concatenate 'string
+                        "first"
+                        (string #\Newline)
+                        "second"
+                        (string #\Return)
+                        " quoted \"text\" \\ λ"))
+         (packets
+           (list (list :output text)
+                 (list :event (list :paste text))))
+         (wire
+           (with-output-to-string (stream)
+             (dolist (packet packets)
+               (localgroup-write-packet stream packet))))
+         (input (make-string-input-stream wire)))
+    (test-assert
+     (and (equal (localgroup-read-packet input) (first packets))
+          (equal (localgroup-read-packet input) (second packets))
+          (null (localgroup-read-packet input)))
+     "length-prefixed localgroup frames preserve multiline Unicode packets"))
+  (let* ((executed-p nil)
+         (payload "#.(setf executed-p t)")
+         (wire (format nil "~D~%~A" (length payload) payload)))
     (declare (special executed-p))
     (test-assert
      (handler-case
          (progn
-           (localgroup-read-packet
-            (make-string-input-stream
-             "#.(setf executed-p t)\n"))
+           (localgroup-read-packet (make-string-input-stream wire))
            nil)
        (localgroup-error () t))
      "localgroup packet reading disables reader evaluation")
     (test-assert (not executed-p)
                  "rejected localgroup reader syntax never executes"))
+  (test-assert
+   (handler-case
+       (progn
+         (localgroup-read-packet
+          (make-string-input-stream (format nil "5~%(:x")))
+         nil)
+     (localgroup-error () t))
+   "localgroup framing rejects a payload shorter than its declared length")
+  (multiple-value-bind (read-descriptor write-descriptor)
+      (sb-posix:pipe)
+    (let ((input nil))
+      (unwind-protect
+           (progn
+             (setf input
+                   (sb-sys:make-fd-stream
+                    read-descriptor
+                    :input t
+                    :element-type 'character
+                    :external-format :utf-8
+                    :buffering ':none
+                    :auto-close nil))
+             (let ((*localgroup-connect-timeout-seconds* 0.05))
+               (test-assert
+                (handler-case
+                    (progn
+                      (localgroup-read-response input ':status)
+                      nil)
+                  (localgroup-error (condition)
+                    (search "did not respond in time"
+                            (autolith-error-message condition))))
+                "localgroup response reads stop at the transport deadline")))
+        (when input
+          (ignore-errors (close input)))
+        (ignore-errors (sb-posix:close read-descriptor))
+        (ignore-errors (sb-posix:close write-descriptor)))))
   (let* ((status
            (list :localgroup-status
                  :session-id "ABC123"
@@ -81,6 +136,25 @@
           (search "ABC123" output)
           (search "/tmp/example" output))
      "localgroup status renders a nonempty human-readable table"))
+  (let ((*standard-input* (make-string-input-stream ""))
+        (*standard-output* (make-string-output-stream)))
+    (test-assert
+     (handler-case
+         (progn
+           (localgroup-attach-record
+            (test-configuration)
+            (cons #P"noninteractive.sexp"
+                  (list :localgroup-endpoint
+                        :session-id "NONTTY"
+                        :port 1
+                        :token "unused"))
+            ':read-only)
+           nil)
+       (localgroup-error (condition)
+         (and (eq (localgroup-error-operation condition) ':attach)
+              (search "interactive terminal"
+                      (autolith-error-message condition)))))
+     "localgroup attach rejects noninteractive input before connecting"))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)
@@ -189,6 +263,54 @@
 (-> test-localgroup-attachments () null)
 (defun test-localgroup-attachments ()
   "Test read-only observation and controlling terminal handoff over the endpoint."
+  (let* ((terminal (localgroup-terminal-create))
+         (socket (make-instance 'sb-bsd-sockets:inet-socket
+                                :type ':stream
+                                :protocol ':tcp))
+         (stream (make-string-output-stream))
+         (attachment
+           (make-instance 'localgroup-attachment
+                          :socket socket
+                          :stream stream
+                          :mode ':read-only)))
+    (unwind-protect
+         (let ((*localgroup-terminal-output-chunk-character-limit* 4)
+               (*localgroup-terminal-history-character-limit* 5)
+               (text (format nil "abcdefghij~%")))
+           (test-assert
+            (localgroup-terminal-attach
+             terminal attachment
+             :rows 24
+             :columns 80
+             :styled-p nil
+             :session-id "ORDER")
+            "localgroup terminal accepts a read-only attachment")
+           (terminal--write terminal text)
+           (let* ((frames
+                    (with-lock-held ((localgroup-attachment-lock attachment))
+                      (copy-list (localgroup-attachment-queue attachment))))
+                  (packets
+                    (mapcar (lambda (frame)
+                              (localgroup-read-packet
+                               (make-string-input-stream frame)))
+                            frames))
+                  (handshake (first packets))
+                  (output
+                    (apply #'concatenate 'string
+                           (mapcar #'second (rest packets)))))
+             (test-assert
+              (and (= (length frames) 4)
+                   (eq (first handshake) ':attached)
+                   (string= (getf (rest handshake) :session-id) "ORDER")
+                   (every (lambda (packet) (eq (first packet) ':output))
+                          (rest packets))
+                   (string= output text)
+                   (string= (localgroup-terminal-history-text terminal)
+                            (subseq text (- (length text) 5))))
+              "the handshake precedes bounded lossless output and exact replay")))
+      (localgroup-terminal-detach terminal attachment)
+      (localgroup-attachment-close attachment)
+      (ignore-errors (sb-bsd-sockets:socket-close socket))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (output (make-string-output-stream))
@@ -221,7 +343,7 @@
          (progn
            (configuration-ensure-directories configuration)
            (terminal-start relay)
-           (terminal--write relay "before attachment\n")
+           (terminal--write relay (format nil "before attachment~%"))
            (setf session (localgroup-start application))
            (multiple-value-bind (read-only-socket read-only-stream response)
                (test-localgroup--attach session ':read-only)
@@ -232,12 +354,12 @@
                           (search "before attachment"
                                   (getf (rest response) :history)))
                      "read-only attach receives bounded existing terminal output")
-                    (terminal--write relay "observer output\n")
+                    (terminal--write relay (format nil "observer output~%"))
                     (let ((packet
                             (test-localgroup--read-packet read-only-stream)))
                       (test-assert
                        (and (eq (first packet) ':output)
-                            (string= (second packet) "observer output\n"))
+                            (string= (second packet) (format nil "observer output~%")))
                        "read-only attach receives live terminal output"))
                     (localgroup-write-packet
                      read-only-stream (list :event (list :insert "ignored")))

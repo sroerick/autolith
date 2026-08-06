@@ -6,10 +6,13 @@
   "The local loopback control protocol version.")
 
 (defparameter *localgroup-packet-character-limit* (* 8 1024 1024)
-  "The maximum characters accepted in one localgroup packet.")
+  "The maximum decoded characters accepted in one localgroup packet.")
+
+(defparameter *localgroup-frame-header-character-limit* 16
+  "The maximum decimal length-header characters accepted for one packet.")
 
 (defparameter *localgroup-connect-timeout-seconds* 2
-  "The maximum seconds allowed for one localgroup connection attempt.")
+  "The maximum seconds allowed for a localgroup connect or required response.")
 
 (defvar *localgroup-startup-record* nil
   "The validated detached-process handoff record active during startup.")
@@ -76,74 +79,134 @@
   "Return a concise process-local session identifier."
   (subseq (localgroup--hex-string (random-data 8)) 0 12))
 
-(-> localgroup--packet-string (list) string)
-(defun localgroup--packet-string (packet)
-  "Return PACKET as one readable line without reader evaluation syntax."
+(-> localgroup--packet-payload (list) string)
+(defun localgroup--packet-payload (packet)
+  "Return PACKET as readable text without reader evaluation syntax."
   (with-standard-io-syntax
     (let ((*print-circle* nil)
           (*print-readably* t)
           (*print-pretty* nil))
       (with-output-to-string (stream)
-        (write packet :stream stream)
-        (terpri stream)))))
+        (write packet :stream stream)))))
+
+(-> localgroup--packet-string (list) string)
+(defun localgroup--packet-string (packet)
+  "Return PACKET as one bounded decimal-length-prefixed wire frame."
+  (let ((payload (localgroup--packet-payload packet)))
+    (when (> (length payload) *localgroup-packet-character-limit*)
+      (error 'localgroup-error
+             :message "A localgroup packet exceeded the configured limit."
+             :operation ':write-packet))
+    (format nil "~D~%~A" (length payload) payload)))
 
 (-> localgroup-write-packet (stream list) null)
 (defun localgroup-write-packet (stream packet)
-  "Write and flush one readable localgroup PACKET to STREAM."
+  "Write and flush one bounded localgroup PACKET frame to STREAM."
   (write-string (localgroup--packet-string packet) stream)
   (finish-output stream)
   nil)
 
-(-> localgroup--read-line-bounded (stream) (option string))
-(defun localgroup--read-line-bounded (stream)
-  "Read one bounded line from STREAM, returning NIL only at clean end of file."
-  (let ((characters (make-array 128
+(-> localgroup--read-frame-header (stream) (option string))
+(defun localgroup--read-frame-header (stream)
+  "Read one bounded decimal frame header, returning NIL only at clean end of file."
+  (let ((characters (make-array 16
                                 :element-type 'character
                                 :adjustable t
                                 :fill-pointer 0)))
     (loop for character = (read-char stream nil nil)
           do (cond
                ((null character)
-                (return
-                  (and (plusp (length characters))
-                       (coerce characters 'string))))
+                (if (zerop (length characters))
+                    (return nil)
+                    (error 'localgroup-error
+                           :message "A localgroup frame header ended early."
+                           :operation ':read-packet)))
                ((char= character #\Newline)
                 (return (coerce characters 'string)))
-               ((>= (length characters) *localgroup-packet-character-limit*)
+               ((>= (length characters)
+                    *localgroup-frame-header-character-limit*)
                 (error 'localgroup-error
-                       :message "A localgroup packet exceeded the configured limit."
+                       :message "A localgroup frame header exceeded the configured limit."
                        :operation ':read-packet))
                (t
                 (vector-push-extend character characters))))))
 
+(-> localgroup--read-frame-length (stream) (option integer))
+(defun localgroup--read-frame-length (stream)
+  "Read and validate one packet character count from STREAM."
+  (let ((header (localgroup--read-frame-header stream)))
+    (unless header
+      (return-from localgroup--read-frame-length nil))
+    (unless (and (plusp (length header))
+                 (every #'digit-char-p header))
+      (error 'localgroup-error
+             :message "A localgroup frame header is malformed."
+             :operation ':read-packet))
+    (let ((length (parse-integer header)))
+      (unless (<= 1 length *localgroup-packet-character-limit*)
+        (error 'localgroup-error
+               :message "A localgroup packet exceeded the configured limit."
+               :operation ':read-packet))
+      length)))
+
+(-> localgroup--read-frame-payload (stream integer) string)
+(defun localgroup--read-frame-payload (stream length)
+  "Read exactly LENGTH decoded packet characters from STREAM."
+  (let ((payload (make-string length)))
+    (loop for index below length
+          for character = (read-char stream nil nil)
+          do (unless character
+               (error 'localgroup-error
+                      :message "A localgroup packet ended before its declared length."
+                      :operation ':read-packet))
+             (setf (char payload index) character))
+    payload))
+
 (-> localgroup-read-packet (stream) (option list))
 (defun localgroup-read-packet (stream)
-  "Read one safe, proper-list localgroup packet from STREAM."
-  (let ((line (localgroup--read-line-bounded stream)))
-    (unless line
+  "Read one safe, proper-list localgroup packet frame from STREAM."
+  (let ((length (localgroup--read-frame-length stream)))
+    (unless length
       (return-from localgroup-read-packet nil))
-    (handler-case
-        (with-standard-io-syntax
-          (let ((*read-eval* nil)
-                (*readtable* (copy-readtable nil)))
-            (multiple-value-bind (packet position)
-                (read-from-string line nil nil)
-              (unless (and packet
-                           (localgroup--proper-list-p packet)
-                           (every (lambda (character)
-                                    (find character '(#\Space #\Tab #\Return)))
-                                  (subseq line position)))
-                (error 'localgroup-error
-                       :message "A localgroup packet is malformed."
-                       :operation ':read-packet))
-              packet)))
-      (localgroup-error (condition)
-        (error condition))
-      (error (condition)
-        (error 'localgroup-error
-               :message "A localgroup packet could not be read safely."
-               :operation ':read-packet
-               :cause condition)))))
+    (let ((payload (localgroup--read-frame-payload stream length)))
+      (handler-case
+          (with-standard-io-syntax
+            (let ((*read-eval* nil)
+                  (*readtable* (copy-readtable nil)))
+              (multiple-value-bind (packet position)
+                  (read-from-string payload nil nil)
+                (unless (and packet
+                             (localgroup--proper-list-p packet)
+                             (every (lambda (character)
+                                      (find character '(#\Space #\Tab #\Return
+                                                        #\Newline)))
+                                    (subseq payload position)))
+                  (error 'localgroup-error
+                         :message "A localgroup packet is malformed."
+                         :operation ':read-packet))
+                packet)))
+        (localgroup-error (condition)
+          (error condition))
+        (error (condition)
+          (error 'localgroup-error
+                 :message "A localgroup packet could not be read safely."
+                 :operation ':read-packet
+                 :cause condition))))))
+
+(-> localgroup-read-response (stream keyword) list)
+(defun localgroup-read-response (stream operation)
+  "Read one required response within the localgroup transport deadline."
+  (handler-case
+      (sb-sys:with-deadline (:seconds *localgroup-connect-timeout-seconds*)
+        (or (localgroup-read-packet stream)
+            (error 'localgroup-error
+                   :message "The localgroup endpoint closed without a response."
+                   :operation operation)))
+    (sb-sys:deadline-timeout (condition)
+      (error 'localgroup-error
+             :message "The localgroup endpoint did not respond in time."
+             :operation operation
+             :cause condition))))
 
 (-> localgroup--socket-stream (sb-bsd-sockets:socket) stream)
 (defun localgroup--socket-stream (socket)
@@ -166,10 +229,11 @@
     (handler-case
         (progn
           (setf (sb-bsd-sockets:sockopt-tcp-nodelay socket) t)
-          (sb-bsd-sockets:socket-connect
-           socket
-           (sb-bsd-sockets:make-inet-address "127.0.0.1")
-           port)
+          (sb-sys:with-deadline (:seconds *localgroup-connect-timeout-seconds*)
+            (sb-bsd-sockets:socket-connect
+             socket
+             (sb-bsd-sockets:make-inet-address "127.0.0.1")
+             port))
           (setf stream (localgroup--socket-stream socket))
           (values socket stream))
       (error (condition)
@@ -198,8 +262,5 @@
                   :token token
                   :operation operation
                   :arguments arguments))
-           (or (localgroup-read-packet stream)
-               (error 'localgroup-error
-                      :message "The localgroup endpoint closed without a response."
-                      :operation operation)))
+           (localgroup-read-response stream operation))
       (ignore-errors (close stream)))))

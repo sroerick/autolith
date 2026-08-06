@@ -8,6 +8,9 @@
 (defparameter *localgroup-terminal-history-character-limit* (* 1024 1024)
   "The maximum rendered terminal output replayed to a new attachment.")
 
+(defparameter *localgroup-terminal-output-chunk-character-limit* (* 64 1024)
+  "The maximum terminal output characters carried in one attachment packet.")
+
 (defclass localgroup-attachment ()
   ((socket
     :initarg :socket
@@ -230,18 +233,37 @@
     (setf (localgroup-terminal-wake-function terminal) function))
   nil)
 
+(-> localgroup-terminal--output-chunks (string) list)
+(defun localgroup-terminal--output-chunks (text)
+  "Return TEXT as ordered bounded attachment-output chunks."
+  (loop with length = (length text)
+        for start = 0 then end
+        while (< start length)
+        for end = (min length
+                       (+ start
+                          *localgroup-terminal-output-chunk-character-limit*))
+        collect (subseq text start end)))
+
 (-> localgroup-terminal--retain-output (localgroup-terminal string) null)
 (defun localgroup-terminal--retain-output (terminal text)
-  "Append TEXT to TERMINAL's bounded attachment replay history while locked."
+  "Append TEXT to TERMINAL's exactly bounded attachment replay history while locked."
   (setf (localgroup-terminal-history terminal)
         (nconc (localgroup-terminal-history terminal) (list text)))
   (incf (localgroup-terminal-history-characters terminal) (length text))
-  (loop while (and (rest (localgroup-terminal-history terminal))
-                   (> (localgroup-terminal-history-characters terminal)
-                      *localgroup-terminal-history-character-limit*))
-        for removed = (pop (localgroup-terminal-history terminal))
-        do (decf (localgroup-terminal-history-characters terminal)
-                 (length removed)))
+  (loop while (> (localgroup-terminal-history-characters terminal)
+                 *localgroup-terminal-history-character-limit*)
+        for excess = (- (localgroup-terminal-history-characters terminal)
+                        *localgroup-terminal-history-character-limit*)
+        for first = (first (localgroup-terminal-history terminal))
+        do (if (<= (length first) excess)
+               (progn
+                 (pop (localgroup-terminal-history terminal))
+                 (decf (localgroup-terminal-history-characters terminal)
+                       (length first)))
+               (progn
+                 (setf (first (localgroup-terminal-history terminal))
+                       (subseq first excess))
+                 (decf (localgroup-terminal-history-characters terminal) excess))))
   nil)
 
 (-> localgroup-terminal-history-text (localgroup-terminal) string)
@@ -294,21 +316,21 @@
   terminal)
 
 (defmethod terminal--write ((terminal localgroup-terminal) (text string))
-  "Write trusted TEXT to the current terminal and every observer."
-  (let ((attachments nil))
-    (with-lock-held ((localgroup-terminal-lock terminal))
-      (localgroup-terminal--retain-output terminal text)
-      (let ((direct (localgroup-terminal-direct-terminal terminal)))
-        (when direct
-          (terminal--write direct text)))
-      (setf attachments
+  "Write trusted TEXT to the current terminal and every observer in exact order."
+  (with-lock-held ((localgroup-terminal-lock terminal))
+    (let ((direct (localgroup-terminal-direct-terminal terminal))
+          (attachments
             (remove-duplicates
              (append (when (localgroup-terminal-controller terminal)
                        (list (localgroup-terminal-controller terminal)))
                      (localgroup-terminal-observers terminal))
              :test #'eq)))
-    (dolist (attachment attachments)
-      (localgroup-attachment-send attachment (list :output text))))
+      (when direct
+        (terminal--write direct text))
+      (dolist (chunk (localgroup-terminal--output-chunks text))
+        (localgroup-terminal--retain-output terminal chunk)
+        (dolist (attachment attachments)
+          (localgroup-attachment-send attachment (list :output chunk))))))
   nil)
 
 (defmethod terminal-flush ((terminal localgroup-terminal))
@@ -385,48 +407,70 @@
     (not (null direct))))
 
 (-> localgroup-terminal-attach
-    (localgroup-terminal localgroup-attachment integer integer boolean)
-    (values string boolean))
-(defun localgroup-terminal-attach (terminal attachment rows columns styled-p)
-  "Attach ATTACHMENT and return replay history and whether direct ownership ended."
+    (localgroup-terminal localgroup-attachment
+     &key (:rows integer) (:columns integer) (:styled-p boolean)
+     (:session-id string))
+    (values boolean boolean))
+(defun localgroup-terminal-attach
+    (terminal attachment &key rows columns styled-p session-id)
+  "Attach ATTACHMENT after queueing its handshake and report direct release."
   (let ((mode (localgroup-attachment-mode attachment))
         (old-controller nil)
         (direct nil)
-        (history "")
         (released-direct-p nil))
     (with-lock-held ((localgroup-terminal-lock terminal))
-      (ecase mode
-        (:read-only
-         (pushnew attachment (localgroup-terminal-observers terminal) :test #'eq))
-        (:control
-         (when (or (localgroup-terminal-direct-terminal terminal)
-                   (localgroup-terminal-controller terminal))
-           (error 'localgroup-error
-                  :message "The localgroup session already has a controlling terminal."
-                  :operation ':attach))
-         (setf (localgroup-terminal-controller terminal) attachment))
-        (:take-over
-         (setf direct (localgroup-terminal-direct-terminal terminal)
-               old-controller (localgroup-terminal-controller terminal)
-               (localgroup-terminal-direct-terminal terminal) nil
-               (localgroup-terminal-controller terminal) attachment
-               released-direct-p (not (null direct)))))
-      (when (not (eq mode ':read-only))
-        (when (plusp rows)
-          (setf (terminal-rows terminal) rows))
-        (when (plusp columns)
-          (setf (terminal-columns terminal) columns))
-        (setf (terminal-interactive-p terminal) t
-              (terminal-styled-p terminal) (not (null styled-p))))
-      (setf history
-            (apply #'concatenate 'string
-                   (cons "" (copy-list (localgroup-terminal-history terminal))))))
+      (when (and (eq mode ':control)
+                 (or (localgroup-terminal-direct-terminal terminal)
+                     (localgroup-terminal-controller terminal)))
+        (error 'localgroup-error
+               :message "The localgroup session already has a controlling terminal."
+               :operation ':attach))
+      (let* ((history
+               (apply #'concatenate 'string
+                      (cons "" (copy-list
+                                (localgroup-terminal-history terminal)))))
+             (next-rows
+               (if (and (not (eq mode ':read-only)) (plusp rows))
+                   rows
+                   (terminal-rows terminal)))
+             (next-columns
+               (if (and (not (eq mode ':read-only)) (plusp columns))
+                   columns
+                   (terminal-columns terminal))))
+        (unless
+            (localgroup-attachment-send
+             attachment
+             (list :attached
+                   :mode mode
+                   :session-id session-id
+                   :history history
+                   :rows next-rows
+                   :columns next-columns))
+          (return-from localgroup-terminal-attach (values nil nil)))
+        (ecase mode
+          (:read-only
+           (pushnew attachment
+                    (localgroup-terminal-observers terminal)
+                    :test #'eq))
+          (:control
+           (setf (localgroup-terminal-controller terminal) attachment))
+          (:take-over
+           (setf direct (localgroup-terminal-direct-terminal terminal)
+                 old-controller (localgroup-terminal-controller terminal)
+                 (localgroup-terminal-direct-terminal terminal) nil
+                 (localgroup-terminal-controller terminal) attachment
+                 released-direct-p (not (null direct)))))
+        (when (not (eq mode ':read-only))
+          (setf (terminal-rows terminal) next-rows
+                (terminal-columns terminal) next-columns
+                (terminal-interactive-p terminal) t
+                (terminal-styled-p terminal) (not (null styled-p))))))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (when (and old-controller (not (eq old-controller attachment)))
       (localgroup-attachment-send old-controller '(:revoked))
       (localgroup-attachment-close old-controller))
-    (values history released-direct-p)))
+    (values t released-direct-p)))
 
 (-> localgroup-terminal-detach
     (localgroup-terminal localgroup-attachment)

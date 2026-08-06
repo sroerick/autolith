@@ -260,7 +260,7 @@
 
 (-> localgroup-attach-record (configuration cons keyword) null)
 (defun localgroup-attach-record (configuration entry mode)
-  "Attach the current terminal to endpoint ENTRY with MODE."
+  "Attach the current interactive terminal to endpoint ENTRY with MODE."
   (let* ((record (rest entry))
          (socket nil)
          (socket-stream nil)
@@ -268,22 +268,29 @@
          (signal-installed-p nil))
     (unwind-protect
          (progn
-           (multiple-value-setq (socket socket-stream)
-             (localgroup-connect (localgroup--record-port record)))
            (multiple-value-bind (rows columns)
                (terminal-current-size)
-             (localgroup-write-packet
-              socket-stream
-              (list :localgroup-request
-                    :version *localgroup-protocol-version*
-                    :token (localgroup--record-token record)
+             (setf terminal
+                   (stream-terminal-create :rows rows :columns columns)))
+           (unless (terminal--terminal-mode-or-nil terminal)
+             (error 'localgroup-error
+                    :message "localgroup attach requires an interactive terminal."
                     :operation ':attach
-                    :arguments
-                    (list :mode mode
-                          :rows rows
-                          :columns columns
-                          :styled-p (terminal-environment-styling-p)))))
-           (let ((response (localgroup-read-packet socket-stream)))
+                    :session-id (localgroup--record-session-id record)))
+           (multiple-value-setq (socket socket-stream)
+             (localgroup-connect (localgroup--record-port record)))
+           (localgroup-write-packet
+            socket-stream
+            (list :localgroup-request
+                  :version *localgroup-protocol-version*
+                  :token (localgroup--record-token record)
+                  :operation ':attach
+                  :arguments
+                  (list :mode mode
+                        :rows (terminal-rows terminal)
+                        :columns (terminal-columns terminal)
+                        :styled-p (terminal-environment-styling-p))))
+           (let ((response (localgroup-read-response socket-stream ':attach)))
              (cond
                ((and response (eq (first response) ':handoff))
                 (let ((session-id (getf (rest response) :session-id))
@@ -318,10 +325,6 @@
                        :operation ':attach
                        :session-id
                        (localgroup--record-session-id record)))))
-           (setf terminal
-                 (stream-terminal-create
-                  :rows *terminal-default-rows*
-                  :columns *terminal-default-columns*))
            (terminal-start terminal)
            (sb-sys:enable-interrupt
             sb-unix:sigwinch
