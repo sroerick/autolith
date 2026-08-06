@@ -187,30 +187,17 @@
              (test-assert
               (string= (json-get (aref input 0) "type") "additional_tools")
               "additional tools are the first input item")
-             (let* ((tools (coerce (json-get (aref input 0) "tools") 'list))
-                    (web-search
-                      (find "web_search" tools
-                            :key (lambda (tool)
-                                   (and (json-object-p tool)
-                                        (json-get tool "type")))
-                            :test #'equal)))
-               (test-assert web-search
-                            "cached web search rides in additional tools")
-               (test-assert (eq (json-get web-search "external_web_access")
-                                false)
-                            "cached web search forbids live web access")
-               (test-assert
-                (equalp (json-get web-search "search_content_types")
-                        (json-array "text" "image"))
-                "Codex GPT-5.6 web search requests text and image content"))
+             (test-assert
+              (null (provider-tests--request-tool-of-type request "web_search"))
+              "requests omit the nonfunctional native web search tool")
              (test-assert
               (string= (json-get (aref input 1) "role") "developer")
               "the Autolith system prompt is the second input item")
              (test-assert
-              (search "HOSTED WEB SEARCH IS AVAILABLE"
+              (search "WEB SEARCH IS AVAILABLE"
                       (json-get (aref (json-get (aref input 1) "content") 0)
                                 "text"))
-              "enabled hosted web search is named in the system prompt")
+              "enabled web search is named in the system prompt")
              (test-assert (string= (json-get (aref input 2) "role") "user")
                           "conversation history follows the developer prefix"))
            (let* ((goal-request
@@ -229,51 +216,8 @@
                                 "text"))
               "the goal context rides as developer text"))
            (test-assert
-            (null (provider-web-search-tool
-                   (make-instance 'configuration
-                                  :web-search-mode "disabled")))
-            "disabled web search adds no hosted tool")
-            (let* ((*provider-hosted-tools-enabled-p* nil)
-                   (restricted-request
-                     (provider-request-object provider conversation schemas)))
-              (test-assert
-               (null (provider-tests--request-tool-of-type
-                      restricted-request "web_search"))
-               "restricted requests omit cached hosted web search")
-              (test-assert
-               (find "test"
-                     (provider-tests--request-tools restricted-request)
-                     :key (lambda (tool) (json-get tool "name"))
-                     :test #'equal)
-               "restricted requests retain native namespace schemas"))
-            (let* ((live-configuration
-                     (configuration--clone configuration
-                                           :web-search-mode "live"))
-                   (live-provider (provider-create live-configuration))
-                   (live-request
-                     (provider-request-object
-                      live-provider conversation schemas))
-                   (live-web-search
-                     (provider-tests--request-tool-of-type
-                      live-request "web_search")))
-              (test-assert
-               (and live-web-search
-                    (eq (json-get live-web-search "external_web_access") t))
-               "live web search permits external access")
-              (let* ((*provider-hosted-tools-enabled-p* nil)
-                     (restricted-live-request
-                       (provider-request-object
-                        live-provider conversation schemas)))
-                (test-assert
-                 (null (provider-tests--request-tool-of-type
-                        restricted-live-request "web_search"))
-                 "restricted requests omit live hosted web search")
-                (test-assert
-                 (find "test"
-                       (provider-tests--request-tools restricted-live-request)
-                       :key (lambda (tool) (json-get tool "name"))
-                       :test #'equal)
-                 "restricted live requests retain native namespace schemas")))
+            (null (provider-web-search-tool configuration))
+            "the nonfunctional native web search tool stays disabled")
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "max")
             "the provider request maps Ultra reasoning to Max")
@@ -433,28 +377,15 @@
               (string= (json-get (aref input 0) "type") "additional_tools")
               "native compaction retains the Responses Lite tool prefix")
              (test-assert
-              (provider-tests--request-tool-of-type request "web_search")
-              "ordinary native compaction includes cached hosted web search")
+              (null (provider-tests--request-tool-of-type request "web_search"))
+              "native compaction omits the nonfunctional web search tool")
              (test-assert
               (find "test"
                     (provider-tests--request-tools request)
                     :key (lambda (tool) (json-get tool "name"))
                     :test #'equal)
               "ordinary native compaction retains namespace schemas")
-             (let* ((*provider-hosted-tools-enabled-p* nil)
-                    (restricted-request
-                      (provider-native-compaction-request-object
-                       provider conversation schemas)))
-               (test-assert
-                (null (provider-tests--request-tool-of-type
-                       restricted-request "web_search"))
-                "restricted native compaction omits hosted web search")
-               (test-assert
-                (find "test"
-                      (provider-tests--request-tools restricted-request)
-                      :key (lambda (tool) (json-get tool "name"))
-                      :test #'equal)
-                "restricted native compaction retains namespace schemas"))
+
              (test-assert
               (string= (json-get (aref input 1) "role") "developer")
               "native compaction retains the system developer message")

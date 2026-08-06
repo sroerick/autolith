@@ -91,6 +91,7 @@
                              (:file "self/status")
                              (:file "self/discard")
                              (:file "self/exercise")
+                             (:file "tools/web")
                              (:file "tools/defaults")
                              (:file "agent/runtime")
                              (:file "task/contracts")

@@ -138,10 +138,10 @@
               (string= (json-get (aref input 0) "role") "developer")
               "the Autolith system prompt is the first input item")
              (test-assert
-              (search "HOSTED WEB SEARCH IS AVAILABLE"
+              (search "WEB SEARCH IS AVAILABLE"
                       (json-get (aref (json-get (aref input 0) "content") 0)
                                 "text"))
-              "enabled hosted web search is named in the Grok system prompt")
+              "enabled web search is named in the Grok system prompt")
              (test-assert (string= (json-get (aref input 1) "role") "user")
                           "conversation history follows the developer prefix")
              (test-assert
@@ -151,25 +151,10 @@
                       input)
               "the Responses Lite additional_tools item never rides to Grok"))
            (let ((tools (json-get request "tools")))
-             (test-assert (= (length tools) 2)
+             (test-assert (= (length tools) 1)
                           "Grok tools ride in the flat request tools array")
              (test-assert (string= (json-get (aref tools 0) "name") "fs.read")
-                          "Grok tools carry dotted wire names")
-             (let ((web-search (aref tools 1)))
-               (test-assert (string= (json-get web-search "type") "web_search")
-                            "Grok requests include hosted web search")
-               (test-assert (eq (json-get web-search "external_web_access") false)
-                            "Grok defaults hosted web search to cached access")))
-           (let* ((disabled-configuration
-                    (configuration--clone configuration :web-search-mode "disabled"))
-                  (disabled-request
-                    (provider-request-object
-                     (grok-provider-create disabled-configuration)
-                     conversation
-                     schemas))
-                  (disabled-tools (json-get disabled-request "tools")))
-             (test-assert (= (length disabled-tools) 1)
-                          "disabled Grok web search omits the hosted tool"))
+                          "Grok tools carry dotted wire names"))
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "high")
             "default Ultra reasoning clamps to Grok's high effort")

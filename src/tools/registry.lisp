@@ -29,6 +29,10 @@
   ()
   (:documentation "A tool whose operation is isolated in a named Lisp worker."))
 
+(defclass web-run-tool (tool)
+  ()
+  (:documentation "A tool that performs provider-backed web search."))
+
 (defclass self-tool (tool)
   ()
   (:documentation "A tool whose operation targets the active Autolith image."))

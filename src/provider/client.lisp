@@ -499,31 +499,13 @@ Grok receives no Codex-specific search-content declaration."
 
 (-> provider-web-search-tool (configuration) (option json-object))
 (defun provider-web-search-tool (configuration)
-  "Return the hosted web search tool for CONFIGURATION, or NIL when disabled.
+  "Return NIL because the subscription Responses endpoint does not execute web_search.
 
-Cached mode keeps external_web_access false so searches use the provider's
-indexed corpus, while live mode permits direct fetches. The tool rides in the
-additional_tools developer item exactly as Codex Responses Lite requests do
-at reference commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
-  (let ((mode (configuration-web-search-mode configuration))
-        (search-content-types
-          (provider--web-search-content-types configuration)))
-    (labels ((tool (external-web-access-p)
-               (apply #'json-object
-                      (append
-                       (list "type" "web_search"
-                             "external_web_access" external-web-access-p)
-                       (when search-content-types
-                         (list "search_content_types" search-content-types))))))
-      (cond
-        ((not *provider-hosted-tools-enabled-p*)
-         nil)
-        ((string= mode "disabled")
-         nil)
-        ((string= mode "live")
-         (tool t))
-        (t
-         (tool false))))))
+Autolith exposes web.run instead. It calls the provider's authenticated
+standalone search endpoint and returns the cited result through the ordinary
+local tool protocol."
+  (declare (ignore configuration))
+  nil)
 
 (-> provider-request-object
     (subscription-provider conversation vector

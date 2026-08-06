@@ -179,7 +179,7 @@
     :initform "cached"
     :reader configuration-web-search-mode
     :type non-empty-string
-    :documentation "The hosted web search mode: cached, live, or disabled.")
+    :documentation "The provider web search mode: cached, live, or disabled.")
    (context-window
     :initarg :context-window
     :initform *default-context-window*

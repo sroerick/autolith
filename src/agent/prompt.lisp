@@ -6,7 +6,7 @@
   "Whether the current provider request uses hurry-up guidance.")
 
 (defvar *system-prompt-hosted-web-search-p* nil
-  "Whether the current provider request offers hosted web search.")
+  "Whether the current provider request offers web search.")
 
 (defparameter *system-prompt-hurry-up-guidance*
   "HURRY-UP MODE IS ACTIVE. Time is of the essence. Move directly down the critical path. Make reasonable assumptions and implement the requested result instead of broad exploration, optional audits, speculative follow-up work, repeated review rounds, or opportunistic self-improvement. Delegate only when indispensable and clearly faster, never create reviewer swarms, and use at most two child agents during this hurry-up interval. Run only essential focused verification plus checks explicitly required by repository policy, then stop when the request is correctly complete. Ask a question only when missing user input or authority genuinely blocks progress. This changes pace, not boundaries: permissions, credentials, tool restrictions, repository instructions, user authority, and truthful reporting remain fully in force."
@@ -168,10 +168,10 @@ The current date is ~A.~@[~2%~A~]"
 
 (-> system-prompt--hosted-web-search-guidance (configuration) string)
 (defun system-prompt--hosted-web-search-guidance (configuration)
-  "Return guidance for an available hosted web-search provider tool."
-  (if (and *system-prompt-hosted-web-search-p*
-           (not (string= (configuration-web-search-mode configuration) "disabled")))
-      "HOSTED WEB SEARCH IS AVAILABLE. Use it when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless the provider returns a web_search_call."
+  "Return guidance for the available web.run local tool."
+  (declare (ignore *system-prompt-hosted-web-search-p*))
+  (if (not (string= (configuration-web-search-mode configuration) "disabled"))
+      "WEB SEARCH IS AVAILABLE. Use web.run when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless web.run returns a result."
       ""))
 
 (-> system-prompt--self-introduction (configuration) string)

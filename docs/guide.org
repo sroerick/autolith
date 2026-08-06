@@ -612,8 +612,9 @@ for unlisted models. =/compact= with no argument forces a compaction immediately
 =/status= reports the model, token usage, and subscription rate limit windows
 parsed from provider responses. Requests never ask for the provider's priority
 service tier, so Autolith always uses the standard path that drains rate limits
-slowest. Hosted web search is requested in cached mode by default; set
-=AUTOLITH_WEB_SEARCH= to =live= or =disabled= to change it.
+slowest. Web search uses the provider's standalone authenticated endpoint in
+cached mode by default; set =AUTOLITH_WEB_SEARCH= to =live= or =disabled= to
+change it.
 
 =/later INPUT= durably schedules ordinary input for the next usable rate-limit
 reset. An exhausted weekly window takes precedence over the five-hour window.

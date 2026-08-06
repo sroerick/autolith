@@ -129,6 +129,21 @@
      '("command"))))
   registry)
 
+(-> default-tools--register-web (tool-registry) tool-registry)
+(defun default-tools--register-web (registry)
+  "Register the provider-backed web search tool in REGISTRY."
+  (default-tools--register
+   registry
+   (list
+    'web-run-tool
+    "web" "run"
+    "Search the web for current or web-only information."
+    (tool-object-schema
+     (json-object
+      "query" (tool-string-property "The web search query."))
+     '("query"))))
+  registry)
+
 (-> default-tools--register-search (tool-registry worker) tool-registry)
 (defun default-tools--register-search (registry worker)
   "Register indexed workspace search tools using WORKER in REGISTRY."
@@ -738,6 +753,7 @@
   (let ((registry (make-instance 'tool-registry))
         (search-worker (search-worker-create)))
     (default-tools--register-workspace registry)
+    (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)
     (default-tools--register-memory registry)
