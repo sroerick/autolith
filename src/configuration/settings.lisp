@@ -41,6 +41,17 @@
 (defparameter *grok-client-protocol-version* "0.2.112"
   "The grok-build release whose Grok proxy wire protocol Autolith implements.")
 
+;; The public Fireworks Responses API, verified against
+;; accounts/fireworks/models/kimi-k3 on 2026-08-06: the endpoint accepts the
+;; standard streaming Responses dialect with function tools, reasoning
+;; effort, store=false, and prompt_cache_key.
+(defparameter *fireworks-responses-endpoint*
+  "https://api.fireworks.ai/inference/v1/responses"
+  "The Fireworks AI Responses API endpoint.")
+
+(defparameter *default-fireworks-model* "accounts/fireworks/models/kimi-k3"
+  "The Fireworks model identifier offered by default.")
+
 (defparameter *grok-oauth-scopes*
   '("openid" "profile" "email" "offline_access"
     "grok-cli:access" "api:access"
@@ -57,7 +68,8 @@
   "Standalone web search modes accepted by Autolith configuration.")
 
 (defparameter *supported-models*
-  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5")
+  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5"
+    "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
 
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
@@ -68,15 +80,20 @@
   '(("gpt-5.6-sol"   . 272000)
     ("gpt-5.6-luna"  . 272000)
     ("gpt-5.6-terra" . 272000)
-    ("grok-4.5"      . 500000))
+    ("grok-4.5"      . 500000)
+    ("accounts/fireworks/models/kimi-k3" . 1048576))
   "Provider context window sizes in tokens for known models.")
 
 (-> model-family (string) keyword)
 (defun model-family (model)
-  "Return the subscription service family serving MODEL, :codex or :grok."
-  (if (uiop:string-prefix-p "grok" model)
-      ':grok
-      ':codex))
+  "Return the service family serving MODEL: :codex, :grok, or :fireworks."
+  (cond
+    ((uiop:string-prefix-p "grok" model)
+     ':grok)
+    ((uiop:string-prefix-p "accounts/fireworks/models/" model)
+     ':fireworks)
+    (t
+     ':codex)))
 
 (defparameter *default-context-window* 272000
   "The conservative context window assumed for unknown models.")
@@ -204,14 +221,18 @@
   "Return MODEL's streaming Responses endpoint from the environment or defaults.
 
 AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint and
-AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint."
+AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint.
+AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
   (ecase (model-family model)
     (:codex
      (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
          *codex-responses-endpoint*))
     (:grok
      (or (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT")
-         *grok-responses-endpoint*))))
+         *grok-responses-endpoint*))
+    (:fireworks
+     (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
+         *fireworks-responses-endpoint*))))
 
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
@@ -577,6 +598,11 @@ Selecting a different model recomputes the context window for that model."
   "Return Autolith's private Grok OAuth credential pathname."
   (merge-pathnames "grok-auth.sexp" (configuration-state-root configuration)))
 
+(-> configuration-fireworks-auth-path (configuration) pathname)
+(defun configuration-fireworks-auth-path (configuration)
+  "Return Autolith's private Fireworks API key credential pathname."
+  (merge-pathnames "fireworks-auth.sexp" (configuration-state-root configuration)))
+
 (-> configuration-journal-path (configuration) pathname)
 (defun configuration-journal-path (configuration)
   "Return the append-only live-mutation journal pathname."
@@ -592,6 +618,18 @@ Selecting a different model recomputes the context window for that model."
 (-> configuration-grok-wire-effort (configuration) string)
 (defun configuration-grok-wire-effort (configuration)
   "Return the Grok provider effort, clamped to the low, medium, high scale."
+  (let ((effort (configuration-reasoning-effort configuration)))
+    (cond
+      ((member effort '("none" "low") :test #'string=)
+       "low")
+      ((string= effort "medium")
+       "medium")
+      (t
+       "high"))))
+
+(-> configuration-fireworks-wire-effort (configuration) string)
+(defun configuration-fireworks-wire-effort (configuration)
+  "Return the Fireworks provider effort, clamped to the low, medium, high scale."
   (let ((effort (configuration-reasoning-effort configuration)))
     (cond
       ((member effort '("none" "low") :test #'string=)
