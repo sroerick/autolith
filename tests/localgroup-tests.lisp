@@ -232,15 +232,18 @@
                (ignore-errors (close read-only-stream))
                (ignore-errors
                  (sb-bsd-sockets:socket-close read-only-socket))))
+           (test-assert
+            (localgroup-terminal-release-direct relay)
+            "a detached process can release its original foreground terminal")
            (multiple-value-setq (socket stream)
              (multiple-value-bind (control-socket control-stream response)
-                 (test-localgroup--attach session ':take-over)
+                 (test-localgroup--attach session ':control)
                (test-assert
                 (and (eq (first response) ':attached)
                      (eq (localgroup-terminal-attachment-kind relay) ':remote)
                      (= (terminal-rows relay) 31)
                      (= (terminal-columns relay) 91))
-                "take-over atomically replaces the foreground terminal")
+                "control attaches to a detached terminal relay")
                (values control-socket control-stream)))
            (localgroup-write-packet stream (list :event (list :insert "remote")))
            (test-assert

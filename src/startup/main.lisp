@@ -605,6 +605,27 @@ Without a SELECTION the configured model chooses the family."
                            collect (terminal-ui--image-label number)))
        :image-pathnames pathnames))))
 
+(-> main--connect-application
+    (&key (:configuration configuration)
+          (:conversation-id (option string))
+          (:immutable-p boolean)
+          (:permission-mode (member :ask :sandboxed :full-access))
+          (:fresh-conversation-p boolean))
+    application)
+(defun main--connect-application
+    (&key configuration conversation-id immutable-p permission-mode
+          fresh-conversation-p)
+  "Create or reconnect the active application for one normal or handoff startup."
+  (if (and (not fresh-conversation-p)
+           (typep *active-application* 'application))
+      (application-reconnect *active-application*
+                             :conversation-id conversation-id
+                             :immutable-p immutable-p
+                             :permission-mode permission-mode)
+      (application-create configuration
+                          :conversation-id conversation-id
+                          :permission-mode permission-mode)))
+
 (-> main-dispatch (list) null)
 (defun main-dispatch (arguments)
   "Dispatch validated Autolith ARGUMENTS inside the active process."
@@ -628,16 +649,28 @@ Without a SELECTION the configured model chooses the family."
                                             :test #'string=))))
             (permission-mode (main--permission-mode arguments))
             (configuration (configuration-create :immutable-p immutable-p))
+            (handoff-record
+              (localgroup-handoff-selection configuration arguments))
+            (fresh-handoff-p
+              (and handoff-record
+                   (getf (rest handoff-record) :fresh-conversation-p)))
             (resume-selection
               (multiple-value-list (main--resume-selection arguments)))
-            (resume-requested-p (first resume-selection))
-            (resume-id (second resume-selection))
+            (resume-requested-p
+              (and (null handoff-record) (first resume-selection)))
+            (resume-id
+              (if handoff-record
+                  (getf (rest handoff-record) :conversation-id)
+                  (second resume-selection)))
             (recovery-state
-              (multiple-value-list
-               (application-recovery-state configuration)))
+              (if handoff-record
+                  (list nil nil)
+                  (multiple-value-list
+                   (application-recovery-state configuration))))
             (recovery-conversation-id (first recovery-state))
             (recovery-diagnosis
-              (and (null resume-id)
+              (and (null handoff-record)
+                   (null resume-id)
                    (application-recovery-diagnosis-prompt configuration)))
             (effective-resume-requested-p
               (and resume-requested-p
@@ -649,15 +682,17 @@ Without a SELECTION the configured model chooses the family."
           (main-authenticate configuration
                              (main--auth-selection arguments)))
          (t
-          (setf *active-application*
-                (if (typep *active-application* 'application)
-                    (application-reconnect *active-application*
-                                           :conversation-id resume-id
-                                           :immutable-p immutable-p
-                                           :permission-mode permission-mode)
-                    (application-create configuration
-                                          :conversation-id resume-id
-                                          :permission-mode permission-mode)))
+          (when handoff-record
+            (localgroup-handoff-begin-startup handoff-record)
+            (application--clear-recovery-environment))
+          (let ((*localgroup-startup-record* handoff-record))
+            (setf *active-application*
+                  (main--connect-application
+                   :configuration configuration
+                   :conversation-id resume-id
+                   :immutable-p immutable-p
+                   :permission-mode permission-mode
+                   :fresh-conversation-p (not (null fresh-handoff-p))))
           (application--clear-recovery-environment)
           (when (and (member "--simulate-crash" arguments :test #'string=)
                      (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
@@ -675,7 +710,10 @@ Without a SELECTION the configured model chooses the family."
                :initial-command (and effective-resume-requested-p
                                      (null resume-id)
                                      "/resume")
-               :initial-input (main--initial-image-input arguments)
+               :initial-input
+               (if handoff-record
+                   (localgroup-handoff-initial-input handoff-record)
+                   (main--initial-image-input arguments))
                :recovery-diagnosis recovery-diagnosis
                :resume-offer-p effective-resume-requested-p)
             (rollback-requested (condition)
@@ -692,7 +730,7 @@ Without a SELECTION the configured model chooses the family."
               (format *error-output*
                       "Autolith entered recovery after a fatal error. Capsule: ~A~%"
                       (fatal-control-path-error-capsule-pathname condition))
-              (uiop:quit *main-fatal-recovery-status*))))))))
+              (uiop:quit *main-fatal-recovery-status*)))))))))
   nil)
 
 (-> main (list) null)

@@ -91,6 +91,11 @@
     :accessor application-input-controller-active-p
     :type boolean
     :documentation "Whether the main thread is processing one work item.")
+   (localgroup-handoff-p
+    :initform nil
+    :accessor application-input-controller-localgroup-handoff-p
+    :type boolean
+    :documentation "Whether localgroup has stopped new input for process handoff.")
    (turn-cancellation-p
     :initform nil
     :accessor application-input-controller-turn-cancellation-p
@@ -687,7 +692,8 @@ snapshot after shutdown cleared the process-local queues."
   "Append one work item of KIND carrying INPUT and report acceptance."
   (let ((queued-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (application-input-controller-stopping-p controller)
+      (unless (or (application-input-controller-stopping-p controller)
+                  (application-input-controller-localgroup-handoff-p controller))
         (setf (application-input-controller-work-items controller)
               (nconc (application-input-controller-work-items controller)
                      (list (list kind (application-input--copy input))))
@@ -706,7 +712,8 @@ snapshot after shutdown cleared the process-local queues."
         (queued-p nil))
     (when work
       (with-lock-held ((application-input-controller-lock controller))
-        (unless (application-input-controller-stopping-p controller)
+        (unless (or (application-input-controller-stopping-p controller)
+                    (application-input-controller-localgroup-handoff-p controller))
           (let ((index
                   (application-input-controller-follow-up-edit-index controller)))
             (setf (application-input-controller-work-items controller)
@@ -732,7 +739,8 @@ snapshot after shutdown cleared the process-local queues."
 (defun application-input-controller--enqueue-steering (controller input)
   "Queue INPUT for the active turn, or promote it before follow-ups if that turn ended."
   (with-lock-held ((application-input-controller-lock controller))
-    (unless (application-input-controller-stopping-p controller)
+    (unless (or (application-input-controller-stopping-p controller)
+                (application-input-controller-localgroup-handoff-p controller))
       (if (application-input-controller-active-p controller)
           (setf (application-input-controller-steering-items controller)
                 (nconc (application-input-controller-steering-items controller)
@@ -1683,43 +1691,62 @@ commit their busy policy before the recalled work is removed."
     (option list))
 (defun application-input-controller--next-work (controller)
   "Wait for and return CONTROLLER's next work item, or NIL after exit."
-  (let ((work nil))
+  (let ((application (application-input-controller-application controller))
+        (work nil))
     (with-lock-held ((application-input-controller-lock controller))
       (loop
-        do (application-input-controller--promote-due-later
-            controller (get-universal-time))
-        while (and
-               (or
-                (application-localgroup-paused-p
-                 (application-input-controller-application controller))
+        (application-input-controller--promote-due-later
+         controller (get-universal-time))
+        (when (or (application-input-controller-failure controller)
+                  (application-input-controller-stopping-p controller))
+          (return))
+        (cond
+          ((and (not (application-localgroup-paused-p application))
                 (null (application-input-controller-work-items controller))
-                (eql
-                 (application-input-controller-follow-up-edit-index controller)
-                 0))
-               (null (application-input-controller-failure controller))
-               (not (application-input-controller-stopping-p controller)))
-        do (let ((wait-seconds
-                   (application-input-controller--later-wait-seconds
-                    controller (get-universal-time))))
-             (if wait-seconds
-                 (condition-wait
-                  (application-input-controller-condition-variable controller)
-                  (application-input-controller-lock controller)
-                  :timeout wait-seconds)
-                 (condition-wait
-                  (application-input-controller-condition-variable controller)
-                  (application-input-controller-lock controller)))))
+                (null (application-input-controller-steering-items controller))
+                (null
+                 (application-input-controller-follow-up-edit-index controller)))
+           (let ((mode (application-localgroup-take-ready-handoff application)))
+             (when mode
+               (setf work (list ':localgroup-handoff mode)
+                     (application-input-controller-active-p controller) t)
+               (return))))
+          ((and (not (application-localgroup-paused-p application))
+                (application-input-controller-work-items controller)
+                (not
+                 (eql
+                  (application-input-controller-follow-up-edit-index controller)
+                  0)))
+           (setf work (pop (application-input-controller-work-items controller))
+                 (application-input-controller-active-p controller) t)
+           (when (application-input-controller-follow-up-edit-index controller)
+             (decf
+              (application-input-controller-follow-up-edit-index controller)))
+           (return)))
+        (let* ((later-wait
+                 (application-input-controller--later-wait-seconds
+                  controller (get-universal-time)))
+               (handoff-wait
+                 (and (application-localgroup-handoff-pending-p application)
+                      1/10))
+               (wait-seconds
+                 (cond ((and later-wait handoff-wait)
+                        (min later-wait handoff-wait))
+                       (later-wait later-wait)
+                       (handoff-wait handoff-wait))))
+          (if wait-seconds
+              (condition-wait
+               (application-input-controller-condition-variable controller)
+               (application-input-controller-lock controller)
+               :timeout wait-seconds)
+              (condition-wait
+               (application-input-controller-condition-variable controller)
+               (application-input-controller-lock controller)))))
       (when (application-input-controller-failure controller)
         (error
          'application-input-failed
          :original-condition (application-input-controller-failure controller)
-         :backtrace (application-input-controller-failure-backtrace controller)))
-      (unless (application-input-controller-stopping-p controller)
-        (setf work (pop (application-input-controller-work-items controller))
-              (application-input-controller-active-p controller) t)
-        (when (application-input-controller-follow-up-edit-index controller)
-          (decf
-           (application-input-controller-follow-up-edit-index controller)))))
+         :backtrace (application-input-controller-failure-backtrace controller))))
     (application-input-controller--publish-counts controller)
     work))
 
@@ -2067,6 +2094,12 @@ provider reset deadline, or a five-minute fallback when no reset is known."
            (application-input-controller--request-exit controller ':quit))))
       (:project-adaptation-offer
        (application-maybe-offer-project-adaptation application))
+      (:localgroup-handoff
+       (handler-case
+           (application-localgroup-run-handoff
+            application (second work) controller)
+         (localgroup-error (condition)
+           (application-handle-expected-error application condition))))
       (:later
        (application-input-controller--run-later controller (second work)))))
   nil)

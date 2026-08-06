@@ -56,6 +56,16 @@
     :accessor localgroup-session-stopping-p
     :type boolean
     :documentation "Whether endpoint shutdown has begun.")
+   (handoff-mode
+    :initform nil
+    :accessor localgroup-session-handoff-mode
+    :type (option keyword)
+    :documentation "The detach or take-over process handoff waiting for strict idle.")
+   (handoff-running-p
+    :initform nil
+    :accessor localgroup-session-handoff-running-p
+    :type boolean
+    :documentation "Whether a detached replacement is being started.")
    (server-thread
     :initform nil
     :accessor localgroup-session-server-thread
@@ -108,6 +118,15 @@
     (sb-posix:chmod (namestring directory) #o700)
     (snapshot-write pathname (localgroup--registry-record session))
     (sb-posix:chmod (namestring pathname) #o600))
+  nil)
+
+(-> localgroup--delete-owned-registry (localgroup-session) null)
+(defun localgroup--delete-owned-registry (session)
+  "Delete SESSION's registry record only while it still names this endpoint."
+  (let* ((pathname (localgroup-session-registry-pathname session))
+         (current (localgroup--read-endpoint-record pathname)))
+    (when (equal current (localgroup--registry-record session))
+      (ignore-errors (delete-file pathname))))
   nil)
 
 (-> localgroup--endpoint-record-p (t) boolean)
@@ -183,6 +202,9 @@
     (unless (and session controller)
       (return-from application-localgroup-pause nil))
     (with-lock-held ((localgroup-session-lock session))
+      (when (or (localgroup-session-handoff-mode session)
+                (localgroup-session-handoff-running-p session))
+        (return-from application-localgroup-pause nil))
       (setf (localgroup-session-paused-p session) t))
     (application-input-controller--request-active-turn-cancellation controller)
     (with-lock-held ((application-input-controller-lock controller))
@@ -208,6 +230,7 @@
          (conversation (application-conversation application))
          (controller (application-input-controller application))
          (paused-p (application-localgroup-paused-p application))
+         (handoff-p (application-localgroup-handoff-pending-p application))
          (active-p nil)
          (queued-count 0)
          (steering-count 0)
@@ -248,6 +271,7 @@
                   (not recalled-p)
                   (not stopping-p)
                   (not cancelling-p)
+                  (not handoff-p)
                   (not reader-paused-p)
                   (not failed-p)))
            (idle-p
@@ -257,6 +281,7 @@
            (state
              (cond (stopping-p ':stopping)
                    (failed-p ':failed)
+                   (handoff-p ':detaching)
                    (paused-p ':paused)
                    (cancelling-p ':cancelling)
                    (active-p ':active)
@@ -276,6 +301,7 @@
             :idle-p (not (null idle-p))
             :waiting-for-input-p (not (null waiting-for-input-p))
             :paused-p (not (null paused-p))
+            :handoff-p (not (null handoff-p))
             :cwd (namestring (configuration-working-directory configuration))
             :conversation-id (conversation-identifier conversation)
             :conversation-display-id
@@ -330,21 +356,6 @@
              :operation ':attach
              :session-id (localgroup-session-identifier session)))
     terminal))
-
-(-> localgroup--release-launcher () boolean)
-(defun localgroup--release-launcher ()
-  "Ask the exact stable launcher parent to release its foreground caller."
-  (let* ((text (uiop:getenv "AUTOLITH_LAUNCHER_PID"))
-         (pid
-           (and (non-empty-string-p text)
-                (every #'digit-char-p text)
-                (parse-integer text))))
-    (when (and pid (= pid (sb-posix:getppid)))
-      (handler-case
-          (progn
-            (sb-posix:kill pid sb-posix:sigusr1)
-            t)
-        (error () nil)))))
 
 (-> localgroup--attachment-mode (list) keyword)
 (defun localgroup--attachment-mode (arguments)
@@ -415,50 +426,60 @@
          (styled-p (not (null (getf arguments :styled-p))))
          (application (localgroup-session-application session))
          (controller (application-input-controller application))
-         (terminal (localgroup--terminal session))
-         (attachment (localgroup-attachment-create socket stream mode)))
-    (unwind-protect
-         (multiple-value-bind (history released-direct-p)
-             (if (eq mode ':read-only)
-                 (localgroup-terminal-attach
-                  terminal attachment rows columns styled-p)
-                 (application-input-controller-call-with-reader-paused
-                  controller
-                  (lambda ()
-                    (localgroup-terminal-attach
-                     terminal attachment rows columns styled-p))))
-           (unless
-               (localgroup-attachment-send
-                attachment
-                (list :attached
-                      :mode mode
-                      :session-id (localgroup-session-identifier session)
-                      :history history
-                      :rows (terminal-rows terminal)
-                      :columns (terminal-columns terminal)))
-             (return-from localgroup--serve-attachment nil))
-           (when released-direct-p
-             (localgroup--release-launcher))
-           (localgroup--attachment-read-loop terminal attachment))
-      (localgroup-terminal-detach terminal attachment)
-      (localgroup-attachment-close attachment)))
+         (terminal (localgroup--terminal session)))
+    (when (and (eq mode ':take-over)
+               (eq (localgroup-terminal-attachment-kind terminal) ':foreground))
+      (let ((response
+              (application-localgroup-request-handoff application ':take-over)))
+        (localgroup-write-packet
+         stream
+         (list :handoff
+               :session-id (localgroup-session-identifier session)
+               :old-pid (getf (rest response) :old-pid))))
+      (return-from localgroup--serve-attachment nil))
+    (let ((attachment (localgroup-attachment-create socket stream mode)))
+      (unwind-protect
+           (multiple-value-bind (history released-direct-p)
+               (if (eq mode ':read-only)
+                   (localgroup-terminal-attach
+                    terminal attachment rows columns styled-p)
+                   (application-input-controller-call-with-reader-paused
+                    controller
+                    (lambda ()
+                      (localgroup-terminal-attach
+                       terminal attachment rows columns styled-p))))
+             (declare (ignore released-direct-p))
+             (unless
+                 (localgroup-attachment-send
+                  attachment
+                  (list :attached
+                        :mode mode
+                        :session-id (localgroup-session-identifier session)
+                        :history history
+                        :rows (terminal-rows terminal)
+                        :columns (terminal-columns terminal)))
+               (return-from localgroup--serve-attachment nil))
+             (localgroup--attachment-read-loop terminal attachment))
+        (localgroup-terminal-detach terminal attachment)
+        (localgroup-attachment-close attachment))))
   nil)
 
 (-> localgroup--detach-terminal (localgroup-session) list)
 (defun localgroup--detach-terminal (session)
-  "Release SESSION's current controlling terminal and return a response."
+  "Release SESSION's current controlling terminal or schedule foreground detach."
   (let* ((application (localgroup-session-application session))
          (controller (application-input-controller application))
-         (terminal (localgroup--terminal session))
-         (released-direct-p
-           (application-input-controller-call-with-reader-paused
-            controller
-            (lambda ()
-              (localgroup-terminal-release-control terminal)))))
-    (when released-direct-p
-      (localgroup--release-launcher))
-    (list :ok :operation :detach
-          :session-id (localgroup-session-identifier session))))
+         (terminal (localgroup--terminal session)))
+    (if (eq (localgroup-terminal-attachment-kind terminal) ':foreground)
+        (application-localgroup-request-handoff application ':detach)
+        (progn
+          (application-input-controller-call-with-reader-paused
+           controller
+           (lambda ()
+             (localgroup-terminal-release-control terminal)))
+          (list :ok :operation :detach
+                :scheduled-p nil
+                :session-id (localgroup-session-identifier session))))))
 
 
 ;;;; -- Localgroup Request Handling --
@@ -490,6 +511,11 @@
              :message "localgroup tell requires one string message."
              :operation ':tell
              :session-id (localgroup-session-identifier session)))
+    (when (application-localgroup-handoff-pending-p application)
+      (error 'localgroup-error
+             :message "The localgroup session is detaching and no longer accepts input."
+             :operation ':tell
+             :session-id (localgroup-session-identifier session)))
     (application-localgroup-resume application)
     (application-input-controller--handle-submission
      controller message
@@ -511,10 +537,12 @@
       (:tell
        (localgroup--tell session arguments))
       (:pause
-       (application-localgroup-pause
-        (localgroup-session-application session))
-       (list :ok :operation :pause
-             :session-id (localgroup-session-identifier session)))
+       (if (application-localgroup-pause
+            (localgroup-session-application session))
+           (list :ok :operation :pause
+                 :session-id (localgroup-session-identifier session))
+           (list :error
+                 :message "The localgroup session cannot pause while detaching.")))
       (:detach
        (localgroup--detach-terminal session))
       (:kill
@@ -617,8 +645,13 @@
 (defun localgroup-start (application &key identifier token created-at)
   "Start and publish APPLICATION's authenticated loopback endpoint.
 
-Optional identity values preserve one process session across checkpoint quiescence."
-  (let* ((listener (make-instance 'sb-bsd-sockets:inet-socket
+Optional identity values preserve one session across quiescence or process handoff."
+  (let* ((startup-values (and *localgroup-startup-record*
+                              (rest *localgroup-startup-record*)))
+         (identifier (or identifier (getf startup-values :session-id)))
+         (token (or token (getf startup-values :token)))
+         (created-at (or created-at (getf startup-values :created-at)))
+         (listener (make-instance 'sb-bsd-sockets:inet-socket
                                   :type ':stream
                                   :protocol ':tcp))
          (session nil)
@@ -662,18 +695,19 @@ Optional identity values preserve one process session across checkpoint quiescen
                         (sb-thread:condition-broadcast
                          (application-input-controller-condition-variable
                           controller)))))))
+               (localgroup-handoff-assert-startup-active)
                (localgroup--publish-registry session)
                (setf (localgroup-session-server-thread session)
                      (make-thread
                       (lambda () (localgroup--serve session))
                       :name "Autolith localgroup endpoint")
                      completed-p t)
+               (localgroup-handoff-finish-startup application)
                session)))
       (unless completed-p
         (when session
           (setf (application-localgroup-session application) nil)
-          (ignore-errors
-            (delete-file (localgroup-session-registry-pathname session))))
+          (localgroup--delete-owned-registry session))
         (ignore-errors (sb-bsd-sockets:socket-close listener))))))
 
 (-> localgroup--wake-server (localgroup-session) null)
@@ -721,6 +755,5 @@ Optional identity values preserve one process session across checkpoint quiescen
           (when (and (thread-alive-p thread)
                      (not (eq thread (current-thread))))
             (ignore-errors (join-thread thread))))
-        (ignore-errors
-          (delete-file (localgroup-session-registry-pathname session))))))
+        (localgroup--delete-owned-registry session))))
   nil)

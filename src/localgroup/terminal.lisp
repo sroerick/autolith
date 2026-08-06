@@ -201,15 +201,25 @@
     :documentation "The callback waking the responsive input controller."))
   (:documentation "A terminal relay supporting foreground, detached, and observed use."))
 
-(-> localgroup-terminal-create (stream-terminal) localgroup-terminal)
-(defun localgroup-terminal-create (direct-terminal)
-  "Create a relay terminal initially owned by DIRECT-TERMINAL."
+(-> localgroup-terminal-create
+    (&optional (option stream-terminal))
+    localgroup-terminal)
+(defun localgroup-terminal-create (&optional direct-terminal)
+  "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied."
   (make-instance 'localgroup-terminal
                  :direct-terminal direct-terminal
-                 :rows (terminal-rows direct-terminal)
-                 :columns (terminal-columns direct-terminal)
-                 :interactive-p (terminal-interactive-p direct-terminal)
-                 :styled-p (terminal-styled-p direct-terminal)))
+                 :rows (if direct-terminal
+                           (terminal-rows direct-terminal)
+                           *terminal-default-rows*)
+                 :columns (if direct-terminal
+                              (terminal-columns direct-terminal)
+                              *terminal-default-columns*)
+                 :interactive-p
+                 (and direct-terminal
+                      (terminal-interactive-p direct-terminal))
+                 :styled-p
+                 (and direct-terminal
+                      (terminal-styled-p direct-terminal))))
 
 (-> localgroup-terminal-set-wake-function
     (localgroup-terminal (option function))

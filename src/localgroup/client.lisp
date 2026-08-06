@@ -226,8 +226,40 @@
           (ignore-errors (join-thread receiver))))))
   nil)
 
-(-> localgroup-attach-record (cons keyword) null)
-(defun localgroup-attach-record (entry mode)
+(-> localgroup--wait-for-handoff-entry
+    (configuration string string integer)
+    cons)
+(defun localgroup--wait-for-handoff-entry
+    (configuration session-id token old-pid)
+  "Wait for SESSION-ID's authenticated replacement endpoint after OLD-PID."
+  (let ((deadline
+          (+ (get-internal-real-time)
+             (* *localgroup-handoff-start-timeout-seconds*
+                internal-time-units-per-second))))
+    (loop
+      (let* ((pathname
+               (localgroup-registry-pathname configuration session-id))
+             (record (localgroup--read-endpoint-record pathname)))
+        (when (and record
+                   (/= (getf (rest record) :pid) old-pid)
+                   (string= (localgroup--record-token record) token)
+                   (handler-case
+                       (eq
+                        (first
+                         (localgroup-call
+                          (localgroup--record-port record) token ':status))
+                        ':ok)
+                     (error () nil)))
+          (return (cons pathname record))))
+      (when (>= (get-internal-real-time) deadline)
+        (error 'localgroup-error
+               :message "The detached localgroup replacement did not become ready."
+               :operation ':attach
+               :session-id session-id))
+      (sleep 0.05))))
+
+(-> localgroup-attach-record (configuration cons keyword) null)
+(defun localgroup-attach-record (configuration entry mode)
   "Attach the current terminal to endpoint ENTRY with MODE."
   (let* ((record (rest entry))
          (socket nil)
@@ -252,17 +284,40 @@
                           :columns columns
                           :styled-p (terminal-environment-styling-p)))))
            (let ((response (localgroup-read-packet socket-stream)))
-             (unless (and response (eq (first response) ':attached))
-               (error 'localgroup-error
-                      :message (or (and response
-                                        (getf (rest response) :message))
-                                   "The localgroup attachment was rejected.")
-                      :operation ':attach
-                      :session-id (localgroup--record-session-id record)))
-             (let ((history (getf (rest response) :history)))
-               (when (stringp history)
-                 (write-string history *standard-output*)
-                 (finish-output *standard-output*))))
+             (cond
+               ((and response (eq (first response) ':handoff))
+                (let ((session-id (getf (rest response) :session-id))
+                      (old-pid (getf (rest response) :old-pid))
+                      (token (localgroup--record-token record)))
+                  (unless (and (non-empty-string-p session-id)
+                               (typep old-pid '(integer 1)))
+                    (error 'localgroup-error
+                           :message "The localgroup handoff response was malformed."
+                           :operation ':attach
+                           :session-id
+                           (localgroup--record-session-id record)))
+                  (close socket-stream)
+                  (setf socket-stream nil
+                        socket nil)
+                  (return-from localgroup-attach-record
+                    (localgroup-attach-record
+                     configuration
+                     (localgroup--wait-for-handoff-entry
+                      configuration session-id token old-pid)
+                     ':control))))
+               ((and response (eq (first response) ':attached))
+                (let ((history (getf (rest response) :history)))
+                  (when (stringp history)
+                    (write-string history *standard-output*)
+                    (finish-output *standard-output*))))
+               (t
+                (error 'localgroup-error
+                       :message (or (and response
+                                         (getf (rest response) :message))
+                                    "The localgroup attachment was rejected.")
+                       :operation ':attach
+                       :session-id
+                       (localgroup--record-session-id record)))))
            (setf terminal
                  (stream-terminal-create
                   :rows *terminal-default-rows*
@@ -317,6 +372,7 @@
                   :operation ':arguments
                   :session-id session-id))
          (localgroup-attach-record
+          configuration
           (localgroup--find-record configuration session-id)
           (localgroup--attachment-request-mode options))))
       ((member operation '("tell" "pause" "detach" "kill") :test #'string=)

@@ -345,7 +345,8 @@
     (terminal-ui-create
      :terminal
      (localgroup-terminal-create
-      (stream-terminal-create :rows rows :columns columns))
+      (unless (localgroup-startup-detached-p)
+        (stream-terminal-create :rows rows :columns columns)))
      :prompt *application-prompt*
      :placeholder *application-placeholder*
      :completion-function #'application-command-completion-entries)))
