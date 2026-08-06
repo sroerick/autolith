@@ -111,11 +111,11 @@
   (if (null statuses)
       (format stream "No local Autolith sessions are running.~%")
       (progn
-        (format stream "~&~-12A  ~-11A  ~-9A  ~-12A  ~A~%"
+        (format stream "~&~12A  ~11A  ~9A  ~12A  ~A~%"
                 "SESSION" "STATE" "CONVERSATION" "ACTIVITY" "WORKSPACE")
         (format stream "~A~%" (make-string 78 :initial-element #\-))
         (dolist (status statuses)
-          (format stream "~-12A  ~-11A  ~-9A  ~-12A  ~A~%"
+          (format stream "~12A  ~11A  ~9A  ~12A  ~A~%"
                   (getf (rest status) :session-id)
                   (localgroup--status-state-text status)
                   (getf (rest status) :conversation-display-id)

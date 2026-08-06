@@ -64,6 +64,23 @@
      "localgroup packet reading disables reader evaluation")
     (test-assert (not executed-p)
                  "rejected localgroup reader syntax never executes"))
+  (let* ((status
+           (list :localgroup-status
+                 :session-id "ABC123"
+                 :state ':idle
+                 :conversation-display-id "new"
+                 :queued-input-count 0
+                 :steering-input-count 0
+                 :task-live-count 0
+                 :cwd "/tmp/example"))
+         (output
+           (with-output-to-string (stream)
+             (localgroup-print-statuses (list status) :stream stream))))
+    (test-assert
+     (and (search "SESSION" output)
+          (search "ABC123" output)
+          (search "/tmp/example" output))
+     "localgroup status renders a nonempty human-readable table"))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)
