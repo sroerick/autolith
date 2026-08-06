@@ -53,8 +53,8 @@
   "Reasoning effort names accepted by Autolith configuration.")
 
 (defparameter *supported-web-search-modes*
-  '("cached" "live" "disabled")
-  "Hosted web search modes accepted by Autolith configuration.")
+  '("cached" "indexed" "live" "disabled")
+  "Standalone web search modes accepted by Autolith configuration.")
 
 (defparameter *supported-models*
   '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5")
@@ -179,7 +179,7 @@
     :initform "cached"
     :reader configuration-web-search-mode
     :type non-empty-string
-    :documentation "The provider web search mode: cached, live, or disabled.")
+    :documentation "The provider web search mode: cached, indexed, live, or disabled.")
    (context-window
     :initarg :context-window
     :initform *default-context-window*

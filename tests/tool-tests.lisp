@@ -157,7 +157,14 @@
                 (format nil "immutable mode omits self.~A" name))))
            (test-assert (not (tool-result-success-p result))
                         "unknown provider calls produce a correlated tool failure")
-           (let ((request (web--search-request context "current UTC date")))
+           (let* ((commands
+                    (json-object
+                     "search_query"
+                     (json-array
+                      (json-object "q" "current UTC date"))))
+                  (request (web--search-request context
+                                                (provider-create configuration)
+                                                commands)))
              (test-assert
               (string=
                (web--search-endpoint
@@ -174,9 +181,10 @@
                               0)
                         "q")
                        "current UTC date")
-              "web.run passes the requested query to provider search")
+              "web.run passes Codex search commands to provider search")
              (test-assert
-              (not (json-get (json-get request "settings") "external_web_access"))
+              (eq (json-get (json-get request "settings") "external_web_access")
+                  false)
               "cached web.run requests forbid direct web access")
              (let ((live-request
                      (web--search-request
@@ -186,11 +194,38 @@
                                                            :web-search-mode "live")
                                      :worker nil
                                      :conversation conversation)
-                      "current UTC date")))
+                      (provider-create configuration)
+                      commands)))
                (test-assert
                 (eq (json-get (json-get live-request "settings")
                               "external_web_access") t)
-                "live web.run requests permit direct web access"))))
+                "live web.run requests permit direct web access"))
+             (let ((indexed-request
+                     (web--search-request
+                      (make-instance 'tool-context
+                                     :configuration
+                                     (configuration--clone configuration
+                                                           :web-search-mode "indexed")
+                                     :worker nil
+                                     :conversation conversation)
+                      (provider-create configuration)
+                      commands)))
+               (test-assert
+                (string= (json-get (json-get indexed-request "settings")
+                                   "external_web_access")
+                         "indexed")
+                "indexed web.run requests select Codex's indexed search mode"))
+             (let ((parameters
+                     (tool-parameters (tool-registry-find registry "web" "run"))))
+               (test-assert
+                (gethash "search_query" (json-get parameters "properties"))
+                "web.run declares Codex's search-query command")
+               (test-assert
+                (gethash "time" (json-get parameters "properties"))
+                "web.run declares Codex's time command")
+               (test-assert
+                (null (gethash "query" (json-get parameters "properties")))
+                "web.run no longer declares its incompatible query shim"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   (let ((registry (make-instance 'tool-registry))
         (runtime-identity (list ':shared-runtime))

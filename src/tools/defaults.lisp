@@ -137,11 +137,8 @@
    (list
     'web-run-tool
     "web" "run"
-    "Search the web for current or web-only information."
-    (tool-object-schema
-     (json-object
-      "query" (tool-string-property "The web search query."))
-     '("query"))))
+    *web-run-description*
+    (web-run-parameters)))
   registry)
 
 (-> default-tools--register-search (tool-registry worker) tool-registry)
