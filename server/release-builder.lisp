@@ -13,6 +13,12 @@
   "autolith-release-builder:ubuntu-22.04"
   "The local container image used for portable release builds.")
 
+(defparameter *release-builder-default-container-timeout-seconds* 1800
+  "The maximum runtime of one isolated release build and check.")
+
+(defvar *release-builder-command-function* #'uiop:run-program
+  "The command runner used by the release builder and replaced by tests.")
+
 (defclass release-builder-configuration ()
   ((source-root
     :initarg :source-root
@@ -43,7 +49,12 @@
     :initarg :container-command
     :reader release-builder-configuration-container-command
     :type string
-    :documentation "The container engine executable used for isolated builds."))
+    :documentation "The container engine executable used for isolated builds.")
+   (container-timeout-seconds
+    :initarg :container-timeout-seconds
+    :reader release-builder-configuration-container-timeout-seconds
+    :type (integer 1)
+    :documentation "The maximum seconds allowed for one container build and check."))
   (:documentation "Private settings for the automatic release builder."))
 
 (defclass release-source-tag ()
@@ -127,11 +138,12 @@
           (:public-root (option pathname))
           (:repository (option string))
           (:poll-seconds (option integer))
-          (:container-command (option string)))
+          (:container-command (option string))
+          (:container-timeout-seconds (option integer)))
     release-builder-configuration)
 (defun release-builder-configuration-create
     (&key source-root state-root public-root repository poll-seconds
-          container-command)
+          container-command container-timeout-seconds)
   "Create automatic release builder settings from arguments and environment."
   (make-instance
    'release-builder-configuration
@@ -164,7 +176,13 @@
         "release poll interval"))
    :container-command (or container-command
                           (uiop:getenv "AUTOLITH_RELEASE_CONTAINER_COMMAND")
-                          "docker")))
+                          "docker")
+   :container-timeout-seconds
+   (or container-timeout-seconds
+       (release-builder--positive-integer
+        (uiop:getenv "AUTOLITH_RELEASE_CONTAINER_TIMEOUT_SECONDS")
+        *release-builder-default-container-timeout-seconds*
+        "release container timeout"))))
 
 
 ;;;; -- Remote Tags --
@@ -424,6 +442,44 @@ tree intact lets one tag's object files fail a later tag's checks."
             (finish-output))))))
   nil)
 
+(-> release-builder--container-name (release-source-tag) string)
+(defun release-builder--container-name (source-tag)
+  "Return a unique managed container name for SOURCE-TAG."
+  (format nil "autolith-release-builder-~A-~D"
+          (release-source-tag-name source-tag)
+          (sb-posix:getpid)))
+
+(-> release-builder--container-diagnostics
+    (release-builder-configuration string)
+    null)
+(defun release-builder--container-diagnostics (configuration container-name)
+  "Print bounded process and log diagnostics for managed CONTAINER-NAME."
+  (dolist (arguments
+           (list (list "top" container-name
+                       "-eo" "pid,ppid,pgid,sid,user,stat,wchan:32,etime,cmd")
+                 (list "logs" "--tail" "200" container-name)))
+    (ignore-errors
+      (funcall *release-builder-command-function*
+               (cons
+                (release-builder-configuration-container-command configuration)
+                arguments)
+               :output ':interactive
+               :error-output ':interactive)))
+  nil)
+
+(-> release-builder--remove-container
+    (release-builder-configuration string)
+    null)
+(defun release-builder--remove-container (configuration container-name)
+  "Force-remove managed CONTAINER-NAME after a failed or timed-out build."
+  (ignore-errors
+    (funcall *release-builder-command-function*
+             (list (release-builder-configuration-container-command configuration)
+                   "rm" "--force" container-name)
+             :output ':interactive
+             :error-output ':interactive))
+  nil)
+
 (-> release-builder--run-container
     (release-builder-configuration release-source-tag pathname)
     pathname)
@@ -432,7 +488,10 @@ tree intact lets one tag's object files fail a later tag's checks."
   (let* ((state (merge-pathnames "container/"
                                  (release-builder-configuration-state-root
                                   configuration)))
-         (staging (release-builder--staging-path configuration source-tag)))
+         (staging (release-builder--staging-path configuration source-tag))
+         (container-name (release-builder--container-name source-tag))
+         (container-command
+           (release-builder-configuration-container-command configuration)))
     (when (uiop:directory-exists-p staging)
       (uiop:delete-directory-tree staging
                                   :validate t
@@ -440,16 +499,25 @@ tree intact lets one tag's object files fail a later tag's checks."
     (uiop:ensure-all-directories-exist (list state staging))
     (release-builder--clear-shared-source-fasl-cache state)
     (handler-case
-        (uiop:run-program
-         (list (release-builder-configuration-container-command configuration)
-               "run" "--rm" "--privileged"
+        (funcall
+         *release-builder-command-function*
+         (list "timeout"
+               "--signal=TERM"
+               "--kill-after=30"
+               (princ-to-string
+                (release-builder-configuration-container-timeout-seconds
+                 configuration))
+               container-command
+               "run" "--name" container-name "--rm" "--privileged"
                "--volume" (release-builder--container-volume checkout "/source")
                "--volume" (release-builder--container-volume state "/state")
                "--volume" (release-builder--container-volume staging "/output")
                *release-builder-container-image*)
-         :output :interactive
-         :error-output :interactive)
+         :output ':interactive
+         :error-output ':interactive)
       (error (cause)
+        (release-builder--container-diagnostics configuration container-name)
+        (release-builder--remove-container configuration container-name)
         (error 'release-builder-error
                :stage ':container-build
                :tag (release-source-tag-name source-tag)

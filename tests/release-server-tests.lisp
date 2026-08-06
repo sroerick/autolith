@@ -411,6 +411,62 @@
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
+             (format nil "autolith-release-timeout-tests-~A/"
+                     (make-identifier))
+             (uiop:temporary-directory))))
+         (source-root (merge-pathnames "source/" root))
+         (state-root (merge-pathnames "state/" root))
+         (public-root (merge-pathnames "public/" root))
+         (checkout (merge-pathnames "checkout/" root))
+         (configuration
+           (release-builder-configuration-create
+            :source-root source-root
+            :state-root state-root
+            :public-root public-root
+            :repository "https://example.invalid/autolith.git"
+            :poll-seconds 30
+            :container-command "container-test"
+            :container-timeout-seconds 17))
+         (source-tag
+           (release-server-tests--source-tag
+            "v0.23.3" "0123456789abcdef0123456789abcdef01234567"))
+         (commands nil))
+    (unwind-protect
+         (progn
+           (uiop:ensure-all-directories-exist
+            (list source-root state-root public-root checkout))
+           (let ((*release-builder-command-function*
+                   (lambda (command &rest arguments)
+                     (declare (ignore arguments))
+                     (push command commands)
+                     (when (string= (first command) "timeout")
+                       (error "simulated container timeout")))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (release-builder--run-container
+                     configuration source-tag checkout)
+                    nil)
+                (release-builder-error (condition)
+                  (and (eq (release-builder-error-stage condition)
+                           ':container-build)
+                       (string= (release-builder-error-tag condition)
+                                "v0.23.3"))))
+              "a failed bounded container build becomes a structured failure"))
+           (let* ((ordered (reverse commands))
+                  (build (first ordered))
+                  (cleanup (find "rm" ordered :test #'string= :key #'second)))
+             (test-assert
+              (and (equal (subseq build 0 4)
+                          '("timeout" "--signal=TERM" "--kill-after=30" "17"))
+                   (member "--name" build :test #'string=)
+                   cleanup
+                   (member "--force" cleanup :test #'string=))
+              "container builds have a deadline, managed name, and force cleanup")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  (let* ((root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
              (format nil "autolith-release-updater-tests-~A/"
                      (make-identifier))
              (uiop:temporary-directory))))

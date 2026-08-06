@@ -99,20 +99,27 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: authenticated logs become reliably available or the Nix
   smoke path gains equivalent structured diagnostics elsewhere.
 
+** Bounded release-host container builds
+
+- Problem: repository checks inside release-builder containers repeatedly stopped
+  producing output and remained alive indefinitely. The v0.23.2 container was
+  still blocked in =script/check.lisp= after 40 minutes, preventing both v0.23.2
+  and v0.23.3 archive publication even though the updater and server had already
+  activated v0.23.2.
+- Behavior: each managed release container has a unique name and a generous
+  30-minute deadline. Failure or timeout prints bounded process and log
+  diagnostics, then force-removes the complete container before the polling loop
+  retries. The deadline is configurable with
+  =AUTOLITH_RELEASE_CONTAINER_TIMEOUT_SECONDS=.
+- Scope and location: tracked project work in =server/release-builder.lisp= and
+  release-server regressions.
+- Verification: timeout command construction, managed naming, structured failure,
+  diagnostics, and forced cleanup pass within the complete 3,251-test repository
+  check. The stuck v0.23.2 container was manually stopped before deployment.
+- Removal condition: the release build moves to an execution boundary with native
+  bounded runtime, complete descendant cleanup, and equivalent diagnostics.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove
 discarded or obsolete candidates.
-
-** Bound release-host candidate checks
-
-- Evidence: the v0.21.3 deployment check stopped producing output after its
-  test run began and remained asleep for more than an hour. An older orphaned
-  v0.20.2 check had remained alive for four days. Terminating the v0.21.3 check
-  let activation and archive publication complete, and the stale v0.20.2
-  process was then removed. The v0.21.4 candidate check completed normally in
-  about two and a half minutes, providing a practical baseline for a generous
-  future timeout.
-- Candidate: bound candidate-check runtime, terminate its complete process
-  group on timeout, and preserve enough test progress to identify the hanging
-  regression without blocking future tags or leaking orphaned checks.
