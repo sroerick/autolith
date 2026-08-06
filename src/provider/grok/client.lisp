@@ -132,10 +132,19 @@ tool-free summarization request whose trailing developer message asks for a
 context checkpoint handoff. The second value is the context delivery that
 the transport consumes only after a completed response."
   (let* ((configuration (provider-configuration provider))
+         (web-search-tool
+           (and (not compaction-p)
+                (provider-web-search-tool configuration)))
          (effective-namespaces
-           (if compaction-p
-               #()
-               tool-namespaces))
+           (cond
+             (compaction-p
+              #())
+             (web-search-tool
+              (concatenate 'vector
+                           tool-namespaces
+                           (vector web-search-tool)))
+             (t
+              tool-namespaces)))
          (prefix (append
                   (list (responses-lite-developer-message
                          (system-prompt configuration)))

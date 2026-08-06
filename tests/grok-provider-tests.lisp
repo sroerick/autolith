@@ -119,7 +119,7 @@
          (let* ((conversation (conversation-create configuration
                                                    :identifier "grok-shape"))
                 (provider (grok-provider-create configuration))
-                (schemas (grok-provider-test--namespaces))
+                (schemas (subseq (grok-provider-test--namespaces) 0 1))
                 (request nil))
            (conversation-append-user-message conversation "hello")
            (setf request (provider-request-object provider conversation schemas))
@@ -149,7 +149,22 @@
              (test-assert (= (length tools) 2)
                           "Grok tools ride in the flat request tools array")
              (test-assert (string= (json-get (aref tools 0) "name") "fs.read")
-                          "Grok tools carry dotted wire names"))
+                          "Grok tools carry dotted wire names")
+             (let ((web-search (aref tools 1)))
+               (test-assert (string= (json-get web-search "type") "web_search")
+                            "Grok requests include hosted web search")
+               (test-assert (eq (json-get web-search "external_web_access") false)
+                            "Grok defaults hosted web search to cached access")))
+           (let* ((disabled-configuration
+                    (configuration--clone configuration :web-search-mode "disabled"))
+                  (disabled-request
+                    (provider-request-object
+                     (grok-provider-create disabled-configuration)
+                     conversation
+                     schemas))
+                  (disabled-tools (json-get disabled-request "tools")))
+             (test-assert (= (length disabled-tools) 1)
+                          "disabled Grok web search omits the hosted tool"))
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "high")
             "default Ultra reasoning clamps to Grok's high effort")
