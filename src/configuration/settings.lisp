@@ -2,7 +2,7 @@
 
 ;;;; -- Defaults --
 
-(defparameter *autolith-version* "0.23.2"
+(defparameter *autolith-version* "0.23.3"
   "The user-visible Autolith version.")
 
 (defparameter *default-model* "gpt-5.6-sol"
