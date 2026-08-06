@@ -1506,22 +1506,32 @@ credential refresh. EVENT-CALLBACK receives the retry notifications shared by
 streaming turns and native compaction requests."
   (labels ((attempt-with-authentication ()
              "Run one logical request with bounded credential recovery."
-             (loop for attempt-number from 1 to 3
-                   for force-refresh = (= attempt-number 3)
-                   do (handler-case
-                          (return-from attempt-with-authentication
-                            (funcall attempt-function force-refresh))
-                        (provider-unauthorized ()
-                          (when (= attempt-number 3)
-                            (error 'authentication-error
-                                   :message
-                                   (format nil
-                                           "~A rejected Autolith's credentials after a bounded refresh."
-                                           (provider-account-label provider)))))))
-             (error 'authentication-error
-                    :message
-                    (format nil "~A authentication retry ended unexpectedly."
-                            (provider-account-label provider)))))
+             (let* ((manager (provider-credential-manager provider))
+                    (refreshable-p
+                      (credential-manager-refreshable-p manager))
+                    (maximum-attempts (if refreshable-p 3 1)))
+               (loop for attempt-number from 1 to maximum-attempts
+                     for force-refresh = (and refreshable-p
+                                              (= attempt-number 3))
+                     do (handler-case
+                            (return-from attempt-with-authentication
+                              (funcall attempt-function force-refresh))
+                          (provider-unauthorized ()
+                            (when (= attempt-number maximum-attempts)
+                              (error 'authentication-error
+                                     :message
+                                     (if refreshable-p
+                                         (format nil
+                                                 "~A rejected Autolith's credentials after a bounded refresh."
+                                                 (provider-account-label provider))
+                                         (format nil
+                                                 "~A rejected Autolith's API key; ~A."
+                                                 (provider-account-label provider)
+                                                 (credential-manager-login-hint manager))))))))
+               (error 'authentication-error
+                      :message
+                      (format nil "~A authentication retry ended unexpectedly."
+                              (provider-account-label provider))))))
     (loop for retry-number from 0
           do (handler-case
                  (return-from provider--call-with-bounded-retries

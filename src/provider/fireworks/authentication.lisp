@@ -91,6 +91,30 @@
                  :bootstrap-source
                  (make-instance 'fireworks-environment-credential-source)))
 
+(defmethod credential-manager-load ((manager fireworks-credential-manager))
+  "Prefer the current environment key, then load the saved interactive key."
+  (let ((environment
+          (credential-source-load
+           (credential-manager-bootstrap-source manager))))
+    (credential-manager-accept-account
+     manager
+     (or environment
+         (credential-source-load
+          (credential-manager-primary-source manager))
+         (error 'credentials-unavailable
+                :message
+                (format nil "No Fireworks API key is available; ~A."
+                        (credential-manager-login-hint manager))
+                :searched-paths
+                (list (credential-source-pathname
+                       (credential-manager-primary-source manager))))))))
+
+(defmethod credential-manager-refreshable-p
+    ((manager fireworks-credential-manager))
+  "Static Fireworks API keys cannot refresh."
+  (declare (ignore manager))
+  nil)
+
 (defmethod credential-manager-refresh-exchange
     ((manager fireworks-credential-manager)
      (credentials oauth-credentials)
@@ -144,6 +168,23 @@
                  "The Fireworks API key could not be validated; check the network."))))
   nil)
 
+(-> fireworks--read-api-key (stream stream) string)
+(defun fireworks--read-api-key (input output)
+  "Read one API key from INPUT without terminal echo when INPUT is interactive."
+  (if (not (interactive-stream-p input))
+      (or (read-line input nil "") "")
+      (let* ((descriptor (sb-sys:fd-stream-fd input))
+             (saved-mode (sb-posix:tcgetattr descriptor))
+             (hidden-mode (sb-posix:tcgetattr descriptor)))
+        (setf (sb-posix:termios-lflag hidden-mode)
+              (logandc2 (sb-posix:termios-lflag hidden-mode) sb-posix:echo))
+        (sb-posix:tcsetattr descriptor sb-posix:tcsanow hidden-mode)
+        (unwind-protect
+             (or (read-line input nil "") "")
+          (sb-posix:tcsetattr descriptor sb-posix:tcsanow saved-mode)
+          (terpri output)
+          (finish-output output)))))
+
 (-> fireworks-api-key-login
     (fireworks-credential-manager &key (:stream t) (:input t))
     null)
@@ -155,7 +196,7 @@
           *fireworks-environment-variable*)
   (finish-output stream)
   (let ((key (string-trim '(#\Space #\Tab #\Newline #\Return)
-                          (or (read-line input nil "") ""))))
+                          (fireworks--read-api-key input stream))))
     (unless (non-empty-string-p key)
       (error 'authentication-error
              :message "No Fireworks API key was entered."))

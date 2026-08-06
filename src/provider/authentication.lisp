@@ -406,6 +406,15 @@ its protocol-level close operation."
   (declare (ignore manager))
   "run autolith --auth")
 
+(-> credential-manager-refreshable-p (credential-manager) boolean)
+(defgeneric credential-manager-refreshable-p (manager)
+  (:documentation "Return true when MANAGER can refresh rejected credentials."))
+
+(defmethod credential-manager-refreshable-p ((manager credential-manager))
+  "OAuth credential managers support bounded token refresh."
+  (declare (ignore manager))
+  t)
+
 (-> credential-manager-refresh-exchange
     (credential-manager oauth-credentials string)
     (values oauth-credentials boolean))
@@ -477,7 +486,11 @@ false when a sibling process already published an equivalent rotation."))
     (credential-source-save primary-source imported)))
 
 (-> credential-manager-load (credential-manager) oauth-credentials)
-(defun credential-manager-load (manager)
+(defgeneric credential-manager-load (manager)
+  (:documentation
+   "Load request credentials from MANAGER's provider-specific sources."))
+
+(defmethod credential-manager-load ((manager credential-manager))
   "Load only Autolith-owned credentials, importing Codex once when no store exists."
   (let ((primary (credential-source-load
                   (credential-manager-primary-source manager))))

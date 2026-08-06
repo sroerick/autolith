@@ -74,6 +74,42 @@
                 t))
             "the environment source rejects writes"))
       (setf (uiop:getenv "FIREWORKS_API_KEY") (or saved ""))))
+  (let* ((configuration (fireworks-provider-test--configuration))
+         (root (test-configuration-root configuration))
+         (manager (fireworks-credential-manager-create configuration))
+         (saved (uiop:getenv "FIREWORKS_API_KEY")))
+    (unwind-protect
+         (progn
+           (credential-source-save
+            (credential-manager-primary-source manager)
+            (make-instance 'oauth-credentials
+                           :access-token "saved-fireworks-key"
+                           :refresh-token nil
+                           :id-token nil
+                           :account-id "fireworks"
+                           :expires-at nil
+                           :source-path
+                           (configuration-fireworks-auth-path configuration)))
+           (setf (uiop:getenv "FIREWORKS_API_KEY") "environment-key-a")
+           (test-assert
+            (string= (oauth-credentials-access-token
+                      (credential-manager-load manager))
+                     "environment-key-a")
+            "the environment key takes precedence over the saved key")
+           (setf (uiop:getenv "FIREWORKS_API_KEY") "environment-key-b")
+           (test-assert
+            (string= (oauth-credentials-access-token
+                      (credential-manager-load manager))
+                     "environment-key-b")
+            "Fireworks observes environment key rotation immediately")
+           (setf (uiop:getenv "FIREWORKS_API_KEY") "")
+           (test-assert
+            (string= (oauth-credentials-access-token
+                      (credential-manager-load manager))
+                     "saved-fireworks-key")
+            "the saved interactive key is the environment fallback"))
+      (setf (uiop:getenv "FIREWORKS_API_KEY") (or saved ""))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
 (-> fireworks-provider-test--wire-tools () null)
@@ -193,6 +229,34 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> fireworks-provider-test--static-authentication-rejection () null)
+(defun fireworks-provider-test--static-authentication-rejection ()
+  "Test that a rejected static key fails once without an OAuth refresh attempt."
+  (let ((provider
+          (fireworks-provider-create
+           (fireworks-provider-test--configuration)))
+        (refresh-flags nil))
+    (test-assert
+     (handler-case
+         (progn
+           (provider--call-with-bounded-retries
+            provider
+            (lambda (force-refresh)
+              (push force-refresh refresh-flags)
+              (error 'provider-unauthorized
+                     :message "Injected Fireworks rejection."
+                     :status 401
+                     :request-id nil
+                     :response nil))
+            #'identity)
+           nil)
+       (authentication-error (condition)
+         (search "API key" (princ-to-string condition))))
+     "a rejected Fireworks key produces an actionable authentication error")
+    (test-assert (equal refresh-flags '(nil))
+                 "a static Fireworks key is attempted exactly once"))
+  nil)
+
 (-> test-fireworks-provider () null)
 (defun test-fireworks-provider ()
   "Test the Fireworks API key provider without network access."
@@ -200,4 +264,5 @@
   (fireworks-provider-test--credential-source)
   (fireworks-provider-test--wire-tools)
   (fireworks-provider-test--request-shape)
+  (fireworks-provider-test--static-authentication-rejection)
   nil)
