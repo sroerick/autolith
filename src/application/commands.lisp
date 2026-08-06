@@ -1125,19 +1125,22 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
 
 (-> application-authenticate (application) null)
 (defun application-authenticate (application)
-  "Run Autolith-owned device authentication outside raw terminal mode."
+  "Run Autolith-owned provider authentication outside raw terminal mode."
   (let* ((ui (application-ui application))
          (provider (application-provider application)))
     (unless (typep provider 'subscription-provider)
       (error 'authentication-error
-             :message "The active provider does not support device login."))
+             :message "The active provider does not support direct login."))
     (terminal-ui-stop ui)
     (unwind-protect
-         (device-authentication-login
-          (provider-device-authentication-client provider)
-          (provider-credential-manager provider)
-          :stream *standard-output*
-          :open-browser-p t)
+         (if (eq (provider-family provider) ':fireworks)
+             (fireworks-api-key-login (provider-credential-manager provider)
+                                      :stream *standard-output*)
+             (device-authentication-login
+              (provider-device-authentication-client provider)
+              (provider-credential-manager provider)
+              :stream *standard-output*
+              :open-browser-p t))
       (terminal-ui-start ui))
     (application-present
      application

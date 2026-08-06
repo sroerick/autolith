@@ -469,7 +469,7 @@
        autolith localgroup detach SESSION-ID
        autolith localgroup pause SESSION-ID
        autolith localgroup kill SESSION-ID
-       autolith --auth [chatgpt | grok]
+       autolith --auth [chatgpt | grok | fireworks]
        autolith --version
        autolith --recovery [--generation ID | --list]")
 
@@ -511,11 +511,13 @@ Without a SELECTION the configured model chooses the family."
      (model-family (configuration-model configuration)))
     ((string-equal selection "grok")
      ':grok)
+    ((string-equal selection "fireworks")
+     ':fireworks)
     ((member selection '("chatgpt" "codex" "openai") :test #'string-equal)
      ':codex)
     (t
      (error 'configuration-error
-            :message (format nil "Unknown --auth provider ~S. The choices are chatgpt and grok."
+            :message (format nil "Unknown --auth provider ~S. The choices are chatgpt, grok, and fireworks."
                              selection)))))
 
 (-> main--auth-selection (list) (option string))
@@ -530,19 +532,23 @@ Without a SELECTION the configured model chooses the family."
 
 (-> main-authenticate (configuration (option string)) null)
 (defun main-authenticate (configuration selection)
-  "Run Autolith-owned device authentication without starting the conversation UI."
+  "Run Autolith-owned provider authentication without starting the conversation UI."
   (configuration-ensure-directories configuration)
   (let ((provider
           (provider-family-create
            (main--auth-family configuration selection)
            configuration)))
-    (device-authentication-login
-     (provider-device-authentication-client provider)
-     (provider-credential-manager provider)
-     :stream *standard-output*
-     :open-browser-p t)
-    (format t "~&~A authentication was saved by Autolith.~%"
-            (provider-account-label provider)))
+    (if (eq (provider-family provider) ':fireworks)
+        (fireworks-api-key-login (provider-credential-manager provider)
+                                 :stream *standard-output*)
+        (progn
+          (device-authentication-login
+           (provider-device-authentication-client provider)
+           (provider-credential-manager provider)
+           :stream *standard-output*
+           :open-browser-p t)
+          (format t "~&~A authentication was saved by Autolith.~%"
+                  (provider-account-label provider)))))
   nil)
 
 (-> main--resume-selection (list) (values boolean (option string)))
