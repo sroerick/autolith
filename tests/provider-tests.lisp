@@ -198,7 +198,11 @@
                             "cached web search rides in additional tools")
                (test-assert (eq (json-get web-search "external_web_access")
                                 false)
-                            "cached web search forbids live web access"))
+                            "cached web search forbids live web access")
+               (test-assert
+                (equalp (json-get web-search "search_content_types")
+                        (json-array "text" "image"))
+                "Codex GPT-5.6 web search requests text and image content"))
              (test-assert
               (string= (json-get (aref input 1) "role") "developer")
               "the Autolith system prompt is the second input item")
