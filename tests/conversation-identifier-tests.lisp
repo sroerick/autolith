@@ -67,6 +67,21 @@
             (string= second
                      (conversation-identifier-from-seed timestamp 11))
             "allocation probes the next seed after a collision")
+           (let* ((occupied
+                    (conversation-identifier-from-seed timestamp 12))
+                  (pathname
+                    (merge-pathnames
+                     (make-pathname :name occupied :type "sexp")
+                     storage)))
+             (ensure-directories-exist pathname)
+             (with-open-file (stream pathname
+                                     :direction :output
+                                     :if-exists :supersede
+                                     :if-does-not-exist :create)
+               (write-string "occupied" stream))
+             (test-assert
+              (eq (conversation-identifier--reserved-p storage occupied) t)
+              "an occupied conversation pathname returns the Boolean true"))
            (let ((reserved
                    (loop for seed below (conversation-identifier-base)
                          collect (conversation-identifier-from-seed

@@ -173,10 +173,9 @@ fully specify the portable derivation."
           (merge-pathnames
            (make-pathname :name identifier :type "sexp")
            storage-root)))
-    (or (probe-file pathname)
-        (gethash (namestring pathname)
-                 *conversation-identifier-reservations*)
-        nil)))
+    (or (not (null (probe-file pathname)))
+        (not (null (gethash (namestring pathname)
+                            *conversation-identifier-reservations*))))))
 
 (-> conversation-identifier-generate
     (pathname &key (:timestamp timestamp) (:reserved-identifiers list))
