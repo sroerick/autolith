@@ -344,18 +344,90 @@
     (declare (ignore incomplete-tail-p))
     forms))
 
+(-> conversation-identifier-migration--rewrite-text-file
+    (pathname pathname list &key (:write-date (option integer)))
+    boolean)
+(defun conversation-identifier-migration--rewrite-text-file
+    (source target entries &key write-date)
+  "Copy SOURCE to TARGET while rewriting one readable form at a time.
+
+The durable log may contain a very large conversation. Processing one top-level
+form at a time keeps migration stack-safe while preserving readable arrays and
+shared structure. An incomplete final form remains ignored, as in log-read."
+  (let ((temporary
+          (merge-pathnames
+           (make-pathname
+            :name (format nil ".~A.~D" (or (pathname-name target) "state")
+                          (sb-posix:getpid))
+            :type "tmp")
+           (uiop:pathname-directory-pathname target)))
+        (changed-p nil))
+    (ensure-directories-exist target)
+    (unwind-protect
+         (progn
+           (with-open-file (input source :direction :input :external-format :utf-8)
+             (with-open-file (output temporary
+                                     :direction :output
+                                     :if-exists :supersede
+                                     :if-does-not-exist :create
+                                     :external-format :utf-8)
+               (with-standard-io-syntax
+                 (let ((*print-readably* t)
+                       (*print-pretty* t)
+                       (*print-circle* t)
+                       (*read-eval* nil)
+                       (end-marker (cons nil nil)))
+                   (loop for form = (handler-case
+                                        (read input nil end-marker)
+                                      (end-of-file () end-marker))
+                         until (eq form end-marker)
+                         do (let ((rewritten
+                                   (conversation-identifier-migration--rewrite-value
+                                    form entries)))
+                              (unless (equalp form rewritten)
+                                (setf changed-p t))
+                              (prin1 rewritten output)
+                              (terpri output)))))
+               (finish-output output)))
+           (when (or changed-p (not (equal source target)))
+             (sb-posix:chmod (namestring temporary) #o600)
+             (uiop:rename-file-overwriting-target temporary target)
+             (when write-date
+               (conversation-identifier-migration--write-date target write-date)))
+           changed-p)
+      (when (probe-file temporary)
+        (delete-file temporary)))))
+
+(-> conversation-identifier-migration--file-needs-rewrite-p (pathname list) boolean)
+(defun conversation-identifier-migration--file-needs-rewrite-p (pathname entries)
+  "Return true when PATHNAME contains one legacy identifier from ENTRIES.
+
+Read bounded text blocks before parsing durable data. This keeps startup fast for
+large conversations that contain no legacy reference."
+  (let ((identifiers (mapcar (lambda (entry) (getf entry :old)) entries))
+        (buffer (make-string 65571))
+        (carry-length 0))
+    (with-open-file (stream pathname :direction :input :external-format :utf-8)
+      (loop
+        for end = (read-sequence buffer stream :start carry-length)
+        do (when (= end carry-length)
+             (return nil))
+           (when (some (lambda (identifier)
+                         (search identifier buffer :end2 end :test #'char=))
+                       identifiers)
+             (return t))
+           (setf carry-length (min 35 end))
+           (replace buffer buffer
+                    :start1 0
+                    :start2 (- end carry-length)
+                    :end2 end)))))
+
 (-> conversation-identifier-migration--rewrite-file (pathname list) boolean)
 (defun conversation-identifier-migration--rewrite-file (pathname entries)
   "Atomically rewrite exact legacy references in PATHNAME and report a change."
-  (let* ((forms (conversation-identifier-migration--read-forms pathname))
-         (rewritten
-           (conversation-identifier-migration--rewrite-value forms entries)))
-    (if (equalp forms rewritten)
-        nil
-        (let ((write-date (file-write-date pathname)))
-          (conversation-identifier-migration--write-forms
-           pathname rewritten :write-date write-date)
-          t))))
+  (when (conversation-identifier-migration--file-needs-rewrite-p pathname entries)
+    (conversation-identifier-migration--rewrite-text-file
+     pathname pathname entries :write-date (file-write-date pathname))))
 
 (-> conversation-identifier-migration--conversation-path
     (configuration string)
@@ -383,11 +455,9 @@
               configuration new)))
       (cond
         ((probe-file source)
-         (let* ((forms
-                  (conversation-identifier-migration--read-forms source))
-                (rewritten
-                  (conversation-identifier-migration--rewrite-value forms entries))
-                (header (first rewritten)))
+         (conversation-identifier-migration--rewrite-text-file
+          source target entries :write-date (file-write-date source))
+         (let ((header (conversation-identifier-migration--header target)))
            (unless (and (listp header)
                         (eq (first header) :conversation)
                         (string= (or (getf (rest header) :id) "") new))
@@ -396,19 +466,7 @@
               ':conversation
               (format nil "Legacy conversation ~A could not be rewritten to ~A."
                       source new)
-              :pathname source))
-           (if (probe-file target)
-               (unless (equalp rewritten
-                               (conversation-identifier-migration--read-forms
-                                target))
-                 (conversation-identifier-migration--signal
-                  configuration
-                  ':conversation
-                  (format nil "Conversation migration target ~A conflicts with its source."
-                          target)
-                  :pathname target))
-               (conversation-identifier-migration--write-forms
-                target rewritten :write-date (file-write-date source)))))
+              :pathname source))))
         ((not (probe-file target))
          (conversation-identifier-migration--signal
           configuration
