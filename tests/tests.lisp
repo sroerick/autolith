@@ -151,6 +151,7 @@
     (test-grok-provider)
     (test-openai-compatible-provider-bootstrap)
     (test-openai-compatible-provider-discovery-is-on-demand)
+    (test-openai-compatible-provider-model-cache-boundary)
     (test-openai-compatible-provider-authentication-bootstrap)
     (test-openai-compatible-provider-discovery)
     (test-openai-compatible-provider-registration-identity)

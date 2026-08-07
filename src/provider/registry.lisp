@@ -54,6 +54,12 @@
     :reader provider-registration-declared-models
     :type list
     :documentation "The static model metadata declared by this provider.")
+   (discovered-models
+    :initarg :discovered-models
+    :initform nil
+    :reader provider-registration-discovered-models
+    :type list
+    :documentation "The last successful dynamic model metadata for this provider.")
    (model-discovery
     :initarg :model-discovery
     :initform nil
@@ -120,7 +126,7 @@
   '(:builtin :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
 
-(defparameter *provider-model-cache-version* 1
+(defparameter *provider-model-cache-version* 2
   "The portable version of the successful provider model cache.")
 
 (defvar *provider-model-cache-lock*
@@ -393,25 +399,27 @@ same name."
                                (provider-registration-name candidate))
                               (provider--registration-key name))))
               *provider-registrations*)))
-         (initial-models
-           (if (and (null declared-models)
-                    model-discovery
+         (retained-discovered-models
+           (if (and model-discovery
                     previous-registration
                     (equal endpoint
                            (provider-registration-endpoint previous-registration))
                     (equal model-discovery-endpoint
                            (provider-registration-model-discovery-endpoint
                             previous-registration)))
-               (copy-list (provider-registration-models previous-registration))
-               declared-models))
+               (copy-list
+                (provider-registration-discovered-models previous-registration))
+               nil))
          (registration
            (make-instance
             'provider-registration
             :name name
             :description (or description name)
             :family (or family (provider--family-keyword name))
-            :models (copy-list initial-models)
+            :models (provider--merge-models declared-models
+                                            retained-discovered-models)
             :declared-models declared-models
+            :discovered-models retained-discovered-models
             :model-discovery model-discovery
             :model-discovery-endpoint model-discovery-endpoint
             :factory factory
@@ -487,10 +495,13 @@ same name."
           (when (provider-registration-model-discovery registration)
             (let ((entry (provider--cache-entry-for registration entries)))
               (when entry
-                (setf (slot-value registration 'models)
-                      (provider--merge-models
-                       (provider-registration-declared-models registration)
-                       (getf entry :models)))))))
+                (let ((discovered-models (copy-list (getf entry :models))))
+                  (setf (slot-value registration 'discovered-models)
+                        discovered-models
+                        (slot-value registration 'models)
+                        (provider--merge-models
+                         (provider-registration-declared-models registration)
+                         discovered-models)))))))
         (provider--refresh-model-settings)))
   nil))
 
@@ -502,18 +513,22 @@ same name."
   (with-recursive-lock-held
       ((provider-registration-model-discovery-lock registration))
     (let* ((discovery (provider-registration-model-discovery registration))
-           (discovered (funcall discovery configuration))
+           (discovered-models
+             (provider--normalize-models
+              (funcall discovery configuration)
+              :allow-empty-p t))
            (models (provider--merge-models
                     (provider-registration-declared-models registration)
-                    discovered))
+                    discovered-models))
            (published-p nil))
       (with-recursive-lock-held (*provider-registry-lock*)
         (when (find registration *provider-registrations* :test #'eq)
-          (setf (slot-value registration 'models) models
+          (setf (slot-value registration 'discovered-models) discovered-models
+                (slot-value registration 'models) models
                 published-p t)
           (provider--refresh-model-settings)))
       (when published-p
-        (provider--write-model-cache configuration registration models))
+        (provider--write-model-cache configuration registration discovered-models))
       models)))
 
 (-> provider-refresh-models

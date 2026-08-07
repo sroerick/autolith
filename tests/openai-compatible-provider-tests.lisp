@@ -164,6 +164,62 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-openai-compatible-provider-model-cache-boundary () null)
+(defun test-openai-compatible-provider-model-cache-boundary ()
+  "Test the model cache persists dynamic metadata without retired static entries."
+  (let* ((registry-snapshot (provider--registry-snapshot))
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (original-get (symbol-function 'dexador:get))
+         (provider-name "cache-boundary-test")
+         (endpoint "https://provider.invalid/v1/chat/completions")
+         (models-endpoint "https://provider.invalid/v1/models"))
+    (labels ((registration-models ()
+               "Return the effective model identifiers for the test provider."
+               (mapcar #'provider-model-name
+                       (provider-registration-models
+                        (provider-registration-find provider-name))))
+
+             (register (&optional models)
+               "Register the test provider with optional static MODELS."
+               (register-openai-compatible-provider
+                :name provider-name
+                :endpoint endpoint
+                :models-endpoint models-endpoint
+                :models models)))
+      (unwind-protect
+           (progn
+             (register '("cache/static"))
+             (openai-compatible-provider-tests--save-key
+              configuration provider-name "synthetic-cache-key")
+             (setf (symbol-function 'dexador:get)
+                   (lambda (url &rest arguments)
+                     (declare (ignore url arguments))
+                     (values "{\"data\":[{\"id\":\"cache/live\"}]}"
+                             200 nil nil)))
+             (test-assert
+              (null (provider-refresh-models
+                     configuration :provider-name provider-name))
+              "the cache-boundary provider refresh succeeds")
+             (test-assert
+              (equal (registration-models)
+                     '("cache/static" "cache/live"))
+              "static metadata precedes the discovered model")
+             (register)
+             (test-assert
+              (equal (registration-models) '("cache/live"))
+              "runtime re-registration does not retain removed static models")
+             (unregister-provider provider-name :source ':runtime)
+             (register)
+             (provider-bootstrap-configuration configuration)
+             (test-assert
+              (equal (registration-models) '("cache/live"))
+              "cache reload does not resurrect removed static models"))
+        (setf (symbol-function 'dexador:get) original-get)
+        (provider--registry-restore registry-snapshot)
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+  nil)
+
 (-> test-openai-compatible-provider-discovery () null)
 (defun test-openai-compatible-provider-discovery ()
   "Test OpenAI-compatible model discovery, metadata overrides, and failures."
