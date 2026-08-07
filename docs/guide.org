@@ -576,7 +576,10 @@ the reusable pool; separate provider tool calls are still executed in order.
 Detached children continue while the primary model proceeds, and the responsive
 composer remains usable in either case. The default pool admits up to eight
 running children, configurable with =AUTOLITH_TASK_MAX_CONCURRENCY= up to the
-implementation maximum of 32.
+implementation maximum of 32. Child jobs have no runtime deadline by default.
+Set a positive =AUTOLITH_TASK_MAX_RUNTIME_MS= only when an operator wants a
+finite wall-clock deadline; cancellation, shutdown, bounded progress, and result
+retention remain available in unlimited mode.
 
 Queued and running children appear in stable creation order in a colored live
 strip immediately above the modeline. Running children share a spinner updated

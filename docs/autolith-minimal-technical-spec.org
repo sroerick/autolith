@@ -658,10 +658,12 @@ remain independently inspectable while the primary loop continues.
 Admission is bounded by batch and live-job limits. A bounded FIFO feeds a
 reusable worker pool with configured concurrency and an implementation maximum.
 Nested synchronous delegation must make progress even when every reusable
-worker is occupied; it must not deadlock waiting for another worker. Runtime
-deadlines use one shared monitor rather than one watchdog thread per job.
-Terminal jobs have bounded retention, and terminal publication is single-writer
-even when completion, cancellation, and timeout race.
+worker is occupied; it must not deadlock waiting for another worker. Child jobs
+have no runtime deadline by default. A positive =AUTOLITH_TASK_MAX_RUNTIME_MS=
+override enables finite deadlines through one shared monitor rather than one
+watchdog thread per job. User cancellation, parent cancellation, shutdown, and
+bounded terminal retention remain active regardless of runtime configuration.
+Terminal publication is single-writer even when completion and cancellation race.
 
 The interactive UI projects every queued and running job into a bounded live
 strip immediately above the modeline. Rows remain in stable creation order,

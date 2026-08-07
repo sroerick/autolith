@@ -8,8 +8,8 @@
 (defparameter *task-maximum-concurrency* 32
   "The largest supported child-agent worker pool.")
 
-(defparameter *task-default-maximum-runtime-milliseconds* 1800000
-  "The default 30-minute wall-clock cap for one child agent.")
+(defparameter *task-default-maximum-runtime-milliseconds* 0
+  "The default unlimited child runtime; positive overrides enable a deadline.")
 
 (defparameter *task-maximum-batch-size* 16
   "The largest task batch accepted atomically.")

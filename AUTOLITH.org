@@ -164,6 +164,24 @@ a user-local init.lisp change, or a private image commit.
   arbitrary-byte output with replacement decoding and exposes caller-selected
   deadlines without an Autolith compatibility layer.
 
+** Unlimited default child runtimes
+
+- Problem: child agents were terminated after a fixed 30-minute wall-clock cap,
+  discarding their live context and often leaving useful repository work without
+  a terminal handoff.
+- Behavior: task jobs have no runtime deadline by default. A positive
+  =AUTOLITH_TASK_MAX_RUNTIME_MS= remains an operator opt-in to the existing shared
+  deadline monitor. User, parent, descendant, shutdown, and active-turn
+  cancellation continue to interrupt live work, while progress and terminal
+  retention remain bounded.
+- Scope and location: tracked project work in =src/task/state.lisp=, task runtime
+  tests, the specification, and the guide.
+- Verification: the default orchestrator has no deadline or monitor, a positive
+  1,000-millisecond override still aborts a real stalled tool call with one
+  durable terminal result, and the complete repository check passes.
+- Removal condition: child providers support reliable resumable handoff at
+  arbitrary forced deadlines without losing in-progress context or work.
+
 ** Actionable public Nix smoke annotations
 
 - Problem: unauthenticated GitHub Actions logs were unavailable, and generic
