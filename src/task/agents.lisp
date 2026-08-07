@@ -389,11 +389,6 @@
 
 ;;;; -- Safe Native Reader --
 
-(-> task-agent--source-line (string integer) (integer 1))
-(defun task-agent--source-line (source offset)
-  "Return the one-based line containing OFFSET in SOURCE."
-  (1+ (count #\Newline source :end (min offset (length source)))))
-
 (-> task-agent--file-byte-length (pathname) (integer 0))
 (defun task-agent--file-byte-length (pathname)
   "Return PATHNAME's byte length without allocating its contents."
@@ -423,133 +418,22 @@
                                :end count
                                :external-format :utf-8))))
 
-(-> task-agent--source-token-delimiter-p (character) boolean)
-(defun task-agent--source-token-delimiter-p (character)
-  "Return true when CHARACTER terminates an atom in restricted role syntax."
-  (not
-   (null
-    (member character
-            '(#\Space #\Tab #\Newline #\Return #\Page
-              #\( #\) #\" #\; #\# #\' #\` #\, #\\ #\|)
-            :test #'char=))))
+(-> task-agent--source-grammar () source-grammar)
+(defun task-agent--source-grammar ()
+  "Return the bounded native data grammar one role file may use.
 
-(-> task-agent--validate-source-shape (string pathname keyword string) null)
-(defun task-agent--validate-source-shape
-    (contents pathname source definition-name)
-  "Bound native list depth and reject reader macros outside block comments."
-  (let ((depth 0)
-        (block-comment-depth 0)
-        (line-comment-p nil)
-        (string-p nil)
-        (escaped-p nil))
-    (labels ((source-error (offset message &optional field)
-               (task-agent-definition--error
-                :pathname pathname
-                :source source
-                :line (task-agent--source-line contents offset)
-                :field field
-                :cause message
-                :definition-name definition-name)))
-      (loop with length = (length contents)
-            for index from 0 below length
-            for character = (char contents index)
-            for next = (and (< (1+ index) length)
-                            (char contents (1+ index)))
-            do
-               (cond
-                 (string-p
-                  (cond
-                    (escaped-p
-                     (setf escaped-p nil))
-                    ((char= character #\\)
-                     (setf escaped-p t))
-                    ((char= character #\")
-                     (setf string-p nil))))
-                 (line-comment-p
-                  (when (member character '(#\Newline #\Return)
-                                :test #'char=)
-                    (setf line-comment-p nil)))
-                 ((plusp block-comment-depth)
-                  (cond
-                    ((and (char= character #\#)
-                          next
-                          (char= next #\|))
-                     (incf block-comment-depth)
-                     (incf index))
-                    ((and (char= character #\|)
-                          next
-                          (char= next #\#))
-                     (decf block-comment-depth)
-                     (incf index))))
-                 ((char= character #\;)
-                  (setf line-comment-p t))
-                 ((char= character #\")
-                  (setf string-p t))
-                 ((and (char= character #\#)
-                       next
-                       (char= next #\|))
-                  (setf block-comment-depth 1)
-                  (incf index))
-                 ((char= character #\:)
-                  (let* ((previous (and (plusp index)
-                                        (char contents (1- index))))
-                         (token-start (1+ index))
-                         (token-end
-                           (or (position-if
-                                #'task-agent--source-token-delimiter-p
-                                contents
-                                :start token-start)
-                               length))
-                         (token (subseq contents token-start token-end)))
-                    (when (or (and next (char= next #\:))
-                              (and previous
-                                   (not (or (member previous
-                                                    '(#\Space #\Tab #\Newline
-                                                      #\Return #\Page)
-                                                    :test #'char=)
-                                            (char= previous #\()
-                                            (char= previous #\))
-                                            (char= previous #\")
-                                            (char= previous #\#)))))
-                      (source-error
-                       index
-                       "Package-qualified symbols are not allowed in native role files."))
-                    (unless (task-agent-native-keyword-name-p token)
-                      (let ((existing-keyword
-                              (find-symbol (string-upcase token)
-                                           '#:keyword)))
-                        (source-error
-                         index
-                         (format nil
-                                 "Unknown native role keyword :~A."
-                                 token)
-                         existing-keyword)))))
-                 ((member character '(#\# #\' #\` #\, #\\ #\|)
-                          :test #'char=)
-                  (source-error
-                   index
-                   "Only lists, strings, keywords, numbers, booleans, and block comments are allowed in native role files."))
-                 ((char= character #\()
-                  (incf depth)
-                  (when (> depth *task-agent-form-maximum-depth*)
-                    (source-error
-                     index
-                     "The native role form exceeds its nesting-depth bound.")))
-                 ((char= character #\))
-                  (decf depth)
-                  (when (minusp depth)
-                    (source-error index
-                                  "The native role form has an unmatched closing parenthesis.")))))
-      (when (plusp block-comment-depth)
-        (source-error (length contents)
-                      "The native role file has an unterminated block comment."))
-      (when string-p
-        (source-error (length contents)
-                      "The native role file has an unterminated string."))
-      (unless (zerop depth)
-        (source-error (length contents)
-                      "The native role file has unbalanced parentheses."))))
-  nil)
+The grammar is rebuilt for every read so that a live change to the bound policy
+or the reasoning-effort vocabulary takes effect without reloading this file.
+Block comments are permitted here, unlike the other native Autolith formats, and
+the keyword vocabulary is a predicate because live reasoning-effort names join
+the static field names."
+  (make-source-grammar
+   :label "The native role file"
+   :keyword-predicate #'task-agent-native-keyword-name-p
+   :maximum-depth *task-agent-form-maximum-depth*
+   :maximum-nodes *task-agent-form-maximum-nodes*
+   :block-comments-permitted-p t
+   :improper-lists-permitted-p t))
 
 (-> task-agent--validate-readable-tree
     (t &key (:pathname pathname) (:source keyword) (:definition-name string))
@@ -615,16 +499,13 @@
                  :definition-name definition-name)))))
   nil)
 
-(-> task-agent--make-reader-package () package)
-(defun task-agent--make-reader-package ()
-  "Return a fresh temporary package for reading untrusted native role data."
-  (loop for name = (symbol-name (gensym "AUTOLITH-TASK-READER-"))
-        unless (find-package name)
-          return (make-package name :use '(#:cl))))
-
 (-> task-agent--read-native-form (pathname keyword string) t)
 (defun task-agent--read-native-form (pathname source definition-name)
-  "Read exactly one bounded native role form from PATHNAME."
+  "Read exactly one bounded native role form from PATHNAME.
+
+SEXP-CONFIG owns the bounded scan and the restricted read. The value vocabulary
+stays here, in TASK-AGENT--VALIDATE-READABLE-TREE, because its diagnostics name
+the offending object rather than only reporting that one was rejected."
   (handler-case
       (progn
         (when (> (task-agent--file-byte-length pathname)
@@ -633,53 +514,24 @@
            :pathname pathname :source source
            :cause "The native role file exceeds its byte bound."
            :definition-name definition-name))
-        (let ((contents
-                (task-agent--read-bounded-contents
-                 pathname source definition-name)))
-          (task-agent--validate-source-shape
-           contents pathname source definition-name)
-          (let ((reader-package (task-agent--make-reader-package)))
-            (unwind-protect
-                 (with-input-from-string (stream contents)
-                   (let* ((*package* reader-package)
-                          (*read-base* 10)
-                          (*read-default-float-format* 'double-float)
-                          (*read-eval* nil)
-                          (*read-suppress* nil)
-                          (*readtable* (copy-readtable nil))
-                          (end (gensym "END")))
-                     (handler-case
-                         (let ((form (read stream nil end)))
-                           (when (eq form end)
-                             (task-agent-definition--error
-                              :pathname pathname :source source :line 1
-                              :cause "The native role file contains no form."
-                              :definition-name definition-name))
-                           (let ((extra (read stream nil end)))
-                             (unless (eq extra end)
-                               (task-agent-definition--error
-                                :pathname pathname :source source
-                                :line (task-agent--source-line
-                                       contents (or (file-position stream) 0))
-                                :cause
-                                "The native role file contains more than one form."
-                                :definition-name definition-name)))
-                           (task-agent--validate-readable-tree
-                            form
-                            :pathname pathname
-                            :source source
-                            :definition-name definition-name)
-                           form)
-                       (task-agent-definition-error (condition)
-                         (error condition))
-                       (error (condition)
-                         (task-agent-definition--error
-                          :pathname pathname :source source
-                          :line (task-agent--source-line
-                                 contents (or (file-position stream) 0))
-                          :cause condition
-                          :definition-name definition-name)))))
-              (delete-package reader-package)))))
+        (let* ((contents
+                 (task-agent--read-bounded-contents
+                  pathname source definition-name))
+               (form
+                 (handler-case
+                     (read-source contents (task-agent--source-grammar))
+                   (sexp-config-error (condition)
+                     (task-agent-definition--error
+                      :pathname pathname :source source
+                      :line (or (sexp-config-error-line condition) 1)
+                      :cause (sexp-config-error-message condition)
+                      :definition-name definition-name)))))
+          (task-agent--validate-readable-tree
+           form
+           :pathname pathname
+           :source source
+           :definition-name definition-name)
+          form))
     (task-agent-definition-error (condition)
       (error condition))
     (error (condition)

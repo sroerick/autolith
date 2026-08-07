@@ -71,7 +71,7 @@
                      (task-tests--write-text pathname source)
                      :project)))
              (test-assert
-              (search "nesting"
+              (search "depth"
                       (string-downcase
                        (princ-to-string
                         (task-agent-definition-error-cause condition))))
