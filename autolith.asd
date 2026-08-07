@@ -14,6 +14,7 @@
                #:closer-mop
                #:dexador
                #:flexi-streams
+               #:idsmall
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen

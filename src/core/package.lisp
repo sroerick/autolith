@@ -101,6 +101,18 @@
   (:import-from #:closer-mop
                 #:class-slots
                 #:slot-definition-name)
+  (:import-from #:idsmall
+                #:*random-index-function*
+                #:identifier-base
+                #:identifier-clear-reservations
+                #:identifier-display
+                #:identifier-error
+                #:identifier-from-seed
+                #:identifier-generate
+                #:identifier-normalize
+                #:identifier-p
+                #:identifier-reserved-p
+                #:identifier-space-exhausted)
   (:import-from #:ironclad
                 #:make-mac
                 #:produce-mac

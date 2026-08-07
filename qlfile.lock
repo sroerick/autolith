@@ -52,8 +52,8 @@
   :version "git-95d81947e6d080826104086fda8c48a4db336db0"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "a9a97263a557a2c125194524677267a6a20767c7")
-  :version "git-a9a97263a557a2c125194524677267a6a20767c7"))
+  :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "cb7951ea203329d7d1d226bfc1e8224bd5c7d9bd")
+  :version "git-cb7951ea203329d7d1d226bfc1e8224bd5c7d9bd"))
 ("clifff" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/clifff.git" :ref "8bf3ebb0985108593cad105d31639cedbe9e5373")
@@ -62,6 +62,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/colorlisp.git" :ref "05a3313d52e2a2c643219a750dd5045df56c1cd7")
   :version "git-05a3313d52e2a2c643219a750dd5045df56c1cd7"))
+("idsmall" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/luciusmagn/idsmall.git" :ref "3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9")
+  :version "git-3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9"))
 ("mcparen" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/mcparen.git" :ref "58ba29a8dd8d06417452b7978748c3d453bc3287")
