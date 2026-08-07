@@ -294,48 +294,39 @@ control characters are rejected even when the native reader accepted them."
                   (or (graphic-char-p character)
                       (char= character #\Space))))))
 
+(-> mcp-configuration--native-value-p (t) boolean)
+(defun mcp-configuration--native-value-p (value)
+  "Return true when VALUE is one atom native MCP configuration may contain."
+  (not (null (or (null value)
+                 (eq value t)
+                 (keywordp value)
+                 (stringp value)
+                 (realp value)))))
+
+(-> mcp-configuration--source-grammar () source-grammar)
+(defun mcp-configuration--source-grammar ()
+  "Return the bounded native data grammar one MCP configuration may use.
+
+The grammar is rebuilt for every read so that a live change to the keyword or
+bound policy takes effect without reloading this file."
+  (make-source-grammar
+   :label "Native MCP configuration"
+   :keywords *mcp-configuration-native-keywords*
+   :maximum-depth *mcp-configuration-maximum-depth*
+   :maximum-nodes *mcp-configuration-maximum-nodes*
+   :improper-lists-permitted-p t
+   :allowed-atom-predicate #'mcp-configuration--native-value-p))
+
 (-> mcp-configuration--validate-readable-tree
     (t &key (:pathname (option pathname)))
     t)
 (defun mcp-configuration--validate-readable-tree (value &key pathname)
   "Reject shared, circular, or non-native objects in readable VALUE."
-  (let ((seen (make-hash-table :test #'eq))
-        (stack (list (cons value 0)))
-        (nodes 0))
-    (loop while stack
-          for entry = (pop stack)
-          for node = (first entry)
-          for depth = (rest entry)
-          do
-             (incf nodes)
-             (when (> nodes *mcp-configuration-maximum-nodes*)
-               (mcp-configuration--error
-                "MCP configuration contains too many values."
-                :pathname pathname))
-             (cond
-               ((consp node)
-                (when (> depth *mcp-configuration-maximum-depth*)
-                  (mcp-configuration--error
-                   "MCP configuration is nested too deeply."
-                   :pathname pathname))
-                (when (gethash node seen)
-                  (mcp-configuration--error
-                   "MCP configuration must not contain shared or circular list structure."
-                   :pathname pathname))
-                (setf (gethash node seen) t)
-                (push (cons (rest node) depth) stack)
-                (push (cons (first node) (1+ depth)) stack))
-               ((or (null node)
-                    (eq node t)
-                    (keywordp node)
-                    (stringp node)
-                    (realp node))
-                nil)
-               (t
-                (mcp-configuration--error
-                 "MCP configuration contains an unsupported value."
-                 :pathname pathname)))))
-  value)
+  (handler-case
+      (validate-tree value (mcp-configuration--source-grammar))
+    (sexp-config-error (condition)
+      (mcp-configuration--error (sexp-config-error-message condition)
+                                :pathname pathname))))
 
 (-> mcp-configuration--validate-plist
     (t list &key (:pathname (option pathname))
@@ -1096,144 +1087,15 @@ control characters are rejected even when the native reader accepted them."
            :pathname pathname
            :cause condition)))))
 
-(-> mcp-configuration--preflight-source
-    (string &key (:pathname (option pathname)))
-    null)
-(defun mcp-configuration--preflight-source (source &key pathname)
-  "Reject reader syntax outside the strict native MCP data grammar."
-  (let ((depth 0)
-        (in-string-p nil)
-        (escaped-p nil)
-        (in-comment-p nil))
-    (labels
-        ((delimiter-p (character)
-           (find character
-                 '(#\( #\) #\; #\Space #\Tab #\Newline #\Return #\Page)))
-
-         (native-keyword-token-p (token)
-           (and (plusp (length token))
-                (char= (char token 0) #\:)
-                (some
-                 (lambda (keyword)
-                   (string-equal
-                    token
-                    (format nil ":~A" (symbol-name keyword))))
-                 *mcp-configuration-native-keywords*)))
-
-         (validate-keyword-token (start)
-           (let* ((end
-                    (or
-                     (position-if #'delimiter-p source :start start)
-                     (length source)))
-                  (token (subseq source start end)))
-             (when (find-if
-                    (lambda (character)
-                      (find character '(#\: #\\ #\| #\#)))
-                    token
-                    :start 1)
-               (mcp-configuration--error
-                "Native MCP configuration does not permit escaped or package-qualified symbols."
-                :pathname pathname))
-             (unless (native-keyword-token-p token)
-               (mcp-configuration--error
-                "Native MCP configuration contains an unknown keyword token."
-                :pathname pathname)))))
-      (loop for character across source
-            for index from 0
-            do
-               (cond
-                 (in-comment-p
-                  (when (char= character #\Newline)
-                    (setf in-comment-p nil)))
-                 (in-string-p
-                  (cond
-                    (escaped-p
-                     (setf escaped-p nil))
-                    ((char= character #\\)
-                     (setf escaped-p t))
-                    ((char= character #\")
-                     (setf in-string-p nil))))
-                 ((char= character #\;)
-                  (setf in-comment-p t))
-                 ((char= character #\")
-                  (setf in-string-p t))
-                 ((find character '(#\# #\' #\` #\, #\\ #\|))
-                  (mcp-configuration--error
-                   (format nil
-                           "Native MCP configuration uses unsupported reader syntax ~S."
-                           character)
-                   :pathname pathname))
-                 ((char= character #\:)
-                  (when
-                      (and (plusp index)
-                           (not
-                            (delimiter-p
-                             (char source (1- index)))))
-                    (mcp-configuration--error
-                     "Native MCP configuration does not permit package-qualified symbols."
-                     :pathname pathname))
-                  (validate-keyword-token index))
-                 ((char= character #\()
-                  (incf depth)
-                  (when (> depth *mcp-configuration-maximum-depth*)
-                    (mcp-configuration--error
-                     "MCP configuration is nested too deeply."
-                     :pathname pathname)))
-                 ((char= character #\))
-                  (decf depth)
-                  (when (minusp depth)
-                    (mcp-configuration--error
-                     "Native MCP configuration contains an unmatched closing parenthesis."
-                     :pathname pathname))))))
-    (when in-string-p
-      (mcp-configuration--error
-       "Native MCP configuration contains an unterminated string."
-       :pathname pathname))
-    (unless (zerop depth)
-      (mcp-configuration--error
-       "Native MCP configuration contains unbalanced parentheses."
-       :pathname pathname))
-    nil))
-
 (-> mcp-configuration--read-form (pathname) t)
 (defun mcp-configuration--read-form (pathname)
   "Read exactly one bounded native MCP form from PATHNAME."
   (let ((source (mcp-configuration--read-source pathname)))
-    (mcp-configuration--preflight-source source :pathname pathname)
-    (let ((reader-package
-            (make-package
-             (symbol-name (gensym "AUTOLITH-MCP-READER-"))
-             :use '(#:cl))))
-      (unwind-protect
-           (handler-case
-               (with-input-from-string (stream source)
-                 (let ((*package* reader-package)
-                       (*read-eval* nil)
-                       (*read-suppress* nil)
-                       (*readtable* (copy-readtable nil))
-                       (*read-base* 10)
-                       (*read-default-float-format* 'double-float)
-                       (end (gensym "END")))
-                   (let ((form (read stream nil end)))
-                     (when (eq form end)
-                       (mcp-configuration--error
-                        "The native MCP configuration contains no form."
-                        :pathname pathname))
-                     (unless (eq (read stream nil end) end)
-                       (mcp-configuration--error
-                        "The native MCP configuration contains more than one form."
-                        :pathname pathname))
-                     (mcp-configuration--validate-readable-tree
-                      form :pathname pathname))))
-             (mcp-configuration-error (condition)
-               (error condition))
-             (serious-condition (cause)
-               (mcp-configuration--error
-                (format nil "Could not read native MCP configuration at ~A: ~A"
-                        pathname cause)
-                :pathname pathname
-                :cause cause)))
-        (delete-package reader-package)))))
+    (handler-case
+        (read-source source (mcp-configuration--source-grammar))
+      (sexp-config-error (condition)
+        (mcp-configuration--error (sexp-config-error-message condition)
+                                  :pathname pathname)))))
 
 (-> mcp-configuration-read-path (pathname) list)
 (defun mcp-configuration-read-path (pathname)
