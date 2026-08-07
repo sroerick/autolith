@@ -206,6 +206,11 @@
   (format nil "run autolith --auth ~A to enter it"
           (credential-manager-provider-label manager)))
 
+(defmethod credential-manager-refreshable-p ((manager api-key-credential-manager))
+  "Static provider API keys cannot refresh."
+  (declare (ignore manager))
+  nil)
+
 (-> api-key-credential-manager-create
     (&key
      (:provider-name non-empty-string)

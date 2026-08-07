@@ -1627,7 +1627,32 @@
                     nil)
                 (authentication-error ()
                   t))
-              "a third unauthorized response becomes a typed authentication failure")))
+              "a third unauthorized response becomes a typed authentication failure"))
+           (let* ((manager
+                    (api-key-credential-manager-create
+                     :provider-name "retry-api-key"
+                     :pathname (configuration-api-keys-path configuration)))
+                  (provider
+                    (make-instance 'test-codex-provider
+                                   :configuration configuration
+                                   :credential-manager manager
+                                   :session-id (make-identifier)
+                                   :outcomes '(:unauthorized :unexpected))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider-stream-turn provider conversation
+                                          :tool-namespaces #()
+                                          :event-callback #'identity)
+                    nil)
+                (authentication-error (condition)
+                  (search "run autolith --auth retry-api-key"
+                          (princ-to-string condition))))
+              "a rejected static API key gives its direct authentication hint")
+             (test-assert
+              (equal (nreverse (test-codex-provider-refresh-flags provider))
+                     '(nil))
+              "a rejected static API key is not retried or refreshed")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
