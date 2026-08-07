@@ -627,21 +627,22 @@
          (member "-h" arguments :test #'string=))
      (format t "~A~%" (main-usage)))
     ((and arguments (string= (first arguments) "localgroup"))
-     (main-localgroup (configuration-create) (rest arguments)))
+     (main-localgroup
+      (configuration-create :defer-provider-validation-p t)
+      (rest arguments)))
     (t
      (let* ((immutable-p (not (null (member "--immutable" arguments
                                             :test #'string=))))
             (permission-mode (main--permission-mode arguments))
-            (configuration (configuration-create :immutable-p immutable-p))
+            (configuration
+              (configuration-create
+               :immutable-p immutable-p
+               :defer-provider-validation-p t))
             (handoff-record
               (localgroup-handoff-selection configuration arguments))
             (fresh-handoff-p
               (and handoff-record
                    (getf (rest handoff-record) :fresh-conversation-p)))
-            (configuration
-               (configuration-create
-                :immutable-p immutable-p
-                :defer-provider-validation-p t))
             (resume-selection
               (multiple-value-list (main--resume-selection arguments)))
             (resume-requested-p

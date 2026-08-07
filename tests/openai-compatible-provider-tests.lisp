@@ -110,6 +110,76 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-openai-compatible-provider-deferred-main-validation () null)
+(defun test-openai-compatible-provider-deferred-main-validation ()
+  "Test main startup defers validation until registered providers are available."
+  (let ((model "main-bootstrap/model")
+        (old-environment-model (uiop:getenv "AUTOLITH_MODEL"))
+        (old-environment-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
+    (unwind-protect
+         (progn
+           (sb-posix:setenv "AUTOLITH_MODEL" model 1)
+           (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" "minimal" 1)
+           (let ((observed-configuration nil)
+                 (*active-application* nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'localgroup-handoff-selection
+                     (lambda (configuration arguments)
+                       (declare (ignore configuration arguments))
+                       nil))
+               (list 'application-recovery-state
+                     (lambda (configuration)
+                       (declare (ignore configuration))
+                       (values nil nil nil)))
+               (list 'application-recovery-diagnosis-prompt
+                     (lambda (configuration)
+                       (declare (ignore configuration))
+                       nil))
+               (list 'application-create
+                     (lambda (configuration &key conversation-id permission-mode)
+                       (declare (ignore conversation-id permission-mode))
+                       (setf observed-configuration configuration)
+                       (make-instance 'application)))
+               (list 'application-run
+                     (lambda (application &rest arguments)
+                       (declare (ignore application arguments))
+                       nil)))
+              (lambda ()
+                (main-dispatch nil)))
+             (test-assert
+              (and observed-configuration
+                   (string= (configuration-model observed-configuration) model)
+                   (string= (configuration-reasoning-effort
+                             observed-configuration)
+                            "minimal"))
+              "main startup defers custom provider validation until user init"))
+           (let ((observed-configuration nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'main-localgroup
+                     (lambda (configuration arguments)
+                       (declare (ignore arguments))
+                       (setf observed-configuration configuration)
+                       nil)))
+              (lambda ()
+                (main-dispatch '("localgroup" "status"))))
+             (test-assert
+              (and observed-configuration
+                   (string= (configuration-model observed-configuration) model)
+                   (string= (configuration-reasoning-effort
+                             observed-configuration)
+                            "minimal"))
+              "localgroup commands do not validate custom providers before init")))
+      (if old-environment-model
+          (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
+          (sb-posix:unsetenv "AUTOLITH_MODEL"))
+      (if old-environment-effort
+          (sb-posix:setenv "AUTOLITH_REASONING_EFFORT"
+                          old-environment-effort 1)
+          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))))
+  nil)
+
 (-> test-openai-compatible-provider-discovery-is-on-demand () null)
 (defun test-openai-compatible-provider-discovery-is-on-demand ()
   "Test startup uses cached metadata and leaves remote discovery to /models."
