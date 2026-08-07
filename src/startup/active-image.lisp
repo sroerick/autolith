@@ -237,7 +237,7 @@
               *secret-use-depth* 0
               *secret-use-quiescence-owner* nil
               *checkpoint-in-progress-p* nil
-              *checkpoint-core-probe-record* nil)
+              sbcl-generations::*checkpoint-core-probe-record* nil)
         (sb-ext:save-lisp-and-die
          (namestring pathname)
          :toplevel #'active-image-main

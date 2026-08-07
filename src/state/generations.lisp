@@ -1,136 +1,6 @@
 (in-package #:autolith)
 
-;;;; -- Retained Generations --
-
-(defclass generation ()
-  ((identifier
-    :initarg :identifier
-    :reader generation-identifier
-    :type non-empty-string
-    :documentation "The stable generation identifier.")
-   (directory
-    :initarg :directory
-    :reader generation-directory
-    :type pathname
-    :documentation "The directory containing generation artifacts.")
-   (core-pathname
-    :initarg :core-pathname
-    :reader generation-core-pathname
-    :type pathname
-    :documentation "The atomically published SBCL core pathname.")
-   (temporary-core-pathname
-    :initarg :temporary-core-pathname
-    :reader generation-temporary-core-pathname
-    :type pathname
-    :documentation "The unpublished core pathname used by the saver child.")
-   (manifest-pathname
-    :initarg :manifest-pathname
-    :reader generation-manifest-pathname
-    :type pathname
-    :documentation "The portable generation manifest pathname.")
-   (reconstruction-pathname
-    :initarg :reconstruction-pathname
-    :initform nil
-    :reader generation-reconstruction-pathname
-    :type (option pathname)
-    :documentation "The complete base-image Lisp reconstruction script.")
-   (image-commit-identifier
-    :initarg :image-commit-identifier
-    :initform nil
-    :reader generation-image-commit-identifier
-    :type (option string)
-    :documentation "The private image commit captured by this generation.")
-   (mutation-history-commit
-    :initarg :mutation-history-commit
-    :initform nil
-    :reader generation-mutation-history-commit
-    :type (option string)
-    :documentation "The private Git commit retaining the captured image state.")
-   (git-commit
-    :initarg :git-commit
-    :reader generation-git-commit
-    :type non-empty-string
-    :documentation "The clean source revision represented by the generation.")
-   (journal-position
-    :initarg :journal-position
-    :reader generation-journal-position
-    :type integer
-    :documentation "The mutation journal byte position captured before the fork.")
-   (created-at
-    :initarg :created-at
-    :reader generation-created-at
-    :type timestamp
-    :documentation "The generation creation time as Common Lisp universal time.")
-   (status
-    :initarg :status
-    :accessor generation-status
-    :type (member :pending :ready :failed)
-    :documentation "The parent process's current publication status.")
-   (coordinator-pid
-    :initform nil
-    :accessor generation-coordinator-pid
-    :type (option integer)
-    :documentation "The coordinator process identifier while publication is pending."))
-  (:documentation "A saved live image paired with its source and runtime identity."))
-
-(defclass generation-core-probe-runner ()
-  ()
-  (:documentation
-   "The execution boundary used to query an unpublished generation core."))
-
-(defclass sbcl-generation-core-probe-runner (generation-core-probe-runner)
-  ((command
-    :initarg :command
-    :reader generation-core-probe-runner-command
-    :type non-empty-string
-    :documentation "The SBCL executable used to boot an unpublished core."))
-  (:documentation "A core probe runner implemented by a separate SBCL process."))
-
-(defparameter *checkpoint-core-probe-argument*
-  "--autolith-internal-checkpoint-probe"
-  "The exact private argument that requests a retained-core identity probe.")
-
-(defvar *checkpoint-in-progress-p* nil
-  "True while this active process has one unpublished checkpoint.")
-
-(defvar *checkpoint-core-probe-record* nil
-  "The portable generation identity embedded in a checkpoint saver core.")
-
-(-> generation-core-probe-run
-    (generation-core-probe-runner generation)
-    string)
-(defgeneric generation-core-probe-run (runner generation)
-  (:documentation
-   "Boot GENERATION's temporary core through RUNNER and return its probe output."))
-
-(defmethod generation-core-probe-run
-    ((runner sbcl-generation-core-probe-runner) (generation generation))
-  "Boot GENERATION's unpublished core and capture its exact internal probe output."
-  (handler-case
-      (uiop:run-program
-       (list (generation-core-probe-runner-command runner)
-             "--noinform"
-             "--core"
-             (namestring (generation-temporary-core-pathname generation))
-             "--end-runtime-options"
-             *checkpoint-core-probe-argument*)
-       :input nil
-       :output :string
-       :error-output :output)
-    (error ()
-      (error 'checkpoint-error
-             :message "The saved checkpoint core could not run its internal probe."
-             :stage ':probe
-             :pathname (generation-temporary-core-pathname generation)))))
-
-(-> generation-core-probe-runner-create () generation-core-probe-runner)
-(defun generation-core-probe-runner-create ()
-  "Create the production subprocess runner for unpublished generation cores."
-  (let ((configured-command (uiop:getenv "AUTOLITH_SBCL")))
-    (make-instance 'sbcl-generation-core-probe-runner
-                   :command (if (non-empty-string-p configured-command)
-                                configured-command
-                                "sbcl"))))
+;;;; -- Generation Store --
 
 (-> generation-root (configuration) pathname)
 (defun generation-root (configuration)
@@ -143,18 +13,113 @@
   (merge-pathnames "current-generation.sexp"
                    (configuration-state-root configuration)))
 
-(-> generation-create-record
-    (configuration &key (:git-commit (option string))
-                        (:mutation-checker (option mutation-checker)))
-    generation)
-(defun generation-create-record (configuration &key git-commit mutation-checker)
-  "Create a pending generation record with immutable artifact paths."
-  (let* ((identifier (make-identifier))
-         (directory (merge-pathnames
-                     (format nil "~A/" identifier)
-                     (generation-root configuration)))
+(-> generation--validate-manifest (list pathname) null)
+(defun generation--validate-manifest (properties pathname)
+  "Require PROPERTIES to carry the Autolith fields its manifest version promises."
+  (let* ((version (getf properties :version))
+         (directory (uiop:pathname-directory-pathname pathname))
+         (reconstruction (getf properties :reconstruction))
          (reconstruction-pathname
-           (merge-pathnames "reconstruct.lisp" directory))
+           (and (non-empty-string-p reconstruction) (pathname reconstruction)))
+         (image-commit (getf properties :image-commit))
+         (history-commit (getf properties :mutation-history-commit)))
+    (unless (non-empty-string-p (getf properties :git-commit))
+      (error 'checkpoint-error
+             :message "A generation manifest has no source revision."
+             :stage ':manifest
+             :pathname pathname))
+    (when (member version '(2 3))
+      (unless (and reconstruction-pathname
+                   (uiop:subpathp reconstruction-pathname directory)
+                   (probe-file reconstruction-pathname)
+                   (or (null image-commit)
+                       (image-commit--identifier-p image-commit)))
+        (error 'checkpoint-error
+               :message "A generation reconstruction manifest is invalid."
+               :stage ':manifest
+               :pathname pathname)))
+    (when (eql version 3)
+      (unless (if image-commit
+                  (image-history--commit-p history-commit)
+                  (null history-commit))
+        (error 'checkpoint-error
+               :message "A generation mutation-history identity is invalid."
+               :stage ':manifest
+               :pathname pathname))))
+  nil)
+
+(-> generation--validate-publication (t) null)
+(defun generation--validate-publication (generation)
+  "Require GENERATION to own the reconstruction script a replay depends on."
+  (let ((reconstruction (generation-reconstruction-pathname generation)))
+    (unless (and reconstruction
+                 (uiop:subpathp reconstruction (generation-directory generation))
+                 (probe-file reconstruction))
+      (error 'checkpoint-error
+             :message "The checkpoint has no valid reconstruction script."
+             :stage ':publish
+             :pathname reconstruction)))
+  nil)
+
+(-> generation-store-for (configuration) generation-store)
+(defun generation-store-for (configuration)
+  "Return the retained-generation store CONFIGURATION publishes into.
+
+Version 3 manifests are written. Versions 1 and 2 remain readable so that a
+generation saved before the reconstruction and mutation-history fields existed
+can still be listed and booted."
+  (make-generation-store
+   :root (generation-root configuration)
+   :current-pathname (generation-current-pathname configuration)
+   :core-name "autolith.core"
+   :temporary-core-name ".autolith.core.tmp"
+   :manifest-version 3
+   :accepted-manifest-versions '(1 2 3)
+   :manifest-validator #'generation--validate-manifest
+   :publish-validator #'generation--validate-publication))
+
+
+;;;; -- Autolith Generation Metadata --
+
+(-> generation-git-commit (t) t)
+(defun generation-git-commit (generation)
+  "Return the clean source revision GENERATION represents."
+  (getf (generation-metadata generation) :git-commit))
+
+(-> generation-image-commit-identifier (t) (option string))
+(defun generation-image-commit-identifier (generation)
+  "Return the private image commit GENERATION captured, or NIL for a base image."
+  (getf (generation-metadata generation) :image-commit))
+
+(-> generation-mutation-history-commit (t) (option string))
+(defun generation-mutation-history-commit (generation)
+  "Return the private Git commit retaining GENERATION's captured image state."
+  (getf (generation-metadata generation) :mutation-history-commit))
+
+(-> generation-journal-position (t) integer)
+(defun generation-journal-position (generation)
+  "Return the mutation journal position captured before GENERATION forked."
+  (or (getf (generation-metadata generation) :journal-position) 0))
+
+(-> generation-reconstruction-pathname (t) (option pathname))
+(defun generation-reconstruction-pathname (generation)
+  "Return GENERATION's base-image Lisp reconstruction script, if it has one."
+  (let ((value (getf (generation-metadata generation) :reconstruction)))
+    (and (non-empty-string-p value) (pathname value))))
+
+(-> generation--metadata (configuration string &key (:git-commit (option string))
+                                                    (:mutation-checker
+                                                     (option mutation-checker)))
+    list)
+(defun generation--metadata
+    (configuration identifier &key git-commit mutation-checker)
+  "Return the Autolith manifest properties for a new generation IDENTIFIER.
+
+Preparing the image commit and writing its replay script happen here, before any
+quiescing, because both touch the private history repository."
+  (let* ((directory (merge-pathnames (format nil "~A/" identifier)
+                                     (generation-root configuration)))
+         (reconstruction-pathname (merge-pathnames "reconstruct.lisp" directory))
          (image-commit
            (image-commit-prepare-checkpoint
             configuration
@@ -166,111 +131,117 @@
      reconstruction-pathname
      :generation-identifier identifier
      :commit image-commit)
+    (list :reconstruction (namestring reconstruction-pathname)
+          :image-commit (and image-commit (image-commit-identifier image-commit))
+          :mutation-history-commit
+          (and image-commit (image-commit-history-commit image-commit))
+          :git-commit (or git-commit
+                          (string-trim
+                           '(#\Space #\Tab #\Newline #\Return)
+                           (self-git-command configuration '("rev-parse" "HEAD"))))
+          :journal-position
+          (let ((journal (configuration-journal-path configuration)))
+            (if (probe-file journal)
+                (with-open-file (stream journal
+                                        :direction :input
+                                        :element-type '(unsigned-byte 8))
+                  (file-length stream))
+                0)))))
+
+
+;;;; -- Retained Generations --
+
+(-> generation-create-record
+    (configuration &key (:git-commit (option string))
+                        (:mutation-checker (option mutation-checker)))
+    generation)
+(defun generation-create-record (configuration &key git-commit mutation-checker)
+  "Create a pending generation record with immutable artifact paths."
+  (let* ((identifier (make-identifier))
+         (metadata (generation--metadata configuration identifier
+                                         :git-commit git-commit
+                                         :mutation-checker mutation-checker))
+         (directory (merge-pathnames (format nil "~A/" identifier)
+                                     (generation-root configuration))))
     (make-instance 'generation
                    :identifier identifier
                    :directory directory
                    :core-pathname (merge-pathnames "autolith.core" directory)
-                   :temporary-core-pathname (merge-pathnames ".autolith.core.tmp" directory)
+                   :temporary-core-pathname
+                   (merge-pathnames ".autolith.core.tmp" directory)
                    :manifest-pathname (merge-pathnames "manifest.sexp" directory)
-                   :reconstruction-pathname reconstruction-pathname
-                   :image-commit-identifier
-                   (and image-commit (image-commit-identifier image-commit))
-                   :mutation-history-commit
-                   (and image-commit
-                        (image-commit-history-commit image-commit))
-                   :git-commit (or git-commit
-                                   (string-trim
-                                    '(#\Space #\Tab #\Newline #\Return)
-                                    (self-git-command
-                                     configuration
-                                     '("rev-parse" "HEAD"))))
-                   :journal-position
-                   (let ((journal (configuration-journal-path configuration)))
-                     (if (probe-file journal)
-                         (with-open-file (stream journal
-                                                 :direction :input
-                                                 :element-type '(unsigned-byte 8))
-                           (file-length stream))
-                         0))
+                   :metadata metadata
                    :created-at (get-universal-time)
                    :status ':pending)))
 
-(-> generation-manifest-form (generation) list)
-(defun generation-manifest-form (generation)
-  "Return the portable ready manifest for GENERATION."
-  (list :generation
-        :version 3
-        :id (generation-identifier generation)
-        :core (namestring (generation-core-pathname generation))
-        :reconstruction
-        (namestring (generation-reconstruction-pathname generation))
-        :image-commit (generation-image-commit-identifier generation)
-        :mutation-history-commit
-        (generation-mutation-history-commit generation)
-        :git-commit (generation-git-commit generation)
-        :journal-position (generation-journal-position generation)
-        :sbcl-version (lisp-implementation-version)
-        :operating-system (software-type)
-        :operating-system-version (software-version)
-        :architecture (machine-type)
-        :created-at (generation-created-at generation)))
-
-(-> generation-core-probe-record (generation) list)
-(defun generation-core-probe-record (generation)
-  "Return the exact portable identity expected from GENERATION's saved core."
-  (list :autolith-checkpoint-core
-        :version 3
-        :generation-id (generation-identifier generation)
-        :git-commit (generation-git-commit generation)
-        :image-commit (generation-image-commit-identifier generation)
-        :mutation-history-commit
-        (generation-mutation-history-commit generation)))
-
-(-> generation-core-probe-output (list) string)
-(defun generation-core-probe-output (record)
-  "Return canonical one-line output for a retained-core probe RECORD."
-  (with-output-to-string (stream)
-    (let ((*print-base* 10)
-          (*print-case* ':upcase)
-          (*print-circle* nil)
-          (*print-length* nil)
-          (*print-level* nil)
-          (*print-pretty* nil)
-          (*print-radix* nil)
-          (*print-readably* t))
-      (write record :stream stream)
-      (terpri stream))))
-
 (-> generation--write-form-atomically (pathname list) pathname)
 (defun generation--write-form-atomically (pathname form)
-  "Atomically write portable FORM to PATHNAME."
-  (snapshot-write pathname form))
+  "Atomically publish portable FORM at PATHNAME."
+  (snapshot-write pathname form)
+  pathname)
 
-(-> generation--validate-core-probe
-    (generation generation-core-probe-runner)
-    null)
-(defun generation--validate-core-probe (generation runner)
-  "Require RUNNER to return GENERATION's exact embedded core identity."
-  (let ((actual
-          (handler-case
-              (generation-core-probe-run runner generation)
-            (checkpoint-error (condition)
-              (error condition))
-            (error ()
-              (error 'checkpoint-error
-                     :message "The checkpoint core probe failed unexpectedly."
-                     :stage ':probe
-                     :pathname
-                     (generation-temporary-core-pathname generation))))))
-    (unless (and (stringp actual)
-                 (string= actual
-                          (generation-core-probe-output
-                           (generation-core-probe-record generation))))
-      (error 'checkpoint-error
-             :message "The checkpoint core returned the wrong generation identity."
-             :stage ':probe
-             :pathname (generation-temporary-core-pathname generation))))
-  nil)
+(-> generation--translate (t) t)
+(defun generation--translate (condition)
+  "Signal CONDITION as the Autolith checkpoint error reporting it.
+
+A host check that already signaled an Autolith checkpoint error reaches here
+wrapped as the library's cause. Re-signal that original instead of the wrapper,
+so its own stage and message survive the round trip."
+  (let ((cause (sbcl-generations:checkpoint-error-cause condition)))
+    (if (typep cause 'checkpoint-error)
+        (error cause)
+        (error 'checkpoint-error
+               :message (sbcl-generations::checkpoint-error-message condition)
+               :stage (sbcl-generations:checkpoint-error-stage condition)
+               :pathname (sbcl-generations:checkpoint-error-pathname condition)
+               :cause cause))))
+
+(defmacro with-generation-errors (&body body)
+  "Run BODY, reporting a library checkpoint failure as an Autolith one."
+  `(handler-case
+       (progn ,@body)
+     (sbcl-generations:checkpoint-error (condition)
+       (generation--translate condition))))
+
+(-> generation-core-probe-runner-create () generation-core-probe-runner)
+(defun generation-core-probe-runner-create ()
+  "Create the subprocess runner that boots unpublished generation cores."
+  (make-sbcl-core-probe-runner
+   :command (let ((configured (uiop:getenv "AUTOLITH_SBCL")))
+              (if (non-empty-string-p configured)
+                  configured
+                  "sbcl"))))
+
+(-> generation-load-manifest ((or pathname string) configuration) generation)
+(defun generation-load-manifest (pathname configuration)
+  "Load and validate one ready generation manifest from PATHNAME."
+  (with-generation-errors
+    (sbcl-generations:generation-load-manifest
+     pathname
+     (generation-store-for configuration))))
+
+(-> generation-list (configuration) list)
+(defun generation-list (configuration)
+  "Return valid retained generations newest first."
+  (sbcl-generations:generation-list (generation-store-for configuration)))
+
+(-> generation-find (configuration string) (option generation))
+(defun generation-find (configuration identifier)
+  "Return retained generation IDENTIFIER, or NIL when it is unknown."
+  (sbcl-generations:generation-find (generation-store-for configuration)
+                                    identifier))
+
+(-> generation-select (configuration generation) generation)
+(defun generation-select (configuration generation)
+  "Select compatible GENERATION for the next recovery startup."
+  (with-generation-errors
+    (sbcl-generations:generation-select (generation-store-for configuration)
+                                       generation)))
+
+(-> generation-selected (configuration) (option generation))
+(defun generation-selected (configuration)
+  "Return CONFIGURATION's selected retained generation, if it remains valid."
+  (sbcl-generations:generation-selected (generation-store-for configuration)))
 
 (-> generation-publish
     (configuration generation
@@ -280,230 +251,29 @@
     (configuration generation
      &key (probe-runner (generation-core-probe-runner-create)))
   "Validate and publish GENERATION's temporary core, manifest, and selection."
-  (unless (probe-file (generation-temporary-core-pathname generation))
-    (error 'checkpoint-error
-           :message "The checkpoint saver produced no core file."
-           :stage ':publish
-           :pathname (generation-temporary-core-pathname generation)))
-  (unless (and (generation-reconstruction-pathname generation)
-               (uiop:subpathp
-                (generation-reconstruction-pathname generation)
-                (generation-directory generation))
-               (probe-file (generation-reconstruction-pathname generation)))
-    (error 'checkpoint-error
-           :message "The checkpoint has no valid reconstruction script."
-           :stage ':publish
-           :pathname (generation-reconstruction-pathname generation)))
-  (generation--validate-core-probe generation probe-runner)
-  (uiop:rename-file-overwriting-target
-   (generation-temporary-core-pathname generation)
-   (generation-core-pathname generation))
-  (generation--write-form-atomically
-   (generation-manifest-pathname generation)
-   (generation-manifest-form generation))
-  (generation--write-form-atomically
-   (generation-current-pathname configuration)
-   (list :current-generation
-         :version 1
-         :id (generation-identifier generation)
-         :manifest (namestring (generation-manifest-pathname generation))))
-  (setf (generation-status generation) ':ready)
-  generation)
-
-(-> generation-record-failure (generation keyword t) pathname)
-(defun generation-record-failure (generation stage detail)
-  "Record a bounded non-secret checkpoint failure at STAGE for GENERATION."
-  (let ((pathname (merge-pathnames "failure.sexp"
-                                   (generation-directory generation))))
-    (generation--write-form-atomically
-     pathname
-     (list :checkpoint-failure
-           :version 1
-           :id (generation-identifier generation)
-           :time (get-universal-time)
-           :stage stage
-           :detail (bounded-string detail :limit 4000)))
-    pathname))
-
-
-;;;; -- Manifest Loading --
-
-(-> generation-load-manifest ((or pathname string)) generation)
-(defun generation-load-manifest (pathname)
-  "Load and validate one ready generation manifest from PATHNAME."
-  (setf pathname (pathname pathname))
-  (let ((form (read-portable-form pathname)))
-    (unless (and (listp form)
-                 (eq (first form) :generation)
-                 (member (getf (rest form) :version) '(1 2 3))
-                 (non-empty-string-p (getf (rest form) :id))
-                 (non-empty-string-p (getf (rest form) :core))
-                 (non-empty-string-p (getf (rest form) :git-commit)))
-      (error 'checkpoint-error
-             :message (format nil "Invalid generation manifest at ~A." pathname)
-             :stage ':manifest
-             :pathname pathname))
-    (let* ((properties (rest form))
-           (version (getf properties :version))
-           (directory (uiop:pathname-directory-pathname pathname))
-           (core-pathname (pathname (getf properties :core)))
-           (reconstruction-value (getf properties :reconstruction))
-           (reconstruction-pathname
-             (and (non-empty-string-p reconstruction-value)
-                  (pathname reconstruction-value)))
-           (image-commit-identifier (getf properties :image-commit))
-           (mutation-history-commit
-             (getf properties :mutation-history-commit)))
-      (unless (uiop:subpathp core-pathname directory)
-        (error 'checkpoint-error
-               :message "A generation core is outside its artifact directory."
-               :stage ':manifest
-               :pathname pathname))
-      (when (member version '(2 3))
-        (unless (and reconstruction-pathname
-                     (uiop:subpathp reconstruction-pathname directory)
-                     (probe-file reconstruction-pathname)
-                     (or (null image-commit-identifier)
-                         (image-commit--identifier-p
-                          image-commit-identifier)))
-          (error 'checkpoint-error
-                 :message "A generation reconstruction manifest is invalid."
-                 :stage ':manifest
-                 :pathname pathname)))
-      (when (= version 3)
-        (unless (if image-commit-identifier
-                    (image-history--commit-p mutation-history-commit)
-                    (null mutation-history-commit))
-          (error 'checkpoint-error
-                 :message "A generation mutation-history identity is invalid."
-                 :stage ':manifest
-                 :pathname pathname)))
-      (make-instance 'generation
-                     :identifier (getf properties :id)
-                     :directory directory
-                     :core-pathname core-pathname
-                     :temporary-core-pathname
-                     (merge-pathnames ".autolith.core.tmp" directory)
-                     :manifest-pathname pathname
-                     :reconstruction-pathname reconstruction-pathname
-                     :image-commit-identifier
-                     image-commit-identifier
-                     :mutation-history-commit mutation-history-commit
-                     :git-commit (getf properties :git-commit)
-                     :journal-position
-                     (or (getf properties :journal-position) 0)
-                     :created-at (or (getf properties :created-at) 0)
-                     :status ':ready))))
-
-(-> generation-compatible-p (generation) boolean)
-(defun generation-compatible-p (generation)
-  "Return true when GENERATION has a plausible core for this exact runtime."
-  (handler-case
-      (let ((manifest (read-portable-form
-                       (generation-manifest-pathname generation))))
-        (and (probe-file (generation-core-pathname generation))
-             (with-open-file (stream (generation-core-pathname generation)
-                                     :direction :input
-                                     :element-type '(unsigned-byte 8))
-               (> (file-length stream) 1048576))
-             (string= (or (getf (rest manifest) :sbcl-version) "")
-                      (lisp-implementation-version))
-             (string= (or (getf (rest manifest) :operating-system) "")
-                      (software-type))
-             (string= (or (getf (rest manifest) :operating-system-version) "")
-                      (software-version))
-             (string= (or (getf (rest manifest) :architecture) "")
-                      (machine-type))
-             t))
-    (error ()
-      nil)))
-
-(-> generation-list (configuration) list)
-(defun generation-list (configuration)
-  "Return valid retained generations newest first."
-  (let ((root (generation-root configuration)))
-    (if (probe-file root)
-        (sort
-         (loop for directory in (uiop:subdirectories root)
-               for manifest = (merge-pathnames "manifest.sexp" directory)
-               for generation = (and (probe-file manifest)
-                                     (handler-case
-                                         (generation-load-manifest manifest)
-                                       (error ()
-                                         nil)))
-               when generation
-                 collect generation)
-         #'>
-         :key #'generation-created-at)
-        nil)))
-
-(-> generation-find (configuration string) (option generation))
-(defun generation-find (configuration identifier)
-  "Return retained generation IDENTIFIER, or NIL when it is unknown."
-  (find identifier (generation-list configuration)
-        :key #'generation-identifier
-        :test #'string=))
-
-(-> generation-select (configuration generation) generation)
-(defun generation-select (configuration generation)
-  "Select compatible GENERATION for the next recovery startup."
-  (when *checkpoint-in-progress-p*
-    (error 'checkpoint-error
-           :message "A generation cannot be selected while a checkpoint publishes."
-           :stage ':selection
-           :pathname (generation-current-pathname configuration)))
-  (unless (generation-compatible-p generation)
-    (error 'checkpoint-error
-           :message (format nil "Generation ~A is not compatible with this runtime."
-                            (generation-identifier generation))
-           :stage ':selection
-           :pathname (generation-manifest-pathname generation)))
-  (generation--write-form-atomically
-   (generation-current-pathname configuration)
-   (list :current-generation
-         :version 1
-         :id (generation-identifier generation)
-         :manifest (namestring (generation-manifest-pathname generation))))
-  generation)
+  (with-generation-errors
+    (sbcl-generations:generation-publish (generation-store-for configuration)
+                                        generation
+                                        :probe-runner probe-runner)))
 
 (-> generation-request-rollback (configuration string) null)
 (defun generation-request-rollback (configuration identifier)
   "Select retained generation IDENTIFIER and request an immediate rollback."
-  (let ((generation (generation-find configuration identifier)))
-    (unless generation
-      (error 'checkpoint-error
-             :message (format nil "Unknown retained generation ~A." identifier)
-             :stage ':selection
-             :pathname nil))
-    (generation-select configuration generation)
-    (error 'rollback-requested
-           :message (format nil "Rollback requested for retained generation ~A."
-                            (generation-identifier generation))
-           :generation-id (generation-identifier generation))))
-
-(-> generation-selected (configuration) (option generation))
-(defun generation-selected (configuration)
-  "Return CONFIGURATION's selected retained generation, if it remains valid."
-  (let ((pathname (generation-current-pathname configuration)))
-    (when (probe-file pathname)
-      (handler-case
-          (let* ((record (read-portable-form pathname))
-                 (identifier (and (listp record)
-                                  (getf (rest record) :id)))
-                 (manifest (and (listp record)
-                                (getf (rest record) :manifest))))
-            (when (and (listp record)
-                       (eq (first record) :current-generation)
-                       (non-empty-string-p identifier)
-                       (non-empty-string-p manifest)
-                       (uiop:subpathp (pathname manifest)
-                                      (generation-root configuration))
-                       (probe-file manifest))
-              (let ((generation (generation-load-manifest manifest)))
-                (and (string= identifier (generation-identifier generation))
-                     generation))))
-        (error ()
-          nil)))))
+  (handler-case
+      (sbcl-generations:generation-request-rollback
+       (generation-store-for configuration)
+       identifier)
+    (sbcl-generations:rollback-requested (condition)
+      (error 'rollback-requested
+             :message
+             (format nil "Rollback requested for retained generation ~A."
+                     (sbcl-generations:rollback-requested-generation-identifier
+                      condition))
+             :generation-id
+             (sbcl-generations:rollback-requested-generation-identifier
+              condition)))
+    (sbcl-generations:checkpoint-error (condition)
+      (generation--translate condition))))
 
 (-> generation-render-list (configuration) string)
 (defun generation-render-list (configuration)
@@ -532,35 +302,8 @@
 
 ;;;; -- Checkpoint Backend --
 
-(defclass checkpoint-backend ()
-  ((configuration
-    :initarg :configuration
-    :reader checkpoint-backend-configuration
-    :type configuration
-    :documentation "The runtime configuration whose image is saved.")
-   (worker
-    :initarg :worker
-    :reader checkpoint-backend-worker
-    :type t
-    :documentation "The disposable worker whose inherited descriptors are detached.")
-   (tool-registry
-    :initarg :tool-registry
-    :initform nil
-    :reader checkpoint-backend-tool-registry
-    :type t
-    :documentation "The active registry whose ephemeral runtimes must be stopped."))
-  (:documentation "The platform boundary for non-stopping live-image checkpoints."))
-
-(defclass fork-sbcl-checkpoint-backend (checkpoint-backend)
-  ()
-  (:documentation "An SBCL checkpoint implemented with coordinator and saver forks."))
-
 (defvar *checkpoint-thread-quiescer* nil
   "A dynamic callback running checkpoint work without ephemeral application threads.")
-
-(-> checkpoint-create (checkpoint-backend) generation)
-(defgeneric checkpoint-create (backend)
-  (:documentation "Begin a validated checkpoint and return its pending generation."))
 
 (-> checkpoint-detach-state (t) t)
 (defgeneric checkpoint-detach-state (state)
@@ -570,22 +313,11 @@
   "Leave unrecognized checkpoint STATE unchanged."
   state)
 
-(-> checkpoint-backend-create
-    (configuration t &key (:tool-registry (option tool-registry)))
-    checkpoint-backend)
-(defun checkpoint-backend-create (configuration worker &key tool-registry)
-  "Return the checkpoint backend supported by this runtime."
-  (if (and (member :sbcl *features*)
-           (or (member :linux *features*)
-               (member :darwin *features*)))
-      (make-instance 'fork-sbcl-checkpoint-backend
-                     :configuration configuration
-                     :worker worker
-                     :tool-registry tool-registry)
-      (error 'checkpoint-error
-             :message "Non-stopping checkpoints currently require SBCL on Linux or macOS."
-             :stage ':backend
-             :pathname nil)))
+(-> checkpoint-resume-main (list) null)
+(defun checkpoint-resume-main (arguments)
+  "Run Autolith's normal entry point inside a booted retained core."
+  (main arguments)
+  nil)
 
 (-> checkpoint--source-snapshot (configuration) string)
 (defun checkpoint--source-snapshot (configuration)
@@ -640,245 +372,113 @@
              :pathname (configuration-source-root configuration))))
   nil)
 
-(-> checkpoint--single-threaded-p () boolean)
-(defun checkpoint--single-threaded-p ()
-  "Return true when SBCL's current thread is the only live Lisp thread."
-  (notany (lambda (thread)
-            (and (not (eq thread sb-thread:*current-thread*))
-                 (sb-thread:thread-alive-p thread)))
-          (sb-thread:list-all-threads)))
-
 (-> checkpoint--detach-worker (t) null)
 (defun checkpoint--detach-worker (worker)
   "Detach SAVER's inherited worker streams without signaling the live subprocess."
   (sbcl-worker-manager-detach-inherited-processes worker)
   nil)
 
-(-> checkpoint-resume-main () null)
-(defun checkpoint-resume-main ()
-  "Run a retained core's exact identity probe or Autolith's normal entry point."
-  (sb-ext:disable-debugger)
-  (let ((arguments (uiop:command-line-arguments)))
-    (if (equal arguments (list *checkpoint-core-probe-argument*))
-        (progn
-          (write-string
-           (generation-core-probe-output *checkpoint-core-probe-record*)
-           *standard-output*)
-          (finish-output *standard-output*))
-        (restart-case
-            (main arguments)
-          (abort ()
-            :report "Exit the retained Autolith core."
-            nil))))
+(-> checkpoint--prepare-saver (t t) null)
+(defun checkpoint--prepare-saver (worker generation)
+  "Clear secrets and detach inherited resources inside the saver child.
+
+Everything this process still holds is written into the core, so credentials are
+dropped and inherited worker descriptors detached before the image is saved."
+  (declare (ignore generation))
+  (setf *credentials-in-request-scope* nil
+        *active-secret-use-count* 0
+        *secret-use-depth* 0
+        *secret-use-quiescence-owner* nil)
+  (checkpoint--detach-worker worker)
+  (when (boundp '*active-application*)
+    (checkpoint-detach-state (symbol-value '*active-application*)))
   nil)
 
-(-> checkpoint--save-core (generation t) null)
-(defun checkpoint--save-core (generation worker)
-  "Detach inherited resources and save GENERATION's temporary core in this child."
-  (handler-case
-      (progn
-        (setf *checkpoint-in-progress-p* nil
-              *credentials-in-request-scope* nil
-              *active-secret-use-count* 0
-              *secret-use-depth* 0
-              *secret-use-quiescence-owner* nil
-              *checkpoint-core-probe-record*
-              (generation-core-probe-record generation))
-        (checkpoint--detach-worker worker)
-        (when (boundp '*active-application*)
-          (checkpoint-detach-state
-           (symbol-value '*active-application*)))
-        (sb-ext:gc :full t)
-        (sb-ext:save-lisp-and-die
-         (namestring (generation-temporary-core-pathname generation))
-         :toplevel #'checkpoint-resume-main
-         :executable nil
-         :purify nil
-         :compression nil))
-    (error (condition)
-      (ignore-errors
-        (generation-record-failure generation ':save condition))
-      (sb-posix:_exit 1)))
-  nil)
+(-> checkpoint-backend-create
+    (configuration t &key (:tool-registry (option tool-registry)))
+    checkpoint-backend)
+(defun checkpoint-backend-create (configuration worker &key tool-registry)
+  "Return the checkpoint backend supported by this runtime."
+  (let ((quiesced-runtime-tools nil))
+    (with-generation-errors
+      (make-checkpoint-backend
+       :store (generation-store-for configuration)
+       :toplevel-function #'checkpoint-resume-main
+       :identifier-function #'make-identifier
+       :probe-runner (generation-core-probe-runner-create)
+       :around-function
+       (lambda (thunk)
+         (when *credentials-in-request-scope*
+           (error 'checkpoint-error
+                  :message "A checkpoint cannot run inside a credential request scope."
+                  :stage ':validation
+                  :pathname nil))
+         (if *checkpoint-thread-quiescer*
+             (let ((quiescer *checkpoint-thread-quiescer*))
+               (funcall quiescer
+                        (lambda ()
+                          (let ((*checkpoint-thread-quiescer* nil))
+                            (funcall thunk)))))
+             (funcall thunk)))
+       :precheck-function
+       (lambda ()
+         (checkpoint--source-snapshot configuration))
+       :fork-guard-function
+       (lambda (thunk)
+         (call-with-secret-use-quiescence
+          (lambda ()
+            (with-live-mutation
+              (funcall thunk)))))
+       :validate-function
+       ;; The quiesced runtimes are recorded in the enclosing scope rather than
+       ;; returned, because a close failure leaves this hook through a non-local
+       ;; exit and the runtimes that did close still have to be resumed.
+       (lambda (source-commit)
+         (checkpoint--revalidate-source configuration source-commit)
+         (when tool-registry
+           (multiple-value-bind (quiesced-tools close-failure)
+               (tool-registry-quiesce-runtime-state tool-registry)
+             (setf quiesced-runtime-tools quiesced-tools)
+             (when close-failure
+               (error close-failure))))
+         (when (secret-use-active-p)
+           (error 'checkpoint-error
+                  :message
+                  "A provider or tool runtime retained a secret while checkpointing."
+                  :stage ':fork
+                  :pathname nil))
+         quiesced-runtime-tools)
+       :metadata-function
+       (lambda (identifier source-commit)
+         (generation--metadata configuration identifier
+                               :git-commit source-commit))
+       :prepare-function
+       (lambda (generation)
+         (checkpoint--prepare-saver worker generation))
+       :resume-function
+       (lambda (state)
+         (declare (ignore state))
+         (when (and tool-registry quiesced-runtime-tools)
+           (tool-registry-resume-runtime-state
+            tool-registry :tools quiesced-runtime-tools)))))))
 
-(-> checkpoint--coordinate (configuration generation t) null)
-(defun checkpoint--coordinate (configuration generation worker)
-  "Fork the saver, publish its completed artifacts, and exit this coordinator."
-  (handler-case
-      (progn
-        (checkpoint--detach-worker worker)
-        (let ((saver-pid (sb-posix:fork)))
-          (if (zerop saver-pid)
-              (checkpoint--save-core generation worker)
-              (multiple-value-bind (waited-pid status)
-                  (sb-posix:waitpid saver-pid 0)
-                (if (and (= waited-pid saver-pid)
-                         (sb-posix:wifexited status)
-                         (zerop (sb-posix:wexitstatus status)))
-                    (progn
-                      (generation-publish configuration generation)
-                      (sb-posix:_exit 0))
-                    (progn
-                      (unless (probe-file
-                               (merge-pathnames "failure.sexp"
-                                                (generation-directory generation)))
-                        (generation-record-failure
-                         generation
-                         ':saver-exit
-                         (if (sb-posix:wifexited status)
-                             (format nil "Saver exited with status ~D."
-                                     (sb-posix:wexitstatus status))
-                             (format nil "Saver terminated with status word ~D."
-                                     status))))
-                      (sb-posix:_exit 1)))))))
-    (error (condition)
-      (ignore-errors
-        (generation-record-failure generation ':coordinator condition))
-      (sb-posix:_exit 1)))
-  nil)
-
-(-> checkpoint--watch-coordinator (generation integer) null)
-(defun checkpoint--watch-coordinator (generation coordinator-pid)
-  "Update parent-side GENERATION status after COORDINATOR-PID terminates."
-  (unwind-protect
-       (handler-case
-           (multiple-value-bind (waited-pid status)
-               (sb-posix:waitpid coordinator-pid 0)
-             (setf (generation-status generation)
-                   (if (and (= waited-pid coordinator-pid)
-                            (sb-posix:wifexited status)
-                            (zerop (sb-posix:wexitstatus status)))
-                       ':ready
-                       ':failed)))
-         (error ()
-           (setf (generation-status generation) ':failed)))
-    (setf *checkpoint-in-progress-p* nil))
-  nil)
-
-(defmethod checkpoint-create ((backend fork-sbcl-checkpoint-backend))
-  "Fork a coordinator while briefly excluding live mutations, then resume the parent."
-  (when *checkpoint-thread-quiescer*
-    (let ((quiescer *checkpoint-thread-quiescer*))
-      (return-from checkpoint-create
-        (funcall
-         quiescer
-         (lambda ()
-           (let ((*checkpoint-thread-quiescer* nil))
-             (checkpoint-create backend)))))))
-  (when *credentials-in-request-scope*
-    (error 'checkpoint-error
-           :message "A checkpoint cannot run inside a credential request scope."
-           :stage ':validation
-           :pathname nil))
-  (let* ((configuration (checkpoint-backend-configuration backend))
-         (worker (checkpoint-backend-worker backend))
-         (registry (checkpoint-backend-tool-registry backend))
-         (source-commit (checkpoint--source-snapshot configuration))
-         (generation nil)
-         (coordinator-p nil)
-         (coordinator-pid nil)
-         (quiesced-runtime-tools nil)
-         (failure nil))
-    (handler-case
-        (call-with-secret-use-quiescence
-         (lambda ()
-           (with-live-mutation
-             (when *checkpoint-in-progress-p*
-               (error 'checkpoint-error
-                      :message "A checkpoint is already being published."
-                      :stage ':validation
-                      :pathname nil))
-             (checkpoint--revalidate-source configuration source-commit)
-             (when registry
-               (multiple-value-bind (quiesced-tools close-failure)
-                   (tool-registry-quiesce-runtime-state registry)
-                 (setf quiesced-runtime-tools quiesced-tools)
-                 (when close-failure
-                   (error close-failure))))
-             (when (secret-use-active-p)
-               (error 'checkpoint-error
-                      :message
-                      "A provider or tool runtime retained a secret while checkpointing."
-                      :stage ':fork
-                      :pathname nil))
-             (unless (checkpoint--single-threaded-p)
-               (error 'checkpoint-error
-                      :message
-                      "A checkpoint requires the current Lisp thread to be the only live thread."
-                      :stage ':fork
-                      :pathname nil))
-             (finish-output *standard-output*)
-             (finish-output *error-output*)
-             (setf generation
-                   (generation-create-record
-                    configuration
-                    :git-commit source-commit))
-             (ensure-directories-exist (generation-directory generation))
-             (setf *checkpoint-in-progress-p* t)
-             (handler-case
-                 (let ((pid (sb-posix:fork)))
-                   (if (zerop pid)
-                       (setf coordinator-p t)
-                       (setf coordinator-pid pid
-                             (generation-coordinator-pid generation) pid)))
-               (error (condition)
-                 (setf *checkpoint-in-progress-p* nil)
-                 (error 'checkpoint-error
-                        :message
-                        (format nil "Could not fork checkpoint coordinator: ~A"
-                                condition)
-                        :stage ':fork
-                        :pathname
-                        (generation-directory generation)))))))
-      (serious-condition (condition)
-        (setf
-         failure
-         (if (typep condition 'checkpoint-error)
-             condition
-             (make-condition
-              'checkpoint-error
-              :message "Checkpoint runtime preparation failed."
-              :stage ':fork
-              :pathname nil
-              :cause condition)))))
-    (when (and quiesced-runtime-tools (not coordinator-p))
-      (handler-case
-          (tool-registry-resume-runtime-state
-           registry :tools quiesced-runtime-tools)
-        (serious-condition (condition)
-          (unless failure
-            (setf failure
-                  (make-condition
-                   'checkpoint-error
-                   :message
-                   "Could not resume tool runtimes after checkpointing."
-                   :stage ':fork
-                   :pathname nil
-                   :cause condition))))))
-    (cond
-      (coordinator-p
-       (checkpoint--coordinate configuration generation worker))
-      (coordinator-pid
-       (make-thread
-        (lambda ()
-          (checkpoint--watch-coordinator generation coordinator-pid))
-        :name (format nil "Autolith checkpoint ~A"
-                      (generation-identifier generation)))
-       (when failure
-         (warn
-          'checkpoint-runtime-resume-warning
-          :generation-id (generation-identifier generation)
-          :cause failure))
-       generation)
-      (t
-       (error
-        (or
-         failure
-         (make-condition
-          'checkpoint-error
-          :message "Checkpoint preparation ended without a coordinator."
-          :stage ':fork
-          :pathname nil)))))))
+(-> checkpoint-create (checkpoint-backend) generation)
+(defun checkpoint-create (backend)
+  "Begin a validated checkpoint through BACKEND and return its pending generation."
+  (handler-bind
+      ((sbcl-generations:checkpoint-resume-warning
+         (lambda (condition)
+           (muffle-warning
+            (progn
+              (warn 'checkpoint-runtime-resume-warning
+                    :generation-id
+                    (sbcl-generations:checkpoint-resume-warning-generation-identifier
+                     condition)
+                    :cause
+                    (sbcl-generations:checkpoint-resume-warning-cause condition))
+              condition)))))
+    (with-generation-errors
+      (sbcl-generations:checkpoint-create backend))))
 
 
 ;;;; -- Generation Tools --

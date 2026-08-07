@@ -3780,7 +3780,7 @@
              (test-assert
               (application-input-controller-call-with-reader-paused
                controller
-               #'checkpoint--single-threaded-p)
+               #'sbcl-generations::checkpoint--single-threaded-p)
               "pausing input leaves checkpoint work on the only Lisp thread")
              (test-assert
               (thread-alive-p

@@ -34,10 +34,11 @@
                    (merge-pathnames ".autolith.core.tmp" directory)
                    :manifest-pathname
                    (merge-pathnames "manifest.sexp" directory)
-                   :reconstruction-pathname
-                   (merge-pathnames "reconstruct.lisp" directory)
-                   :git-commit git-commit
-                   :journal-position 27
+                   :metadata
+                   (list :reconstruction
+                         (namestring (merge-pathnames "reconstruct.lisp" directory))
+                         :git-commit git-commit
+                         :journal-position 27)
                    :created-at 4000000000
                    :status ':pending)))
 
@@ -108,11 +109,8 @@
             :resume-function (lambda () (incf resume-count))
             :detach-function (lambda () nil)))
          (backend
-           (make-instance
-            'fork-sbcl-checkpoint-backend
-            :configuration configuration
-            :worker nil
-            :tool-registry registry)))
+           (checkpoint-backend-create configuration nil
+                                      :tool-registry registry)))
     (unwind-protect
          (progn
            (tool-registry-register registry tool)
@@ -148,7 +146,7 @@
                     (ignore active-configuration source-commit))
                    nil))
                 (list
-                 'checkpoint--single-threaded-p
+                 'sbcl-generations::checkpoint--single-threaded-p
                  (lambda ()
                    nil)))
                (lambda ()
@@ -191,11 +189,8 @@
             :format-control "Synthetic checkpoint close failure."
             :format-arguments nil))
          (backend
-           (make-instance
-            'fork-sbcl-checkpoint-backend
-            :configuration configuration
-            :worker nil
-            :tool-registry registry)))
+           (checkpoint-backend-create configuration nil
+                                      :tool-registry registry)))
     (labels
         ((runtime-tool
              (&key name identity priority close-function resume-function)
@@ -291,11 +286,8 @@
                          do (condition-wait barrier barrier-lock))))))
             :name "Autolith active provider secret test"))
          (backend
-           (make-instance
-            'fork-sbcl-checkpoint-backend
-            :configuration configuration
-            :worker nil
-            :tool-registry nil)))
+           (checkpoint-backend-create configuration nil
+                                      :tool-registry nil)))
     (unwind-protect
          (progn
            (with-lock-held (barrier-lock)
@@ -590,7 +582,7 @@
                   :operating-system-version (software-version)
                   :architecture (machine-type)
                   :created-at 3999999999))
-           (let ((legacy (generation-load-manifest manifest)))
+           (let ((legacy (generation-load-manifest manifest configuration)))
              (test-assert
               (and (string= (generation-identifier legacy)
                             "legacy-generation")

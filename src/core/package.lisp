@@ -102,6 +102,29 @@
                 #:identifier-p
                 #:identifier-reserved-p
                 #:identifier-space-exhausted)
+  (:import-from #:sbcl-generations
+                #:*checkpoint-in-progress-p*
+                #:checkpoint-backend
+                #:generation
+                #:generation-compatible-p
+                #:generation-coordinator-pid
+                #:generation-core-pathname
+                #:generation-core-probe-output
+                #:generation-core-probe-record
+                #:generation-core-probe-run
+                #:generation-core-probe-runner
+                #:generation-created-at
+                #:generation-directory
+                #:generation-identifier
+                #:generation-manifest-pathname
+                #:generation-metadata
+                #:generation-record-failure
+                #:generation-status
+                #:generation-store
+                #:generation-temporary-core-pathname
+                #:make-checkpoint-backend
+                #:make-generation-store
+                #:make-sbcl-core-probe-runner)
   (:import-from #:sexp-config
                 #:make-source-grammar
                 #:read-source

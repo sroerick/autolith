@@ -23,6 +23,7 @@
                #:serapeum
                #:sb-posix
                #:sb-bsd-sockets
+               #:sbcl-generations
                #:sbcl-workers
                #:sexp-config
                #:sexp-store
