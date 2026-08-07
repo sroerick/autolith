@@ -669,6 +669,10 @@
        (cond
          ((member "--auth" arguments :test #'string=)
           (user-init-load configuration)
+          (setf configuration
+                (provider-bootstrap-configuration configuration)
+                configuration
+                (preferences-apply-model-selection configuration))
           (main-authenticate configuration
                              (main--auth-selection arguments)))
          (t

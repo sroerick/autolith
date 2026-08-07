@@ -151,6 +151,7 @@
     (test-grok-provider)
     (test-openai-compatible-provider-bootstrap)
     (test-openai-compatible-provider-deferred-main-validation)
+    (test-openai-compatible-provider-bare-auth-selection)
     (test-openai-compatible-provider-discovery-is-on-demand)
     (test-openai-compatible-provider-model-cache-boundary)
     (test-openai-compatible-provider-authentication-bootstrap)

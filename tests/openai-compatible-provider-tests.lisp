@@ -180,6 +180,81 @@
           (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))))
   nil)
 
+(-> test-openai-compatible-provider-bare-auth-selection () null)
+(defun test-openai-compatible-provider-bare-auth-selection ()
+  "Test bare authentication selects the persisted registered provider."
+  (let* ((registry-snapshot (provider--registry-snapshot))
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (model "bare-auth/model")
+         (old-environment-model (uiop:getenv "AUTOLITH_MODEL"))
+         (old-environment-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
+    (unwind-protect
+         (progn
+           (sb-posix:unsetenv "AUTOLITH_MODEL")
+           (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT")
+           (preferences--write
+            configuration
+            (make-instance 'preference-state
+                           :model model
+                           :reasoning-effort "minimal"))
+           (let ((authenticated-configuration nil)
+                 (authenticated-selection :unset))
+             (test-call-with-function-replacements
+              (list
+               (list 'configuration-create
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       configuration))
+               (list 'localgroup-handoff-selection
+                     (lambda (configuration arguments)
+                       (declare (ignore configuration arguments))
+                       nil))
+               (list 'application-recovery-state
+                     (lambda (configuration)
+                       (declare (ignore configuration))
+                       (values nil nil nil)))
+               (list 'application-recovery-diagnosis-prompt
+                     (lambda (configuration)
+                       (declare (ignore configuration))
+                       nil))
+               (list 'user-init-load
+                     (lambda (configuration)
+                       (declare (ignore configuration))
+                       (register-openai-compatible-provider
+                        :name "bare-auth"
+                        :endpoint "https://provider.invalid/v1/chat/completions"
+                        :models
+                        '((:name "bare-auth/model"
+                           :reasoning-efforts ("minimal"))))
+                       nil))
+               (list 'main-authenticate
+                     (lambda (configuration selection)
+                       (setf authenticated-configuration configuration
+                             authenticated-selection selection)
+                       nil)))
+              (lambda ()
+                (main-dispatch '("--auth"))))
+             (test-assert
+              (and authenticated-configuration
+                   (null authenticated-selection)
+                   (string= (configuration-model authenticated-configuration)
+                            model)
+                   (string= (configuration-reasoning-effort
+                             authenticated-configuration)
+                            "minimal"))
+              "bare --auth selects the persisted registered provider")))
+      (if old-environment-model
+          (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
+          (sb-posix:unsetenv "AUTOLITH_MODEL"))
+      (if old-environment-effort
+          (sb-posix:setenv "AUTOLITH_REASONING_EFFORT"
+                          old-environment-effort 1)
+          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
+      (provider--registry-restore registry-snapshot)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-openai-compatible-provider-discovery-is-on-demand () null)
 (defun test-openai-compatible-provider-discovery-is-on-demand ()
   "Test startup uses cached metadata and leaves remote discovery to /models."
