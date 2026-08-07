@@ -36,71 +36,86 @@
     :documentation "The atomically selected generation record."))
   (:documentation "Stable paths available to the pristine recovery image."))
 
-(defclass recovery-generation ()
-  ((identifier
-    :initarg :identifier
-    :reader recovery-generation-identifier
-    :type string
-    :documentation "The validated retained generation identifier.")
-   (core-pathname
-    :initarg :core-pathname
-    :reader recovery-generation-core-pathname
-    :type pathname
-    :documentation "The contained saved core pathname.")
-   (manifest-pathname
-    :initarg :manifest-pathname
-    :reader recovery-generation-manifest-pathname
-    :type pathname
-    :documentation "The validated manifest pathname.")
-   (reconstruction-pathname
-    :initarg :reconstruction-pathname
-    :initform nil
-    :reader recovery-generation-reconstruction-pathname
-    :type (or null pathname)
-    :documentation "The contained base-image reconstruction script, when present.")
-   (image-commit-identifier
-    :initarg :image-commit-identifier
-    :initform nil
-    :reader recovery-generation-image-commit-identifier
-    :type (or null string)
-    :documentation "The private image commit captured by this generation.")
-   (mutation-history-commit
-    :initarg :mutation-history-commit
-    :initform nil
-    :reader recovery-generation-mutation-history-commit
-    :type (or null string)
-    :documentation "The private Git commit retaining the captured image state.")
-   (git-commit
-    :initarg :git-commit
-    :reader recovery-generation-git-commit
-    :type string
-    :documentation "The exact source revision paired with the core.")
-   (sbcl-version
-    :initarg :sbcl-version
-    :reader recovery-generation-sbcl-version
-    :type string
-    :documentation "The SBCL version that wrote the core.")
-   (operating-system
-    :initarg :operating-system
-    :reader recovery-generation-operating-system
-    :type string
-    :documentation "The operating system type that wrote the core.")
-   (operating-system-version
-    :initarg :operating-system-version
-    :reader recovery-generation-operating-system-version
-    :type string
-    :documentation "The operating system build that wrote the core.")
-   (architecture
-    :initarg :architecture
-    :reader recovery-generation-architecture
-    :type string
-    :documentation "The machine architecture that wrote the core.")
-   (created-at
-    :initarg :created-at
-    :reader recovery-generation-created-at
-    :type integer
-    :documentation "The universal time at which the generation was created."))
-  (:documentation "A minimally validated generation visible to recovery."))
+(deftype recovery-generation ()
+  "One retained generation as this image sees it."
+  'sbcl-generations:generation)
+
+(serapeum:-> recovery-generation-identifier (recovery-generation) string)
+(defun recovery-generation-identifier (generation)
+  "Return GENERATION's validated retained identifier."
+  (sbcl-generations:generation-identifier generation))
+
+(serapeum:-> recovery-generation-core-pathname (recovery-generation) pathname)
+(defun recovery-generation-core-pathname (generation)
+  "Return GENERATION's contained saved core pathname."
+  (sbcl-generations:generation-core-pathname generation))
+
+(serapeum:-> recovery-generation-manifest-pathname (recovery-generation) pathname)
+(defun recovery-generation-manifest-pathname (generation)
+  "Return GENERATION's validated manifest pathname."
+  (sbcl-generations:generation-manifest-pathname generation))
+
+(serapeum:-> recovery-generation-created-at (recovery-generation) integer)
+(defun recovery-generation-created-at (generation)
+  "Return the universal time at which GENERATION was created."
+  (sbcl-generations:generation-created-at generation))
+
+(serapeum:-> recovery-generation-property (recovery-generation symbol) t)
+(defun recovery-generation-property (generation key)
+  "Return GENERATION's manifest property KEY.
+
+The Autolith fields live in the manifest properties rather than in slots, because
+the library that reads a generation owns only the fields every host shares."
+  (getf (sbcl-generations:generation-metadata generation) key))
+
+(serapeum:-> recovery-generation-reconstruction-pathname
+    (recovery-generation)
+    (or null pathname))
+(defun recovery-generation-reconstruction-pathname (generation)
+  "Return GENERATION's contained reconstruction script, when it has one."
+  (let ((value (recovery-generation-property generation :reconstruction)))
+    (and (stringp value) (pathname value))))
+
+(serapeum:-> recovery-generation-image-commit-identifier
+    (recovery-generation)
+    (or null string))
+(defun recovery-generation-image-commit-identifier (generation)
+  "Return the private image commit GENERATION captured, when it captured one."
+  (recovery-generation-property generation :image-commit))
+
+(serapeum:-> recovery-generation-mutation-history-commit
+    (recovery-generation)
+    (or null string))
+(defun recovery-generation-mutation-history-commit (generation)
+  "Return the private Git commit retaining GENERATION's captured image state."
+  (recovery-generation-property generation :mutation-history-commit))
+
+(serapeum:-> recovery-generation-git-commit (recovery-generation) string)
+(defun recovery-generation-git-commit (generation)
+  "Return the exact source revision paired with GENERATION's core."
+  (recovery-generation-property generation :git-commit))
+
+(serapeum:-> recovery-generation-sbcl-version (recovery-generation) string)
+(defun recovery-generation-sbcl-version (generation)
+  "Return the SBCL version that wrote GENERATION's core."
+  (recovery-generation-property generation :sbcl-version))
+
+(serapeum:-> recovery-generation-operating-system (recovery-generation) string)
+(defun recovery-generation-operating-system (generation)
+  "Return the operating system type that wrote GENERATION's core."
+  (recovery-generation-property generation :operating-system))
+
+(serapeum:-> recovery-generation-operating-system-version
+    (recovery-generation)
+    string)
+(defun recovery-generation-operating-system-version (generation)
+  "Return the operating system build that wrote GENERATION's core."
+  (recovery-generation-property generation :operating-system-version))
+
+(serapeum:-> recovery-generation-architecture (recovery-generation) string)
+(defun recovery-generation-architecture (generation)
+  "Return the machine architecture that wrote GENERATION's core."
+  (recovery-generation-property generation :architecture))
 
 (defclass recovery-terminal-state ()
   ((settings
@@ -322,6 +337,74 @@
    (merge-pathnames (format nil "~A/" identifier)
                     (recovery-context-generation-root context))))
 
+(serapeum:-> recovery-validate-manifest-properties
+    (list pathname &key (:expected-identifier t))
+    null)
+(defun recovery-validate-manifest-properties
+    (properties pathname &key expected-identifier)
+  "Re-check every Autolith field PROPERTIES must carry at PATHNAME.
+
+This image cannot trust its own state directory, because the active image that
+wrote it may be the thing that broke. Nothing is assumed from the fact that a
+manifest parsed: the identifier must be a safe path component naming its own
+directory, every recorded identity must have the right shape, and every runtime
+field must be present."
+  (let* ((identifier (getf properties :id))
+         (version (getf properties :version))
+         (directory (uiop:pathname-directory-pathname pathname))
+         (reconstruction-value (getf properties :reconstruction))
+         (reconstruction-pathname
+           (and (stringp reconstruction-value) (pathname reconstruction-value)))
+         (image-commit-identifier (getf properties :image-commit))
+         (mutation-history-commit (getf properties :mutation-history-commit)))
+    (unless (and (recovery-identifier-p identifier)
+                 (or (null expected-identifier)
+                     (string= identifier expected-identifier))
+                 (string= identifier
+                          (first (last (pathname-directory directory))))
+                 (or (= version 1)
+                     (and reconstruction-pathname
+                          (uiop:subpathp reconstruction-pathname directory)
+                          (probe-file reconstruction-pathname)))
+                 (or (/= version 3)
+                     (if image-commit-identifier
+                         (and (recovery-image-commit-identifier-p
+                               image-commit-identifier)
+                              (recovery-history-commit-p
+                               mutation-history-commit))
+                         (null mutation-history-commit)))
+                 (recovery-git-commit-p (getf properties :git-commit))
+                 (stringp (getf properties :sbcl-version))
+                 (stringp (getf properties :operating-system))
+                 (stringp (getf properties :operating-system-version))
+                 (stringp (getf properties :architecture))
+                 (integerp (getf properties :created-at)))
+      (error "Invalid retained generation manifest at ~A."
+             (recovery-sanitize-text pathname))))
+  nil)
+
+(serapeum:-> recovery-generation-store
+    (recovery-context &key (:expected-identifier t))
+    sbcl-generations:generation-store)
+(defun recovery-generation-store (context &key expected-identifier)
+  "Return the generation store this image reads CONTEXT's generations through.
+
+The store keeps the library's plain-Lisp record reader rather than the active
+image's, so recovery needs no foreign-function or filesystem library to read a
+generation. Its validator carries this image's own stricter checks."
+  (sbcl-generations:make-generation-store
+   :root (recovery-context-generation-root context)
+   :current-pathname (recovery-context-current-pathname context)
+   :core-name "autolith.core"
+   :temporary-core-name ".autolith.core.tmp"
+   :manifest-version 3
+   :accepted-manifest-versions '(1 2 3)
+   :manifest-validator
+   (lambda (properties manifest-pathname)
+     (recovery-validate-manifest-properties
+      properties manifest-pathname
+      :expected-identifier expected-identifier))))
+
 (serapeum:-> recovery-load-generation
     (recovery-context pathname &key (:expected-identifier t))
     recovery-generation)
@@ -331,88 +414,20 @@
                               (recovery-context-generation-root context))
                (probe-file pathname))
     (error "Generation manifest is absent or outside the retained root."))
-  (let* ((form (recovery-read-form pathname))
-         (properties (and (listp form) (rest form)))
-         (identifier (and properties (getf properties :id)))
-         (core-value (and properties (getf properties :core)))
-         (commit (and properties (getf properties :git-commit)))
-         (image-commit-identifier
-           (and properties (getf properties :image-commit)))
-         (mutation-history-commit
-           (and properties (getf properties :mutation-history-commit)))
-         (version (and properties (getf properties :version)))
-         (reconstruction-value
-           (and properties (getf properties :reconstruction)))
-         (directory (uiop:pathname-directory-pathname pathname))
-         (core-pathname (and (stringp core-value) (pathname core-value)))
-         (reconstruction-pathname
-           (and (stringp reconstruction-value)
-                (pathname reconstruction-value))))
-    (unless (and (listp form)
-                 (eq (first form) :generation)
-                 (member version '(1 2 3))
-                 (recovery-identifier-p identifier)
-                 (or (null expected-identifier)
-                     (string= identifier expected-identifier))
-                 (string= identifier
-                          (first (last (pathname-directory directory))))
-                 core-pathname
-                 (uiop:subpathp core-pathname directory)
-                 (or (= version 1)
-                     (and reconstruction-pathname
-                          (uiop:subpathp reconstruction-pathname directory)
-                          (probe-file reconstruction-pathname)))
-                 (or (/= version 3)
-                     (if image-commit-identifier
-                         (and
-                          (recovery-image-commit-identifier-p
-                           image-commit-identifier)
-                          (recovery-history-commit-p
-                           mutation-history-commit))
-                         (null mutation-history-commit)))
-                 (recovery-git-commit-p commit)
-                 (stringp (getf properties :sbcl-version))
-                 (stringp (getf properties :operating-system))
-                 (stringp (getf properties :operating-system-version))
-                 (stringp (getf properties :architecture))
-                 (integerp (getf properties :created-at)))
-      (error "Invalid retained generation manifest at ~A."
-             (recovery-sanitize-text pathname)))
-    (make-instance
-     'recovery-generation
-     :identifier identifier
-     :core-pathname core-pathname
-     :manifest-pathname pathname
-     :reconstruction-pathname reconstruction-pathname
-     :image-commit-identifier image-commit-identifier
-     :mutation-history-commit mutation-history-commit
-     :git-commit commit
-     :sbcl-version (getf properties :sbcl-version)
-     :operating-system (getf properties :operating-system)
-     :operating-system-version (getf properties :operating-system-version)
-     :architecture (getf properties :architecture)
-     :created-at (getf properties :created-at))))
+  (handler-case
+      (sbcl-generations:generation-load-manifest
+       pathname
+       (recovery-generation-store context
+                                  :expected-identifier expected-identifier))
+    (sbcl-generations:checkpoint-error (condition)
+      (error "~A"
+             (recovery-sanitize-text
+              (sbcl-generations:checkpoint-error-message condition))))))
 
 (serapeum:-> recovery-generation-compatible-p (recovery-generation) boolean)
 (defun recovery-generation-compatible-p (generation)
   "Return true when GENERATION has a plausible core for this exact SBCL host."
-  (handler-case
-      (and (string= (recovery-generation-sbcl-version generation)
-                    (lisp-implementation-version))
-           (string= (recovery-generation-operating-system generation)
-                    (software-type))
-           (string= (recovery-generation-operating-system-version generation)
-                    (software-version))
-           (string= (recovery-generation-architecture generation)
-                    (machine-type))
-           (probe-file (recovery-generation-core-pathname generation))
-           (with-open-file (stream (recovery-generation-core-pathname generation)
-                                   :direction :input
-                                   :element-type '(unsigned-byte 8))
-             (> (file-length stream) 1048576))
-           t)
-    (error ()
-      nil)))
+  (sbcl-generations:generation-compatible-p generation))
 
 (serapeum:-> recovery-generation-bootable-p
     (recovery-generation &key (:source-commit (or null string)))

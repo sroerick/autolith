@@ -72,8 +72,8 @@
   :version "git-58ba29a8dd8d06417452b7978748c3d453bc3287"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-generations.git" :ref "99782dfe5c190973ea18ed02dc9e5adc5ae05892")
-  :version "git-99782dfe5c190973ea18ed02dc9e5adc5ae05892"))
+  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-generations.git" :ref "95ea9d28244fce21a2d7e34580f86d5e2c21a1bf")
+  :version "git-95ea9d28244fce21a2d7e34580f86d5e2c21a1bf"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/sexp-config.git" :ref "f3697d1e97b6b6e7ad1430d236e3706b377277cc")

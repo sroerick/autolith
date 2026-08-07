@@ -43,15 +43,18 @@
   (let ((directory
           (merge-pathnames (format nil "~A/" identifier) root)))
     (make-instance
-     'recovery-generation
+     'sbcl-generations:generation
      :identifier identifier
+     :directory directory
      :core-pathname (merge-pathnames "autolith.core" directory)
+     :temporary-core-pathname
+     (merge-pathnames ".autolith.core.tmp" directory)
      :manifest-pathname (merge-pathnames "manifest.sexp" directory)
-     :git-commit commit
-     :sbcl-version (lisp-implementation-version)
-     :operating-system (software-type)
-     :operating-system-version (software-version)
-     :architecture (machine-type)
+     :metadata (list :git-commit commit
+                     :sbcl-version (lisp-implementation-version)
+                     :operating-system (software-type)
+                     :operating-system-version (software-version)
+                     :architecture (machine-type))
      :created-at created-at)))
 
 (-> recovery-tests--migration-record (list) list)
