@@ -310,6 +310,25 @@ values. This reminder must not become a mutation quota either.
 Tools are registered internally. Configured external MCP tools join the same
 registry, but in-process tools do not require loopback MCP transport.
 
+** Native Resource Protocol
+
+Autolith has a small internal CLOS protocol for authority-neutral resources. A
+resource URI uses the strict lowercase =scheme:identifier= form and identifies
+what may be requested, never whether the caller may access it. Every resolver,
+capability query, observation, and operation receives the caller's explicit
+authority context. URI schemes map to CLOS resolver objects in a registry owned
+by each agent's tool registry, so child and replacement registries do not gain
+resource resolvers implicitly.
+
+A resource observation keeps the stable URI, opaque revision, resource-specific
+content, and metadata separate. Concrete resources specialize capability,
+observation, and revision-gated operation generic functions. The abstract
+resource advertises no capabilities and rejects observation or operations with
+a structured unsupported-operation condition. Malformed URIs, unknown schemes,
+unsupported operations, and stale revisions are distinct structured failures.
+The protocol does not itself expose model-facing tools or grant filesystem,
+agenda, memory, network, or active-image authority.
+
 ** 5.1 =lisp.*=
 
 =lisp.*= tools operate only in named, heap-isolated Lisp workers. Operations

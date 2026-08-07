@@ -159,6 +159,7 @@
     (test-openai-compatible-provider-registration-identity)
     (test-openai-compatible-provider)
     (test-fireworks-provider)
+    (test-resource-protocol)
     (test-tool-registry)
     (test-workspace-tools)
     (test-search-tools)

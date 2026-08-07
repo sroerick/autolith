@@ -553,7 +553,12 @@
     :reader tool-registry-runtime-bindings
     :type hash-table
     :documentation
-    "Subsystem-specific bindings used to reconcile shared dynamic runtimes."))
+    "Subsystem-specific bindings used to reconcile shared dynamic runtimes.")
+   (resource-registry
+    :initform (make-resource-registry)
+    :reader tool-registry-resource-registry
+    :type resource-registry
+    :documentation "The per-agent registry of authority-neutral resource resolvers."))
   (:documentation "The model-visible tools and their active dispatch objects."))
 
 (-> tool-runtime-resume (tool tool-registry) null)
