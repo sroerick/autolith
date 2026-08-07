@@ -135,11 +135,58 @@ let
     ];
   };
 
+  idsmall = pkgs.sbcl.buildASDFSystem {
+    pname = "idsmall";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "idsmall";
+      rev = "3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9";
+      hash = "sha256-KnK/eWB1DQrI1LdO63rBNbeDhWESI6b5BZq1s9Xlp2A=";
+    };
+    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+  };
+
+  sexpConfig = pkgs.sbcl.buildASDFSystem {
+    pname = "sexp-config";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "sexp-config";
+      rev = "f3697d1e97b6b6e7ad1430d236e3706b377277cc";
+      hash = "sha256-fIsWY/YVOtyrsD+GE/OTmMfH2GdB7L8ND1oEoWp/RFI=";
+    };
+  };
+
+  sbclGenerations = pkgs.sbcl.buildASDFSystem {
+    pname = "sbcl-generations";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "sbcl-generations";
+      rev = "95ea9d28244fce21a2d7e34580f86d5e2c21a1bf";
+      hash = "sha256-7xgPpCaLie+gRfNvGLclDP+9toj+lFo1P5pdaC32vjs=";
+    };
+    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+  };
+
+  clJobpond = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-jobpond";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "cl-jobpond";
+      rev = "4f7679be1b760450b8d497b0ec3119ee0f716995";
+      hash = "sha256-ifXzyzK6Ue4ZkZuwAr65wakE0Wh2rFlJexGWMpxFJUQ=";
+    };
+    lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
+  };
+
   clExecSandboxSource = pkgs.fetchFromGitHub {
     owner = "luciusmagn";
     repo = "cl-exec-sandbox";
-    rev = "a9a97263a557a2c125194524677267a6a20767c7";
-    hash = "sha256-1kzzKfx3lKJUG3Un2kmmqT1+DmldVhTRyhHLALCcF30=";
+    rev = "cb7951ea203329d7d1d226bfc1e8224bd5c7d9bd";
+    hash = "sha256-JJVHoUyxntkVfiU3V4quq+w6MOhTl8hYn5m1JCyvprs=";
   };
 
   clExecSandbox = pkgs.sbcl.buildASDFSystem {
@@ -148,9 +195,8 @@ let
     src = clExecSandboxSource;
   };
 
-  # The helper wraps Linux bubblewrap, seccomp, and network namespaces, so
-  # only Linux builds it. Elsewhere the Lisp side loads the library's
-  # portable fallback; see script/build-sandbox.lisp.
+  # The native helper wraps Linux bubblewrap, seccomp, and network namespaces.
+  # macOS uses cl-exec-sandbox's built-in Seatbelt backend without a helper.
   sandboxHelper = if pkgs.stdenv.isLinux then pkgs.stdenv.mkDerivation {
     pname = "cl-exec-sandbox-helper";
     version = "0.1.0";
@@ -214,8 +260,12 @@ let
       clinedi
       clExecSandbox
       clifff
+      clJobpond
+      idsmall
       mcparen
+      sbclGenerations
       sbclWorkers
+      sexpConfig
       sexpStore
     ];
     nativeBuildInputs = [ pkgs.git ];
@@ -540,8 +590,9 @@ pkgs.writeShellApplication {
   };
 
   passthru = {
-    inherit autolithSystem clColorist clExecSandbox clifff clinedi colorlisp
-      colorlispNativeLibrary fffLibrary imageIdentity imageValidation runtime sandboxHelper
-      sbclSource mcparen sbclWorkers sexpStore;
+    inherit autolithSystem clColorist clExecSandbox clifff clinedi clJobpond
+      colorlisp colorlispNativeLibrary fffLibrary idsmall imageIdentity
+      imageValidation runtime sandboxHelper sbclGenerations sbclSource mcparen
+      sbclWorkers sexpConfig sexpStore;
   };
 }

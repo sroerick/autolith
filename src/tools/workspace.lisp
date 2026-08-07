@@ -594,15 +594,21 @@ is retained whenever the configured maximum can contain the fixed metadata."
                      (:full-access
                       (external-sandbox-policy))))
                  (result
-                   (run-sandboxed
-                    "/bin/sh"
-                    (list "-c" command)
-                    :policy policy
-                    :working-directory directory
-                    :timeout timeout
-                    :merge-output-p t
-                    :output-limit *shell-maximum-output-characters*
-                    :error-output-limit *shell-maximum-output-characters*))
+                   (handler-bind
+                       ((sb-int:stream-decoding-error
+                          (lambda (condition)
+                            (let ((restart (find-restart 'use-value condition)))
+                              (when restart
+                                (invoke-restart restart (code-char #xFFFD)))))))
+                     (run-sandboxed
+                      "/bin/sh"
+                      (list "-c" command)
+                      :policy policy
+                      :working-directory directory
+                      :timeout timeout
+                      :merge-output-p t
+                      :output-limit *shell-maximum-output-characters*
+                      :error-output-limit *shell-maximum-output-characters*)))
                  (output (sandbox-result-output result))
                  (presented-output
                    (if (sandbox-result-output-truncated-p result)
