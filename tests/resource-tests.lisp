@@ -39,6 +39,28 @@
                  :identifier identifier
                  :marker     (test-resource-resolver-marker resolver)))
 
+(defmethod resource-tool-read
+    ((resource test-resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Return fixture content through generic model-facing resource dispatch."
+  (declare (ignore tool))
+  (tool-success
+   (format nil "read ~A at ~A in ~A"
+           (test-resource-identifier resource)
+           (tool-argument arguments "start-line")
+           (conversation-identifier (tool-context-conversation context)))))
+
+(defmethod resource-tool-edit
+    ((resource test-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Return fixture edit arguments through generic model-facing resource dispatch."
+  (declare (ignore tool context))
+  (tool-success
+   (format nil "edited ~A from ~A with ~D operations"
+           (test-resource-identifier resource)
+           (tool-argument arguments "base-revision")
+           (length (tool-argument arguments "operations")))))
+
 
 ;;;; -- Resource Protocol Tests --
 
@@ -196,6 +218,61 @@
      (not (eq (tool-registry-resource-registry first-tools)
               (tool-registry-resource-registry second-tools)))
      "resource resolver registries remain isolated per agent tool registry"))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (registry (make-default-tool-registry))
+         (resolver (make-instance 'test-resource-resolver
+                                  :scheme "test"
+                                  :marker ':tool-dispatch))
+         (conversation
+           (conversation-create configuration :identifier "resource-dispatch"))
+         (context (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation)))
+    (unwind-protect
+         (progn
+           (resource-registry-register
+            (tool-registry-resource-registry registry) resolver)
+           (let ((result
+                   (tool-registry-execute-call
+                    registry
+                    (json-object
+                     "namespace" "resource"
+                     "name" "read"
+                     "arguments"
+                     (json-encode
+                      (json-object "uri" "test:alpha" "start-line" 7)))
+                    context)))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (string= (tool-result-content result)
+                            "read alpha at 7 in resource-dispatch"))
+              "resource.read dispatches registered schemes through resource methods"))
+           (let ((result
+                   (tool-registry-execute-call
+                    registry
+                    (json-object
+                     "namespace" "resource"
+                     "name" "edit"
+                     "arguments"
+                     (json-encode
+                      (json-object
+                       "uri" "test:alpha"
+                       "base-revision" "fixture-revision"
+                       "operations" (vector (json-object "op" "fixture")))))
+                    context)))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (string= (tool-result-content result)
+                            "edited alpha from fixture-revision with 1 operations"))
+              "resource.edit dispatches registered schemes through resource methods"))
+           (test-assert (eq (test-resource-resolver-last-context resolver) context)
+                        "resource tool dispatch preserves the exact authority context"))
+      (tool-registry-close-runtime-state registry)
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist :ignore)))
   (let ((condition (make-condition 'resource-revision-stale
                                    :uri               "test:item"
                                    :expected-revision "revision-1"

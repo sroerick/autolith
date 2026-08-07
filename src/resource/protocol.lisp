@@ -115,6 +115,35 @@
     :documentation "Resource-specific metadata associated with the observation."))
   (:documentation "A revisioned observation whose identity is separate from its content."))
 
+(defclass resource-observation-state ()
+  ((alias
+    :initarg :alias
+    :reader resource-observation-state-alias
+    :type non-empty-string
+    :documentation "The short opaque revision alias visible to the model.")
+   (observation
+    :initarg :observation
+    :reader resource-observation-state-observation
+    :type resource-observation
+    :documentation "The complete internal observation represented by the alias."))
+  (:documentation "Conversation-local state for one model-visible resource observation."))
+
+(-> resource-observation-state-new-alias (hash-table) non-empty-string)
+(defun resource-observation-state-new-alias (states)
+  "Return a fresh opaque alias not present in resource observation STATES."
+  (loop for candidate = (format nil "R~A"
+                                (subseq (localgroup-random-token) 0 16))
+        unless (gethash candidate states)
+          return candidate))
+
+(-> resource-observation-state-find
+    (hash-table non-empty-string t)
+    (option resource-observation-state))
+(defun resource-observation-state-find (states alias class)
+  "Return ALIAS from STATES only when it is an instance of CLASS."
+  (let ((state (gethash alias states)))
+    (and (typep state class) state)))
+
 (-> resource-capabilities (resource t) list)
 (defgeneric resource-capabilities (resource context)
   (:documentation

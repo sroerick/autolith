@@ -25,6 +25,22 @@
     :documentation "The JSON Schema accepted by this tool."))
   (:documentation "A documented, model-visible operation."))
 
+(defclass resource-tool (tool)
+  ((resource-registry
+    :initarg :resource-registry
+    :reader resource-tool-resource-registry
+    :type resource-registry
+    :documentation "The exact per-agent resolver registry owning this tool."))
+  (:documentation "A model-facing tool resolving resources in one agent registry."))
+
+(defclass resource-read-tool (resource-tool)
+  ()
+  (:documentation "Read one resource through its model-facing CLOS protocol."))
+
+(defclass resource-edit-tool (resource-tool)
+  ()
+  (:documentation "Edit one resource through its model-facing CLOS protocol."))
+
 (defclass lisp-tool (tool)
   ()
   (:documentation "A tool whose operation is isolated in a named Lisp worker."))
@@ -535,6 +551,69 @@
              :message (format nil "Required tool argument ~S is missing." name)
              :tool-name "unknown"))
     value))
+
+
+;;;; -- Resource Tool Dispatch --
+
+(-> resource-tool-read
+    (resource resource-read-tool tool-context json-object)
+    tool-result)
+(defgeneric resource-tool-read (resource tool context arguments)
+  (:documentation
+   "Read RESOURCE for the model through TOOL under CONTEXT and ARGUMENTS."))
+
+(defmethod resource-tool-read
+    ((resource resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Reject model-facing reads not implemented by RESOURCE's concrete class."
+  (declare (ignore tool context arguments))
+  (error 'resource-operation-unsupported
+         :uri       (resource-uri resource)
+         :operation ':read))
+
+(-> resource-tool-edit
+    (resource resource-edit-tool tool-context json-object)
+    tool-result)
+(defgeneric resource-tool-edit (resource tool context arguments)
+  (:documentation
+   "Edit RESOURCE for the model through TOOL under CONTEXT and ARGUMENTS."))
+
+(defmethod resource-tool-edit
+    ((resource resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Reject model-facing edits not implemented by RESOURCE's concrete class."
+  (declare (ignore tool context arguments))
+  (error 'resource-operation-unsupported
+         :uri       (resource-uri resource)
+         :operation ':edit))
+
+(-> resource-tool--resolve (resource-tool tool-context json-object) resource)
+(defun resource-tool--resolve (tool context arguments)
+  "Resolve TOOL's required resource URI under exact authority CONTEXT."
+  (resource-registry-resolve
+   (resource-tool-resource-registry tool)
+   (tool-argument arguments "uri" :required t)
+   context))
+
+(defmethod tool-execute
+    ((tool resource-read-tool) (context tool-context) (arguments hash-table))
+  "Resolve and dispatch one model-facing resource read."
+  (resource-tool-read (resource-tool--resolve tool context arguments)
+                      tool context arguments))
+
+(defmethod tool-execute
+    ((tool resource-edit-tool) (context tool-context) (arguments hash-table))
+  "Resolve and dispatch one model-facing resource edit."
+  (resource-tool-edit (resource-tool--resolve tool context arguments)
+                      tool context arguments))
+
+(defmethod tool-child-safe-p ((tool resource-read-tool))
+  "Permit authority-confined resource reads inside child agents."
+  t)
+
+(defmethod tool-child-safe-p ((tool resource-edit-tool))
+  "Permit authority-confined resource edits inside child agents."
+  t)
 
 
 ;;;; -- Registry and Dispatch --

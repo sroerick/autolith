@@ -54,47 +54,13 @@
     :documentation "Whether the exact observed snapshot ended in a line ending."))
   (:documentation "A complete transient UTF-8 workspace-file snapshot."))
 
-(defclass workspace-file-observation-state ()
-  ((alias
-    :initarg :alias
-    :reader workspace-file-observation-state-alias
-    :type non-empty-string
-    :documentation "The short opaque revision alias visible to the model.")
-   (observation
-    :initarg :observation
-    :reader workspace-file-observation-state-observation
-    :type workspace-file-observation
-    :documentation "The complete internal snapshot represented by the alias.")
-   (visible-ranges
+(defclass workspace-file-observation-state (resource-observation-state)
+  ((visible-ranges
     :initarg :visible-ranges
     :accessor workspace-file-observation-state-visible-ranges
     :type list
     :documentation "Inclusive original line ranges fully shown to the model."))
   (:documentation "One conversation-local model observation of a workspace file."))
-
-(defclass workspace-resource-tool (workspace-tool)
-  ((resource-registry
-    :initarg :resource-registry
-    :reader workspace-resource-tool-resource-registry
-    :type resource-registry
-    :documentation "The exact per-agent resolver registry owning this tool."))
-  (:documentation "A model-facing tool resolving resources in one agent registry."))
-
-(defclass resource-read-tool (workspace-resource-tool)
-  ()
-  (:documentation "Read and observe one revision-gated resource window."))
-
-(defclass resource-edit-tool (workspace-resource-tool)
-  ()
-  (:documentation "Apply structured operations to one exact observed resource revision."))
-
-(defmethod tool-child-safe-p ((tool resource-read-tool))
-  "Permit authority-confined resource reads inside child agents."
-  t)
-
-(defmethod tool-child-safe-p ((tool resource-edit-tool))
-  "Permit authority-confined resource edits inside child agents."
-  t)
 
 
 ;;;; -- URI Resolution --
@@ -170,11 +136,6 @@
     (with-output-to-string (stream)
       (loop for octet across (produce-mac mac)
             do (format stream "~2,'0X" octet)))))
-
-(-> workspace-file--revision-alias () string)
-(defun workspace-file--revision-alias ()
-  "Return a short opaque model revision alias."
-  (format nil "R~A" (subseq (localgroup-random-token) 0 16)))
 
 (-> workspace-file--validate-file-stat (pathname t) null)
 (defun workspace-file--validate-file-stat (path stat)
@@ -359,6 +320,31 @@
             (push (copy-list range) result))))
     (nreverse result)))
 
+(-> workspace-file--observation-state-count (hash-table) (integer 0))
+(defun workspace-file--observation-state-count (states)
+  "Return the number of workspace file observation STATES."
+  (loop for state being the hash-values of states
+        count (typep state 'workspace-file-observation-state)))
+
+(-> workspace-file--expire-oldest-observation-state
+    (conversation hash-table)
+    boolean)
+(defun workspace-file--expire-oldest-observation-state (conversation states)
+  "Expire the oldest workspace file state without disturbing other resource states."
+  (loop for alias in (conversation-resource-observation-order conversation)
+        for state = (resource-observation-state-find
+                     states alias 'workspace-file-observation-state)
+        when state
+          do
+             (setf (conversation-resource-observation-order conversation)
+                   (remove alias
+                           (conversation-resource-observation-order conversation)
+                           :test #'string=
+                           :count 1))
+             (remhash alias states)
+             (return t)
+        finally (return nil)))
+
 (-> workspace-file--observation-state-for-snapshot
     (conversation workspace-file-observation list)
     workspace-file-observation-state)
@@ -366,38 +352,40 @@
     (conversation observation visible-ranges)
   "Return or create CONVERSATION's state for OBSERVATION and VISIBLE-RANGES."
   (with-recursive-lock-held ((conversation-resource-observation-lock conversation))
-    (let* ((table (conversation-resource-observations conversation))
+    (let* ((states (conversation-resource-observations conversation))
            (matching
-             (loop for state being the hash-values of table
-                   for existing = (workspace-file-observation-state-observation state)
-                   when (and (string= (resource-observation-uri existing)
-                                      (resource-observation-uri observation))
-                             (string= (resource-observation-revision existing)
-                                      (resource-observation-revision observation))
-                             (string= (resource-observation-content existing)
-                                      (resource-observation-content observation)))
-                     return state)))
+             (loop for state being the hash-values of states
+                   when (typep state 'workspace-file-observation-state)
+                     do
+                        (let ((existing
+                                (resource-observation-state-observation state)))
+                          (when (and
+                                 (string= (resource-observation-uri existing)
+                                          (resource-observation-uri observation))
+                                 (string= (resource-observation-revision existing)
+                                          (resource-observation-revision observation))
+                                 (string= (resource-observation-content existing)
+                                          (resource-observation-content observation)))
+                            (return state))))))
       (when matching
         (setf (workspace-file-observation-state-visible-ranges matching)
               (workspace-file--merge-visible-ranges
                (workspace-file-observation-state-visible-ranges matching)
                visible-ranges))
         (return-from workspace-file--observation-state-for-snapshot matching))
-      (let* ((alias (loop for candidate = (workspace-file--revision-alias)
-                          unless (gethash candidate table)
-                            return candidate))
+      (let* ((alias (resource-observation-state-new-alias states))
              (state (make-instance 'workspace-file-observation-state
                                    :alias          alias
                                    :observation    observation
                                    :visible-ranges visible-ranges)))
-        (setf (gethash alias table) state
+        (setf (gethash alias states) state
               (conversation-resource-observation-order conversation)
               (append (conversation-resource-observation-order conversation)
                       (list alias)))
-        (loop while (> (hash-table-count table)
+        (loop while (> (workspace-file--observation-state-count states)
                        *workspace-file-resource-maximum-observations*)
-              for expired = (pop (conversation-resource-observation-order conversation))
-              do (remhash expired table))
+              while (workspace-file--expire-oldest-observation-state
+                     conversation states))
         state))))
 
 (-> workspace-file--find-observation-state
@@ -405,11 +393,15 @@
     workspace-file-observation-state)
 (defun workspace-file--find-observation-state (conversation uri alias)
   "Return CONVERSATION's exact URI observation ALIAS or signal stale revision."
-  (let ((state (gethash alias (conversation-resource-observations conversation))))
+  (let ((state
+          (resource-observation-state-find
+           (conversation-resource-observations conversation)
+           alias
+           'workspace-file-observation-state)))
     (unless (and state
                  (string= uri
                           (resource-observation-uri
-                           (workspace-file-observation-state-observation state))))
+                           (resource-observation-state-observation state))))
       (error 'resource-revision-stale
              :uri               uri
              :expected-revision alias
@@ -513,12 +505,12 @@
     string)
 (defun workspace-file--read-result (state body total-lines truncated-p)
   "Return one explicit model-facing resource observation result."
-  (let* ((observation (workspace-file-observation-state-observation state))
+  (let* ((observation (resource-observation-state-observation state))
          (ranges (workspace-file-observation-state-visible-ranges state))
          (elisions (workspace-file--elisions total-lines ranges truncated-p)))
     (format nil "URI: ~A~%Revision: ~A~%Visible lines: ~A of ~D~%Elided: ~A~%Content:~%~A"
             (resource-observation-uri observation)
-            (workspace-file-observation-state-alias state)
+            (resource-observation-state-alias state)
             (workspace-file--format-ranges ranges)
             total-lines
             (if elisions (format nil "~{~A~^; ~}" elisions) "none")
@@ -580,7 +572,7 @@
            :message "Every resource edit operation must be a JSON object."
            :tool-name "resource.edit"))
   (let* ((name (workspace-file--operation-name operation))
-         (observation (workspace-file-observation-state-observation state)))
+         (observation (resource-observation-state-observation state)))
     (cond
       ((string= name "replace-empty")
        (when (workspace-file--operation-extra-keys-p
@@ -839,7 +831,7 @@
         (let* ((state (workspace-file--find-observation-state
                        conversation (resource-uri resource) base-revision))
                (base-observation
-                 (workspace-file-observation-state-observation state)))
+                 (resource-observation-state-observation state)))
           (when (workspace-file--mixed-line-endings-p
                  (resource-observation-content base-observation))
             (error 'tool-error
@@ -884,37 +876,23 @@
                normalized))))))))
 
 
-;;;; -- Resource Tool Executions --
+;;;; -- Resource Tool Methods --
 
-(-> workspace-file--registry-resource
-    (workspace-resource-tool tool-context string)
-    workspace-file-resource)
-(defun workspace-file--registry-resource (tool context uri)
-  "Resolve URI through TOOL's exact per-agent resource registry."
-  (let ((resource
-          (resource-registry-resolve
-           (workspace-resource-tool-resource-registry tool) uri context)))
-    (unless (typep resource 'workspace-file-resource)
-      (error 'tool-error
-             :message (format nil "Resource ~A is not a workspace file." uri)
-             :tool-name "resource"))
-    resource))
-
-(defmethod tool-execute
-    ((tool resource-read-tool) (context tool-context) (arguments hash-table))
+(defmethod resource-tool-read
+    ((resource workspace-file-resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
   "Read a bounded workspace resource window and establish its edit observation."
-  (let* ((uri (tool-argument arguments "uri" :required t))
-         (start-line
-           (max 1 (or (workspace-tool-integer-argument
-                       arguments "start-line" :fallback 1)
-                      1)))
-         (line-count
-           (min *workspace-file-resource-maximum-line-count*
-                (max 1 (or (workspace-tool-integer-argument
-                            arguments "line-count"
-                            :fallback *workspace-file-resource-default-line-count*)
-                           *workspace-file-resource-default-line-count*))))
-         (resource (workspace-file--registry-resource tool context uri)))
+  (declare (ignore tool))
+  (let ((start-line
+          (max 1 (or (workspace-tool-integer-argument
+                      arguments "start-line" :fallback 1)
+                     1)))
+        (line-count
+          (min *workspace-file-resource-maximum-line-count*
+               (max 1 (or (workspace-tool-integer-argument
+                           arguments "line-count"
+                           :fallback *workspace-file-resource-default-line-count*)
+                          *workspace-file-resource-default-line-count*)))))
     (with-recursive-lock-held (*workspace-file-mutation-lock*)
       (let* ((observation (resource-observe resource context))
              (total-lines
@@ -938,9 +916,11 @@
             (tool-success
              (workspace-file--read-result state body total-lines truncated-p))))))))
 
-(defmethod tool-execute
-    ((tool resource-edit-tool) (context tool-context) (arguments hash-table))
+(defmethod resource-tool-edit
+    ((resource workspace-file-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
   "Apply structured revision-gated operations and return a refreshed observation."
+  (declare (ignore tool))
   (let* ((uri (tool-argument arguments "uri" :required t))
          (base-revision (tool-argument arguments "base-revision" :required t))
          (operation-array (tool-argument arguments "operations" :required t)))
@@ -952,8 +932,7 @@
       (error 'tool-error
              :message "Resource edit operations must be a non-empty JSON array."
              :tool-name "resource.edit"))
-    (let ((resource (workspace-file--registry-resource tool context uri))
-          (operations (coerce operation-array 'list)))
+    (let ((operations (coerce operation-array 'list)))
       (handler-case
         (multiple-value-bind (observation normalized)
             (resource-apply-operations resource context

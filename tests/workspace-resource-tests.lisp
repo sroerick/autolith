@@ -79,6 +79,11 @@
     :documentation "The synchronization state shared with resolved resources."))
   (:documentation "Resolve coordinated workspace resources for serialization testing."))
 
+(defclass workspace-resource-tests-other-observation-state
+    (resource-observation-state)
+  ()
+  (:documentation "A non-workspace observation state sharing conversation storage."))
+
 (defmethod resource-resolver-resolve
     ((resolver workspace-resource-tests-coordinated-resolver) identifier context)
   "Resolve IDENTIFIER as a coordinated workspace resource under CONTEXT."
@@ -123,6 +128,9 @@
                   (conversation-create configuration :identifier "resource-first"))
                 (second-conversation
                   (conversation-create configuration :identifier "resource-second"))
+                (heterogeneous-conversation
+                  (conversation-create configuration
+                                       :identifier "resource-heterogeneous"))
                 (first-context
                   (make-instance 'tool-context
                                  :configuration configuration
@@ -132,7 +140,12 @@
                   (make-instance 'tool-context
                                  :configuration configuration
                                  :worker nil
-                                 :conversation second-conversation)))
+                                 :conversation second-conversation))
+                (heterogeneous-context
+                  (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation heterogeneous-conversation)))
            (labels ((call (context namespace name &rest arguments)
                       "Execute one resource fixture call."
                       (apply #'workspace-resource-tests--call
@@ -164,6 +177,63 @@
                             "uri" uri
                             "base-revision" revision
                             "operations" (coerce operations 'vector))))
+             (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
+                    (other-observation
+                      (make-instance 'resource-observation
+                                     :uri "workspace:heterogeneous.txt"
+                                     :revision "foreign-revision"
+                                     :content 42))
+                    (other-state
+                      (make-instance
+                       'workspace-resource-tests-other-observation-state
+                       :alias "Rforeign"
+                       :observation other-observation)))
+               (workspace-resource-tests--write-text path "workspace")
+               (with-recursive-lock-held
+                   ((conversation-resource-observation-lock
+                     heterogeneous-conversation))
+                 (setf
+                  (gethash
+                   "Rforeign"
+                   (conversation-resource-observations
+                    heterogeneous-conversation))
+                  other-state
+                  (conversation-resource-observation-order
+                   heterogeneous-conversation)
+                  (list "Rforeign")))
+               (let ((*workspace-file-resource-maximum-observations* 1))
+                 (multiple-value-bind (result uri revision)
+                     (read-resource heterogeneous-context
+                                    "workspace:heterogeneous.txt")
+                   (test-assert (tool-result-success-p result)
+                                "workspace observations ignore other state classes")
+                   (with-recursive-lock-held
+                       ((conversation-resource-observation-lock
+                         heterogeneous-conversation))
+                     (let ((states
+                             (conversation-resource-observations
+                              heterogeneous-conversation)))
+                       (test-assert
+                        (eq (resource-observation-state-find
+                             states "Rforeign"
+                             'workspace-resource-tests-other-observation-state)
+                            other-state)
+                        "workspace observation expiry preserves other resource states")
+                       (test-assert
+                        (and (= (hash-table-count states) 2)
+                             (= (workspace-file--observation-state-count states) 1)
+                             (typep (gethash revision states)
+                                    'workspace-file-observation-state))
+                        "workspace and other resource observation states coexist")))
+                   (test-assert
+                    (handler-case
+                        (progn
+                          (workspace-file--find-observation-state
+                           heterogeneous-conversation uri "Rforeign")
+                          nil)
+                      (resource-revision-stale ()
+                        t))
+                    "workspace observation lookup rejects another state class"))))
              (let* ((resolver
                       (gethash "workspace"
                                (resource-registry-resolvers
