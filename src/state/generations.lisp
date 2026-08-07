@@ -76,7 +76,12 @@ can still be listed and booted."
    :manifest-version 3
    :accepted-manifest-versions '(1 2 3)
    :manifest-validator #'generation--validate-manifest
-   :publish-validator #'generation--validate-publication))
+   :publish-validator #'generation--validate-publication
+   ;; Autolith already owns an atomic state layer, so the store uses it rather
+   ;; than the library's plain-Lisp default: that keeps the private file mode and
+   ;; the crash-tolerant reader that every other Autolith state file relies on.
+   :write-function #'snapshot-write
+   :read-function #'read-portable-form))
 
 
 ;;;; -- Autolith Generation Metadata --

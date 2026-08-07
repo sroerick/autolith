@@ -16,7 +16,7 @@ git clifff https://github.com/luciusmagn/clifff.git :ref 8bf3ebb0985108593cad105
 git colorlisp https://github.com/luciusmagn/colorlisp.git :ref 05a3313d52e2a2c643219a750dd5045df56c1cd7
 git idsmall https://github.com/luciusmagn/idsmall.git :ref 3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9
 git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b7978748c3d453bc3287
-git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref 049140313e626f9902f2354e338d10b3d8f564d1
+git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref 99782dfe5c190973ea18ed02dc9e5adc5ae05892
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref f3697d1e97b6b6e7ad1430d236e3706b377277cc
 git sexp-store https://github.com/luciusmagn/sexp-store.git :ref 0a586df98c295ca6d2fcd47e33bc5f478075f470
 git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref e43fc87daaca01183606c2e0b4150605d01677e7
