@@ -375,6 +375,7 @@
          (response-body
            "{\"data\":[{\"id\":\"dynamic/model-a\"},{\"id\":\"dynamic/model-b\"}]}")
          (response-status 200)
+         (response-error-p nil)
          (observed-url nil)
          (observed-headers nil))
     (unwind-protect
@@ -396,11 +397,13 @@
             configuration "dynamic-test" "synthetic-discovery-key")
            (openai-compatible-provider-tests--save-key
             configuration "dynamic-only" "synthetic-discovery-key")
-           (setf (symbol-function 'dexador:get)
-                 (lambda (url &rest arguments)
-                   (setf observed-url url
-                         observed-headers (getf arguments :headers))
-                   (values response-body response-status nil nil)))
+            (setf (symbol-function 'dexador:get)
+                  (lambda (url &rest arguments)
+                    (setf observed-url url
+                          observed-headers (getf arguments :headers))
+                    (when response-error-p
+                      (error "Synthetic model discovery transport failure."))
+                    (values response-body response-status nil nil)))
            (let ((failures
                    (provider-refresh-models
                     configuration
@@ -509,6 +512,16 @@
                            (provider-model-identifiers)
                            :test #'string=))
               "model discovery failures retain the last successful model list")))
+            (setf response-error-p t)
+            (let ((failures
+                    (provider-refresh-models
+                     configuration
+                     :provider-name "dynamic-test")))
+              (test-assert
+               (and (= (length failures) 1)
+                    (typep (first failures)
+                           'provider-model-discovery-error))
+               "model discovery normalizes dependency transport failures"))
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
@@ -587,6 +600,44 @@
                 "bracketed paste saves the exact API key without terminal markers"))))
       (provider--registry-restore registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-provider-sse-bounds () null)
+(defun test-provider-sse-bounds ()
+  "Test SSE line and joined-event bounds at and above their limits."
+  (let ((*sse-maximum-line-characters* 7)
+        (*sse-maximum-event-characters* 16))
+    (test-assert
+     (string= (read-sse-data
+               (make-string-input-stream (format nil "data: x~%~%")))
+              "x")
+     "an SSE line at the configured limit is accepted")
+    (test-assert
+     (handler-case
+         (progn
+           (read-sse-data
+            (make-string-input-stream (format nil "data: xx~%~%")))
+           nil)
+       (response-stream-error () t))
+     "an SSE line above the configured limit is rejected"))
+  (let ((*sse-maximum-line-characters* 32)
+        (*sse-maximum-event-characters* 3))
+    (test-assert
+     (string= (read-sse-data
+               (make-string-input-stream
+                (format nil "data: a~%data: b~%~%")))
+              (format nil "a~%b"))
+     "an SSE event at the configured joined-data limit is accepted")
+    (let ((*sse-maximum-event-characters* 2))
+      (test-assert
+       (handler-case
+           (progn
+             (read-sse-data
+              (make-string-input-stream
+               (format nil "data: a~%data: b~%~%")))
+             nil)
+         (response-stream-error () t))
+       "an SSE event above the configured joined-data limit is rejected")))
   nil)
 
 (-> test-openai-compatible-provider () null)
@@ -849,6 +900,116 @@
                       nil)
                   (response-stream-error () t))
                 "truncated Chat Completions streams remain retryable failures"))
+              (let* ((tool-event
+                       (openai-compatible-provider-tests--stream-event
+                        (json-object
+                         "tool_calls"
+                         (json-array
+                          (json-object
+                           "index" 0
+                           "id" "call-empty"
+                           "function"
+                           (json-object
+                            "name"
+                            (openai-compatible--wire-tool-name "fs" "read")))))
+                        "chat-empty"))
+                     (finish-event
+                       (openai-compatible-provider-tests--stream-event
+                        (json-object) "chat-empty" "tool_calls"))
+                     (result
+                       (provider-consume-stream
+                        provider
+                        (make-string-input-stream
+                         (concatenate
+                          'string
+                          (test-sse-event-string tool-event)
+                          (test-sse-event-string finish-event)
+                          (format nil "data: [DONE]~%~%")))
+                        nil
+                        #'identity))
+                     (call (first (provider-result-tool-calls result))))
+                (test-assert
+                 (and call (string= (json-get call "arguments") "{}"))
+                 "empty Chat Completions tool arguments normalize to an object"))
+              (dolist (case
+                       (list
+                        (list "missing call id"
+                              (json-object
+                               "index" 0
+                               "function"
+                               (json-object "name" "read" "arguments" "{}")))
+                        (list "missing function name"
+                              (json-object
+                               "index" 0
+                               "id" "call-missing-name"
+                               "function"
+                               (json-object "arguments" "{}")))))
+                (let* ((tool-event
+                         (openai-compatible-provider-tests--stream-event
+                          (json-object "tool_calls" (json-array (second case)))
+                          "chat-incomplete"))
+                       (finish-event
+                         (openai-compatible-provider-tests--stream-event
+                          (json-object) "chat-incomplete" "tool_calls"))
+                       (source
+                         (concatenate
+                          'string
+                          (test-sse-event-string tool-event)
+                          (test-sse-event-string finish-event)
+                          (format nil "data: [DONE]~%~%"))))
+                  (test-assert
+                   (handler-case
+                       (progn
+                         (provider-consume-stream
+                          provider
+                          (make-string-input-stream source)
+                          nil
+                          #'identity)
+                         nil)
+                     (response-stream-error () t))
+                   (format nil "Chat Completions rejects ~A" (first case)))))
+              (dolist (item
+                       (list
+                        (json-object "type" 17 "role" "assistant")
+                        (json-object "type" "message" "role" 17)
+                        (json-object "type" 17 "summary" (json-array))))
+                (test-assert
+                 (and (null (response-item-assistant-text item))
+                      (null (response-item-reasoning-summary item))
+                      (not (function-call-item-p item)))
+                 "non-string response discriminators are ignored safely"))
+              (let* ((malformed-event
+                       (openai-compatible-provider-tests--stream-event
+                        (json-object
+                         "content" 17
+                         "tool_calls"
+                         (json-array
+                          (json-object
+                           "index" 0
+                           "id" 17
+                           "function"
+                           (json-object "name" 17 "arguments" 17))))
+                        "chat-malformed"))
+                     (finish-event
+                       (openai-compatible-provider-tests--stream-event
+                        (json-object) "chat-malformed" "stop"))
+                     (source
+                       (concatenate
+                        'string
+                        (test-sse-event-string malformed-event)
+                        (test-sse-event-string finish-event)
+                        (format nil "data: [DONE]~%~%"))))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (provider-consume-stream
+                        provider
+                        (make-string-input-stream source)
+                        nil
+                        #'identity)
+                       nil)
+                   (response-stream-error () t))
+                 "malformed tool fields become typed stream failures"))
            (let* ((prompt-provider
                     (openai-compatible-provider-create
                      configuration

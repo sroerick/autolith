@@ -38,6 +38,17 @@
       (gethash key object)
     (if present-p value default)))
 
+(-> json-string= (t string) boolean)
+(defun json-string= (value expected)
+  "Return true when VALUE is the JSON string EXPECTED."
+  (and (stringp value) (string= value expected)))
+
+(-> json-string-member-p (t list) boolean)
+(defun json-string-member-p (value expected)
+  "Return true when VALUE is a JSON string in EXPECTED."
+  (not (null (and (stringp value)
+                  (member value expected :test #'string=)))))
+
 (-> json-encode (json-value) string)
 (defun json-encode (value)
   "Encode VALUE as a compact JSON string."

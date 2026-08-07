@@ -592,16 +592,16 @@ so authentication can bootstrap credentials before model discovery."
 (-> response-item-assistant-text (json-object) (option string))
 (defun response-item-assistant-text (item)
   "Return the joined visible text of assistant message ITEM, when applicable."
-  (when (and (string= (or (json-get item "type") "") "message")
-             (string= (or (json-get item "role") "") "assistant"))
+  (when (and (json-string= (json-get item "type") "message")
+             (json-string= (json-get item "role") "assistant"))
     (let ((content (json-get item "content")))
       (when (vectorp content)
         (let ((parts
                 (loop for part across content
                       when (and (json-object-p part)
-                                (member (json-get part "type")
-                                        '("output_text" "text")
-                                        :test #'string=)
+                                (json-string-member-p
+                                 (json-get part "type")
+                                 '("output_text" "text"))
                                 (stringp (json-get part "text")))
                         collect (json-get part "text"))))
           (when parts
@@ -621,14 +621,14 @@ so authentication can bootstrap credentials before model discovery."
 (-> response-item-reasoning-summary (json-object) (option string))
 (defun response-item-reasoning-summary (item)
   "Return ITEM's provider-visible reasoning summary, never raw reasoning text."
-  (when (string= (or (json-get item "type") "") "reasoning")
+  (when (json-string= (json-get item "type") "reasoning")
     (let ((summary (json-get item "summary")))
       (when (vectorp summary)
         (let ((parts
                 (loop for part across summary
                       when (and (json-object-p part)
-                                (string= (or (json-get part "type") "")
-                                         "summary_text")
+                                (json-string= (json-get part "type")
+                                              "summary_text")
                                 (non-empty-string-p (json-get part "text")))
                         collect (json-get part "text"))))
           (when parts
@@ -895,6 +895,21 @@ checkpoint."
 (defvar *sse-end-of-stream* (gensym "SSE-END-")
   "A private marker returned after a clean SSE end of stream.")
 
+(defparameter *sse-maximum-line-characters* (* 1024 1024)
+  "Maximum accepted character count for one SSE wire line.")
+
+(defparameter *sse-maximum-event-characters* (* 4 1024 1024)
+  "Maximum accepted joined data character count for one SSE event.")
+
+(-> sse--signal-size-error (string) null)
+(defun sse--signal-size-error (message)
+  "Signal a bounded provider stream failure described by MESSAGE."
+  (error 'response-stream-error
+         :message message
+         :status nil
+         :request-id nil
+         :response nil))
+
 (-> sse-data-line (string) (option string))
 (defun sse-data-line (line)
   "Return the payload of an SSE data LINE, or NIL for another field."
@@ -908,36 +923,57 @@ checkpoint."
 
 (-> sse-read-line (stream) t)
 (defun sse-read-line (stream)
-  "Read a line from STREAM using only the portable character-stream protocol."
-  (let ((characters nil))
+  "Read one bounded line using only the portable character-stream protocol."
+  (let ((characters
+          (make-array 256
+                      :element-type 'character
+                      :adjustable t
+                      :fill-pointer 0)))
     (loop for character = (read-char stream nil *sse-end-of-stream*)
           do (cond
                ((eq character *sse-end-of-stream*)
-                (return (if characters
-                            (coerce (nreverse characters) 'string)
+                (return (if (plusp (length characters))
+                            (coerce characters 'string)
                             *sse-end-of-stream*)))
                ((char= character #\Newline)
-                (return (coerce (nreverse characters) 'string)))
+                (return (coerce characters 'string)))
+               ((>= (length characters) *sse-maximum-line-characters*)
+                (sse--signal-size-error
+                 "The provider returned an SSE line above the configured limit."))
                (t
-                (push character characters))))))
+                (vector-push-extend character characters))))))
 
 (-> read-sse-data (stream) t)
 (defun read-sse-data (stream)
-  "Read one SSE event's joined data field from STREAM."
-  (let ((data-lines nil))
-    (loop
-      (let ((raw-line (sse-read-line stream)))
-        (when (eq raw-line *sse-end-of-stream*)
-          (return (if data-lines
-                      (format nil "~{~A~^~%~}" (nreverse data-lines))
-                      *sse-end-of-stream*)))
-        (let ((line (string-right-trim '(#\Return) raw-line)))
-          (when (zerop (length line))
-            (when data-lines
-              (return (format nil "~{~A~^~%~}" (nreverse data-lines)))))
-          (let ((data (sse-data-line line)))
-            (when data
-              (push data data-lines))))))))
+  "Read one bounded SSE event's joined data field from STREAM."
+  (let ((data-stream (make-string-output-stream))
+        (data-character-count 0)
+        (data-line-count 0))
+    (labels ((event-data ()
+               (if (plusp data-line-count)
+                   (get-output-stream-string data-stream)
+                   *sse-end-of-stream*)))
+      (loop
+        (let ((raw-line (sse-read-line stream)))
+          (when (eq raw-line *sse-end-of-stream*)
+            (return (event-data)))
+          (let ((line (string-right-trim '(#\Return) raw-line)))
+            (when (zerop (length line))
+              (when (plusp data-line-count)
+                (return (event-data))))
+            (let ((data (sse-data-line line)))
+              (when data
+                (let ((next-count (+ data-character-count
+                                     (if (plusp data-line-count) 1 0)
+                                     (length data))))
+                  (when (> next-count *sse-maximum-event-characters*)
+                    (sse--signal-size-error
+                     "The provider returned an SSE event above the configured limit."))
+                  (when (plusp data-line-count)
+                    (write-char #\Newline data-stream))
+                  (write-string data data-stream)
+                  (setf data-character-count next-count)
+                  (incf data-line-count))))))))))
 
 (-> response-header (t string) (option string))
 (defun response-header (headers name)
@@ -1189,7 +1225,7 @@ are decoded as UTF-8."
 (-> function-call-item-p (json-object) boolean)
 (defun function-call-item-p (item)
   "Return true when ITEM is a Responses function call."
-  (string= (or (json-get item "type") "") "function_call"))
+  (json-string= (json-get item "type") "function_call"))
 
 (-> provider--reasoning-summary-key (json-object) (option list))
 (defun provider--reasoning-summary-key (event)
@@ -1304,6 +1340,8 @@ are decoded as UTF-8."
   "Read one SSE payload and normalize transport EOF into a provider condition."
   (handler-case
       (read-sse-data stream)
+    (provider-error (condition)
+      (error condition))
     (end-of-file ()
       (provider--signal-stream-interruption
        headers
@@ -1508,18 +1546,18 @@ are decoded as UTF-8."
                       (type (and (json-object-p event)
                                  (json-get event "type"))))
                  (cond
-                   ((string= (or type "") "response.created")
+                  ((json-string= type "response.created")
                     (let ((response (json-get event "response")))
                       (when (json-object-p response)
                         (setf response-id (json-get response "id"))))
                     (funcall event-callback
                              (make-instance 'provider-progress-event)))
-                   ((string= (or type "") "response.output_text.delta")
+                  ((json-string= type "response.output_text.delta")
                     (funcall event-callback
                              (make-instance 'assistant-delta-event
                                             :text (or (json-get event "delta") ""))))
-                   ((string= (or type "")
-                             "response.reasoning_summary_text.delta")
+                  ((json-string=
+                    type "response.reasoning_summary_text.delta")
                     (let* ((delta (or (json-get event "delta") ""))
                            (next-key
                              (and (plusp (length delta))
@@ -1536,14 +1574,14 @@ are decoded as UTF-8."
                                 :text (if new-part-p
                                           (format nil "~2%~A" delta)
                                           delta)))))
-                   ((string= (or type "") "response.output_item.done")
+                  ((json-string= type "response.output_item.done")
                     (let ((item (json-get event "item")))
                       (when (json-object-p item)
                         (provider-normalize-output-item provider item)
                         (push item output-items)
                         (funcall event-callback
                                  (make-instance 'provider-item-event :item item)))))
-                   ((string= (or type "") "response.completed")
+                  ((json-string= type "response.completed")
                     (let ((response (json-get event "response")))
                       (when (json-object-p response)
                         (setf response-id (or (json-get response "id") response-id)
@@ -1559,15 +1597,14 @@ are decoded as UTF-8."
                                               :response-id response-id
                                               :usage usage
                                               :turn-completion turn-completion))))
-                   ((string= (or type "") "response.incomplete")
+                  ((json-string= type "response.incomplete")
                     (provider--signal-incomplete-response
                      event
                      :data data
                      :headers headers
                      :response-id response-id))
-                   ((and (stringp type)
-                         (member type '("response.failed" "error")
-                                 :test #'string=))
+                  ((json-string-member-p
+                    type '("response.failed" "error"))
                     (provider--signal-event-failure
                      event
                      :type type

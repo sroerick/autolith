@@ -157,6 +157,7 @@
     (test-openai-compatible-provider-authentication-bootstrap)
     (test-openai-compatible-provider-discovery)
     (test-openai-compatible-provider-registration-identity)
+     (test-provider-sse-bounds)
     (test-openai-compatible-provider)
     (test-fireworks-provider)
     (test-resource-protocol)

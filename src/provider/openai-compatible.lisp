@@ -222,17 +222,22 @@
     (call-with-credentials
      manager
      (lambda (credentials)
-       (multiple-value-bind (body status response-headers)
-           (dexador:get
-            endpoint
-            :headers
-            (openai-compatible--authenticated-headers
-             credentials
-             :accept "application/json"
-             :custom headers)
-            :force-string t
-            :connect-timeout 10
-            :read-timeout 30)
+        (multiple-value-bind (body status response-headers)
+            (handler-case
+                (dexador:get
+                 endpoint
+                 :headers
+                 (openai-compatible--authenticated-headers
+                  credentials
+                  :accept "application/json"
+                  :custom headers)
+                 :force-string t
+                 :connect-timeout 10
+                 :read-timeout 30)
+              (error ()
+                (error 'configuration-error
+                       :message
+                       "The model discovery endpoint could not be reached.")))
          (declare (ignore response-headers))
          (unless (and (integerp status) (<= 200 status 299))
            (error 'configuration-error
@@ -393,7 +398,7 @@ letters, digits, hyphens, and underscores on the wire."
 (defun openai-compatible--standalone-wire-tool (entry)
   "Normalize one standalone Responses function ENTRY for Chat Completions."
   (when (and (json-object-p entry)
-             (string= (or (json-get entry "type") "") "function")
+             (json-string= (json-get entry "type") "function")
              (non-empty-string-p (json-get entry "name")))
     (json-object
      "type" "function"
@@ -407,7 +412,7 @@ letters, digits, hyphens, and underscores on the wire."
          append
          (cond
            ((and (json-object-p entry)
-                 (string= (or (json-get entry "type") "") "namespace")
+                 (json-string= (json-get entry "type") "namespace")
                  (non-empty-string-p (json-get entry "name"))
                  (vectorp (json-get entry "tools")))
             (loop for tool across (json-get entry "tools")
@@ -429,16 +434,16 @@ letters, digits, hyphens, and underscores on the wire."
   "Translate one Responses content PART into a Chat Completions part."
   (let ((type (json-get part "type")))
     (cond
-      ((and (member type '("input_text" "output_text" "text" "refusal")
-                     :test #'string=)
+      ((and (json-string-member-p
+             type '("input_text" "output_text" "text" "refusal"))
             (stringp (json-get part "text")))
        (json-object "type" "text" "text" (json-get part "text")))
-      ((and (string= (or type "") "input_image")
+      ((and (json-string= type "input_image")
             (non-empty-string-p (json-get part "image_url")))
        (json-object
         "type" "image_url"
         "image_url" (json-object "url" (json-get part "image_url"))))
-      ((and (string= (or type "") "image_url")
+      ((and (json-string= type "image_url")
             (non-empty-string-p (json-get part "url")))
        (json-object
         "type" "image_url"
@@ -477,12 +482,12 @@ letters, digits, hyphens, and underscores on the wire."
 (defun openai-compatible--chat-message (item)
   "Translate a Responses message ITEM into a Chat Completions message."
   (let ((role (json-get item "role")))
-    (when (member role '("user" "assistant" "developer" "system")
-                  :test #'string=)
+    (when (json-string-member-p
+           role '("user" "assistant" "developer" "system"))
       (json-object
-       "role" (if (member role '("developer" "system") :test #'string=)
-                   "system"
-                   role)
+       "role" (if (json-string-member-p role '("developer" "system"))
+                  "system"
+                  role)
        "content" (openai-compatible--chat-content
                    (json-get item "content"))))))
 
@@ -520,9 +525,9 @@ letters, digits, hyphens, and underscores on the wire."
   "Translate one portable Responses input ITEM for Chat Completions."
   (when (json-object-p item)
     (cond
-      ((string= (or (json-get item "type") "") "message")
+      ((json-string= (json-get item "type") "message")
        (openai-compatible--chat-message item))
-      ((string= (or (json-get item "type") "") "function_call_output")
+      ((json-string= (json-get item "type") "function_call_output")
        (openai-compatible--chat-tool-output item))
       (t
        nil))))
@@ -668,8 +673,10 @@ letters, digits, hyphens, and underscores on the wire."
   "Mutable accumulator for one Chat Completions tool call."
   (index 0 :type (integer 0) :read-only t)
   (id nil :type (option string))
-  (name "" :type string)
-  (arguments "" :type string))
+  (name-stream (make-string-output-stream) :type stream :read-only t)
+  (name-character-count 0 :type (integer 0))
+  (arguments-stream (make-string-output-stream) :type stream :read-only t)
+  (arguments-character-count 0 :type (integer 0)))
 
 (-> openai-compatible--append-tool-delta
     (hash-table (integer 0) json-object)
@@ -693,15 +700,14 @@ letters, digits, hyphens, and underscores on the wire."
       (when (non-empty-string-p id)
         (setf (openai-compatible-tool-state-id state) id))
       (when (non-empty-string-p name)
-        (setf (openai-compatible-tool-state-name state)
-              (concatenate 'string
-                           (openai-compatible-tool-state-name state)
-                           name)))
+        (write-string name (openai-compatible-tool-state-name-stream state))
+        (incf (openai-compatible-tool-state-name-character-count state)
+              (length name)))
       (when (stringp arguments)
-        (setf (openai-compatible-tool-state-arguments state)
-              (concatenate 'string
-                           (openai-compatible-tool-state-arguments state)
-                           arguments))))
+        (write-string arguments
+                      (openai-compatible-tool-state-arguments-stream state))
+        (incf (openai-compatible-tool-state-arguments-character-count state)
+              (length arguments))))
     state))
 
 (-> openai-compatible--tool-delta-index (json-object (integer 0)) (integer 0))
@@ -737,15 +743,26 @@ letters, digits, hyphens, and underscores on the wire."
    :key #'openai-compatible-tool-state-index))
 
 (-> openai-compatible--function-call-item
-    (openai-compatible-tool-state)
+    (openai-compatible-tool-state t)
     json-object)
-(defun openai-compatible--function-call-item (state)
-  "Return one normalized Responses function-call item from STATE."
-  (json-object
-   "type" "function_call"
-   "call_id" (or (openai-compatible-tool-state-id state) (make-identifier))
-   "name" (openai-compatible-tool-state-name state)
-   "arguments" (or (openai-compatible-tool-state-arguments state) "{}")))
+(defun openai-compatible--function-call-item (state headers)
+  "Return one complete normalized Responses function-call item from STATE."
+  (let ((id (openai-compatible-tool-state-id state))
+        (name
+          (get-output-stream-string
+           (openai-compatible-tool-state-name-stream state)))
+        (arguments
+          (get-output-stream-string
+           (openai-compatible-tool-state-arguments-stream state))))
+    (unless (and (non-empty-string-p id) (non-empty-string-p name))
+      (provider--signal-stream-interruption
+       headers
+       "The provider returned an incomplete tool call."))
+    (json-object
+     "type" "function_call"
+     "call_id" id
+     "name" name
+     "arguments" (if (zerop (length arguments)) "{}" arguments))))
 
 (defmethod provider-normalize-output-item
     ((provider openai-compatible-provider) (item hash-table))
@@ -793,8 +810,12 @@ letters, digits, hyphens, and underscores on the wire."
                      :headers headers
                      :response-id response-id))
                   (when (json-object-p event)
-                    (setf response-id (or (json-get event "id") response-id)
-                          usage (or (json-get event "usage") usage))
+                    (let ((event-id (json-get event "id"))
+                          (event-usage (json-get event "usage")))
+                      (when (non-empty-string-p event-id)
+                        (setf response-id event-id))
+                      (when event-usage
+                        (setf usage event-usage)))
                     (let ((choices (json-get event "choices")))
                       (if (vectorp choices)
                           (loop for choice across choices
@@ -852,11 +873,12 @@ letters, digits, hyphens, and underscores on the wire."
       (let* ((states (openai-compatible--stream-tool-states tool-states))
              (tool-call-p
                (some (lambda (state)
-                       (non-empty-string-p
-                        (openai-compatible-tool-state-name state)))
+                       (plusp
+                        (openai-compatible-tool-state-name-character-count
+                         state)))
                      states)))
         (dolist (state states)
-          (let ((item (openai-compatible--function-call-item state)))
+          (let ((item (openai-compatible--function-call-item state headers)))
             (provider-normalize-output-item provider item)
             (push item output-items)))
         (setf output-items (nreverse output-items))
