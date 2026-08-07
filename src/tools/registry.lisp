@@ -207,8 +207,10 @@
 (defun tool-namespace-description (namespace)
   "Return the model-visible description of tool NAMESPACE."
   (cond
+    ((string= namespace "resource")
+     "Revision-gated observation and structured editing of model-addressable resources.")
     ((string= namespace "fs")
-     "Workspace file reading and listing.")
+     "Workspace file reading, listing, complete writes, and compatibility editing.")
     ((string= namespace "search")
      "Fast indexed workspace path and content discovery through fff.")
     ((string= namespace "shell")

@@ -828,12 +828,23 @@ ambiguous prefixes instead of guessing.
 
 * Workspace, search, memory, agenda, Lisp, and self tools
 
-The =fs.*= and =shell.*= tools cover everyday workspace work: =fs.read=
-returns numbered file lines from an optional window, =fs.list= lists one
-directory with entry kinds and sizes, =fs.write= creates or replaces a file,
-=fs.edit= prefers exact text with a uniqueness check and can conservatively
-normalize a unique multiline line-ending or uniform-indentation mismatch, and
-=shell.run= executes one external command with a bounded timeout and combined output.
+For an existing UTF-8 workspace file, =resource.read= returns a bounded numbered
+window together with a canonical =workspace:= URI, an opaque conversation-local
+revision, visible line ranges, and explicit elisions. =resource.edit= applies one
+or more non-overlapping =replace-lines=, =insert-before=, =insert-after=, or
+=delete-lines= operations against the original observed line numbers. It rejects
+unseen lines and stale or expired revisions before atomically replacing the file.
+Use =replace-empty= to populate an observed empty file. Exact snapshots are
+bounded, transient, and never written into conversation history. Mixed LF and
+CRLF files require deliberate normalization or exact =fs.edit= use.
+
+The =fs.*= and =shell.*= tools cover remaining everyday workspace work:
+=fs.read= returns numbered file lines from an optional window, =fs.list= lists
+one directory with entry kinds and sizes, =fs.write= creates or replaces a file,
+=fs.edit= remains an exact-text compatibility editor with a uniqueness check and
+can conservatively normalize a unique multiline line-ending or
+uniform-indentation mismatch, and =shell.run= executes one external command with
+a bounded timeout and combined output.
 Unknown commands ask before execution. Allowing once or permanently runs the
 command with an isolated network and a read-only host filesystem except for the
 workspace and temporary directories. A permanent approval matches the exact

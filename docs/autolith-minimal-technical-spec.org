@@ -329,6 +329,24 @@ unsupported operations, and stale revisions are distinct structured failures.
 The protocol does not itself expose model-facing tools or grant filesystem,
 agenda, memory, network, or active-image authority.
 
+The initial =workspace:= resource resolver reuses the ordinary workspace path,
+readable-root, symlink, and protected-artifact boundaries. =resource.read=
+returns a bounded numbered line window, canonical URI, transient opaque revision,
+visible ranges, and explicit elisions. The complete exact UTF-8 snapshot is kept
+only in bounded process memory for that conversation and is never persisted.
+=resource.edit= accepts non-overlapping structured operations against original
+snapshot line numbers. Every touched or anchor line must have been visible under
+the supplied revision. It validates all operations before writing, rejects stale
+or expired observations, serializes native =resource.edit=, =fs.edit=, and
+=fs.write= mutations, rechecks exact content immediately before publication,
+preserves uniform LF or CRLF style and final-newline state, refuses mixed line
+endings, and atomically renames a same-directory replacement while retaining the
+existing protected-path policy. The revision gate serializes Autolith writers and
+rechecks immediately before publication; portable filesystems provide no
+cross-process compare-and-swap rename, so an unrelated external writer can still
+race after that final check. Existing =fs.write= and =fs.edit= remain available
+for complete replacement and compatibility.
+
 ** 5.1 =lisp.*=
 
 =lisp.*= tools operate only in named, heap-isolated Lisp workers. Operations

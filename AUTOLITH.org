@@ -93,6 +93,32 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: the provider supplies a native structured patch protocol
   with equal or stronger uniqueness, line-ending, and indentation safeguards.
 
+** Revision-gated workspace resources
+
+- Problem: exact-text editing requires models to reproduce existing source,
+  indentation, and line endings, causing avoidable retries and output token use.
+  Independent tool calls could also edit content that changed after inspection.
+- Behavior: =resource.read= establishes a bounded, transient, conversation-local
+  snapshot alias for an exact =workspace:= file revision and records only lines
+  fully shown to the model. =resource.edit= applies validated non-overlapping
+  operations against original snapshot line numbers, rejects unseen or stale
+  content, serializes native resource and filesystem mutations, preserves uniform
+  line endings and final-newline state, and atomically replaces the file. It
+  rechecks immediately before publication, while documenting the unavoidable
+  final-check race with unrelated external writers. Existing =fs.edit= stays
+  available as a compatibility path.
+- Scope and location: tracked project work in =src/resource/=,
+  =src/conversation/store.lisp=, =src/tools/defaults.lisp=, and the resource
+  schemas, prompt, specification, guide, and regressions.
+- Verification: URI confinement, observation isolation and expiry, visible-range
+  gating, original-snapshot multi-operation edits, stale and protected paths,
+  bounded regular UTF-8 snapshots, empty files, atomic publish failures, line
+  endings, schemas, and compatibility regressions pass within the complete
+  3,461-test repository check.
+- Removal condition: a provider-native editing protocol supplies the same exact
+  revision, visibility, authority, atomicity, and recovery guarantees with lower
+  harness complexity.
+
 ** Actionable public Nix smoke annotations
 
 - Problem: unauthenticated GitHub Actions logs were unavailable, and generic

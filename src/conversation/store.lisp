@@ -84,6 +84,24 @@
     :type list
     :documentation
     "Request-local provider items and owned attachments awaiting one response.")
+   (resource-observations
+    :initform (make-hash-table :test #'equal)
+    :reader conversation-resource-observations
+    :type hash-table
+    :documentation
+    "Transient model-visible resource revisions keyed by opaque alias.")
+   (resource-observation-order
+    :initform nil
+    :accessor conversation-resource-observation-order
+    :type list
+    :documentation
+    "Oldest-first aliases bounding transient resource observation retention.")
+   (resource-observation-lock
+    :initform (make-recursive-lock "Autolith resource observations")
+    :reader conversation-resource-observation-lock
+    :type t
+    :documentation
+    "The lock serializing transient resource observations and gated edits.")
    (input-item-families
     :initform (make-hash-table :test #'eq)
     :reader conversation-input-item-families

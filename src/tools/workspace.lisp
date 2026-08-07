@@ -79,6 +79,10 @@
 (defparameter *workspace-tool-readable-roots* nil
   "Optional pathname roots confining workspace-tool reads for the current call.")
 
+(defvar *workspace-file-mutation-lock*
+  (make-recursive-lock "Autolith workspace file mutations")
+  "Serialize native workspace file writes and revision-gated publication.")
+
 
 ;;;; -- Path Resolution --
 
@@ -472,25 +476,26 @@ is retained whenever the configured maximum can contain the fixed metadata."
       (error 'tool-error
              :message "fs.write requires string content."
              :tool-name "fs.write"))
-    (cond
-      ((workspace-tool-protected-path-p context path)
-       (tool-failure (workspace-tool-protection-notice context path)))
-      ((uiop:directory-exists-p path)
-       (tool-failure (format nil "~A is a directory." path)))
-      (t
-       (let ((existed-p (and (probe-file path) t)))
-         (ensure-directories-exist path)
-         (with-open-file (stream path
-                                 :direction :output
-                                 :if-exists :supersede
-                                 :if-does-not-exist :create
-                                 :external-format :utf-8)
-           (write-string content stream))
-         (tool-success
-          (format nil "~:[Created~;Replaced~] ~A with ~:D character~:P."
-                  existed-p
-                  path
-                  (length content))))))))
+    (with-recursive-lock-held (*workspace-file-mutation-lock*)
+      (cond
+        ((workspace-tool-protected-path-p context path)
+         (tool-failure (workspace-tool-protection-notice context path)))
+        ((uiop:directory-exists-p path)
+         (tool-failure (format nil "~A is a directory." path)))
+        (t
+         (let ((existed-p (and (probe-file path) t)))
+           (ensure-directories-exist path)
+           (with-open-file (stream path
+                                   :direction :output
+                                   :if-exists :supersede
+                                   :if-does-not-exist :create
+                                   :external-format :utf-8)
+             (write-string content stream))
+           (tool-success
+            (format nil "~:[Created~;Replaced~] ~A with ~:D character~:P."
+                    existed-p
+                    path
+                    (length content)))))))))
 
 (defmethod tool-execute ((tool fs-edit-tool)
                          (context tool-context)
@@ -506,7 +511,8 @@ is retained whenever the configured maximum can contain the fixed metadata."
       (error 'tool-error
              :message "fs.edit requires string old-text and new-text."
              :tool-name "fs.edit"))
-    (cond
+    (with-recursive-lock-held (*workspace-file-mutation-lock*)
+      (cond
       ((zerop (length old-text))
        (tool-failure "fs.edit requires non-empty old-text."))
       ((workspace-tool-protected-path-p context path)
@@ -555,7 +561,7 @@ is retained whenever the configured maximum can contain the fixed metadata."
                      (if replace-all
                          occurrences
                          1)
-                     path)))))))))
+                     path))))))))))
 
 (defmethod tool-execute ((tool shell-run-tool)
                          (context tool-context)

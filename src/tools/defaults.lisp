@@ -44,70 +44,158 @@
              "The pristine or saved worker image; defaults to pristine.")))
     (tool-object-schema properties nil)))
 
+(-> default-tools--resource-operation-schema () json-object)
+(defun default-tools--resource-operation-schema ()
+  "Return the closed operation variants accepted by resource.edit."
+  (labels ((line-property (description)
+             "Return one positive original-snapshot line schema."
+             (json-object "type" "integer"
+                          "minimum" 1
+                          "description" description))
+
+           (operation-schema (name properties required)
+             "Return one closed resource edit operation variant."
+             (setf (gethash "op" properties)
+                   (json-object "type" "string"
+                                "enum" (vector name)))
+             (tool-object-schema properties (cons "op" required))))
+    (json-object
+     "description"
+     "One structured operation against original observed line numbers."
+     "oneOf"
+     (vector
+      (operation-schema
+       "replace-lines"
+       (json-object
+        "start-line" (line-property "First original line to replace.")
+        "end-line" (line-property "Last original line to replace.")
+        "content" (tool-string-property "Replacement text, which may be empty."))
+       '("start-line" "end-line" "content"))
+      (operation-schema
+       "delete-lines"
+       (json-object
+        "start-line" (line-property "First original line to delete.")
+        "end-line" (line-property "Last original line to delete."))
+       '("start-line" "end-line"))
+      (operation-schema
+       "insert-before"
+       (json-object
+        "line" (line-property "Visible original line before which to insert.")
+        "content" (tool-string-property "Non-empty text to insert."))
+       '("line" "content"))
+      (operation-schema
+       "insert-after"
+       (json-object
+        "line" (line-property "Visible original line after which to insert.")
+        "content" (tool-string-property "Non-empty text to insert."))
+       '("line" "content"))
+      (operation-schema
+       "replace-empty"
+       (json-object
+        "content" (tool-string-property
+                   "Non-empty complete content for an observed empty file."))
+       '("content"))))))
+
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
-  "Register the default filesystem tools in REGISTRY."
-  (dolist
-      (specification
-       (list
-        (list
-         'fs-read-tool
-         "fs" "read"
-         "Read one workspace file, returning numbered lines from an optional window."
-         (tool-object-schema
-          (json-object
-           "path" (tool-string-property
-                   "The file path, absolute or workspace-relative.")
-           "start-line" (tool-integer-property
-                         "The first line to return, starting at 1.")
-           "line-count" (tool-integer-property
-                         "How many lines to return; default 400."))
-          '("path")))
-        (list
-         'fs-view-image-tool
-         "fs" "view-image"
-         "View a local image file when visual inspection is needed. The image is returned directly to the model."
-         (tool-object-schema
-          (json-object
-           "path" (tool-string-property
-                   "The image path, absolute or workspace-relative."))
-          '("path")))
-        (list
-         'fs-list-tool
-         "fs" "list"
-         "List one workspace directory's entries with kinds and byte sizes."
-         (tool-object-schema
-          (json-object
-           "path" (tool-string-property
-                   "The directory path; defaults to the workspace."))
-          nil))
-        (list
-         'fs-write-tool
-         "fs" "write"
-         "Create or replace one workspace file with the supplied content."
-         (tool-object-schema
-          (json-object
-           "path" (tool-string-property
-                   "The file path, absolute or workspace-relative.")
-           "content" (tool-string-property
-                      "The complete new file content."))
-          '("path" "content")))
-        (list
-         'fs-edit-tool
-         "fs" "edit"
-         "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read."
-         (tool-object-schema
-          (json-object
-           "path" (tool-string-property
-                   "The file path, absolute or workspace-relative.")
-           "old-text" (tool-string-property
-                       "The existing text to replace. Preserve exact indentation and newlines when possible, include enough context to be unique, and never include fs.read line-number prefixes.")
-           "new-text" (tool-string-property
-                       "The replacement text, using the file's exact indentation style.")
-           "replace-all" (tool-boolean-property
-                          "Replace every exact occurrence. Relaxed multiline matching always requires one unique candidate."))
-          '("path" "old-text" "new-text")))))
-    (default-tools--register registry specification))
+  "Register the default resource and filesystem tools in REGISTRY."
+  (let ((resource-registry (tool-registry-resource-registry registry)))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'workspace-file-resolver :scheme "workspace"))
+    (dolist
+        (specification
+         (list
+          (list
+           'resource-read-tool
+           "resource" "read"
+           "Read a bounded line window from a workspace: URI. Returns a canonical URI, opaque revision, numbered content, visible ranges, and elisions; this observation is required by resource.edit."
+           (tool-object-schema
+            (json-object
+             "uri" (tool-string-property
+                    "The workspace: URI to read, for example workspace:src/main.lisp.")
+             "start-line" (tool-integer-property
+                           "The first line to return, starting at 1.")
+             "line-count" (tool-integer-property
+                           "How many lines to return; default 400, maximum 1000."))
+            '("uri"))
+           :resource-registry resource-registry)
+          (list
+           'resource-edit-tool
+           "resource" "edit"
+           "Edit an existing workspace: file at an exact observed revision using structured original-line operations. Every touched or anchor line must have been visible under that revision; stale or expired revisions require a reread."
+           (tool-object-schema
+            (json-object
+             "uri" (tool-string-property
+                    "The canonical workspace: URI returned by resource.read.")
+             "base-revision" (tool-string-property
+                              "The opaque revision returned by resource.read.")
+             "operations" (json-object
+                           "type" "array"
+                           "description"
+                           "Non-overlapping operations addressing original snapshot line numbers."
+                           "minItems" 1
+                           "items" (default-tools--resource-operation-schema)))
+            '("uri" "base-revision" "operations"))
+           :resource-registry resource-registry)
+          (list
+           'fs-read-tool
+           "fs" "read"
+           "Read one workspace file, returning numbered lines from an optional window."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The file path, absolute or workspace-relative.")
+             "start-line" (tool-integer-property
+                           "The first line to return, starting at 1.")
+             "line-count" (tool-integer-property
+                           "How many lines to return; default 400."))
+            '("path")))
+          (list
+           'fs-view-image-tool
+           "fs" "view-image"
+           "View a local image file when visual inspection is needed. The image is returned directly to the model."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The image path, absolute or workspace-relative."))
+            '("path")))
+          (list
+           'fs-list-tool
+           "fs" "list"
+           "List one workspace directory's entries with kinds and byte sizes."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The directory path; defaults to the workspace."))
+            nil))
+          (list
+           'fs-write-tool
+           "fs" "write"
+           "Create or replace one workspace file with the supplied content."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The file path, absolute or workspace-relative.")
+             "content" (tool-string-property
+                        "The complete new file content."))
+            '("path" "content")))
+          (list
+           'fs-edit-tool
+           "fs" "edit"
+           "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The file path, absolute or workspace-relative.")
+             "old-text" (tool-string-property
+                         "The existing text to replace. Preserve exact indentation and newlines when possible, include enough context to be unique, and never include fs.read line-number prefixes.")
+             "new-text" (tool-string-property
+                         "The replacement text, using the file's exact indentation style.")
+             "replace-all" (tool-boolean-property
+                            "Replace every exact occurrence. Relaxed multiline matching always requires one unique candidate."))
+            '("path" "old-text" "new-text")))))
+      (default-tools--register registry specification)))
   registry)
 
 (-> default-tools--register-shell (tool-registry) tool-registry)
