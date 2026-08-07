@@ -31,9 +31,9 @@ a user-local init.lisp change, or a private image commit.
   to Clinedi. It collects bounded literal Ctrl-V and raw multiline byte bursts as
   paste events, while buffering ordinary multi-key bursts for normal decoding.
   Partial protocol activation performs balanced best-effort cleanup. Terminal mode
-  detection uses the input file descriptor, so stopping and restarting the UI for
-  line-oriented secret prompts remains interactive even when the Lisp stream
-  wrapper reports noninteractive.
+  detection checks the input file descriptor's POSIX TTY status before inspecting
+  termios, so stopping and restarting the UI for line-oriented secret prompts
+  remains interactive even when the Lisp stream wrapper reports noninteractive.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
   =src/terminal/protocol.lisp=, =src/terminal/stream.lisp=, and
   =src/localgroup/terminal.lisp=.

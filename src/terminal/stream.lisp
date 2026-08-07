@@ -88,21 +88,26 @@
           pending
           (listen (stream-terminal-input-stream terminal)))))))
 
+(-> terminal--interactive-file-descriptor-p (integer) boolean)
+(defun terminal--interactive-file-descriptor-p (file-descriptor)
+  "Return true when FILE-DESCRIPTOR names an interactive terminal."
+  (and (not (minusp file-descriptor))
+       (let ((result (sb-unix:unix-isatty file-descriptor)))
+         (and result (plusp result)))))
+
 (-> terminal--terminal-mode-or-nil (stream-terminal) t)
 (defun terminal--terminal-mode-or-nil (terminal)
   "Return TERMINAL's termios value, or NIL when its input is not interactive."
   (let ((file-descriptor (stream-terminal-input-file-descriptor terminal)))
-    (when (minusp file-descriptor)
+    (unless (terminal--interactive-file-descriptor-p file-descriptor)
       (return-from terminal--terminal-mode-or-nil nil))
     (handler-case
         (sb-posix:tcgetattr file-descriptor)
       (sb-posix:syscall-error (condition)
-        (if (= (sb-posix:syscall-errno condition) sb-posix:enotty)
-            nil
-            (error 'terminal-error
-                   :message "Could not inspect terminal input mode."
-                   :operation ':start
-                   :cause condition))))))
+        (error 'terminal-error
+               :message "Could not inspect terminal input mode."
+               :operation ':start
+               :cause condition)))))
 
 (-> terminal--configure-input-mode (sb-posix:termios) sb-posix:termios)
 (defun terminal--configure-input-mode (mode)

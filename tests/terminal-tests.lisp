@@ -2109,6 +2109,8 @@ sources keeps the tests deterministic under an interactive terminal."
 (-> test-terminal-non-tty-fallback () null)
 (defun test-terminal-non-tty-fallback ()
   "Test line-oriented fallback input and output on a non-TTY descriptor."
+  (test-assert (not (terminal--interactive-file-descriptor-p -1))
+               "a missing descriptor is not interactive")
   (let ((terminal
           (stream-terminal-create
            :input-stream (make-string-input-stream "")
@@ -2120,6 +2122,12 @@ sources keeps the tests deterministic under an interactive terminal."
     (test-assert (not (terminal-interactive-p terminal))
                  "a noninteractive stream selects fallback mode")
     (terminal-stop terminal))
+  (let ((null-descriptor (sb-posix:open "/dev/null" sb-posix:o-rdonly)))
+    (unwind-protect
+         (test-assert
+          (not (terminal--interactive-file-descriptor-p null-descriptor))
+          "/dev/null is not an interactive terminal")
+      (sb-posix:close null-descriptor)))
   (multiple-value-bind (read-descriptor write-descriptor)
       (sb-posix:pipe)
     (unwind-protect
