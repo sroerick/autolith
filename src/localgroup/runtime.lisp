@@ -94,6 +94,22 @@
   (merge-pathnames (make-pathname :name session-id :type "sexp")
                    (localgroup-registry-directory configuration)))
 
+(-> localgroup-session-identifier-generate (configuration timestamp) string)
+(defun localgroup-session-identifier-generate (configuration timestamp)
+  "Allocate one canonical timestamp-bearing identifier for a local process session."
+  (let ((directory (localgroup-registry-directory configuration)))
+    (ensure-directories-exist directory)
+    (identifier-generate
+     :timestamp timestamp
+     :namespace (namestring directory)
+     :occupied-p
+     (lambda (candidate)
+       (not
+        (null
+         (probe-file
+          (localgroup-registry-pathname configuration candidate))))))))
+
+
 (-> localgroup--registry-record (localgroup-session) list)
 (defun localgroup--registry-record (session)
   "Return SESSION's private endpoint discovery record."
@@ -652,6 +668,7 @@ Optional identity values preserve one session across quiescence or process hando
          (identifier (or identifier (getf startup-values :session-id)))
          (token (or token (getf startup-values :token)))
          (created-at (or created-at (getf startup-values :created-at)))
+         (configuration (application-configuration application))
          (listener (make-instance 'sb-bsd-sockets:inet-socket
                                   :type ':stream
                                   :protocol ':tcp))
@@ -668,22 +685,29 @@ Optional identity values preserve one session across quiescence or process hando
            (multiple-value-bind (address port)
                (sb-bsd-sockets:socket-name listener)
              (declare (ignore address))
-             (let* ((identifier (or identifier (localgroup-random-session-id)))
-                    (token (or token (localgroup-random-token)))
-                    (created-at (or created-at (get-universal-time)))
-                    (configuration (application-configuration application)))
-               (setf session
-                     (make-instance
-                      'localgroup-session
-                      :application application
-                      :identifier identifier
-                      :token token
-                      :listener listener
-                      :port port
-                      :registry-pathname
-                      (localgroup-registry-pathname configuration identifier)
-                      :created-at created-at)
-                     (application-localgroup-session application) session)
+              (let* ((created-at
+                       (or created-at
+                           (and identifier
+                                (localgroup-session-identifier-timestamp identifier))
+                           (get-universal-time)))
+                     (identifier
+                       (localgroup-session-identifier-normalize
+                        (or identifier
+                            (localgroup-session-identifier-generate
+                             configuration created-at))))
+                     (token (or token (localgroup-random-token))))
+                (setf session
+                      (make-instance
+                       'localgroup-session
+                       :application application
+                       :identifier identifier
+                       :token token
+                       :listener listener
+                       :port port
+                       :registry-pathname
+                       (localgroup-registry-pathname configuration identifier)
+                       :created-at created-at)
+                      (application-localgroup-session application) session)
                (let ((terminal
                        (terminal-ui-terminal (application-ui application)))
                      (controller (application-input-controller application)))

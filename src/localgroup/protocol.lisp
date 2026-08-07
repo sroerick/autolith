@@ -76,8 +76,51 @@
 
 (-> localgroup-random-session-id () string)
 (defun localgroup-random-session-id ()
-  "Return a concise process-local session identifier."
+  "Return a fresh hexadecimal nonce for private handoff pathnames."
   (subseq (localgroup--hex-string (random-data 8)) 0 12))
+
+(-> localgroup--legacy-session-identifier-p (t) boolean)
+(defun localgroup--legacy-session-identifier-p (value)
+  "Return true when VALUE is one former twelve-character hexadecimal session ID."
+  (not
+   (null
+    (and (stringp value)
+         (= (length value) 12)
+         (every (lambda (character) (digit-char-p character 16)) value)))))
+
+(-> localgroup-session-identifier-normalize (t) string)
+(defun localgroup-session-identifier-normalize (value)
+  "Return VALUE's canonical localgroup session identifier.
+
+Canonical idsmall identifiers accept their visual hyphen. Former hexadecimal
+session identifiers remain accepted for discovery and detached handoff."
+  (handler-case
+      (identifier-normalize value)
+    (identifier-error ()
+      (if (localgroup--legacy-session-identifier-p value)
+          (string-downcase value)
+          (error 'localgroup-error
+                 :message
+                 "A localgroup session identifier must be a seven-character Bitcoin Base58 identifier, with an optional hyphen after the first, or a legacy twelve-character hexadecimal identifier."
+                 :operation ':arguments
+                 :session-id (and (stringp value) value))))))
+
+(-> localgroup-session-identifier-display (string) string)
+(defun localgroup-session-identifier-display (identifier)
+  "Return IDENTIFIER in readable canonical form, retaining legacy IDs plainly."
+  (handler-case
+      (identifier-display identifier)
+    (identifier-error ()
+      (if (localgroup--legacy-session-identifier-p identifier)
+          (string-downcase identifier)
+          identifier))))
+
+(-> localgroup-session-identifier-timestamp (string) (option timestamp))
+(defun localgroup-session-identifier-timestamp (identifier)
+  "Return the timestamp encoded by canonical IDENTIFIER, or NIL for legacy IDs."
+  (handler-case
+      (idsmall:identifier-timestamp identifier)
+    (identifier-error () nil)))
 
 (-> localgroup--packet-payload (list) string)
 (defun localgroup--packet-payload (packet)

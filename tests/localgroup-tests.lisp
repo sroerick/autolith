@@ -72,9 +72,97 @@
     (terminal-stop relay))
   nil)
 
+(-> test-localgroup-session-identifiers () null)
+(defun test-localgroup-session-identifiers ()
+  "Test canonical timestamp-bearing IDs and retained legacy discovery behavior."
+  (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
+         (canonical (identifier-from-seed timestamp 0))
+         (display (identifier-display canonical))
+         (legacy "ABCDEF012345"))
+    (test-assert
+     (and (string= (localgroup-session-identifier-normalize display) canonical)
+          (string= (localgroup-session-identifier-display canonical) display)
+          (= (localgroup-session-identifier-timestamp canonical) timestamp)
+          (null (localgroup-session-identifier-timestamp legacy)))
+     "localgroup canonical identifiers normalize, display, and recover their timestamp")
+    (test-assert
+     (and (string= (localgroup-session-identifier-normalize legacy)
+                   "abcdef012345")
+          (string= (localgroup-session-identifier-display legacy)
+                   "abcdef012345"))
+     "localgroup retains lowercase-normalized legacy hexadecimal identifiers")
+    (let ((configuration (test-configuration)))
+      (unwind-protect
+           (progn
+             (configuration-ensure-directories configuration)
+             (let ((first nil)
+                   (second nil)
+                   (namespace
+                     (namestring (localgroup-registry-directory configuration))))
+               (unwind-protect
+                    (let ((*random-index-function* (lambda (limit)
+                                                      (declare (ignore limit))
+                                                      0)))
+                      (setf first
+                            (localgroup-session-identifier-generate
+                             configuration timestamp)
+                            second
+                            (localgroup-session-identifier-generate
+                             configuration timestamp))
+                      (test-assert
+                       (and (identifier-p first)
+                            (identifier-p second)
+                            (not (string= first second))
+                            (= (localgroup-session-identifier-timestamp first)
+                               timestamp))
+                       "new localgroup process sessions receive unique timestamp-bearing identifiers"))
+                 (when first
+                   (idsmall:identifier-release first :namespace namespace))
+                 (when second
+                   (idsmall:identifier-release second :namespace namespace))))
+             (let ((pathname
+                     (localgroup-registry-pathname configuration "abcdef012345")))
+               (snapshot-write
+                pathname
+                (list :localgroup-endpoint
+                      :version *localgroup-registry-version*
+                      :session-id "abcdef012345"
+                      :pid 1
+                      :address "127.0.0.1"
+                      :port 1
+                      :token "legacy-token"
+                      :created-at timestamp))
+               (test-assert
+                (string=
+                 (localgroup--record-session-id
+                  (rest
+                   (localgroup--find-record configuration "ABCDEF012345")))
+                 "abcdef012345")
+                "legacy hexadecimal identifiers remain discoverable through normalized input")))
+               (test-assert
+                (localgroup-handoff--record-p
+                 (list :localgroup-handoff
+                       :version *localgroup-handoff-version*
+                       :session-id "abcdef012345"
+                       :token "legacy-token"
+                       :created-at timestamp
+                       :mode ':detach
+                       :state ':pending
+                       :fresh-conversation-p nil
+                       :old-pid 1
+                       :replacement-pid nil
+                       :conversation-id canonical
+                       :draft ""))
+                "legacy session identifiers remain valid in detached handoff records")
+        (uiop:delete-directory-tree (test-configuration-root configuration)
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
 (-> test-localgroup-protocol () null)
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
+  (test-localgroup-session-identifiers)
   (let* ((text
            (concatenate 'string
                         "first"
@@ -143,23 +231,44 @@
           (ignore-errors (close input)))
         (ignore-errors (sb-posix:close read-descriptor))
         (ignore-errors (sb-posix:close write-descriptor)))))
-  (let* ((status
-           (list :localgroup-status
-                 :session-id "ABC123"
-                 :state ':idle
-                 :conversation-display-id "new"
-                 :queued-input-count 0
-                 :steering-input-count 0
-                 :task-live-count 0
-                 :cwd "/tmp/example"))
-         (output
-           (with-output-to-string (stream)
-             (localgroup-print-statuses (list status) :stream stream))))
-    (test-assert
-     (and (search "SESSION" output)
-          (search "ABC123" output)
-          (search "/tmp/example" output))
-     "localgroup status renders a nonempty human-readable table"))
+    (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
+           (status
+             (list :localgroup-status
+                   :session-id (identifier-from-seed timestamp 0)
+                   :state ':idle
+                   :created-at timestamp
+                   :conversation-display-id "n-ew1234"
+                   :queued-input-count 0
+                   :steering-input-count 0
+                   :task-live-count 0
+                   :cwd "/tmp/example"))
+           (plain-output
+             (with-output-to-string (stream)
+               (localgroup-print-statuses
+                (list status) :stream stream :styled-p nil :columns 80)))
+           (styled-output
+             (with-output-to-string (stream)
+               (localgroup-print-statuses
+                (list status) :stream stream :styled-p t :columns 80)))
+           (narrow-output
+             (with-output-to-string (stream)
+               (localgroup-print-statuses
+                (list status) :stream stream :styled-p nil :columns 24))))
+      (test-assert
+       (and (search "┌" plain-output)
+            (search (identifier-display (getf (rest status) :session-id)) plain-output)
+            (search "/tmp/example" plain-output)
+            (not (search (string #\Escape) plain-output)))
+       "localgroup status renders a plain box-drawing table without ANSI controls")
+      (test-assert
+       (and (search (terminal-style-sequence ':brand) styled-output)
+            (search (terminal-style-sequence ':success) styled-output))
+       "localgroup status applies semantic ANSI styles only when requested")
+      (test-assert
+       (and (search "2025-01-02T03:04Z" styled-output)
+            (every (lambda (line) (<= (text-cell-width line) 24))
+                   (uiop:split-string narrow-output :separator '(#\Newline))))
+       "localgroup status exposes encoded start times and fits narrow terminals"))
   (let ((*standard-input* (make-string-input-stream ""))
         (*standard-output* (make-string-output-stream)))
     (test-assert
@@ -199,25 +308,29 @@
                      (localgroup-session-token session)
                      ':status))
                   (status (getf (rest response) :status)))
-             (test-assert (localgroup--endpoint-record-p record)
-                          "localgroup start publishes one valid private record")
-             (test-assert
-              (and (eq (first response) ':ok)
-                   (string= (getf (rest status) :session-id)
-                            (localgroup-session-identifier session))
-                   (getf (rest status) :idle-p)
-                   (getf (rest status) :waiting-for-input-p)
-                   (zerop (getf (rest status) :task-live-count)))
-              "an empty controller with no child work is strictly idle")
-             (test-assert
-              (eq
-               (first
-                (localgroup-call
-                 (localgroup-session-port session)
-                 "wrong-token"
-                 ':status))
-               ':error)
-              "an invalid capability token receives no successful status"))
+               (test-assert (localgroup--endpoint-record-p record)
+                            "localgroup start publishes one valid private record")
+               (test-assert
+                (and (eq (first response) ':ok)
+                     (identifier-p (localgroup-session-identifier session))
+                     (= (localgroup-session-identifier-timestamp
+                         (localgroup-session-identifier session))
+                        (localgroup-session-created-at session))
+                     (string= (getf (rest status) :session-id)
+                              (localgroup-session-identifier session))
+                     (getf (rest status) :idle-p)
+                     (getf (rest status) :waiting-for-input-p)
+                     (zerop (getf (rest status) :task-live-count)))
+                "new localgroup endpoints publish their canonical timestamp-bearing identity")
+               (test-assert
+                (eq
+                 (first
+                  (localgroup-call
+                   (localgroup-session-port session)
+                   "wrong-token"
+                   ':status))
+                 ':error)
+                "an invalid capability token receives no successful status"))
            (let ((identifier (localgroup-session-identifier session))
                  (token (localgroup-session-token session))
                  (created-at (localgroup-session-created-at session)))
