@@ -72,8 +72,8 @@
   :version "git-58ba29a8dd8d06417452b7978748c3d453bc3287"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/sexp-config.git" :ref "53322544c1b2844cc3e2f5f70f5d9102e59bd268")
-  :version "git-53322544c1b2844cc3e2f5f70f5d9102e59bd268"))
+  :initargs (:remote-url "https://github.com/luciusmagn/sexp-config.git" :ref "f3697d1e97b6b6e7ad1430d236e3706b377277cc")
+  :version "git-f3697d1e97b6b6e7ad1430d236e3706b377277cc"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/sexp-store.git" :ref "0a586df98c295ca6d2fcd47e33bc5f478075f470")

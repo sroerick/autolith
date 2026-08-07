@@ -107,6 +107,7 @@
                 #:read-source
                 #:sexp-config-error
                 #:sexp-config-error-kind
+                #:sexp-config-error-line
                 #:sexp-config-error-message
                 #:source-grammar
                 #:validate-tree)
