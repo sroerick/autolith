@@ -263,7 +263,8 @@ can answer that, so the event carries it. A job of another class is ignored."
 (-> task-orchestrator-close (task-orchestrator) boolean)
 (defun task-orchestrator-close (orchestrator)
   "Cancel all children, stop the pool's threads, and report complete shutdown."
-  (job-pool-close (task-orchestrator-pool orchestrator)))
+  (let ((cl-jobpond:*shutdown-timeout-seconds* *task-shutdown-timeout-seconds*))
+    (job-pool-close (task-orchestrator-pool orchestrator))))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
 (defun task-orchestrator-detach (orchestrator)
@@ -374,8 +375,12 @@ pool's own JOB-TERMINAL-P."
   "Return the name JOB is presented under in results and transcripts.
 
 A child admitted with a name keeps it; one named for it falls back to its
-identifier, which is generated to be readable for this reason."
-  (or (job-name job) (job-identifier job)))
+identifier, which is generated to be readable for this reason. A caller-supplied
+name is bounded here, because only the identifier derived from it was."
+  (let ((name (job-name job)))
+    (if name
+        (subseq name 0 (min (length name) *task-identifier-maximum-characters*))
+        (job-identifier job))))
 
 (-> task-job-identity (task-job) list)
 (defun task-job-identity (job)
