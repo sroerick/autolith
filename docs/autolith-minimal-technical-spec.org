@@ -365,19 +365,47 @@ operations under the same lock. =*agenda-lock*= serializes same-process Autolith
 operations only and provides no interprocess coordination or lost-update
 guarantee.
 
-The read-only =memory:= resolver exposes =memory:relevant=,
-=memory:workspace=, and =memory:global= collections plus =memory:<stable-id>=
-for one exact active memory. Collection visibility reuses the current
-configuration and existing memory scope rules. Exact identifiers preserve
-=memory.read= semantics and may read an active memory regardless of its scope.
-The resolver denies task child-agent contexts and never exposes the underlying
-=memories.sexp= log. =resource.read= returns each collection completely with
-metadata and bounded excerpts, or one exact memory with full content and
-metadata, and retains an exact content-addressed snapshot including empty
-collections. Memory revision aliases are transient, conversation-local, and
-expire independently of workspace and agenda observations. =memory.*= tools
-remain the only memory mutation and lexical-search interface; =resource.edit=
-does not mutate memory resources.
+The =memory:= resolver exposes =memory:relevant=, =memory:workspace=, and
+=memory:global= collections plus canonical
+=memory:id/<percent-encoded-stable-id>= URIs for exact active memories. This
+exact-item namespace supports every valid non-empty persisted identifier,
+including the three reserved collection names; direct =memory:<stable-id>=
+resolution remains compatible only for non-reserved identifiers. Collection
+visibility reuses the current configuration and existing memory scope rules.
+Exact identifiers preserve =memory.read= semantics and may read an active memory
+regardless of its scope. The resolver denies task child-agent contexts and never
+exposes the underlying =memories.sexp= log. =resource.read= returns each
+collection completely with canonical exact-item URIs, metadata, and bounded
+excerpts, or one exact memory with full content and metadata, and retains an
+exact content-addressed snapshot including empty collections. Relevant and
+workspace collection snapshots include the canonical current working-directory
+identity, so their revisions and aliases cannot cross a configuration workspace
+switch even when their selected memories are structurally equal. Global
+collection snapshots remain workspace-independent.
+
+=memory:relevant= remains read-only. =resource.edit= accepts exactly one
+=memory-remember= operation on =memory:workspace= or =memory:global=; the
+collection URI determines creation scope, and caller operation data cannot
+override it. An exact active =memory:id/<percent-encoded-stable-id>= accepts one
+complete =memory-replace= operation with title, content, optional tags, and optional
+=global= or =workspace= scope, or one fieldless =memory-forget= operation.
+Creation through an item URI and replacement or forgetting through a collection
+URI are rejected. Every operation is completely validated before persistence,
+requires the exact transient observation alias for that URI, and rechecks the
+current complete content-addressed snapshot while holding =*memory-lock*=. An
+alias is stale while the exact snapshot differs and becomes valid again if that
+exact snapshot returns. Successful creation and replacement retain source
+conversation attribution, use the existing append-only memory mutation path,
+and return a fresh revisioned rendering plus the exact memory URI. Forgetting
+appends the existing tombstone and returns a revisioned terminal rendering.
+
+Memory revision aliases are transient, conversation-local, and expire
+independently of workspace and agenda observations. Existing =memory.*= tools
+remain valid compatibility, convenience, and lexical-search operations under
+the same recursive lock. =*memory-lock*= makes the stale-check-plus-append
+transaction atomic only among operations in one Autolith process. It does not
+provide interprocess compare-and-swap or coordinate another process writing the
+memory log.
 
 ** 5.1 =lisp.*=
 

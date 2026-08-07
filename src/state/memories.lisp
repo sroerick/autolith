@@ -20,8 +20,8 @@
 (defparameter *memory-search-term-limit* 24
   "The maximum distinct terms considered by one memory query.")
 
-(defvar *memory-lock* (make-lock "Autolith persistent memories")
-  "The process-local lock serializing memory reads and appends.")
+(defvar *memory-lock* (make-recursive-lock "Autolith persistent memories")
+  "Serialize same-process memory reads, appends, and guarded transactions.")
 
 (defclass memory ()
   ((identifier
@@ -260,11 +260,15 @@
              (let ((memory (memory--record->memory pathname record)))
                (setf (gethash (memory-identifier memory) active) memory)))
             (:memory-forgotten
-             (let ((identifier (getf (rest record) :id)))
+             (let ((identifier (getf (rest record) :id))
+                   (source-conversation
+                     (getf (rest record) :source-conversation)))
                (unless (and (eql (getf (rest record) :version)
                                  *memory-format-version*)
                             (non-empty-string-p identifier)
-                            (typep (getf (rest record) :time) 'timestamp))
+                            (typep (getf (rest record) :time) 'timestamp)
+                            (or (null source-conversation)
+                                (non-empty-string-p source-conversation)))
                  (error 'memory-error
                         :message "A memory tombstone has invalid metadata."
                         :pathname pathname
@@ -323,7 +327,7 @@
     list)
 (defun memory-list (configuration &key (visibility :relevant))
   "Return active memories selected by VISIBILITY, newest first."
-  (with-lock-held (*memory-lock*)
+  (with-recursive-lock-held (*memory-lock*)
     (remove-if-not
      (lambda (memory)
        (memory--visible-p memory configuration visibility))
@@ -365,7 +369,7 @@
              :message "Memory scope must be GLOBAL or WORKSPACE."
              :pathname (configuration-memory-path configuration)
              :identifier identifier))
-    (with-lock-held (*memory-lock*)
+    (with-recursive-lock-held (*memory-lock*)
       (let* ((active (memory--load-unlocked configuration))
              (existing (and identifier
                             (find identifier active
@@ -411,10 +415,18 @@
                      :identifier (memory-identifier memory))))
           memory)))))
 
-(-> memory-forget (configuration string) memory)
-(defun memory-forget (configuration identifier)
-  "Stop recalling active memory IDENTIFIER by appending a tombstone."
-  (with-lock-held (*memory-lock*)
+(-> memory-forget
+    (configuration string &key (:source-conversation (option string)))
+    memory)
+(defun memory-forget (configuration identifier &key source-conversation)
+  "Stop recalling active memory IDENTIFIER by appending an attributed tombstone."
+  (unless (or (null source-conversation)
+              (non-empty-string-p source-conversation))
+    (error 'memory-error
+           :message "Memory source conversation must be non-empty when supplied."
+           :pathname (configuration-memory-path configuration)
+           :identifier identifier))
+  (with-recursive-lock-held (*memory-lock*)
     (let ((memory (find identifier
                         (memory--load-unlocked configuration)
                         :test #'string=
@@ -429,7 +441,8 @@
        (list :memory-forgotten
              :version *memory-format-version*
              :id identifier
-             :time (get-universal-time)))
+             :time (get-universal-time)
+             :source-conversation source-conversation))
       memory)))
 
 (-> memory--search-terms (string) list)

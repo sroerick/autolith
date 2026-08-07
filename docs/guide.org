@@ -760,14 +760,33 @@ runs in the same workspace. Global scope is intended for cross-workspace user
 preferences and durable guidance. =memory.list= shows metadata, =memory.search=
 ranks case-insensitive query terms across title, body, tags, and workspace,
 favoring title, tag, and broad-coverage matches. =memory.read= returns one
-complete active memory. The read-only =memory:= resource resolver provides
+complete active memory. The =memory:= resource resolver provides
 =memory:relevant=, =memory:workspace=, and =memory:global= collections plus
-=memory:<stable-id>= for exact recall. Collection reads return every selected
-active memory with metadata and bounded excerpts; exact reads return full
-content and metadata. Results carry transient conversation-local exact snapshot
-revisions, including empty collections, but memory resources do not support
-=resource.edit=. Task child agents cannot resolve them, and the underlying
-=memories.sexp= file is never exposed as a resource.
+canonical =memory:id/<percent-encoded-stable-id>= URIs for exact recall. The
+canonical item namespace supports every non-empty persisted identifier,
+including =relevant=, =workspace=, and =global=; direct =memory:<stable-id>=
+reads remain compatible for non-reserved identifiers. Collection reads return
+every selected active memory with canonical item URIs, metadata, and bounded
+excerpts; exact reads return full content and metadata. Results carry transient
+conversation-local exact snapshot revisions, including empty collections.
+Relevant and workspace revisions are bound to the canonical current workspace,
+while global revisions remain workspace-independent. Task child agents cannot
+resolve them, and the underlying =memories.sexp= file is never exposed as a
+resource.
+
+=memory:relevant= is read-only. After reading =memory:workspace= or
+=memory:global=, one guarded =memory-remember= resource operation creates a
+memory in the scope selected by that collection URI. After reading an exact
+active item, one =memory-replace= operation completely replaces its title,
+content, tags, and optional scope while preserving its stable identifier, or one
+fieldless =memory-forget= operation appends a tombstone. Operations cannot be
+moved between collection and item URIs. =resource.edit= validates the complete
+operation before persistence and rejects expired, cross-URI, cross-conversation,
+or stale observations. It rechecks and appends under one recursive process-local
+memory lock, then returns a fresh revisioned rendering and the exact item URI
+where applicable. This guards only writers in one Autolith process and is not an
+interprocess compare-and-swap guarantee.
+
 =memory.remember= creates a memory or replaces one by identifier.
 =memory.remember= limits the complete body to 5,000 characters so one
 =memory.read= call can return it without hidden paging.

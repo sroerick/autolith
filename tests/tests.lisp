@@ -163,6 +163,7 @@
     (test-workspace-file-resources)
     (test-agenda-resources)
     (test-memory-resources)
+    (test-memory-resource-mutations)
     (test-tool-registry)
     (test-workspace-tools)
     (test-search-tools)

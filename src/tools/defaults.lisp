@@ -46,7 +46,7 @@
 
 (-> default-tools--resource-operation-schema () json-object)
 (defun default-tools--resource-operation-schema ()
-  "Return the closed workspace and agenda variants accepted by resource.edit."
+  "Return the closed workspace, agenda, and memory resource.edit variants."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (json-object "type" "integer"
@@ -67,6 +67,24 @@
               "description" "Stable memory identifiers to attach; empty detaches all."
               "maxItems" *agenda-item-memory-limit*
               "items" (tool-string-property "One stable memory identifier.")))
+
+           (memory-tags-property ()
+             "Return the bounded persistent-memory tag schema."
+             (json-object
+              "type" "array"
+              "description" "Optional complete replacement tag list; empty clears tags."
+              "maxItems" *memory-tag-count-limit*
+              "items" (json-object
+                       "type" "string"
+                       "minLength" 1
+                       "maxLength" *memory-tag-limit*)))
+
+           (memory-scope-property ()
+             "Return the closed persistent-memory replacement scope schema."
+             (json-object
+              "type" "string"
+              "enum" (vector "global" "workspace")
+              "description" "Optional complete replacement scope."))
 
            (operation-schema (name properties required &key any-required)
              "Return one closed resource edit operation variant."
@@ -137,7 +155,26 @@
        "agenda-remove"
        (json-object
         "id" (tool-string-property "The stable agenda item identifier."))
-       '("id"))))))
+       '("id"))
+      (operation-schema
+       "memory-remember"
+       (json-object
+        "title" (tool-string-property "Complete persistent-memory title.")
+        "content" (tool-string-property "Complete persistent-memory content.")
+        "tags" (memory-tags-property))
+       '("title" "content"))
+      (operation-schema
+       "memory-replace"
+       (json-object
+        "title" (tool-string-property "Complete replacement memory title.")
+        "content" (tool-string-property "Complete replacement memory content.")
+        "tags" (memory-tags-property)
+        "scope" (memory-scope-property))
+       '("title" "content"))
+      (operation-schema
+       "memory-forget"
+       (json-object)
+       nil)))))
 
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
@@ -158,11 +195,11 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, and memory:<id> return complete read-only memory observations. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, or memory:<stable-id>.")
+                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, or canonical memory:id/<percent-encoded-stable-id>.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -172,7 +209,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts exactly one agenda-add, agenda-update, or agenda-remove operation. memory: resources are read-only. Stale or expired revisions require a reread."
+           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. memory:relevant is read-only. Stale or expired revisions require a reread."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -182,7 +219,7 @@
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Resource-specific operations. agenda:current accepts exactly one; workspace: files accept non-overlapping original-line operations."
+                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files accept non-overlapping original-line operations."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))

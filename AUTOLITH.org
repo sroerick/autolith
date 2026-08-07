@@ -111,16 +111,27 @@ a user-local init.lisp change, or a private image commit.
   URIs cannot resolve another workspace or the raw state file, task child agents
   cannot resolve them, and aliases cannot cross conversations or workspace
   changes. The agenda lock serializes same-process Autolith operations only and
-  does not provide interprocess safety. Read-only =memory:= resources expose the
-  relevant, workspace, and global collections plus exact active stable IDs using
-  existing scope rules. They return complete metadata and excerpts or one full
-  memory, retain exact snapshots including empty collections, deny task child
-  agents, and never expose =memories.sexp=. Existing =fs.edit=, =agenda.*=, and
-  =memory.*= tools stay available as compatibility paths; memory mutation remains
-  exclusive to =memory.*= tools.
+  does not provide interprocess safety. =memory:= resources expose the relevant,
+  workspace, and global collections plus exact active stable IDs through canonical
+  =memory:id/<percent-encoded-stable-id>= URIs using existing scope rules. This
+  namespace supports reserved collection names and arbitrary valid persisted IDs;
+  direct item URIs remain compatible for non-reserved IDs. They return complete
+  metadata, canonical item URIs, and excerpts or one full memory, retain exact
+  snapshots including empty collections, deny task child agents, and never expose
+  =memories.sexp=. Relevant and workspace snapshots include the canonical current
+  workspace identity, while global snapshots remain workspace-independent. The
+  relevant collection is read-only; workspace and global collection revisions
+  each accept one complete create, while exact item revisions accept one complete
+  replacement or tombstone. Every memory operation validates before persistence,
+  rechecks the exact snapshot, attributes writes to the source conversation, and
+  appends under the recursive process-local memory lock. This lock does not
+  provide interprocess CAS. Existing
+  =fs.edit=, =agenda.*=, and =memory.*= tools stay available as compatibility
+  paths.
 - Scope and location: tracked project work in =src/resource/=,
-  =src/state/agendas.lisp=, =src/conversation/store.lisp=,
-  =src/tools/defaults.lisp=, and the resource schemas, prompt, specification,
+  =src/state/agendas.lisp=, =src/state/memories.lisp=,
+  =src/conversation/store.lisp=, =src/tools/defaults.lisp=, and the resource
+  schemas, prompt, specification,
   guide, and regressions.
 - Verification: workspace URI confinement, observation isolation and expiry,
   visible-range gating, original-snapshot multi-operation edits, stale and
@@ -129,7 +140,7 @@ a user-local init.lisp change, or a private image commit.
   add/update/remove, memory links, shared locking, and legacy compatibility pass.
   Memory collection scopes, exact IDs, empty and missing states, child denial,
   typed mixed observation retention, schemas, and existing memory tools also pass
-  within the complete 3,537-test repository check.
+  within the complete 3,559-test repository check.
 - Removal condition: a provider-native editing protocol supplies the same exact
   revision, visibility, authority, atomicity, and recovery guarantees with lower
   harness complexity.

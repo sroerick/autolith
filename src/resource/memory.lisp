@@ -32,7 +32,7 @@
     :reader memory-resource-identifier
     :type non-empty-string
     :documentation "The collection name or stable memory identifier in this resource URI."))
-  (:documentation "A read-only persistent-memory resource."))
+  (:documentation "A revisioned persistent-memory collection or active item resource."))
 
 (defclass memory-collection-resource (memory-resource)
   ((visibility
@@ -87,10 +87,98 @@
     (t
      nil)))
 
+(-> memory-resource--identifier-unreserved-octet-p
+    ((unsigned-byte 8))
+    boolean)
+(defun memory-resource--identifier-unreserved-octet-p (octet)
+  "Return true when OCTET is an RFC 3986 unreserved ASCII character."
+  (and (or (<= (char-code #\A) octet (char-code #\Z))
+           (<= (char-code #\a) octet (char-code #\z))
+           (<= (char-code #\0) octet (char-code #\9))
+           (member octet '(#x2D #x2E #x5F #x7E)))
+       t))
+
+(-> memory-resource--encode-identifier (non-empty-string) non-empty-string)
+(defun memory-resource--encode-identifier (identifier)
+  "Return IDENTIFIER as one canonical percent-encoded URI path segment."
+  (with-output-to-string (stream)
+    (loop for octet across
+          (sb-ext:string-to-octets identifier :external-format ':utf-8)
+          do
+             (if (memory-resource--identifier-unreserved-octet-p octet)
+                 (write-char (code-char octet) stream)
+                 (format stream "%~2,'0X" octet)))))
+
+(-> memory-resource--malformed-item-identifier (string non-empty-string) null)
+(defun memory-resource--malformed-item-identifier (encoded reason)
+  "Signal that ENCODED cannot identify one exact memory because of REASON."
+  (error 'resource-uri-malformed
+         :uri    (format nil "memory:id/~A" encoded)
+         :reason reason))
+
+(-> memory-resource--decode-identifier (string) non-empty-string)
+(defun memory-resource--decode-identifier (encoded)
+  "Decode one percent-encoded exact-memory path segment from ENCODED."
+  (when (zerop (length encoded))
+    (memory-resource--malformed-item-identifier
+     encoded "the exact memory identifier must not be empty"))
+  (let ((octets
+          (make-array (length encoded)
+                      :element-type '(unsigned-byte 8)
+                      :fill-pointer 0)))
+    (loop with index = 0
+          while (< index (length encoded))
+          for character = (char encoded index)
+          do
+             (cond
+               ((char= character #\%)
+                (when (> (+ index 3) (length encoded))
+                  (memory-resource--malformed-item-identifier
+                   encoded "a percent escape is incomplete"))
+                (let ((high (digit-char-p (char encoded (1+ index)) 16))
+                      (low (digit-char-p (char encoded (+ index 2)) 16)))
+                  (unless (and high low)
+                    (memory-resource--malformed-item-identifier
+                     encoded "a percent escape contains a non-hexadecimal digit"))
+                  (vector-push (+ (* high 16) low) octets)
+                  (incf index 3)))
+               ((and (< (char-code character) 128)
+                     (memory-resource--identifier-unreserved-octet-p
+                      (char-code character)))
+                (vector-push (char-code character) octets)
+                (incf index))
+               (t
+                (memory-resource--malformed-item-identifier
+                 encoded
+                 "exact memory identifiers must use percent encoding outside RFC 3986 unreserved characters"))))
+    (let ((identifier
+            (handler-case
+                (sb-ext:octets-to-string octets :external-format ':utf-8)
+              (error ()
+                (memory-resource--malformed-item-identifier
+                 encoded "the percent-encoded identifier is not valid UTF-8")))))
+      (unless (non-empty-string-p identifier)
+        (memory-resource--malformed-item-identifier
+         encoded "the exact memory identifier must not be empty"))
+      identifier)))
+
+(-> memory-resource--item-uri (non-empty-string) non-empty-string)
+(defun memory-resource--item-uri (identifier)
+  "Return the canonical exact-item resource URI for stable IDENTIFIER."
+  (format nil "memory:id/~A"
+          (memory-resource--encode-identifier identifier)))
+
+(-> memory-resource--make-item (non-empty-string) memory-item-resource)
+(defun memory-resource--make-item (identifier)
+  "Return one exact item resource with canonical URI identity."
+  (make-instance 'memory-item-resource
+                 :uri        (memory-resource--item-uri identifier)
+                 :identifier identifier))
+
 (defmethod resource-resolver-resolve
     ((resolver memory-resolver) identifier (context tool-context))
-  "Resolve reserved collections or one exact active memory under CONTEXT."
-  (declare (ignore resolver))
+  "Resolve reserved collections or one canonical or compatible exact identifier."
+  (declare (ignore resolver context))
   (let ((visibility (memory-resource--collection-visibility identifier)))
     (cond
       (visibility
@@ -98,18 +186,24 @@
                       :uri        (format nil "memory:~A" identifier)
                       :identifier identifier
                       :visibility visibility))
-      ((memory-find (tool-context-configuration context) identifier)
-       (make-instance 'memory-item-resource
-                      :uri        (format nil "memory:~A" identifier)
-                      :identifier identifier))
+      ((uiop:string-prefix-p "id/" identifier)
+       (memory-resource--make-item
+        (memory-resource--decode-identifier
+         (subseq identifier (length "id/")))))
       (t
-       (error 'memory-resource-not-found :identifier identifier)))))
+       (memory-resource--make-item identifier)))))
 
 (defmethod resource-capabilities
     ((resource memory-resource) (context tool-context))
-  "Expose only read capability after authority-confined memory resolution."
-  (declare (ignore resource context))
-  '(:read))
+  "Expose only capabilities implemented by RESOURCE's concrete memory kind."
+  (declare (ignore context))
+  (etypecase resource
+    (memory-item-resource
+     '(:read :edit))
+    (memory-collection-resource
+     (if (eq (memory-collection-resource-visibility resource) ':relevant)
+         '(:read)
+         '(:read :edit)))))
 
 
 ;;;; -- Exact Memory Observations --
@@ -134,7 +228,8 @@
 (defun memory-resource--collection-entry (memory)
   "Return one complete metadata and bounded excerpt entry for MEMORY."
   (format nil
-          "id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~%excerpt: ~A"
+          "uri: ~A~%id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~%excerpt: ~A"
+          (memory-resource--item-uri (memory-identifier memory))
           (memory-identifier memory)
           (memory-tool--scope-label memory)
           (memory--timestamp-string (memory-created-at memory))
@@ -159,18 +254,39 @@
       (format nil "collection: ~A~%count: 0~2%No matching memories."
               identifier)))
 
+(-> memory-resource--workspace-identity (tool-context) non-empty-string)
+(defun memory-resource--workspace-identity (context)
+  "Return CONTEXT's canonical current working-directory identity."
+  (namestring
+   (truename
+    (configuration-working-directory
+     (tool-context-configuration context)))))
+
+(-> memory-resource--collection-workspace-identity
+    (memory-collection-resource tool-context)
+    (option non-empty-string))
+(defun memory-resource--collection-workspace-identity (resource context)
+  "Return the workspace identity that contributes to RESOURCE's observations."
+  (unless (eq (memory-collection-resource-visibility resource) ':global)
+    (memory-resource--workspace-identity context)))
+
 (-> memory-resource--collection-observation
     (memory-collection-resource tool-context)
     memory-observation)
 (defun memory-resource--collection-observation (resource context)
   "Return RESOURCE's exact scoped collection observation under CONTEXT."
-  (let* ((memories
+  (let* ((visibility
+           (memory-collection-resource-visibility resource))
+         (workspace-identity
+           (memory-resource--collection-workspace-identity resource context))
+         (memories
            (memory-list
             (tool-context-configuration context)
-            :visibility (memory-collection-resource-visibility resource)))
+            :visibility visibility))
          (snapshot
            (list :kind ':collection
                  :identifier (memory-resource-identifier resource)
+                 :workspace workspace-identity
                  :records (mapcar #'memory--record memories))))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
@@ -178,8 +294,8 @@
                    :content    (memory-resource--render-collection
                                 (memory-resource-identifier resource)
                                 memories)
-                   :metadata   (list :visibility
-                                     (memory-collection-resource-visibility resource)
+                   :metadata   (list :visibility visibility
+                                     :workspace workspace-identity
                                      :count (length memories))
                    :identifier (memory-resource-identifier resource)
                    :kind       ':collection
@@ -285,8 +401,274 @@
                      conversation states))
         state))))
 
+(-> memory-resource--find-observation-state
+    (conversation memory-resource non-empty-string)
+    memory-observation-state)
+(defun memory-resource--find-observation-state (conversation resource alias)
+  "Return CONVERSATION's exact RESOURCE observation ALIAS or signal staleness."
+  (let ((state
+          (resource-observation-state-find
+           (conversation-resource-observations conversation)
+           alias
+           'memory-observation-state)))
+    (unless (and state
+                 (let ((observation
+                         (resource-observation-state-observation state)))
+                   (and (string= (resource-uri resource)
+                                 (resource-observation-uri observation))
+                        (string= (memory-resource-identifier resource)
+                                 (memory-observation-identifier observation)))))
+      (error 'resource-revision-stale
+             :uri               (resource-uri resource)
+             :expected-revision alias
+             :actual-revision   nil))
+    state))
 
-;;;; -- Resource Tool Method --
+
+;;;; -- Memory Operations --
+
+(-> memory-resource--validate-operation-fields (json-object list list) null)
+(defun memory-resource--validate-operation-fields (operation allowed required)
+  "Require OPERATION to contain exactly ALLOWED fields and every REQUIRED field."
+  (loop for name being the hash-keys of operation
+        unless (member name allowed :test #'string=)
+          do
+             (error 'tool-error
+                    :message (format nil
+                                     "Memory resource operation does not accept field ~A."
+                                     name)
+                    :tool-name "resource.edit"))
+  (dolist (name required)
+    (unless (nth-value 1 (gethash name operation))
+      (error 'tool-error
+             :message (format nil
+                              "Memory resource operation requires ~A."
+                              name)
+             :tool-name "resource.edit")))
+  nil)
+
+(-> memory-resource--operation-tags (json-object) list)
+(defun memory-resource--operation-tags (operation)
+  "Return OPERATION's validated optional tag array as a detached list."
+  (multiple-value-bind (tags supplied-p)
+      (gethash "tags" operation)
+    (cond
+      ((not supplied-p)
+       nil)
+      ((and (vectorp tags) (every #'stringp tags))
+       (memory--validate-tags (coerce tags 'list)))
+      (t
+       (error 'tool-error
+              :message "Memory resource tags must be an array of strings."
+              :tool-name "resource.edit")))))
+
+(-> memory-resource--operation-scope (json-object) (option memory-scope))
+(defun memory-resource--operation-scope (operation)
+  "Return OPERATION's optional validated replacement scope."
+  (multiple-value-bind (scope supplied-p)
+      (gethash "scope" operation)
+    (cond
+      ((not supplied-p)
+       nil)
+      ((and (stringp scope) (string-equal scope "global"))
+       ':global)
+      ((and (stringp scope) (string-equal scope "workspace"))
+       ':workspace)
+      (t
+       (error 'tool-error
+              :message "Memory resource scope must be global or workspace."
+              :tool-name "resource.edit")))))
+
+(-> memory-resource--normalize-operation (t) list)
+(defun memory-resource--normalize-operation (operation)
+  "Return one completely validated normalized memory resource OPERATION."
+  (unless (hash-table-p operation)
+    (error 'tool-error
+           :message "Memory resource operations must be JSON objects."
+           :tool-name "resource.edit"))
+  (let ((name (tool-argument operation "op" :required t)))
+    (unless (stringp name)
+      (error 'tool-error
+             :message "Memory resource operation op must be a string."
+             :tool-name "resource.edit"))
+    (cond
+      ((string= name "memory-remember")
+       (memory-resource--validate-operation-fields
+        operation
+        '("op" "title" "content" "tags")
+        '("op" "title" "content"))
+       (list :kind ':remember
+             :title (memory--validate-text
+                     (tool-argument operation "title" :required t)
+                     "title"
+                     *memory-title-limit*)
+             :content (memory--validate-text
+                       (tool-argument operation "content" :required t)
+                       "content"
+                       *memory-content-limit*)
+             :tags (memory-resource--operation-tags operation)))
+      ((string= name "memory-replace")
+       (memory-resource--validate-operation-fields
+        operation
+        '("op" "title" "content" "tags" "scope")
+        '("op" "title" "content"))
+       (list :kind ':replace
+             :title (memory--validate-text
+                     (tool-argument operation "title" :required t)
+                     "title"
+                     *memory-title-limit*)
+             :content (memory--validate-text
+                       (tool-argument operation "content" :required t)
+                       "content"
+                       *memory-content-limit*)
+             :tags (memory-resource--operation-tags operation)
+             :scope (memory-resource--operation-scope operation)))
+      ((string= name "memory-forget")
+       (memory-resource--validate-operation-fields
+        operation '("op") '("op"))
+       (list :kind ':forget))
+      (t
+       (error 'tool-error
+              :message
+              "Memory resource operation op must be memory-remember, memory-replace, or memory-forget."
+              :tool-name "resource.edit")))))
+
+(-> memory-resource--validate-operation-target (memory-resource list) null)
+(defun memory-resource--validate-operation-target (resource operation)
+  "Require normalized OPERATION to match RESOURCE's collection or item identity."
+  (etypecase resource
+    (memory-collection-resource
+     (unless (and (eq (getf operation :kind) ':remember)
+                  (member (memory-collection-resource-visibility resource)
+                          '(:workspace :global)))
+       (error 'tool-error
+              :message "Only memory:workspace and memory:global accept memory-remember."
+              :tool-name "resource.edit")))
+    (memory-item-resource
+     (unless (member (getf operation :kind) '(:replace :forget))
+       (error 'tool-error
+              :message "Exact memory item URIs accept only memory-replace or memory-forget."
+              :tool-name "resource.edit"))))
+  nil)
+
+(-> memory-resource--current-observation
+    (memory-resource tool-context)
+    memory-observation)
+(defun memory-resource--current-observation (resource context)
+  "Return RESOURCE's current exact observation while the caller holds the memory lock."
+  (etypecase resource
+    (memory-collection-resource
+     (memory-resource--collection-observation resource context))
+    (memory-item-resource
+     (memory-resource--item-observation resource context))))
+
+(-> memory-resource--forgotten-observation
+    (memory-item-resource memory)
+    memory-observation)
+(defun memory-resource--forgotten-observation (resource memory)
+  "Return a revisioned terminal observation for forgotten MEMORY."
+  (let* ((identifier (memory-identifier memory))
+         (snapshot (list :kind ':forgotten :identifier identifier)))
+    (make-instance 'memory-observation
+                   :uri        (resource-uri resource)
+                   :revision   (memory-resource--digest snapshot)
+                   :content    (format nil "Memory ~A was forgotten." identifier)
+                   :metadata   (list :forgotten t)
+                   :identifier identifier
+                   :kind       ':forgotten
+                   :snapshot   snapshot)))
+
+(defmethod resource-apply-operations
+    ((resource memory-resource) (context tool-context)
+     &key base-revision operations)
+  "Apply exactly one revision-gated append-only mutation to RESOURCE."
+  (unless (and (listp operations) (= (length operations) 1))
+    (error 'tool-error
+           :message "memory: resources require exactly one operation per resource.edit call."
+           :tool-name "resource.edit"))
+  (let ((operation (memory-resource--normalize-operation (first operations))))
+    (memory-resource--validate-operation-target resource operation)
+    (let ((conversation (tool-context-conversation context))
+          (configuration (tool-context-configuration context)))
+      (with-recursive-lock-held (*memory-lock*)
+        (with-recursive-lock-held
+            ((conversation-resource-observation-lock conversation))
+          (let* ((state
+                   (memory-resource--find-observation-state
+                    conversation resource base-revision))
+                 (base-observation
+                   (resource-observation-state-observation state))
+                 (current
+                   (handler-case
+                       (memory-resource--current-observation resource context)
+                     (memory-resource-not-found ()
+                       (error 'resource-revision-stale
+                              :uri               (resource-uri resource)
+                              :expected-revision base-revision
+                              :actual-revision   nil)))))
+            (unless (and
+                     (string= (resource-observation-revision current)
+                              (resource-observation-revision base-observation))
+                     (equal (memory-observation-snapshot current)
+                            (memory-observation-snapshot base-observation)))
+              (error 'resource-revision-stale
+                     :uri               (resource-uri resource)
+                     :expected-revision base-revision
+                     :actual-revision
+                     (resource-observation-revision current)))
+            (case (getf operation :kind)
+              (:remember
+               (let* ((scope
+                        (ecase (memory-collection-resource-visibility resource)
+                          (:workspace ':workspace)
+                          (:global ':global)))
+                      (memory
+                        (memory-remember
+                         configuration
+                         :title (getf operation :title)
+                         :content (getf operation :content)
+                         :scope scope
+                         :tags (getf operation :tags)
+                         :source-conversation
+                         (conversation-identifier conversation)))
+                      (item-resource
+                        (memory-resource--make-item
+                         (memory-identifier memory))))
+                 (values
+                  (memory-resource--item-observation item-resource context)
+                  (format nil "Created memory ~A."
+                          (memory-identifier memory))
+                  (resource-uri item-resource))))
+              (:replace
+               (memory-remember
+                configuration
+                :identifier (memory-resource-identifier resource)
+                :title (getf operation :title)
+                :content (getf operation :content)
+                :scope (getf operation :scope)
+                :tags (getf operation :tags)
+                :source-conversation
+                (conversation-identifier conversation))
+               (values
+                (memory-resource--item-observation resource context)
+                (format nil "Replaced memory ~A."
+                        (memory-resource-identifier resource))
+                (resource-uri resource)))
+              (:forget
+               (let ((memory
+                       (memory-forget
+                        configuration
+                        (memory-resource-identifier resource)
+                        :source-conversation
+                        (conversation-identifier conversation))))
+                 (values
+                  (memory-resource--forgotten-observation resource memory)
+                  (format nil "Forgot memory ~A."
+                          (memory-resource-identifier resource))
+                  nil))))))))))
+
+
+;;;; -- Resource Tool Methods --
 
 (-> memory-resource--read-result
     (memory-observation-state)
@@ -315,3 +697,38 @@
             (tool-context-conversation context)
             observation)))
     (tool-success (memory-resource--read-result state))))
+
+(defmethod resource-tool-edit
+    ((resource memory-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Apply one revision-gated memory operation and return a fresh exact observation."
+  (declare (ignore tool))
+  (let* ((uri (tool-argument arguments "uri" :required t))
+         (base-revision (tool-argument arguments "base-revision" :required t))
+         (operation-array (tool-argument arguments "operations" :required t)))
+    (unless (non-empty-string-p base-revision)
+      (error 'tool-error
+             :message "Resource edit base-revision must be a non-empty string."
+             :tool-name "resource.edit"))
+    (unless (and (vectorp operation-array) (= (length operation-array) 1))
+      (error 'tool-error
+             :message "memory: resources require exactly one operation per resource.edit call."
+             :tool-name "resource.edit"))
+    (handler-case
+        (multiple-value-bind (observation summary exact-uri)
+            (resource-apply-operations resource context
+                                       :base-revision base-revision
+                                       :operations (coerce operation-array 'list))
+          (let ((state
+                  (memory-resource--observation-state-for-snapshot
+                   (tool-context-conversation context)
+                   observation)))
+            (tool-success
+             (format nil "~A~@[~%Exact URI: ~A~]~%~A"
+                     summary
+                     exact-uri
+                     (memory-resource--read-result state)))))
+      (resource-revision-stale ()
+        (tool-failure
+         (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
+                 base-revision uri))))))

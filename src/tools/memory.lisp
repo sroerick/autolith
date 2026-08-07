@@ -225,5 +225,9 @@
       (error 'tool-error
              :message "memory.forget requires a non-empty string id."
              :tool-name "memory.forget"))
-    (memory-forget (tool-context-configuration context) identifier)
+    (memory-forget
+     (tool-context-configuration context)
+     identifier
+     :source-conversation
+     (conversation-identifier (tool-context-conversation context)))
     (tool-success (format nil "Forgot memory ~A." identifier))))
