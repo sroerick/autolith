@@ -83,7 +83,6 @@
                              (:file "tools/papercut")
                              (:file "tools/agenda")
                              (:file "tools/plan")
-                             (:file "tools/seatbelt")
                              (:file "tools/workspace-edit")
                              (:file "tools/workspace")
                              (:file "resource/workspace-file")

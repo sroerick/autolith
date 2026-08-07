@@ -15,23 +15,11 @@
                 #:sgr-sequence)
   (:import-from #:cl-exec-sandbox
                 #:external-sandbox-policy
-                #:filesystem-rule-access
-                #:filesystem-rule-kind
-                #:filesystem-rule-path
-                #:filesystem-rule-subpath
                 #:run-sandboxed
-                #:sandbox-policy
-                #:sandbox-policy-filesystem-kind
-                #:sandbox-policy-filesystem-rules
-                #:sandbox-policy-network
-                #:sandbox-policy-protected-metadata-names
-                #:sandbox-policy-workspace-roots
-                #:sandbox-result
                 #:sandbox-result-exit-code
                 #:sandbox-result-output
                 #:sandbox-result-output-truncated-p
                 #:sandbox-result-timed-out-p
-                #:sandbox-unavailable
                 #:workspace-write-sandbox-policy)
   (:import-from #:flexi-streams
                 #:get-output-stream-sequence

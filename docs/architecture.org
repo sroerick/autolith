@@ -156,17 +156,18 @@ Composes the default registry from one focused registration function per
 namespace. This keeps a schema or tool-set change local instead of requiring a
 replacement of the complete registry definition in the live image.
 
-** =workspace-tools.lisp= and =seatbelt.lisp=
+** =workspace-tools.lisp=
 
-Own the workspace filesystem and command surfaces plus host command-sandbox
-dispatch. Restricted Linux commands run through =cl-exec-sandbox= and
-Bubblewrap. Restricted macOS commands translate the same workspace policy into
-a Seatbelt profile and run through the system =sandbox-exec= launcher. Seatbelt
-enforces read-only host access, writable workspace and temporary roots,
-protected repository metadata, and network denial, but it does not add Linux
-process namespaces, =no_new_privs=, or seccomp. The workspace layer keeps a
-60-second default without imposing a maximum requested timeout, bounds returned
-output, and replaces invalid encoded output bytes while preserving process status.
+Owns the workspace filesystem and command surfaces. One workspace policy
+describes a restricted command, and =cl-exec-sandbox= selects the host backend
+for it: Bubblewrap on Linux, a translated Seatbelt profile through the system
+=sandbox-exec= launcher on macOS. Seatbelt enforces read-only host access,
+writable workspace and temporary roots, protected repository metadata, and
+network denial, but it does not add Linux process namespaces, =no_new_privs=,
+or seccomp. Autolith no longer translates policies itself. The workspace layer
+keeps a 60-second default without imposing a maximum requested timeout, bounds
+returned output, and replaces invalid encoded output bytes while preserving
+process status.
 
 ** =search-tools.lisp= and =search-worker.lisp=
 
