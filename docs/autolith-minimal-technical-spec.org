@@ -365,6 +365,20 @@ operations under the same lock. =*agenda-lock*= serializes same-process Autolith
 operations only and provides no interprocess coordination or lost-update
 guarantee.
 
+The read-only =memory:= resolver exposes =memory:relevant=,
+=memory:workspace=, and =memory:global= collections plus =memory:<stable-id>=
+for one exact active memory. Collection visibility reuses the current
+configuration and existing memory scope rules. Exact identifiers preserve
+=memory.read= semantics and may read an active memory regardless of its scope.
+The resolver denies task child-agent contexts and never exposes the underlying
+=memories.sexp= log. =resource.read= returns each collection completely with
+metadata and bounded excerpts, or one exact memory with full content and
+metadata, and retains an exact content-addressed snapshot including empty
+collections. Memory revision aliases are transient, conversation-local, and
+expire independently of workspace and agenda observations. =memory.*= tools
+remain the only memory mutation and lexical-search interface; =resource.edit=
+does not mutate memory resources.
+
 ** 5.1 =lisp.*=
 
 =lisp.*= tools operate only in named, heap-isolated Lisp workers. Operations

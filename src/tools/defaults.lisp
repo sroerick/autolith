@@ -149,17 +149,20 @@
     (resource-registry-register
      resource-registry
      (make-instance 'agenda-resolver :scheme "agenda"))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'memory-resolver :scheme "memory"))
     (dolist
         (specification
          (list
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda. Both establish a transient revision required by resource.edit."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, and memory:<id> return complete read-only memory observations. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp or agenda:current.")
+                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, or memory:<stable-id>.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -169,7 +172,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts exactly one agenda-add, agenda-update, or agenda-remove operation. Stale or expired revisions require a reread."
+           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts exactly one agenda-add, agenda-update, or agenda-remove operation. memory: resources are read-only. Stale or expired revisions require a reread."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property

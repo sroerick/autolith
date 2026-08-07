@@ -760,7 +760,14 @@ runs in the same workspace. Global scope is intended for cross-workspace user
 preferences and durable guidance. =memory.list= shows metadata, =memory.search=
 ranks case-insensitive query terms across title, body, tags, and workspace,
 favoring title, tag, and broad-coverage matches. =memory.read= returns one
-complete active memory.
+complete active memory. The read-only =memory:= resource resolver provides
+=memory:relevant=, =memory:workspace=, and =memory:global= collections plus
+=memory:<stable-id>= for exact recall. Collection reads return every selected
+active memory with metadata and bounded excerpts; exact reads return full
+content and metadata. Results carry transient conversation-local exact snapshot
+revisions, including empty collections, but memory resources do not support
+=resource.edit=. Task child agents cannot resolve them, and the underlying
+=memories.sexp= file is never exposed as a resource.
 =memory.remember= creates a memory or replaces one by identifier.
 =memory.remember= limits the complete body to 5,000 characters so one
 =memory.read= call can return it without hidden paging.
