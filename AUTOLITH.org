@@ -145,6 +145,25 @@ a user-local init.lisp change, or a private image commit.
   revision, visibility, authority, atomicity, and recovery guarantees with lower
   harness complexity.
 
+** Caller-selected shell runtimes and resilient output decoding
+
+- Problem: long deployment commands were silently capped at ten minutes even
+  when the user requested more time, while arbitrary generated-file bytes in
+  command output could raise a UTF-8 decoding error and discard the exit status.
+- Behavior: =shell.run= keeps its 60-second default but accepts any positive
+  requested timeout without a product maximum. The sandbox still enforces the
+  selected deadline and bounded output. Invalid encoded bytes are replaced at
+  the command-sandbox boundary so status and surrounding diagnostics survive.
+- Scope and location: tracked project work in =src/tools/workspace.lisp=,
+  =src/tools/seatbelt.lisp=, the shell schema, specification, guide, and
+  workspace-tool regressions.
+- Verification: a requested 900-second timeout is retained, invalid UTF-8 shell
+  output completes with replacement characters and its exit status, truncation
+  remains bounded, and the complete 3,567-test repository check passes.
+- Removal condition: the command sandbox dependency natively captures bounded
+  arbitrary-byte output with replacement decoding and exposes caller-selected
+  deadlines without an Autolith compatibility layer.
+
 ** Actionable public Nix smoke annotations
 
 - Problem: unauthenticated GitHub Actions logs were unavailable, and generic

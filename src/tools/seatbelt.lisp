@@ -210,22 +210,30 @@ only after every broader workspace and temporary-directory write allowance."
     (program arguments
      &key policy working-directory timeout merge-output-p
        output-limit error-output-limit)
-  "Run PROGRAM under POLICY using the host command sandbox backend."
-  (if (and (member :darwin *features*)
-           (eq (sandbox-policy-filesystem-kind policy) ':restricted))
-      (seatbelt-run-sandboxed
-       program arguments
-       :policy policy
-       :working-directory working-directory
-       :timeout timeout
-       :merge-output-p merge-output-p
-       :output-limit output-limit
-       :error-output-limit error-output-limit)
-      (run-sandboxed
-       program arguments
-       :policy policy
-       :working-directory working-directory
-       :timeout timeout
-       :merge-output-p merge-output-p
-       :output-limit output-limit
-       :error-output-limit error-output-limit)))
+  "Run PROGRAM under POLICY using the host command sandbox backend.
+
+Invalid encoded output bytes are replaced rather than losing the command result."
+  (handler-bind
+      ((sb-int:stream-decoding-error
+         (lambda (condition)
+           (let ((restart (find-restart 'use-value condition)))
+             (when restart
+               (invoke-restart restart (code-char #xFFFD)))))))
+    (if (and (member :darwin *features*)
+             (eq (sandbox-policy-filesystem-kind policy) ':restricted))
+        (seatbelt-run-sandboxed
+         program arguments
+         :policy policy
+         :working-directory working-directory
+         :timeout timeout
+         :merge-output-p merge-output-p
+         :output-limit output-limit
+         :error-output-limit error-output-limit)
+        (run-sandboxed
+         program arguments
+         :policy policy
+         :working-directory working-directory
+         :timeout timeout
+         :merge-output-p merge-output-p
+         :output-limit output-limit
+         :error-output-limit error-output-limit))))

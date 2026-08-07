@@ -892,7 +892,9 @@ one directory with entry kinds and sizes, =fs.write= creates or replaces a file,
 =fs.edit= remains an exact-text compatibility editor with a uniqueness check and
 can conservatively normalize a unique multiline line-ending or
 uniform-indentation mismatch, and =shell.run= executes one external command with
-a bounded timeout and combined output.
+combined bounded output. It defaults to a 60-second timeout but accepts any
+positive requested duration without a product maximum. Invalid encoded output
+bytes are shown as replacement characters rather than failing the result.
 Unknown commands ask before execution. Allowing once or permanently runs the
 command with an isolated network and a read-only host filesystem except for the
 workspace and temporary directories. A permanent approval matches the exact

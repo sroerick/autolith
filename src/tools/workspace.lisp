@@ -29,7 +29,7 @@
 
 (defclass shell-run-tool (workspace-tool)
   ()
-  (:documentation "Run one bounded external command in the workspace."))
+  (:documentation "Run one authorized external command in the workspace."))
 
 (defmethod tool-child-safe-p ((tool fs-read-tool))
   "Permit bounded workspace reads inside child agents."
@@ -69,9 +69,6 @@
 
 (defparameter *shell-default-timeout-seconds* 60
   "The seconds one shell.run command may take by default.")
-
-(defparameter *shell-maximum-timeout-seconds* 600
-  "The largest timeout one shell.run command may request.")
 
 (defparameter *shell-maximum-output-characters* 65536
   "The maximum combined output characters returned by shell.run.")
@@ -178,6 +175,13 @@ through private image commits instead."
        (error 'tool-error
               :message (format nil "Tool argument ~S must be an integer." name)
               :tool-name name)))))
+
+(-> workspace-tool-shell-timeout (json-object) (integer 1))
+(defun workspace-tool-shell-timeout (arguments)
+  "Return the positive requested shell timeout with no product maximum."
+  (max 1
+       (or (workspace-tool-integer-argument arguments "timeout-seconds")
+           *shell-default-timeout-seconds*)))
 
 
 ;;;; -- Tool Executions --
@@ -566,15 +570,12 @@ is retained whenever the configured maximum can contain the fixed metadata."
 (defmethod tool-execute ((tool shell-run-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Authorize and run one bounded external command under the selected policy."
+  "Authorize and run one external command under the selected policy."
   (let* ((command (tool-argument arguments "command" :required t))
          (directory (workspace-tool-path
                      context
                      (tool-argument arguments "directory")))
-         (timeout (min *shell-maximum-timeout-seconds*
-                       (max 1 (or (workspace-tool-integer-argument
-                                   arguments "timeout-seconds")
-                                  *shell-default-timeout-seconds*)))))
+         (timeout (workspace-tool-shell-timeout arguments)))
     (unless (non-empty-string-p command)
       (error 'tool-error
              :message "shell.run requires a non-empty command."

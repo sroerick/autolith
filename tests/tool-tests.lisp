@@ -598,6 +598,20 @@
                (test-assert (search "autolith-shell-works"
                                     (tool-result-content result))
                             "shell.run captures combined output"))
+             (test-assert
+              (= (workspace-tool-shell-timeout
+                  (json-object "timeout-seconds" 900))
+                 900)
+              "shell.run accepts requested timeouts above ten minutes")
+             (let* ((result
+                      (run "shell" "run"
+                           "command" "printf '\\374\\022\\023\\265\\n'"))
+                    (content (tool-result-content result)))
+               (test-assert (tool-result-success-p result)
+                            "shell.run completes after invalid UTF-8 output")
+               (test-assert
+                (search (string (code-char #xFFFD)) content)
+                "shell.run replaces invalid output bytes without losing status"))
              (let* ((*shell-maximum-output-characters* 5)
                     (result (run "shell" "run"
                                  "command" "printf 123456789"))

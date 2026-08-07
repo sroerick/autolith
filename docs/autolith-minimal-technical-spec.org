@@ -548,7 +548,12 @@ process namespaces, =no_new_privs=, and seccomp. On macOS, the system Seatbelt
 launcher enforces the filesystem and network policy but does not provide those
 Linux process controls. The user may explicitly grant full user privileges for
 the current session.
-Malformed persistent permission data fails closed.
+Malformed persistent permission data fails closed. =shell.run= applies a
+60-second timeout when none is requested, accepts any positive caller-selected
+timeout without a product maximum, and always keeps model-visible output bounded.
+Invalid encoded output bytes are replaced so decoding cannot discard the exit
+status and captured diagnostics. Timeout termination and active-turn cancellation
+remain process-control boundaries independent of the requested duration.
 
 This command boundary limits accidental damage from external programs. It does
 not make Autolith a hostile-code sandbox because filesystem, Lisp worker, and

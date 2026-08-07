@@ -299,7 +299,7 @@
       "directory" (tool-string-property
                    "The working directory; defaults to the workspace.")
       "timeout-seconds" (tool-integer-property
-                         "Seconds before the command is stopped; default 60."))
+                         "Seconds before the command is stopped; defaults to 60 with no maximum."))
      '("command"))))
   registry)
 

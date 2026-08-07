@@ -164,7 +164,9 @@ Bubblewrap. Restricted macOS commands translate the same workspace policy into
 a Seatbelt profile and run through the system =sandbox-exec= launcher. Seatbelt
 enforces read-only host access, writable workspace and temporary roots,
 protected repository metadata, and network denial, but it does not add Linux
-process namespaces, =no_new_privs=, or seccomp.
+process namespaces, =no_new_privs=, or seccomp. The workspace layer keeps a
+60-second default without imposing a maximum requested timeout, bounds returned
+output, and replaces invalid encoded output bytes while preserving process status.
 
 ** =search-tools.lisp= and =search-worker.lisp=
 
