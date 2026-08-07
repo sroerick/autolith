@@ -41,31 +41,32 @@
 (-> application-agenda-entry (application) (or string list))
 (defun application-agenda-entry (application)
   "Return the current workspace agenda as a readable transcript entry."
-  (let* ((configuration (application-configuration application))
-         (record (agenda-current configuration (agenda-load configuration)))
-         (items (and record (workspace-agenda-items record))))
-    (if (null items)
-        "The current workspace agenda is empty."
-        (append
-         (list (terminal-span ':brand "agenda")
-               (terminal-span
-                ':dim
-                (format nil "  ~A~%"
-                        (namestring
-                         (configuration-working-directory configuration)))))
-         (loop for item in items
-               append
-               (list
-                (terminal-span
-                 (application--agenda-status-style
-                  (agenda-item-status item))
-                 (format nil "  [~(~A~)] " (agenda-item-status item)))
-                (terminal-span ':plain (agenda-item-text item))
-                (terminal-span
-                 ':dim
-                 (format nil "~%           id ~A~@[ · memories ~{~A~^, ~}~]~%"
-                         (agenda-item-identifier item)
-                         (agenda-item-memory-identifiers item)))))))))
+  (with-recursive-lock-held (*agenda-lock*)
+    (let* ((configuration (application-configuration application))
+           (record (agenda-current configuration (agenda-load configuration)))
+           (items (and record (workspace-agenda-items record))))
+      (if (null items)
+          "The current workspace agenda is empty."
+          (append
+           (list (terminal-span ':brand "agenda")
+                 (terminal-span
+                  ':dim
+                  (format nil "  ~A~%"
+                          (namestring
+                           (configuration-working-directory configuration)))))
+           (loop for item in items
+                 append
+                 (list
+                  (terminal-span
+                   (application--agenda-status-style
+                    (agenda-item-status item))
+                   (format nil "  [~(~A~)] " (agenda-item-status item)))
+                  (terminal-span ':plain (agenda-item-text item))
+                  (terminal-span
+                   ':dim
+                   (format nil "~%           id ~A~@[ · memories ~{~A~^, ~}~]~%"
+                           (agenda-item-identifier item)
+                           (agenda-item-memory-identifiers item))))))))))
 
 
 (-> application--papercut-list-row (papercut) list)

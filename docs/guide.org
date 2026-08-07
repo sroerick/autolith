@@ -802,6 +802,20 @@ pointing at its newest value. Supplying an empty =memory-ids= array detaches all
 memories from an item. Existing version-one agenda files load with no attachments
 and upgrade atomically on their next mutation.
 
+The model may also read =agenda:current= with =resource.read=. That URI always
+means the canonical current workspace agenda and never exposes another workspace
+or the underlying =agendas.sexp= file. The result contains the same complete
+readable agenda plus a transient conversation-local content-addressed snapshot
+revision. =resource.edit= accepts exactly one =agenda-add=, =agenda-update=, or
+=agenda-remove= operation against that exact revision and returns a fresh
+complete observation. A revision is stale while the current exact agenda
+snapshot differs, and becomes valid again if that exact snapshot returns.
+Revisions may expire and cannot cross conversations or =/cwd= workspace changes.
+Task child agents cannot resolve =agenda:= resources. The resource path and
+existing =agenda.*= tools share =*agenda-lock*=, which serializes same-process
+Autolith operations only. It does not coordinate other Autolith processes or
+external writers and provides no interprocess lost-update guarantee.
+
 =agenda.transport= lists all known workspace keys, views another agenda, copies
 one agenda into an existing target workspace, or moves it by merging into the
 target and removing the old key. The source path may already be absent, so a
@@ -837,6 +851,12 @@ unseen lines and stale or expired revisions before atomically replacing the file
 Use =replace-empty= to populate an observed empty file. Exact snapshots are
 bounded, transient, and never written into conversation history. Mixed LF and
 CRLF files require deliberate normalization or exact =fs.edit= use.
+
+For =agenda:current=, =resource.read= returns the complete current workspace
+agenda and a transient content-addressed snapshot revision. =resource.edit=
+accepts exactly one closed agenda operation against that revision. This is the
+revision-gated interface; =agenda.list=, =agenda.add=, =agenda.update=, and
+=agenda.remove= remain valid compatibility and convenience tools.
 
 The =fs.*= and =shell.*= tools cover remaining everyday workspace work:
 =fs.read= returns numbered file lines from an optional window, =fs.list= lists

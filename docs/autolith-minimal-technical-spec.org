@@ -317,8 +317,9 @@ resource URI uses the strict lowercase =scheme:identifier= form and identifies
 what may be requested, never whether the caller may access it. Every resolver,
 capability query, observation, and operation receives the caller's explicit
 authority context. URI schemes map to CLOS resolver objects in a registry owned
-by each agent's tool registry, so child and replacement registries do not gain
-resource resolvers implicitly.
+by each agent's tool registry. Resolver policy defaults closed for task child
+agents; =workspace:= explicitly opts into child use through its existing path
+authority boundary, while =agenda:= remains unavailable to children.
 
 A resource observation keeps the stable URI, opaque revision, resource-specific
 content, and metadata separate. Concrete resources specialize capability,
@@ -346,6 +347,23 @@ rechecks immediately before publication; portable filesystems provide no
 cross-process compare-and-swap rename, so an unrelated external writer can still
 race after that final check. Existing =fs.write= and =fs.edit= remain available
 for complete replacement and compatibility.
+
+The =agenda:= resolver exposes only =agenda:current=, bound to the caller's
+canonical current workspace, and denies task child-agent contexts. It never
+resolves other workspace identifiers or the underlying agenda state file.
+=resource.read= returns the complete agenda in the same readable rendering as
+=agenda.list= and retains an exact transient snapshot, including empty state,
+under a conversation-local content-addressed revision alias. =resource.edit=
+accepts exactly one =agenda-add=, =agenda-update=, or =agenda-remove= operation,
+requires that exact observed alias, and rechecks the current agenda under
+=*agenda-lock*= before mutation. An alias is stale while the current exact
+snapshot differs and becomes valid again if that exact snapshot returns. Returned
+content is a fresh complete observation. Agenda observation expiry is independent
+of workspace-file observations, and an alias cannot cross conversations or
+workspace changes. Existing =agenda.*= tools remain compatibility and convenience
+operations under the same lock. =*agenda-lock*= serializes same-process Autolith
+operations only and provides no interprocess coordination or lost-update
+guarantee.
 
 ** 5.1 =lisp.*=
 
@@ -458,10 +476,16 @@ Each item has a stable identifier, bounded complete text, lifecycle or note
 status, creation and update times, and an optional bounded list of stable memory
 identifiers. Replacing a memory preserves every agenda attachment because its
 identifier remains stable. Every model request receives the current workspace
-agenda in full as quoted untrusted data. Transport enumerates and inspects other
-workspace agendas, copies them into existing target directories, and moves them
-to new directory keys even when the old source directory no longer exists. Copy
-and move merge without discarding existing target items or memory attachments.
+agenda in full as quoted untrusted data. The =agenda:current= resource provides a
+revision-gated equivalent read and one-operation mutation path, while the
+=agenda.*= tools remain valid convenience operations. =*agenda-lock*= covers
+complete reads and read-modify-write transactions across both interfaces within
+one Autolith process. It does not coordinate other processes or provide an
+interprocess lost-update guarantee.
+Transport enumerates and inspects other workspace agendas, copies them into
+existing target directories, and moves them to new directory keys even when the
+old source directory no longer exists. Copy and move merge without discarding
+existing target items or memory attachments.
 
 ** 5.5 Workspace Commands
 

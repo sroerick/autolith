@@ -38,6 +38,18 @@
                      (resource-scheme-unknown-scheme condition)
                      (resource-scheme-unknown-uri condition)))))
 
+(define-condition resource-access-denied (autolith-error)
+  ((uri
+    :initarg :uri
+    :reader resource-access-denied-uri
+    :type non-empty-string
+    :documentation "The URI rejected under the caller's authority context."))
+  (:default-initargs :message "The resource is unavailable under this authority context.")
+  (:documentation "A resolver policy denies a resource under the caller's authority context.")
+  (:report (lambda (condition stream)
+             (format stream "Resource ~S is unavailable under this authority context."
+                     (resource-access-denied-uri condition)))))
+
 (define-condition resource-operation-unsupported (autolith-error)
   ((uri
     :initarg :uri
@@ -264,6 +276,26 @@
            :uri    (resource-resolver-scheme resolver)
            :reason "the resolver scheme must use lowercase URI scheme characters")))
 
+(-> resource-context-child-agent-p (t) boolean)
+(defgeneric resource-context-child-agent-p (context)
+  (:documentation "Return true when CONTEXT belongs to a restricted task child agent."))
+
+(defmethod resource-context-child-agent-p (context)
+  "Treat unknown authority contexts as primary contexts."
+  (declare (ignore context))
+  nil)
+
+(-> resource-resolver-child-safe-p (resource-resolver t) boolean)
+(defgeneric resource-resolver-child-safe-p (resolver context)
+  (:documentation
+   "Return true when RESOLVER may resolve resources for child-agent CONTEXT."))
+
+(defmethod resource-resolver-child-safe-p
+    ((resolver resource-resolver) context)
+  "Default resource resolvers closed for task child agents."
+  (declare (ignore resolver context))
+  nil)
+
 (-> resource-resolver-resolve (resource-resolver non-empty-string t) resource)
 (defgeneric resource-resolver-resolve (resolver identifier context)
   (:documentation
@@ -317,4 +349,7 @@
         (error 'resource-scheme-unknown
                :uri    uri
                :scheme scheme))
+      (when (and (resource-context-child-agent-p context)
+                 (not (resource-resolver-child-safe-p resolver context)))
+        (error 'resource-access-denied :uri uri))
       (resource-resolver-resolve resolver identifier context))))

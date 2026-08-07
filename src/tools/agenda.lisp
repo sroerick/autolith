@@ -135,91 +135,96 @@
                          (arguments hash-table))
   "Read the complete agenda for the current workspace."
   (declare (ignore tool arguments))
-  (let* ((configuration (tool-context-configuration context))
-         (state (agenda-load configuration)))
-    (tool-success
-     (agenda-tool--render-record (agenda-current configuration state)))))
+  (with-recursive-lock-held (*agenda-lock*)
+    (let* ((configuration (tool-context-configuration context))
+           (state (agenda-load configuration)))
+      (tool-success
+       (agenda-tool--render-record (agenda-current configuration state))))))
 
 (defmethod tool-execute ((tool agenda-add-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Add one item to the current workspace agenda."
   (declare (ignore tool))
-  (let* ((configuration (tool-context-configuration context))
-         (state (agenda-load configuration))
-         (text (agenda-tool--string-argument
-                arguments "text" "agenda.add" :required t))
-         (status (or (agenda-tool--status arguments) ':todo)))
+  (let ((text (agenda-tool--string-argument
+               arguments "text" "agenda.add" :required t))
+        (status (or (agenda-tool--status arguments) ':todo)))
     (multiple-value-bind (memory-identifiers memory-identifiers-supplied-p)
         (agenda-tool--memory-identifiers arguments "agenda.add")
       (declare (ignore memory-identifiers-supplied-p))
-      (let ((item (agenda-add :configuration configuration
-                              :state state
-                              :text text
-                              :status status
-                              :memory-identifiers memory-identifiers)))
-        (tool-success
-         (format nil "Added ~A." (agenda-tool--render-item item)))))))
+      (with-recursive-lock-held (*agenda-lock*)
+        (let* ((configuration (tool-context-configuration context))
+               (state (agenda-load configuration))
+               (item (agenda-add :configuration configuration
+                                 :state state
+                                 :text text
+                                 :status status
+                                 :memory-identifiers memory-identifiers)))
+          (tool-success
+           (format nil "Added ~A." (agenda-tool--render-item item))))))))
 
 (defmethod tool-execute ((tool agenda-update-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Update text or status for one current workspace agenda item."
   (declare (ignore tool))
-  (let* ((configuration (tool-context-configuration context))
-         (state (agenda-load configuration))
-         (identifier (agenda-tool--string-argument
-                      arguments "id" "agenda.update" :required t))
-         (text (agenda-tool--string-argument
-                arguments "text" "agenda.update"))
-         (status (agenda-tool--status arguments)))
+  (let ((identifier (agenda-tool--string-argument
+                     arguments "id" "agenda.update" :required t))
+        (text (agenda-tool--string-argument
+               arguments "text" "agenda.update"))
+        (status (agenda-tool--status arguments)))
     (multiple-value-bind (memory-identifiers memory-identifiers-supplied-p)
         (agenda-tool--memory-identifiers arguments "agenda.update")
       (unless (or text status memory-identifiers-supplied-p)
         (error 'tool-error
                :message "agenda.update requires text, status, or memory-ids."
                :tool-name "agenda.update"))
-      (let ((item
-              (apply #'agenda-update
-                     configuration state identifier
-                     (append (and text (list :text text))
-                             (and status (list :status status))
-                             (and memory-identifiers-supplied-p
-                                  (list :memory-identifiers
-                                        memory-identifiers))))))
-        (tool-success
-         (format nil "Updated ~A." (agenda-tool--render-item item)))))))
+      (with-recursive-lock-held (*agenda-lock*)
+        (let* ((configuration (tool-context-configuration context))
+               (state (agenda-load configuration))
+               (item
+                 (apply #'agenda-update
+                        configuration state identifier
+                        (append (and text (list :text text))
+                                (and status (list :status status))
+                                (and memory-identifiers-supplied-p
+                                     (list :memory-identifiers
+                                           memory-identifiers))))))
+          (tool-success
+           (format nil "Updated ~A." (agenda-tool--render-item item))))))))
 
 (defmethod tool-execute ((tool agenda-remove-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Remove one current workspace agenda item."
   (declare (ignore tool))
-  (let* ((configuration (tool-context-configuration context))
-         (state (agenda-load configuration))
-         (identifier (agenda-tool--string-argument
-                      arguments "id" "agenda.remove" :required t)))
-    (if (agenda-remove configuration state identifier)
-        (tool-success (format nil "Removed agenda item ~A." identifier))
-        (tool-failure (format nil "Agenda item ~A does not exist here."
-                              identifier)))))
+  (let ((identifier (agenda-tool--string-argument
+                     arguments "id" "agenda.remove" :required t)))
+    (with-recursive-lock-held (*agenda-lock*)
+      (let* ((configuration (tool-context-configuration context))
+             (state (agenda-load configuration)))
+        (if (agenda-remove configuration state identifier)
+            (tool-success (format nil "Removed agenda item ~A." identifier))
+            (tool-failure (format nil "Agenda item ~A does not exist here."
+                                  identifier)))))))
 
 (defmethod tool-execute ((tool agenda-transport-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Enumerate, inspect, copy, or move persistent workspace agendas."
   (declare (ignore tool))
-  (let* ((configuration (tool-context-configuration context))
-         (state (agenda-load configuration))
-         (operation (agenda-tool--string-argument
-                     arguments "operation" "agenda.transport" :required t))
-         (source (agenda-tool--string-argument
-                  arguments "source-directory" "agenda.transport"))
-         (target (or (agenda-tool--string-argument
-                      arguments "target-directory" "agenda.transport")
-                     (namestring
-                      (configuration-working-directory configuration)))))
-    (cond
+  (with-recursive-lock-held (*agenda-lock*)
+    (let* ((configuration (tool-context-configuration context))
+           (state (agenda-load configuration))
+           (operation (agenda-tool--string-argument
+                       arguments "operation" "agenda.transport" :required t))
+           (source (agenda-tool--string-argument
+                    arguments "source-directory" "agenda.transport"))
+           (target (or (agenda-tool--string-argument
+                        arguments "target-directory" "agenda.transport")
+                       (namestring
+                        (configuration-working-directory configuration)))))
+      (cond
       ((string-equal operation "workspaces")
        (tool-success (agenda-tool--render-workspaces state)))
       ((string-equal operation "view")
@@ -255,4 +260,4 @@
       (t
        (error 'tool-error
               :message "agenda.transport operation must be workspaces, view, copy, or move."
-              :tool-name "agenda.transport")))))
+              :tool-name "agenda.transport"))))))

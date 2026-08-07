@@ -93,28 +93,37 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: the provider supplies a native structured patch protocol
   with equal or stronger uniqueness, line-ending, and indentation safeguards.
 
-** Revision-gated workspace resources
+** Revision-gated workspace and agenda resources
 
 - Problem: exact-text editing requires models to reproduce existing source,
   indentation, and line endings, causing avoidable retries and output token use.
-  Independent tool calls could also edit content that changed after inspection.
-- Behavior: =resource.read= establishes a bounded, transient, conversation-local
-  snapshot alias for an exact =workspace:= file revision and records only lines
-  fully shown to the model. =resource.edit= applies validated non-overlapping
-  operations against original snapshot line numbers, rejects unseen or stale
-  content, serializes native resource and filesystem mutations, preserves uniform
-  line endings and final-newline state, and atomically replaces the file. It
-  rechecks immediately before publication, while documenting the unavoidable
-  final-check race with unrelated external writers. Existing =fs.edit= stays
-  available as a compatibility path.
+  Independent file or agenda calls could also mutate content after inspection.
+- Behavior: =resource.read= establishes transient conversation-local observations.
+  For =workspace:= files it retains an exact bounded snapshot and only lines fully
+  shown to the model; =resource.edit= applies validated original-line operations,
+  rejects unseen or stale content, serializes native filesystem mutations,
+  preserves uniform line endings and final-newline state, and atomically replaces
+  the file. For =agenda:current= it returns the complete readable current agenda,
+  retains an exact snapshot including empty state, and applies exactly one
+  revision-gated add, update, or remove under the same recursive lock as legacy
+  agenda tools. Agenda revisions address exact snapshots, so an alias is stale
+  while content differs and valid again if the exact snapshot returns. Agenda
+  URIs cannot resolve another workspace or the raw state file, task child agents
+  cannot resolve them, and aliases cannot cross conversations or workspace
+  changes. The agenda lock serializes same-process Autolith operations only and
+  does not provide interprocess safety. Existing =fs.edit= and =agenda.*= tools
+  stay available as compatibility paths.
 - Scope and location: tracked project work in =src/resource/=,
-  =src/conversation/store.lisp=, =src/tools/defaults.lisp=, and the resource
-  schemas, prompt, specification, guide, and regressions.
-- Verification: URI confinement, observation isolation and expiry, visible-range
-  gating, original-snapshot multi-operation edits, stale and protected paths,
-  bounded regular UTF-8 snapshots, empty files, atomic publish failures, line
-  endings, schemas, and compatibility regressions pass within the complete
-  3,461-test repository check.
+  =src/state/agendas.lisp=, =src/conversation/store.lisp=,
+  =src/tools/defaults.lisp=, and the resource schemas, prompt, specification,
+  guide, and regressions.
+- Verification: workspace URI confinement, observation isolation and expiry,
+  visible-range gating, original-snapshot multi-operation edits, stale and
+  protected paths, bounded UTF-8 snapshots, empty files, atomic publish failures,
+  line endings, plus agenda empty and complete reads, revisions, confinement,
+  add/update/remove, memory links, mixed observation retention, schema closure,
+  shared locking, and legacy compatibility pass within the complete 3,506-test
+  repository check.
 - Removal condition: a provider-native editing protocol supplies the same exact
   revision, visibility, authority, atomicity, and recovery guarantees with lower
   harness complexity.

@@ -892,8 +892,8 @@
                       (operation-items
                         (json-get (json-get properties "operations") "items"))
                       (variants (json-get operation-items "oneOf")))
-                 (test-assert (= (length variants) 5)
-                              "resource.edit schema exposes five closed operation variants")
+                 (test-assert (= (length variants) 8)
+                              "resource.edit schema exposes workspace and agenda variants")
                  (test-assert
                   (every (lambda (variant)
                            (and (json-get variant "required")

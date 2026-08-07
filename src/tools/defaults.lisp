@@ -46,22 +46,44 @@
 
 (-> default-tools--resource-operation-schema () json-object)
 (defun default-tools--resource-operation-schema ()
-  "Return the closed operation variants accepted by resource.edit."
+  "Return the closed workspace and agenda variants accepted by resource.edit."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (json-object "type" "integer"
                           "minimum" 1
                           "description" description))
 
-           (operation-schema (name properties required)
+           (status-property ()
+             "Return the closed agenda status schema."
+             (json-object
+              "type" "string"
+              "enum" (vector "todo" "doing" "blocked" "done" "note")
+              "description" "The agenda item's lifecycle or note status."))
+
+           (memory-identifiers-property ()
+             "Return the bounded agenda memory attachment schema."
+             (json-object
+              "type" "array"
+              "description" "Stable memory identifiers to attach; empty detaches all."
+              "maxItems" *agenda-item-memory-limit*
+              "items" (tool-string-property "One stable memory identifier.")))
+
+           (operation-schema (name properties required &key any-required)
              "Return one closed resource edit operation variant."
              (setf (gethash "op" properties)
                    (json-object "type" "string"
                                 "enum" (vector name)))
-             (tool-object-schema properties (cons "op" required))))
+             (let ((schema (tool-object-schema properties (cons "op" required))))
+               (when any-required
+                 (setf (gethash "anyOf" schema)
+                       (map 'vector
+                            (lambda (field)
+                              (json-object "required" (vector field)))
+                            any-required)))
+               schema)))
     (json-object
      "description"
-     "One structured operation against original observed line numbers."
+     "One structured operation for the observed resource type."
      "oneOf"
      (vector
       (operation-schema
@@ -94,7 +116,28 @@
        (json-object
         "content" (tool-string-property
                    "Non-empty complete content for an observed empty file."))
-       '("content"))))))
+       '("content"))
+      (operation-schema
+       "agenda-add"
+       (json-object
+        "text" (tool-string-property "Complete bounded agenda item text.")
+        "status" (status-property)
+        "memory-ids" (memory-identifiers-property))
+       '("text"))
+      (operation-schema
+       "agenda-update"
+       (json-object
+        "id" (tool-string-property "The stable agenda item identifier.")
+        "text" (tool-string-property "Replacement bounded agenda item text.")
+        "status" (status-property)
+        "memory-ids" (memory-identifiers-property))
+       '("id")
+       :any-required '("text" "status" "memory-ids"))
+      (operation-schema
+       "agenda-remove"
+       (json-object
+        "id" (tool-string-property "The stable agenda item identifier."))
+       '("id"))))))
 
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
@@ -103,17 +146,20 @@
     (resource-registry-register
      resource-registry
      (make-instance 'workspace-file-resolver :scheme "workspace"))
+    (resource-registry-register
+     resource-registry
+     (make-instance 'agenda-resolver :scheme "agenda"))
     (dolist
         (specification
          (list
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a bounded line window from a workspace: URI. Returns a canonical URI, opaque revision, numbered content, visible ranges, and elisions; this observation is required by resource.edit."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda. Both establish a transient revision required by resource.edit."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The workspace: URI to read, for example workspace:src/main.lisp.")
+                    "The resource URI, for example workspace:src/main.lisp or agenda:current.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -123,17 +169,17 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit an existing workspace: file at an exact observed revision using structured original-line operations. Every touched or anchor line must have been visible under that revision; stale or expired revisions require a reread."
+           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts exactly one agenda-add, agenda-update, or agenda-remove operation. Stale or expired revisions require a reread."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The canonical workspace: URI returned by resource.read.")
+                    "The canonical resource URI returned by resource.read.")
              "base-revision" (tool-string-property
                               "The opaque revision returned by resource.read.")
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Non-overlapping operations addressing original snapshot line numbers."
+                           "Resource-specific operations. agenda:current accepts exactly one; workspace: files accept non-overlapping original-line operations."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))

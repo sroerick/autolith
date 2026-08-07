@@ -161,6 +161,7 @@
     (test-fireworks-provider)
     (test-resource-protocol)
     (test-workspace-file-resources)
+    (test-agenda-resources)
     (test-tool-registry)
     (test-workspace-tools)
     (test-search-tools)
