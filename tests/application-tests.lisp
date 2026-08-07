@@ -3781,7 +3781,7 @@
                      (application-input-controller-call-with-reader-paused
                       controller
                       (lambda ()
-                        (unless (sbcl-generations::checkpoint--single-threaded-p)
+                        (unless (checkpoint--single-threaded-p)
                           (mapcar #'bordeaux-threads:thread-name
                                   (bordeaux-threads:all-threads)))))))
                (test-assert

@@ -377,11 +377,35 @@ so its own stage and message survive the round trip."
              :pathname (configuration-source-root configuration))))
   nil)
 
+(-> checkpoint--single-threaded-p () boolean)
+(defun checkpoint--single-threaded-p ()
+  "Return true when SBCL's current thread is the only live Lisp thread."
+  (notany (lambda (thread)
+            (and (not (eq thread sb-thread:*current-thread*))
+                 (sb-thread:thread-alive-p thread)))
+          (sb-thread:list-all-threads)))
+
+(-> checkpoint--process-identifier () integer)
+(defun checkpoint--process-identifier ()
+  "Return the current process identifier used to recognize a checkpoint child."
+  (sb-posix:getpid))
+
 (-> checkpoint--detach-worker (t) null)
 (defun checkpoint--detach-worker (worker)
   "Detach SAVER's inherited worker streams without signaling the live subprocess."
   (sbcl-worker-manager-detach-inherited-processes worker)
   nil)
+
+(-> checkpoint--call-with-fork-guard (t function) t)
+(defun checkpoint--call-with-fork-guard (worker thunk)
+  "Call THUNK exclusively and detach inherited WORKER state in its forked child."
+  (let ((parent-pid (checkpoint--process-identifier)))
+    (call-with-secret-use-quiescence
+     (lambda ()
+       (with-live-mutation
+         (multiple-value-prog1 (funcall thunk)
+           (unless (= parent-pid (checkpoint--process-identifier))
+             (checkpoint--detach-worker worker))))))))
 
 (-> checkpoint--prepare-saver (t t) null)
 (defun checkpoint--prepare-saver (worker generation)
@@ -430,10 +454,7 @@ dropped and inherited worker descriptors detached before the image is saved."
          (checkpoint--source-snapshot configuration))
        :fork-guard-function
        (lambda (thunk)
-         (call-with-secret-use-quiescence
-          (lambda ()
-            (with-live-mutation
-              (funcall thunk)))))
+         (checkpoint--call-with-fork-guard worker thunk))
        :validate-function
        ;; The quiesced runtimes are recorded in the enclosing scope rather than
        ;; returned, because a close failure leaves this hook through a non-local

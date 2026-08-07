@@ -503,6 +503,114 @@
   nil)
 
 
+(-> generation-tests--test-checkpoint-worker-detachment () null)
+(defun generation-tests--test-checkpoint-worker-detachment ()
+  "Test coordinator and saver processes detach inherited worker state."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (worker        (list ':checkpoint-worker))
+         (backend       (checkpoint-backend-create configuration worker))
+         (guard
+           (sbcl-generations::checkpoint-backend-fork-guard-function backend))
+         (process-identifiers nil)
+         (events nil))
+    (unwind-protect
+         (progn
+           (labels ((process-identifier ()
+                      "Return the next simulated process identifier."
+                      (pop process-identifiers))
+
+                    (detach-worker (detached-worker)
+                      "Record inherited worker detachment."
+                      (push (list ':detach detached-worker) events)
+                      nil))
+             (setf process-identifiers '(100 101))
+             (test-call-with-function-replacements
+              (list (list 'checkpoint--process-identifier #'process-identifier)
+                    (list 'checkpoint--detach-worker #'detach-worker))
+              (lambda ()
+                (test-assert
+                 (eq (funcall guard
+                              (lambda ()
+                                (push ':thunk events)
+                                ':complete))
+                     ':complete)
+                 "the checkpoint fork guard preserves its thunk result")))
+             (test-assert
+              (equal (reverse events)
+                     (list ':thunk (list ':detach worker)))
+              "the forked coordinator detaches worker state after the guarded fork")
+             (setf process-identifiers '(100 100)
+                   events nil)
+             (test-call-with-function-replacements
+              (list (list 'checkpoint--process-identifier #'process-identifier)
+                    (list 'checkpoint--detach-worker #'detach-worker))
+              (lambda ()
+                (funcall guard (lambda () (push ':thunk events)))))
+             (test-assert
+              (equal events '(:thunk))
+              "the live parent keeps ownership of its worker state"))
+           (let ((*credentials-in-request-scope* (list "test credential"))
+                 (*active-secret-use-count* 2)
+                 (*secret-use-depth* 2)
+                 (*secret-use-quiescence-owner* sb-thread:*current-thread*)
+                 (*active-application* ':saved-application)
+                 (saved-events nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'checkpoint--detach-worker
+                     (lambda (detached-worker)
+                       (push (list ':detach detached-worker) saved-events)
+                       nil))
+               (list 'checkpoint-detach-state
+                     (lambda (application)
+                       (push (list ':state application) saved-events)
+                       nil)))
+              (lambda ()
+                (checkpoint--prepare-saver worker nil)))
+             (test-assert
+              (and (null *credentials-in-request-scope*)
+                   (zerop *active-secret-use-count*)
+                   (zerop *secret-use-depth*)
+                   (null *secret-use-quiescence-owner*))
+              "the saver clears credential state before writing the core")
+             (test-assert
+              (equal (reverse saved-events)
+                     (list (list ':detach worker)
+                           '(:state :saved-application)))
+              "the saver detaches worker and application state before saving")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> generation-tests--test-active-image-single-thread-check () null)
+(defun generation-tests--test-active-image-single-thread-check ()
+  "Test active-image installation refuses to fork with another live Lisp thread."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (source-root   (asdf:system-source-directory :autolith))
+         (core-pathname (merge-pathnames "active/autolith.core" root)))
+    (unwind-protect
+         (test-assert
+          (test-call-with-function-replacements
+           (list
+            (list 'active-image-build-record-create
+                  (lambda (active-source-root)
+                    (declare (ignore active-source-root))
+                    '(:active-image-build-test)))
+            (list 'checkpoint--single-threaded-p (lambda () nil)))
+           (lambda ()
+             (handler-case
+                 (progn
+                   (active-image-install source-root core-pathname)
+                   nil)
+               (active-image-build-error (condition)
+                 (and (eq (active-image-build-error-stage condition) ':fork)
+                      (equal (active-image-build-error-pathname condition)
+                             core-pathname))))))
+          "active-image installation checks for one live thread before forking")
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 ;;;; -- Subsystem Tests --
 
 (-> test-generation-manifest () null)
@@ -511,6 +619,8 @@
   (generation-tests--test-checkpoint-runtime-resume)
   (generation-tests--test-partial-runtime-quiescence)
   (generation-tests--test-active-provider-secret-refusal)
+  (generation-tests--test-checkpoint-worker-detachment)
+  (generation-tests--test-active-image-single-thread-check)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (generation
