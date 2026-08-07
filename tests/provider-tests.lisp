@@ -958,6 +958,8 @@
               :errno 1
               :symbol 'getaddrinfo
               :syscall 'getaddrinfo))
+      ((eq outcome ':simple-error)
+       (error "Synthetic provider transport failure."))
       ((consp outcome)
        (values-list outcome))
       (t
@@ -1093,6 +1095,25 @@
                 (provider-transport-error ()
                   t))
               "native compaction normalizes an SBCL name-service error"))
+            (let ((provider
+                    (provider-tests--transport-provider
+                     configuration
+                     (list ':simple-error))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (provider--open-response-stream
+                      provider
+                      (json-object)
+                      :credentials credentials
+                      :conversation conversation)
+                     nil)
+                 (provider-error (condition)
+                   (and (not (typep condition 'provider-retryable-error))
+                        (string=
+                         (autolith-error-message condition)
+                         "The provider transport failed before a response was received."))))
+               "a raw transport SIMPLE-ERROR becomes a terminal provider failure"))
            (let* ((stream
                     (make-instance
                      'test-failing-close-stream

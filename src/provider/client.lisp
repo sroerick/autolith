@@ -1258,6 +1258,10 @@ are decoded as UTF-8."
     (cl+ssl-error ()
       (provider--signal-transport-failure
        "The provider TLS connection could not be established."
+       :retryable-p nil))
+    (simple-error ()
+      (provider--signal-transport-failure
+       "The provider transport failed before a response was received."
        :retryable-p nil))))
 
 (-> provider--open-native-compaction
@@ -1289,6 +1293,10 @@ are decoded as UTF-8."
     (cl+ssl-error ()
       (provider--signal-transport-failure
        "The provider TLS connection could not be established."
+       :retryable-p nil))
+    (simple-error ()
+      (provider--signal-transport-failure
+       "The provider transport failed before compaction began."
        :retryable-p nil))))
 
 (-> provider--read-sse-data (stream t) t)
