@@ -8,6 +8,7 @@
                #:cl+ssl
                #:cl-colorist
                #:cl-exec-sandbox
+               #:cl-jobpond
                #:clifff
                #:clinedi
                #:colorlisp

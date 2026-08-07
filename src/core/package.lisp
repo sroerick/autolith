@@ -21,6 +21,58 @@
                 #:sandbox-result-output-truncated-p
                 #:sandbox-result-timed-out-p
                 #:workspace-write-sandbox-policy)
+  (:import-from #:cl-jobpond
+                #:job
+                #:job-aborted
+                #:job-aborted-identifier
+                #:job-aborted-message
+                #:job-aborted-reason
+                #:job-await
+                #:job-cancel
+                #:job-cancellation-reason
+                #:job-cancellation-requested-p
+                #:job-check-cancellation
+                #:job-condition-report
+                #:job-created-at
+                #:job-deadline
+                #:job-ended-at
+                #:job-identifier
+                #:job-index
+                #:job-maximum-runtime-milliseconds
+                #:job-name
+                #:job-not-found
+                #:job-owner-identifiers
+                #:job-pool
+                #:job-pool-active-count
+                #:job-pool-add-listener
+                #:job-pool-capacity-exceeded
+                #:job-pool-capacity-exceeded-limit-kind
+                #:job-pool-close
+                #:job-pool-closed
+                #:job-pool-descendant-jobs
+                #:job-pool-detach
+                #:job-pool-emit
+                #:job-pool-error
+                #:job-pool-error-message
+                #:job-pool-find-job
+                #:job-pool-lifecycle-state
+                #:job-pool-list-jobs
+                #:job-pool-live-count
+                #:job-pool-maximum-batch-size
+                #:job-pool-maximum-concurrency
+                #:job-pool-maximum-live-jobs
+                #:job-pool-maximum-runtime-milliseconds
+                #:job-pool-refresh
+                #:job-pool-remove-listener
+                #:job-pool-submit-batch
+                #:job-result
+                #:job-root-identifier
+                #:job-run-inline
+                #:job-run-token
+                #:job-started-at
+                #:job-state
+                #:job-terminal-p
+                #:make-job-pool)
   (:import-from #:flexi-streams
                 #:get-output-stream-sequence
                 #:make-flexi-stream
