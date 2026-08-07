@@ -1904,6 +1904,23 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
         (application-compact application)))
   ':continue)
 
+(define-application-command application--builtin-detach-command
+    (:name "/detach"
+     :argument nil
+     :description "detach Autolith from the current terminal"
+     :tip "keeps the session running and returns the foreground shell."
+     :busy-behavior :hold
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (let ((session (application-localgroup-session application)))
+    (unless session
+      (error 'localgroup-error
+             :message "The localgroup session is not ready to detach."
+             :operation ':detach))
+    (localgroup--detach-terminal session))
+  ':continue)
+
 (define-application-command application--builtin-quit-command
     (:name "/quit"
      :aliases ("/exit")

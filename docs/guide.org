@@ -247,9 +247,10 @@ receives bounded terminal replay and live output without input authority.
 Ordinary attach requires the session to have no controlling terminal.
 =--take-over= replaces a remote controller immediately.
 
-Detaching or taking over a foreground session uses a safe process handoff rather
-than forking the active image or changing the stable launcher. Existing queued
-work and live subagents finish first. Autolith preserves a durable conversation
+Use =/detach= inside an interactive session to detach it from the current
+terminal. Detaching or taking over a foreground session uses a safe process
+handoff rather than forking the active image or changing the stable launcher.
+Existing queued work and live subagents finish first. Autolith preserves a durable conversation
 when one exists, preserves an empty session as a fresh conversation, restores
 the composer draft, keeps the same localgroup session ID, and starts a detached
 replacement in the same working directory and permission mode. The old process

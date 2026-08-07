@@ -287,6 +287,7 @@
          ("/context" :execute)
          ("/new" :hold)
          ("/compact" :hold)
+         ("/detach" :hold)
          ("/quit" :cancel)
          ("/exit" :cancel)))
     (destructuring-bind (input expected) case
