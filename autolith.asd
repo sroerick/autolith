@@ -24,6 +24,7 @@
                #:sb-posix
                #:sb-bsd-sockets
                #:sbcl-workers
+               #:sexp-config
                #:sexp-store
                #:usocket
                #:yason)

@@ -102,6 +102,14 @@
                 #:identifier-p
                 #:identifier-reserved-p
                 #:identifier-space-exhausted)
+  (:import-from #:sexp-config
+                #:make-source-grammar
+                #:read-source
+                #:sexp-config-error
+                #:sexp-config-error-kind
+                #:sexp-config-error-message
+                #:source-grammar
+                #:validate-tree)
   (:import-from #:ironclad
                 #:make-mac
                 #:produce-mac
