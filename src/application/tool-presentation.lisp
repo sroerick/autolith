@@ -137,49 +137,130 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
         (error ()
           nil)))))
 
+(defparameter *application-tool-structure-items* 12
+  "The maximum nested fields or items shown for one generic tool value.")
+
+(defparameter *application-tool-structure-depth* 4
+  "The maximum nesting depth expanded for one untrusted structured tool value.")
+
 (-> application--presentation-value (t) string)
 (defun application--presentation-value (value)
-  "Return a concise readable presentation of one JSON argument VALUE."
+  "Return a concise readable presentation of one JSON VALUE without JSON syntax."
   (cond
     ((stringp value)
      value)
-    ((vectorp value)
-     (format nil "~{~A~^, ~}"
-             (map 'list #'application--presentation-value value)))
     ((json-object-p value)
-     (json-encode value))
+     (format nil "~:D field~:P" (hash-table-count value)))
+    ((and (vectorp value) (not (stringp value)))
+     (format nil "~:D item~:P" (length value)))
+    ((eq value t)
+     "true")
     ((eq value false)
      "false")
+    ((null value)
+     "null")
     (t
      (bounded-string value :limit 500))))
+
+(-> application--structured-value-rows
+    (application string t &key (:depth integer))
+    list)
+(defun application--structured-value-rows
+    (application label value &key (depth *application-tool-structure-depth*))
+  "Return bounded readable rows for LABEL and nested JSON VALUE.
+
+Objects and arrays are expanded recursively so unregistered and dynamic tools
+never fall back to raw JSON argument syntax.  DEPTH bounds untrusted nesting."
+  (cond
+    ((json-object-p value)
+     (if (plusp depth)
+         (application--structured-object-rows application value
+                                              :prefix label
+                                              :depth (1- depth))
+         (application--tool-field-rows
+          application
+          (list (list :label label :value "(nested object)" :style ':dim)))))
+    ((and (vectorp value) (not (stringp value)))
+     (if (not (plusp depth))
+         (application--tool-field-rows
+          application
+          (list (list :label label
+                      :value (format nil "~:D nested item~:P" (length value))
+                      :style ':dim)))
+         (let* ((visible-count (min *application-tool-structure-items*
+                                    (length value)))
+                (omitted (- (length value) visible-count)))
+           (if (zerop (length value))
+               (application--tool-field-rows
+                application
+                (list (list :label label :value "(no items)" :style ':dim)))
+               (append
+                (loop for index below visible-count
+                      append (application--structured-value-rows
+                              application
+                              (format nil "~A[~D]" label (1+ index))
+                              (aref value index)
+                              :depth (1- depth)))
+                (when (plusp omitted)
+                  (list
+                   (list (terminal-span
+                          ':dim
+                          (format nil "… +~D more item~:P" omitted))))))))))
+    ((and (stringp value) (find #\Newline value))
+     (append
+      (list (application--tool-section-row label))
+      (application--preview-rows value ':code *application-tool-call-lines*
+                                 :gutter "│ ")))
+    (t
+     (application--tool-field-rows
+      application
+      (list (list :label label
+                  :value (if (stringp value)
+                             (bounded-string value :limit 500)
+                             (application--presentation-value value))
+                  :style ':code))))))
+
+(-> application--structured-object-rows
+    (application json-object &key (:prefix (option string))
+                                  (:excluded-keys list) (:depth integer))
+    list)
+(defun application--structured-object-rows
+    (application object &key prefix excluded-keys
+                              (depth *application-tool-structure-depth*))
+  "Return bounded recursively formatted OBJECT fields under optional PREFIX.
+
+EXCLUDED-KEYS are omitted by exact name, allowing callers to present a
+structural discriminator as a readable heading instead."
+  (let* ((keys
+           (sort
+            (loop for key being the hash-keys of object
+                  unless (member key excluded-keys :test #'string=)
+                    collect key)
+            #'string<))
+         (visible-count (min *application-tool-structure-items* (length keys)))
+         (omitted (- (length keys) visible-count)))
+    (append
+     (loop for key in (subseq keys 0 visible-count)
+           append (application--structured-value-rows
+                   application
+                   (if prefix
+                       (format nil "~A.~A" prefix key)
+                       key)
+                   (json-get object key)
+                   :depth depth))
+     (when (plusp omitted)
+       (list
+        (list (terminal-span
+               ':dim
+               (format nil "… +~D more field~:P" omitted))))))))
 
 (-> application--generic-argument-rows
     (application (option json-object))
     list)
 (defun application--generic-argument-rows (application arguments)
-  "Return readable field rows for generic tool ARGUMENTS."
+  "Return readable recursively structured rows for generic tool ARGUMENTS."
   (when arguments
-    (let ((fields nil)
-          (sections nil))
-      (loop for name in (sort (loop for key being the hash-keys of arguments
-                                    collect key)
-                              #'string<)
-            for value = (json-get arguments name)
-            for text = (application--presentation-value value)
-            do (if (find #\Newline text)
-                   (setf sections
-                         (append sections
-                                 (list (application--tool-section-row name))
-                                 (application--preview-rows
-                                  text ':code *application-tool-call-lines*
-                                  :gutter "│ ")))
-                   (setf fields
-                         (append fields
-                                 (list (list :label name
-                                             :value text
-                                             :style ':code))))))
-      (append (application--tool-field-rows application fields)
-              sections))))
+    (application--structured-object-rows application arguments)))
 
 (-> application--restart-call-rows ((option json-object)) list)
 (defun application--restart-call-rows (arguments)
@@ -798,6 +879,137 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                (list
                 (application--tool-section-row
                  "arguments unavailable"))))))
+
+(-> application--resource-operation-heading (json-object integer) string)
+(defun application--resource-operation-heading (operation index)
+  "Return a readable verb phrase for resource edit OPERATION at INDEX."
+  (let ((name (let ((value (json-get operation "op")))
+                (if (stringp value) value "")))
+        (start (json-get operation "start-line"))
+        (end (json-get operation "end-line"))
+        (anchor (json-get operation "line"))
+        (identifier (json-get operation "id")))
+    (format nil "operation ~D · ~A"
+            index
+            (cond
+              ((string= name "replace-lines")
+               (if (and (integerp start) (integerp end))
+                   (format nil "replace lines ~D-~D" start end)
+                   "replace lines"))
+              ((string= name "delete-lines")
+               (if (and (integerp start) (integerp end))
+                   (format nil "delete lines ~D-~D" start end)
+                   "delete lines"))
+              ((string= name "insert-before")
+               (if (integerp anchor)
+                   (format nil "insert before line ~D" anchor)
+                   "insert before line"))
+              ((string= name "insert-after")
+               (if (integerp anchor)
+                   (format nil "insert after line ~D" anchor)
+                   "insert after line"))
+              ((string= name "replace-empty")
+               "replace empty file")
+              ((string= name "agenda-add")
+               "add agenda item")
+              ((string= name "agenda-update")
+               (if (non-empty-string-p identifier)
+                   (format nil "update agenda item ~A" identifier)
+                   "update agenda item"))
+              ((string= name "agenda-remove")
+               (if (non-empty-string-p identifier)
+                   (format nil "remove agenda item ~A" identifier)
+                   "remove agenda item"))
+              ((string= name "memory-remember")
+               "remember memory")
+              ((string= name "memory-replace")
+               "replace memory")
+              ((string= name "memory-forget")
+               "forget memory")
+              ((non-empty-string-p name)
+               name)
+              (t
+               "invalid operation")))))
+
+(-> application--resource-operation-rows (application t) list)
+(defun application--resource-operation-rows (application operations)
+  "Return readable verbs, fields, and content previews for resource OPERATIONS."
+  (cond
+    ((not (and (vectorp operations) (not (stringp operations))))
+     (list (application--tool-section-row "operations unavailable")))
+    ((zerop (length operations))
+     (list (application--tool-section-row "no operations")))
+    (t
+     (let* ((visible-count (min *application-tool-structure-items*
+                                (length operations)))
+            (omitted (- (length operations) visible-count)))
+       (append
+        (loop for index below visible-count
+              for operation = (aref operations index)
+              for first-p = t then nil
+              append
+              (append
+               (unless first-p (list nil))
+               (if (json-object-p operation)
+                   (append
+                    (list (application--tool-section-row
+                           (application--resource-operation-heading
+                            operation
+                            (1+ index))))
+                    (application--structured-object-rows
+                     application operation :excluded-keys '("op")))
+                   (application--structured-value-rows
+                    application
+                    (format nil "operation ~D" (1+ index))
+                    operation))))
+        (when (plusp omitted)
+          (list nil
+                (list (terminal-span
+                       ':dim
+                       (format nil "… +~D more operation~:P" omitted))))))))))
+
+(defmethod application-tool-call-entry
+    ((tool resource-read-tool) (application application) (call hash-table))
+  "Present resource.read as a URI and optional bounded line window."
+  (declare (ignore tool))
+  (let* ((arguments (application--function-call-arguments call))
+         (uri (or (and arguments (json-get arguments "uri")) ""))
+         (start (and arguments (json-get arguments "start-line")))
+         (count (and arguments (json-get arguments "line-count"))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ resource.read"
+     :rows
+     (application--tool-field-rows
+      application
+      (append
+       (list (list :label "uri" :value uri :style ':code))
+       (when (integerp start)
+         (list (list :label "start line" :value (princ-to-string start))))
+       (when (integerp count)
+         (list (list :label "line count" :value (princ-to-string count)))))))))
+
+(defmethod application-tool-call-entry
+    ((tool resource-edit-tool) (application application) (call hash-table))
+  "Present resource.edit's revision-gated operations without raw JSON."
+  (declare (ignore tool))
+  (let* ((arguments (application--function-call-arguments call))
+         (uri (or (and arguments (json-get arguments "uri")) ""))
+         (revision (or (and arguments (json-get arguments "base-revision")) ""))
+         (operations (and arguments (json-get arguments "operations"))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ resource.edit"
+     :rows
+     (append
+      (application--tool-field-rows
+       application
+       (list (list :label "uri" :value uri :style ':code)
+             (list :label "revision" :value revision :style ':code)))
+      (list nil)
+      (application--resource-operation-rows application operations)))))
 
 (defmethod application-tool-call-entry
     ((tool fs-read-tool) (application application) (call hash-table))
@@ -1520,16 +1732,49 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
                                   *application-tool-output-lines*
                                   :gutter "│ ")))))
 
+(-> application--structured-output-value (string) (values t boolean))
+(defun application--structured-output-value (output)
+  "Decode a JSON object or array OUTPUT for transcript presentation.
+
+Only complete object and array documents opt into this path.  Other output
+remains ordinary bounded tool text, including malformed untrusted JSON."
+  (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
+    (if (and (plusp (length trimmed))
+             (member (char trimmed 0) '(#\{ #\[)))
+        (handler-case
+            (let ((value (json-decode trimmed)))
+              (if (or (json-object-p value)
+                      (and (vectorp value) (not (stringp value))))
+                  (values value t)
+                  (values nil nil)))
+          (error ()
+            (values nil nil)))
+        (values nil nil))))
+
+(-> application--structured-output-rows (application string) list)
+(defun application--structured-output-rows (application output)
+  "Return safe recursive fields for JSON OUTPUT or a bounded text preview."
+  (multiple-value-bind (value structured-p)
+      (application--structured-output-value output)
+    (if structured-p
+        (if (json-object-p value)
+            (application--structured-object-rows application value)
+            (application--structured-value-rows application "result" value))
+        (application--preview-rows output ':dim *application-tool-output-lines*
+                                   :gutter "│ "))))
+
 (-> application--generic-tool-result-entry (application list) list)
 (defun application--generic-tool-result-entry (application record)
-  "Return a readable fallback entry for tool result RECORD."
+  "Return a readable fallback entry for tool result RECORD.
+
+This also formats JSON returned by dynamic tools as bounded fields instead of
+re-emitting untrusted serialized JSON."
   (let ((output (or (getf (rest record) :output) "")))
     (application--tool-result-entry
      application
      record
      :rows (if (application--tool-result-success-p record)
-               (application--preview-rows
-                output ':dim *application-tool-output-lines* :gutter "│ ")
+               (application--structured-output-rows application output)
                (application--failure-result-rows output)))))
 
 (defmethod application-tool-result-entry

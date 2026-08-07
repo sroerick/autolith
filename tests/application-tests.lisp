@@ -2417,6 +2417,83 @@
                  "help lists command descriptions"))
   nil)
 
+(-> test-structured-tool-presentation () null)
+(defun test-structured-tool-presentation ()
+  "Test resource operations and dynamic tool data never render as raw JSON."
+  (let ((application
+          (application-tests--ui-application :columns 80 :compact-view-p nil)))
+    (let* ((entry
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" "resource"
+               "name" "edit"
+               "arguments"
+               (json-encode
+                (json-object
+                 "uri" "workspace:src/example.lisp"
+                 "base-revision" "revision-123"
+                 "operations"
+                 (json-array
+                  (json-object
+                   "op" "replace-lines"
+                   "start-line" 4
+                   "end-line" 6
+                   "content" "(defun example ()~%  :updated)")
+                  (json-object
+                   "op" "agenda-update"
+                   "id" "agenda-7"
+                   "status" "done"
+                   "text" "Finish the release")))))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (and (equal (first entry) (terminal-span :tool "▸ resource.edit"))
+            (search "replace lines 4-6" text)
+            (search "update agenda item agenda-7" text)
+            (search "(defun example" text)
+            (not (search "{\"op\"" text)))
+       "resource.edit presents operations as verbs and code instead of JSON"))
+    (let* ((entry
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" "mcp__example"
+               "name" "inspect"
+               "arguments"
+               (json-encode
+                (json-object
+                 "options" (json-object "timeout" 5)
+                 "targets" (json-array "first" "second")
+                  "content" (format nil "untrusted~C[31m text"
+                                    *terminal-escape-character*))))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (and (search "options.timeout" text)
+            (search "targets[1]" text)
+            (search "untrusted" text)
+            (not (search "{\"options\"" text))
+            (not (find *terminal-escape-character* text)))
+       "dynamic tool calls recursively format and sanitize nested arguments"))
+    (let* ((entry
+             (conversation-record-entry
+              application
+              (list :tool-result :seq 1 :time 0 :call-id 1
+                    :tool "mcp__example.inspect" :status :ok
+                    :output
+                    (json-encode
+                     (json-object
+                      "content" "dynamic result"
+                      "details" (json-object "count" 2))))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (and (search "dynamic result" text)
+            (search "details.count" text)
+            (not (search "{\"content\"" text)))
+       "dynamic JSON results use the recursive readable fallback")))
+  nil)
+
 (-> test-plan-update-call-presentation () null)
 (defun test-plan-update-call-presentation ()
   "Test Codex-style plan.update checklist rendering and malformed fallbacks."
@@ -6922,6 +6999,7 @@
   (test-active-cancellation-interrupt-window-expiry)
   (test-cancellation-completion-clears-interrupt-state)
   (test-transcript-entries)
+  (test-structured-tool-presentation)
   (test-plan-update-call-presentation)
   (test-task-run-call-presentation)
   (test-recovery-cursor-normalization)
