@@ -167,7 +167,7 @@
     :initform 0
     :accessor task-orchestrator-hurry-up-admission-count
     :type (integer 0)
-    :documentation "The children admitted during the current hurry-up interval.")
+    :documentation "The children admitted or reserved during the current hurry-up interval.")
    (maximum-depth
     :initarg :maximum-depth
     :accessor task-orchestrator-maximum-depth

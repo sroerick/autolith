@@ -18,24 +18,41 @@
           (error nil fallback))
         fallback)))
 
-(defun task-orchestrator--apply-limits (orchestrator)
-  "Apply environment or hurry-up admission bounds to ORCHESTRATOR's pool.
+(-> task-orchestrator--apply-limits-locked
+    (task-orchestrator &key (:refresh-runtime-p boolean))
+    null)
+(defun task-orchestrator--apply-limits-locked
+    (orchestrator &key refresh-runtime-p)
+  "Apply environment or hurry-up admission bounds while ORCHESTRATOR is locked.
 
 Hurry-up mode replaces every admission bound with one small number, because an
-urgent session should not be spending its remaining budget on child agents."
-  (let ((pool (task-orchestrator-pool orchestrator))
+urgent session should not be spending its remaining budget on child agents. The
+orchestrator-to-pool lock order serializes a complete policy update with task
+submission and cl-jobpond workers."
+  (let ((pool       (task-orchestrator-pool orchestrator))
         (hurry-up-p (task-orchestrator-hurry-up-p orchestrator)))
-    (setf (job-pool-maximum-concurrency pool)
-          (if hurry-up-p
-              *task-hurry-up-maximum-agents*
-              (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
-                                         *task-default-maximum-concurrency*
-                                         :minimum 1
-                                         :maximum *task-maximum-concurrency*))
-          (job-pool-maximum-batch-size pool)
-          (if hurry-up-p *task-hurry-up-maximum-agents* *task-maximum-batch-size*)
-          (job-pool-maximum-live-jobs pool)
-          (if hurry-up-p *task-hurry-up-maximum-agents* *task-maximum-live-jobs*)))
+    (with-lock-held ((cl-jobpond::job-pool--lock pool))
+      (setf (job-pool-maximum-concurrency pool)
+            (if hurry-up-p
+                *task-hurry-up-maximum-agents*
+                (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
+                                           *task-default-maximum-concurrency*
+                                           :minimum 1
+                                           :maximum *task-maximum-concurrency*))
+            (job-pool-maximum-batch-size pool)
+            (if hurry-up-p
+                *task-hurry-up-maximum-agents*
+                *task-maximum-batch-size*)
+            (job-pool-maximum-live-jobs pool)
+            (if hurry-up-p
+                *task-hurry-up-maximum-agents*
+                *task-maximum-live-jobs*))
+      (when refresh-runtime-p
+        (setf (job-pool-maximum-runtime-milliseconds pool)
+              (task--environment-integer
+               "AUTOLITH_TASK_MAX_RUNTIME_MS"
+               *task-default-maximum-runtime-milliseconds*
+               :minimum 0)))))
   nil)
 
 (-> task-orchestrator-set-hurry-up (task-orchestrator boolean) task-orchestrator)
@@ -51,7 +68,7 @@ call for, so changing a limit never costs a session threads it may never use."
             (if enabled-p
                 (job-pool-live-count (task-orchestrator-pool orchestrator))
                 0)))
-    (task-orchestrator--apply-limits orchestrator))
+    (task-orchestrator--apply-limits-locked orchestrator))
   orchestrator)
 
 
@@ -141,15 +158,12 @@ call for, so changing a limit never costs a session threads it may never use."
   "Apply current limits to ORCHESTRATOR and ensure its reusable workers."
   (let ((pool (task-orchestrator-pool orchestrator)))
     (with-lock-held ((task-orchestrator-lock orchestrator))
-      (task-orchestrator--apply-limits orchestrator)
+      (task-orchestrator--apply-limits-locked
+       orchestrator
+       :refresh-runtime-p t)
       (setf (task-orchestrator-maximum-depth orchestrator)
             (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
                                        *task-default-maximum-depth* :minimum 1)))
-    (setf (job-pool-maximum-runtime-milliseconds pool)
-          (task--environment-integer
-           "AUTOLITH_TASK_MAX_RUNTIME_MS"
-           *task-default-maximum-runtime-milliseconds*
-           :minimum 0))
     ;; A detached pool dropped its listeners along with its job table, so this
     ;; registration has to be repeated rather than assumed to have survived.
     (job-pool-add-listener pool #'task--pool-event-listener)

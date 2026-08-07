@@ -285,29 +285,38 @@ start under a cancelled ancestor, and hands over to the child."
            (t "The task runtime is shutting down."))
          :tool-name "task.run"))
 
-(defun task-orchestrator--check-hurry-up (orchestrator count)
-  "Refuse COUNT further children once hurry-up mode has spent its allowance.
+(-> task-orchestrator--reserve-hurry-up-admission-locked
+    (task-orchestrator (integer 0))
+    (integer 0))
+(defun task-orchestrator--reserve-hurry-up-admission-locked
+    (orchestrator count)
+  "Reserve COUNT hurry-up admissions while ORCHESTRATOR's lock is held.
 
-The pool caps how many children are live at once; this is the cumulative budget
-for the whole interval, a session policy the pool knows nothing about."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (when (and (task-orchestrator-hurry-up-p orchestrator)
-               (> (+ (task-orchestrator-hurry-up-admission-count orchestrator)
-                     count)
-                  *task-hurry-up-maximum-agents*))
-      (error 'task-error
-             :message
-             (format nil
-                     "Hurry-up mode permits at most ~D child agents before it is turned off."
-                     *task-hurry-up-maximum-agents*)
-             :tool-name "task.run")))
-  nil)
+The reservation is charged before pool submission, so concurrent task.run calls
+cannot each observe the same remaining allowance. Return the charged count, or
+zero outside hurry-up mode."
+  (if (task-orchestrator-hurry-up-p orchestrator)
+      (let ((total (+ (task-orchestrator-hurry-up-admission-count orchestrator)
+                      count)))
+        (when (> total *task-hurry-up-maximum-agents*)
+          (error 'task-error
+                 :message
+                 (format nil
+                         "Hurry-up mode permits at most ~D child agents before it is turned off."
+                         *task-hurry-up-maximum-agents*)
+                 :tool-name "task.run"))
+        (setf (task-orchestrator-hurry-up-admission-count orchestrator) total)
+        count)
+      0))
 
-(defun task-orchestrator--note-hurry-up-admission (orchestrator count)
-  "Charge COUNT admitted children against the current hurry-up allowance."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (when (task-orchestrator-hurry-up-p orchestrator)
-      (incf (task-orchestrator-hurry-up-admission-count orchestrator) count)))
+(-> task-orchestrator--rollback-hurry-up-admission-locked
+    (task-orchestrator (integer 0))
+    null)
+(defun task-orchestrator--rollback-hurry-up-admission-locked
+    (orchestrator count)
+  "Release COUNT failed hurry-up reservations while ORCHESTRATOR is locked."
+  (when (plusp count)
+    (decf (task-orchestrator-hurry-up-admission-count orchestrator) count))
   nil)
 
 (defun task-orchestrator--refuse-cancelled-parent (parent-job)
@@ -341,7 +350,6 @@ guarantee."
         (reference-enabled-entries (make-hash-table :test #'eq))
         (reference-byte-limit nil)
         (inherited-reference-items nil))
-    (task-orchestrator--check-hurry-up orchestrator count)
     (dolist (entry entries)
       (let* ((definition (getf entry :definition))
              (child-configuration
@@ -361,52 +369,58 @@ guarantee."
       (setf inherited-reference-items
             (conversation-inherited-reference-snapshot
              (agent-conversation parent-agent) reference-byte-limit)))
-    (let ((jobs
-            (handler-case
-                (job-pool-submit-batch
-                 (task-orchestrator-pool orchestrator)
-                 (mapcar
-                  (lambda (entry)
-                    (let* ((item (getf entry :item))
-                           (inherited-p
-                             (not (null (gethash entry
-                                                 reference-enabled-entries))))
-                           (nested-synchronous-p
-                             (and (typep parent-agent 'task-child-agent)
-                                  (not (getf entry :detached)))))
-                      (list :function #'task-job--run
-                            :terminal-result-function #'task-job--terminal-record
-                            :name (task-orchestrator--child-name
-                                   orchestrator (getf item :name))
-                            ;; A child a child agent waits for runs on the
-                            ;; waiting worker rather than occupying a second one,
-                            ;; so a deep synchronous chain cannot starve the pool.
-                            :inline-only-p nested-synchronous-p
-                            :owner-identifiers owner-identifiers
-                            :root-identifier root-conversation-identifier
-                            :initargs
-                            (list :orchestrator orchestrator
-                                  :execution-identifier (make-identifier)
-                                  :definition (getf entry :definition)
-                                  :item item
-                                  :parent-agent parent-agent
-                                  :inherited-reference-p inherited-p
-                                  :inherited-reference-items
-                                  (and inherited-p inherited-reference-items)
-                                  :parent-call-id parent-call-id
-                                  :detached-p (getf entry :detached)
-                                  :command-authorization-function
-                                  command-authorization-function
-                                  :tool-authorization-function
-                                  tool-authorization-function))))
-                  entries))
-              (job-pool-error (condition)
-                (task-orchestrator--refuse-admission orchestrator condition)))))
-      (task-orchestrator--note-hurry-up-admission orchestrator count)
-      (values jobs
-              (if (typep parent-agent 'task-child-agent)
-                  (remove-if #'task-job-detached-p jobs)
-                  nil)))))
+    (let ((pool-entries
+            (mapcar
+             (lambda (entry)
+               (let* ((item (getf entry :item))
+                      (inherited-p
+                        (not (null (gethash entry reference-enabled-entries))))
+                      (nested-synchronous-p
+                        (and (typep parent-agent 'task-child-agent)
+                             (not (getf entry :detached)))))
+                 (list :function #'task-job--run
+                       :terminal-result-function #'task-job--terminal-record
+                       :name (task-orchestrator--child-name
+                              orchestrator (getf item :name))
+                       ;; A child a child agent waits for runs on the waiting
+                       ;; worker rather than occupying a second one, so a deep
+                       ;; synchronous chain cannot starve the pool.
+                       :inline-only-p nested-synchronous-p
+                       :owner-identifiers owner-identifiers
+                       :root-identifier root-conversation-identifier
+                       :initargs
+                       (list :orchestrator orchestrator
+                             :execution-identifier (make-identifier)
+                             :definition (getf entry :definition)
+                             :item item
+                             :parent-agent parent-agent
+                             :inherited-reference-p inherited-p
+                             :inherited-reference-items
+                             (and inherited-p inherited-reference-items)
+                             :parent-call-id parent-call-id
+                             :detached-p (getf entry :detached)
+                             :command-authorization-function
+                             command-authorization-function
+                             :tool-authorization-function
+                             tool-authorization-function))))
+             entries)))
+      (let ((jobs
+              (with-lock-held ((task-orchestrator-lock orchestrator))
+                (let ((reserved-count
+                        (task-orchestrator--reserve-hurry-up-admission-locked
+                         orchestrator count)))
+                  (handler-case
+                      (job-pool-submit-batch
+                       (task-orchestrator-pool orchestrator) pool-entries)
+                    (job-pool-error (condition)
+                      (task-orchestrator--rollback-hurry-up-admission-locked
+                       orchestrator reserved-count)
+                      (task-orchestrator--refuse-admission
+                       orchestrator condition)))))))
+        (values jobs
+                (if (typep parent-agent 'task-child-agent)
+                    (remove-if #'task-job-detached-p jobs)
+                    nil))))))
 
 (defun task-orchestrator-start-job
     (orchestrator

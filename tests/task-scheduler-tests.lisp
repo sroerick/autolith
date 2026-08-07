@@ -106,8 +106,7 @@
               (and
                (zerop
                 (task-orchestrator-maximum-runtime-milliseconds orchestrator))
-               (zerop *task-default-maximum-runtime-milliseconds*)
-               (null (task-orchestrator-monitor-thread orchestrator)))
+               (zerop *task-default-maximum-runtime-milliseconds*))
               "task children have no default runtime deadline"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000" 1)
            (let* ((configuration (test-configuration))
@@ -380,6 +379,13 @@ exactly that race."
                                  (setf admission-condition condition))))
                            :name "Autolith admission race"))
                     (test-assert
+                     (task-tests--wait-until
+                      (lambda ()
+                        (task-tests--lock-held-by-another-p
+                         (task-orchestrator-lock orchestrator)))
+                      2)
+                     "admission reaches the serialized pool boundary")
+                    (test-assert
                      (not (task-tests--wait-until (lambda () admitted) 1))
                      "nested admission cannot commit while admission is locked")
                     (setf cancel-thread
@@ -476,6 +482,293 @@ exactly that race."
               "cancel-first admission consumes no identity or live capacity")))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-task-hurry-up-admission-races () null)
+(defun test-task-hurry-up-admission-races ()
+  "Test hurry-up reservations and pool-limit reconfiguration ordering."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (definition
+           (task-agent-definition-create
+            :name "hurry-race"
+            :description "Exercise hurry-up admission serialization."
+            :instructions "Remain inline for the admission test."
+            :spawns :all
+            :source :test))
+         (primary
+           (task-tests--primary-agent configuration "hurry-race-primary")))
+    (labels ((make-viewer (orchestrator identifier)
+               (task-tests--child-viewer
+                configuration
+                (task-tests--make-job
+                 orchestrator
+                 :definition definition
+                 :item
+                 (list :name identifier
+                       :agent "hurry-race"
+                       :task "Own inline admission test children."
+                       :context nil
+                       :async nil)
+                 :parent-agent primary
+                 :identifier identifier)))
+
+             (make-entries (count prefix)
+               (loop for index from 1 to count
+                     collect
+                     (list
+                      :definition definition
+                      :item
+                      (list :name (format nil "~A-~D" prefix index)
+                            :agent "hurry-race"
+                            :task "Remain inline for admission accounting."
+                            :context nil
+                            :async nil)
+                      :detached nil))))
+      (unwind-protect
+           (progn
+             (let* ((orchestrator (task-tests--orchestrator))
+                    (viewer (make-viewer orchestrator "rollback-parent"))
+                    (pool (task-orchestrator-pool orchestrator))
+                    (refused-p nil))
+               (task-orchestrator-set-hurry-up orchestrator t)
+               (with-lock-held ((task-orchestrator-lock orchestrator))
+                 (setf (job-pool-maximum-live-jobs pool) 1))
+               (handler-case
+                   (task-orchestrator-start-jobs
+                    orchestrator viewer (make-entries 2 "refused"))
+                 (task-error ()
+                   (setf refused-p t)))
+               (test-assert
+                (and refused-p
+                     (zerop
+                      (task-orchestrator-hurry-up-admission-count orchestrator))
+                     (zerop (task-orchestrator-live-count orchestrator)))
+                "failed pool admission rolls back its hurry-up reservation")
+               (with-lock-held ((task-orchestrator-lock orchestrator))
+                 (setf (job-pool-maximum-live-jobs pool)
+                       *task-hurry-up-maximum-agents*))
+               (let ((jobs
+                       (first
+                        (multiple-value-list
+                         (task-orchestrator-start-jobs
+                          orchestrator viewer (make-entries 2 "accepted"))))))
+                 (test-assert
+                  (and (= (length jobs) 2)
+                       (= (task-orchestrator-hurry-up-admission-count
+                           orchestrator)
+                          2)
+                       (= (task-orchestrator-live-count orchestrator) 2))
+                  "a rolled-back reservation leaves the full allowance usable")))
+             (let* ((orchestrator (task-tests--orchestrator))
+                    (viewer (make-viewer orchestrator "concurrent-parent"))
+                    (pool (task-orchestrator-pool orchestrator))
+                    (gate-lock (make-lock "Autolith hurry race gate"))
+                    (gate-condition (make-condition-variable))
+                    (gate-count 0)
+                    (release-gate-p nil)
+                    (result-lock (make-lock "Autolith hurry race results"))
+                    (success-count 0)
+                    (conditions nil)
+                    (threads nil)
+                    (original-configuration
+                      (symbol-function 'task-configuration-for-definition)))
+               (task-orchestrator-set-hurry-up orchestrator t)
+               ;; Isolate the cumulative session allowance from the pool's live
+               ;; bound. Inline jobs remain live until test cleanup.
+               (with-lock-held ((task-orchestrator-lock orchestrator))
+                 (setf (job-pool-maximum-live-jobs pool)
+                       *task-maximum-live-jobs*))
+               (test-call-with-function-replacements
+                (list
+                 (list
+                  'task-configuration-for-definition
+                  (lambda (parent-configuration child-definition)
+                    (with-lock-held (gate-lock)
+                      (incf gate-count)
+                      (when (= gate-count 3)
+                        (setf release-gate-p t)
+                        (task--condition-broadcast gate-condition))
+                      (loop until release-gate-p
+                            unless
+                            (condition-wait gate-condition gate-lock :timeout 2)
+                              do (error
+                                  "Timed out synchronizing hurry-up admissions.")))
+                    (funcall original-configuration
+                             parent-configuration child-definition))))
+                (lambda ()
+                  (setf threads
+                        (loop for index from 1 to 3
+                              collect
+                              (make-thread
+                               (lambda ()
+                                 (handler-case
+                                     (progn
+                                       (task-orchestrator-start-jobs
+                                        orchestrator viewer
+                                        (make-entries
+                                         1 (format nil "concurrent-~D" index)))
+                                       (with-lock-held (result-lock)
+                                         (incf success-count)))
+                                   (task-error (condition)
+                                     (with-lock-held (result-lock)
+                                       (push condition conditions)))))
+                               :name (format nil
+                                             "Autolith hurry admission ~D"
+                                             index))))
+                  (dolist (thread threads)
+                    (join-thread thread))))
+               (test-assert
+                (and (= success-count 2)
+                     (= (length conditions) 1)
+                     (= (task-orchestrator-hurry-up-admission-count orchestrator)
+                        2)
+                     (= (task-orchestrator-live-count orchestrator) 2))
+                "concurrent task.run calls atomically share the two-child allowance"))
+             (let* ((orchestrator (task-tests--orchestrator))
+                    (viewer (make-viewer orchestrator "limit-parent"))
+                    (submit-lock (make-lock "Autolith limit race submit"))
+                    (submit-condition (make-condition-variable))
+                    (submission-entered-p nil)
+                    (release-submission-p nil)
+                    (state-lock (make-lock "Autolith limit race state"))
+                    (reconfiguration-started-p nil)
+                    (reconfiguration-finished-p nil)
+                    (jobs nil)
+                    (submission-condition nil)
+                    (submission-thread nil)
+                    (reconfiguration-thread nil)
+                    (original-submit (symbol-function 'job-pool-submit-batch)))
+               (unwind-protect
+                    (test-call-with-function-replacements
+                     (list
+                      (list
+                       'job-pool-submit-batch
+                       (lambda (pool entries)
+                         (with-lock-held (submit-lock)
+                           (setf submission-entered-p t)
+                           (task--condition-broadcast submit-condition)
+                           (loop until release-submission-p
+                                 do (condition-wait
+                                     submit-condition submit-lock)))
+                         (funcall original-submit pool entries))))
+                     (lambda ()
+                       (setf submission-thread
+                             (make-thread
+                              (lambda ()
+                                (handler-case
+                                    (setf jobs
+                                          (first
+                                           (multiple-value-list
+                                            (task-orchestrator-start-jobs
+                                             orchestrator viewer
+                                             (make-entries 3 "limit")))))
+                                  (condition (condition)
+                                    (setf submission-condition condition))))
+                              :name "Autolith limit race admission"))
+                       (with-lock-held (submit-lock)
+                         (loop until submission-entered-p
+                               unless
+                               (condition-wait
+                                submit-condition submit-lock :timeout 2)
+                                 do (error
+                                     "Timed out waiting for pool submission.")))
+                       (setf reconfiguration-thread
+                             (make-thread
+                              (lambda ()
+                                (with-lock-held (state-lock)
+                                  (setf reconfiguration-started-p t))
+                                (task-orchestrator-set-hurry-up orchestrator t)
+                                (with-lock-held (state-lock)
+                                  (setf reconfiguration-finished-p t)))
+                              :name "Autolith limit race reconfiguration"))
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda ()
+                           (with-lock-held (state-lock)
+                             reconfiguration-started-p))
+                         2)
+                        "limit reconfiguration starts during pool submission")
+                       (sleep 0.1)
+                       (test-assert
+                        (with-lock-held (state-lock)
+                          (not reconfiguration-finished-p))
+                        "limit reconfiguration waits for in-flight admission")
+                       (with-lock-held (submit-lock)
+                         (setf release-submission-p t)
+                         (task--condition-broadcast submit-condition))
+                       (join-thread submission-thread)
+                       (setf submission-thread nil)
+                       (join-thread reconfiguration-thread)
+                       (setf reconfiguration-thread nil)))
+                 (with-lock-held (submit-lock)
+                   (setf release-submission-p t)
+                   (task--condition-broadcast submit-condition))
+                 (when submission-thread
+                   (join-thread submission-thread))
+                 (when reconfiguration-thread
+                   (join-thread reconfiguration-thread)))
+               (test-assert
+                (and (null submission-condition)
+                     (= (length jobs) 3)
+                     (task-orchestrator-hurry-up-p orchestrator)
+                     (= (task-orchestrator-hurry-up-admission-count orchestrator)
+                        3))
+                "a limit change takes effect after the atomic submission boundary")))
+              (let* ((orchestrator (task-tests--orchestrator))
+                     (pool (task-orchestrator-pool orchestrator))
+                     (state-lock (make-lock "Autolith pool policy state"))
+                     (reconfiguration-started-p nil)
+                     (reconfiguration-finished-p nil)
+                     (thread nil)
+                     (pool-lock-held-p nil))
+                (unwind-protect
+                     (progn
+                       (bordeaux-threads:acquire-lock
+                        (cl-jobpond::job-pool--lock pool))
+                       (setf pool-lock-held-p t
+                             thread
+                             (make-thread
+                              (lambda ()
+                                (with-lock-held (state-lock)
+                                  (setf reconfiguration-started-p t))
+                                (task-orchestrator-set-hurry-up orchestrator t)
+                                (with-lock-held (state-lock)
+                                  (setf reconfiguration-finished-p t)))
+                              :name "Autolith pool policy reconfiguration"))
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda ()
+                           (with-lock-held (state-lock)
+                             reconfiguration-started-p))
+                         2)
+                        "pool policy reconfiguration reaches the cl-jobpond lock")
+                       (sleep 0.1)
+                       (test-assert
+                        (with-lock-held (state-lock)
+                          (not reconfiguration-finished-p))
+                        "pool policy reconfiguration waits for the worker-pool lock")
+                       (bordeaux-threads:release-lock
+                        (cl-jobpond::job-pool--lock pool))
+                       (setf pool-lock-held-p nil)
+                       (join-thread thread)
+                       (setf thread nil)
+                       (test-assert
+                        (and (task-orchestrator-hurry-up-p orchestrator)
+                             (= (job-pool-maximum-concurrency pool)
+                                *task-hurry-up-maximum-agents*)
+                             (= (job-pool-maximum-batch-size pool)
+                                *task-hurry-up-maximum-agents*)
+                             (= (job-pool-maximum-live-jobs pool)
+                                *task-hurry-up-maximum-agents*))
+                        "one worker-pool critical section publishes every hurry-up limit"))
+                  (when pool-lock-held-p
+                    (bordeaux-threads:release-lock
+                     (cl-jobpond::job-pool--lock pool)))
+                  (when thread
+                    (join-thread thread))))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist :ignore))))
   nil)
 
 (-> task-tests--release-publication-barrier

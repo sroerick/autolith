@@ -199,6 +199,7 @@
     (test-task-runtime-deadline)
     (test-task-nested-parent-cancellation)
     (test-task-admission-cancellation-barrier)
+    (test-task-hurry-up-admission-races)
     (test-task-publication-coherence)
     (test-task-terminal-wakeup-ordering)
     (test-task-job-visibility)
