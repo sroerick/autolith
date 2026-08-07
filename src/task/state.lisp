@@ -148,29 +148,15 @@
   (:documentation "A normalized, thread-safe child progress snapshot."))
 
 (defclass task-orchestrator nil
-  ((lock
+  ((pool
+    :initarg :pool
+    :reader task-orchestrator-pool
+    :type job-pool
+    :documentation "The supervised worker pool running this session's children.")
+   (lock
     :initform (make-lock "Autolith task orchestrator")
     :accessor task-orchestrator-lock
-    :documentation "The lock protecting scheduler, jobs, and listeners.")
-   (condition-variable
-    :initform (make-condition-variable)
-    :accessor task-orchestrator-condition-variable
-    :documentation "The condition waking reusable workers and shutdown waiters.")
-   (maximum-concurrency
-    :initarg :maximum-concurrency
-    :accessor task-orchestrator-maximum-concurrency
-    :type (integer 1)
-    :documentation "The maximum child jobs that may execute concurrently.")
-   (maximum-batch-size
-    :initarg :maximum-batch-size
-    :accessor task-orchestrator-maximum-batch-size
-    :type (integer 1)
-    :documentation "The maximum children accepted in one atomic task batch.")
-   (maximum-live-jobs
-    :initarg :maximum-live-jobs
-    :accessor task-orchestrator-maximum-live-jobs
-    :type (integer 1)
-    :documentation "The maximum combined queued and running child jobs.")
+    :documentation "The lock protecting naming, hurry-up, and listener state.")
    (hurry-up-p
     :initarg :hurry-up-p
     :initform nil
@@ -187,90 +173,29 @@
     :accessor task-orchestrator-maximum-depth
     :type (integer 1)
     :documentation "The maximum child depth below the primary agent.")
-   (maximum-runtime-milliseconds
-    :initarg :maximum-runtime-milliseconds
-    :accessor task-orchestrator-maximum-runtime-milliseconds
-    :type (integer 0)
-    :documentation "The wall-clock cap for one child, or zero when disabled.")
-   (queue
-    :initform nil
-    :accessor task-orchestrator-queue
-    :type list
-    :documentation "The bounded FIFO of jobs awaiting a reusable worker.")
-   (worker-threads
-    :initform nil
-    :accessor task-orchestrator-worker-threads
-    :type list
-    :documentation "The reusable scheduler worker threads.")
-   (monitor-thread
-    :initform nil
-    :accessor task-orchestrator-monitor-thread
-    :type t
-    :documentation "The optional single runtime-deadline monitor thread.")
-   (shutdown-p
-    :initform nil
-    :accessor task-orchestrator-shutdown-p
-    :type boolean
-    :documentation "True while admission is closed and workers must exit.")
-   (lifecycle-state
-    :initform :open
-    :accessor task-orchestrator-lifecycle-state
-    :type keyword
-    :documentation "The :OPEN, :CLOSING, or :CLOSED scheduler lifecycle state.")
-   (close-owner
-    :initform nil
-    :accessor task-orchestrator-close-owner
-    :type t
-    :documentation "The thread coordinating shutdown, or NIL between attempts.")
-   (active-count
+   (next-name-index
     :initform 0
-    :accessor task-orchestrator-active-count
+    :accessor task-orchestrator-next-name-index
     :type (integer 0)
-    :documentation "The jobs currently executing on reusable workers.")
-   (live-count
-    :initform 0
-    :accessor task-orchestrator-live-count
-    :type (integer 0)
-    :documentation "The admitted queued, running, and finalizing jobs.")
-   (next-index
-    :initform 0
-    :accessor task-orchestrator-next-index
-    :type (integer 0)
-    :documentation "The monotonically increasing friendly-name source.")
-   (names
-    :initform (make-hash-table :test #'equal)
-    :accessor task-orchestrator-names
-    :type hash-table
-    :documentation "Lowercase child identifiers reserved by retained jobs.")
-   (jobs
-    :initform (make-hash-table :test #'equal)
-    :accessor task-orchestrator-jobs
-    :type hash-table
-    :documentation "Task identifiers mapped to bounded live or terminal jobs.")
-   (terminal-identifiers
-    :initform nil
-    :accessor task-orchestrator-terminal-identifiers
-    :type list
-    :documentation "Terminal job identifiers ordered from oldest to newest.")
+    :documentation "The source of readable names for children given none.")
    (listeners
     :initform nil
     :accessor task-orchestrator-listeners
     :type list
     :documentation "Callbacks receiving portable task lifecycle and progress events."))
   (:documentation
-   "Session-scoped child identity, concurrency, event, and job state."))
+   "Session-scoped child identity, concurrency, event, and job state.
 
-(defclass task-job nil
+The queue, workers, deadline monitor, shutdown protocol, and job tables belong to
+the CL-JOBPOND pool this wraps. What stays here is what no job pool could know:
+child naming, hurry-up admission, nesting depth, and task event listeners."))
+
+(defclass task-job (job)
   ((orchestrator
     :initarg :orchestrator
     :reader task-job-orchestrator
     :type task-orchestrator
     :documentation "The session orchestrator owning this job.")
-   (identity
-    :initarg :identity
-    :reader task-job-identity
-    :type list
-    :documentation "The stable child identity plist.")
    (execution-identifier
     :initarg :execution-identifier
     :reader task-job-execution-identifier
@@ -303,16 +228,6 @@
     :accessor task-job-inherited-reference-items
     :type list
     :documentation "The filtered parent reference messages captured at admission.")
-   (root-conversation-identifier
-    :initarg :root-conversation-identifier
-    :reader task-job-root-conversation-identifier
-    :type non-empty-string
-    :documentation "The primary conversation that owns this task tree.")
-   (owner-identifiers
-    :initarg :owner-identifiers
-    :reader task-job-owner-identifiers
-    :type list
-    :documentation "The ancestor task identifiers authorized to inspect this job.")
    (parent-call-id
     :initarg :parent-call-id
     :initform nil
@@ -335,65 +250,16 @@
    (detached-p :initarg :detached-p :reader task-job-detached-p :type
                boolean :documentation
                "True when the parent did not wait for this child.")
-   (lock
-    :initform (make-lock "Autolith task job")
-    :reader task-job-lock
-    :documentation "The lock protecting mutable job lifecycle fields.")
-   (condition-variable
-    :initform (make-condition-variable)
-    :reader task-job-condition-variable
-    :documentation "The condition waking waiters after lifecycle transitions.")
-   (state :initform :queued :accessor task-job-state :type keyword
-          :documentation
-          "The queued, running, completed, failed, or aborted state.")
-   (publication-claimed-p
-    :initform nil
-    :accessor task-job-publication-claimed-p
-    :type boolean
-    :documentation "True while one writer prepares the terminal publication.")
-   (thread
-    :initform nil
-    :accessor task-job-thread
-    :type t
-    :documentation "The reusable worker currently executing this job.")
-   (run-token
-    :initform nil
-    :accessor task-job-run-token
-    :type (option string)
-    :documentation "The token preventing delayed interrupts from striking another job.")
-   (result :initform nil :accessor task-job-result :type t
-           :documentation "The final portable SingleResult-style plist.")
-   (condition-report
-    :initform nil
-    :accessor task-job-condition-report
-    :type (option string)
-    :documentation "The bounded report for an unexpected job failure.")
-   (cancellation-reason
-    :initform nil
-    :accessor task-job-cancellation-reason
-    :type (option keyword)
-    :documentation "The structured cancellation reason requested by a controller.")
-   (retained-p
-    :initform nil
-    :accessor task-job-retained-p
-    :type boolean
-    :documentation "True after terminal retention accounts for this job.")
    (progress :initform (make-instance 'task-progress) :reader
              task-job-progress :type task-progress :documentation
-             "The normalized progress visible to job inspection.")
-   (created-at :initform (get-internal-real-time) :reader
-               task-job-created-at :type integer :documentation
-               "The internal real time at job creation.")
-   (started-at :initform nil :accessor task-job-started-at :type t
-               :documentation "The internal real time at child execution start.")
-   (deadline
-    :initform nil
-    :accessor task-job-deadline
-    :type (option integer)
-    :documentation "The internal real time at which the runtime monitor cancels this job.")
-   (ended-at :initform nil :accessor task-job-ended-at :type t
-             :documentation "The internal real time at terminal completion."))
-  (:documentation "One synchronous or detached child-agent execution."))
+             "The normalized progress visible to job inspection."))
+  (:documentation
+   "One synchronous or detached child-agent execution.
+
+The lifecycle lock, state, publication claim, worker thread, run token, result,
+deadline, and timings are inherited from CL-JOBPOND:JOB. This adds the child agent:
+its role, assignment, parent, and borrowed capabilities, all released at terminal
+state by TASK-JOB--TERMINAL-RECORD."))
 
 (defclass task-child-agent (agent)
   ((definition :initarg :definition :reader task-child-agent-definition
@@ -422,17 +288,8 @@
   "Return the live hurry-up policy shared by AGENT's task orchestrator."
   (task-orchestrator-hurry-up-p (task-child-agent-orchestrator agent)))
 
-(defvar *task-current-job* nil
-  "The task job dynamically owned by the current reusable worker.")
-
-(defvar *task-current-run-token* nil
-  "The run token guarding cancellation interrupts on a reusable worker.")
-
 (defvar *task-admission-parent-locked-p* nil
-  "True while nested task admission holds its parent job lifecycle lock.")
-
-(defvar *task-terminal-publication-job* nil
-  "The job protected from delayed cancellation while publishing terminal state.")
+  "True while nested task admission has already checked its parent job.")
 
 (-> task--condition-broadcast (t) null)
 (defun task--condition-broadcast (condition-variable)

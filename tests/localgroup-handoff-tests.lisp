@@ -157,18 +157,25 @@
            (application-input-controller--finish-work controller)
            (let ((orchestrator
                    (make-instance 'task-orchestrator
-                                  :maximum-concurrency 1
-                                  :maximum-batch-size 1
-                                  :maximum-live-jobs 1
-                                  :maximum-depth 1
-                                  :maximum-runtime-milliseconds 0)))
+                                  :pool (make-job-pool :name "Autolith handoff test"
+                                                       :job-class 'task-job
+                                                       :maximum-concurrency 1
+                                                       :maximum-batch-size 1
+                                                       :maximum-live-jobs 1
+                                                       :maximum-runtime-milliseconds 0
+                                                       :start-threads-p nil)
+                                  :maximum-depth 1)))
              (setf (application-task-presentation-orchestrator application)
                    orchestrator
-                   (task-orchestrator-live-count orchestrator) 1)
+                   (cl-jobpond::job-pool--live-count
+                    (task-orchestrator-pool orchestrator))
+                   1)
              (test-assert
               (null (application-localgroup-take-ready-handoff application))
               "live child work prevents handoff admission")
-             (setf (task-orchestrator-live-count orchestrator) 0)
+             (setf (cl-jobpond::job-pool--live-count
+                    (task-orchestrator-pool orchestrator))
+                   0)
              (test-assert
               (equal (application-input-controller--next-work controller)
                      (list ':localgroup-handoff ':take-over))

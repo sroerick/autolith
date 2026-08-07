@@ -129,7 +129,7 @@
     (:error
      (error "Deliberate artifact publication failure."))
     (:abort
-     (error 'task-aborted
+     (error 'job-aborted
             :message "Deliberate post-claim task abort."
             :reason :test-cancel))
     (otherwise
@@ -360,7 +360,7 @@
      (arguments hash-table))
   "Signal a deliberate task abort through ordinary registry dispatch."
   (declare (ignore tool context arguments))
-  (error 'task-aborted
+  (error 'job-aborted
          :message "Task test was cancelled."
          :reason :test-cancel))
 
@@ -429,7 +429,7 @@
     list)
 (defun task-tests--yield-fixture (configuration definition identifier)
   "Return an isolated child, yield registry, and completion fixture."
-  (let* ((orchestrator (task-orchestrator-create))
+  (let* ((orchestrator (task-tests--orchestrator))
          (parent-registry (make-instance 'tool-registry))
          (parent-conversation
            (conversation-create
@@ -443,18 +443,13 @@
             :tool-registry parent-registry
             :worker nil))
          (job
-           (make-instance
-            'task-job
-            :orchestrator orchestrator
-            :identity (list :id identifier :index 1)
-            :execution-identifier (make-identifier)
+           (task-tests--make-job
+            orchestrator
+            :identifier identifier
             :definition definition
             :item (list :task "Exercise the terminal yield contract.")
             :parent-agent parent
-            :root-conversation-identifier
-            (conversation-identifier parent-conversation)
-            :owner-identifiers nil
-            :detached-p nil))
+            :root-identifier (conversation-identifier parent-conversation)))
          (completion (make-instance 'task-completion))
          (registry
            (task-child-tool-registry
@@ -541,7 +536,7 @@
        (owner-identifiers nil owner-identifiers-supplied-p)
        root-conversation-identifier
        (detached-p t))
-  "Register one inert queued job with scheduler accounting for focused tests."
+  "Register one inert queued job with pool accounting for focused tests."
   (let ((root
           (or root-conversation-identifier
               (task-parent-root-conversation-identifier parent)))
@@ -549,36 +544,107 @@
           (if owner-identifiers-supplied-p
               owner-identifiers
               (task-parent-owner-identifiers parent))))
-    (with-lock-held ((task-orchestrator-lock orchestrator))
-      (let* ((identity
-               (task-orchestrator--create-identity
-                orchestrator name
-                (task-agent-definition-name definition)))
-             (job
-               (make-instance
-                'task-job
-                :orchestrator orchestrator
-                :identity identity
-                :execution-identifier (make-identifier)
-                :definition definition
-                :item (list :name name
-                            :agent (task-agent-definition-name definition)
-                            :task
-                            (format nil "Hold ~A for a scheduler test."
-                                    (or name "this unnamed job"))
-                            :context nil
-                            :async detached-p)
-                :parent-agent parent
-                :root-conversation-identifier root
-                :owner-identifiers owners
-                :parent-call-id nil
-                :detached-p detached-p
-                :command-authorization-function nil)))
-        (setf (gethash (getf identity :id)
-                       (task-orchestrator-jobs orchestrator))
-              job)
-        (incf (task-orchestrator-live-count orchestrator))
-        job))))
+    (task-tests--attach-job
+     orchestrator
+     (lambda (identifier index)
+       (make-instance
+        'task-job
+        :pool (task-orchestrator-pool orchestrator)
+        :identifier identifier
+        :index index
+        :name name
+        :payload nil
+        :owner-identifiers owners
+        :root-identifier root
+        :body-function #'task-job--run
+        :terminal-result-function #'task-job--terminal-record
+        :maximum-runtime-milliseconds 0
+        :orchestrator orchestrator
+        :execution-identifier (make-identifier)
+        :definition definition
+        :item (list :name name
+                    :agent (task-agent-definition-name definition)
+                    :task
+                    (format nil "Hold ~A for a scheduler test."
+                            (or name "this unnamed job"))
+                    :context nil
+                    :async detached-p)
+        :parent-agent parent
+        :parent-call-id nil
+        :detached-p detached-p
+        :command-authorization-function nil))
+     :name (or name (task-agent-definition-name definition)))))
+
+(defvar *task-tests--orchestrators* nil
+  "Orchestrators created by tests, closed when the task suite finishes.")
+
+(defun task-tests--orchestrator ()
+  "Return a fresh orchestrator the task suite will close afterwards.
+
+A pool starts its workers on first admission, so a test that admits a job and then
+walks away leaks worker threads into every later test. Nothing else notices, but
+the tests that require a single-threaded image do."
+  (let ((orchestrator (task-orchestrator-create)))
+    (push orchestrator *task-tests--orchestrators*)
+    orchestrator))
+
+(defun task-tests--close-orchestrators ()
+  "Close every orchestrator the task tests created and forget them."
+  (dolist (orchestrator *task-tests--orchestrators*)
+    (ignore-errors (task-orchestrator-close orchestrator)))
+  (setf *task-tests--orchestrators* nil))
+
+(defun task-tests--queued-jobs (orchestrator)
+  "Return the children ORCHESTRATOR has admitted but not yet started."
+  (cl-jobpond::job-pool--queue (task-orchestrator-pool orchestrator)))
+
+(defun task-tests--make-job
+    (orchestrator &key definition item parent-agent identifier (index 1)
+                    detached-p owner-identifiers root-identifier)
+  "Return one unregistered job for tests that only need a job object."
+  (make-instance
+   'task-job
+   :pool (task-orchestrator-pool orchestrator)
+   :identifier identifier
+   :index index
+   :name identifier
+   :payload nil
+   :owner-identifiers owner-identifiers
+   :root-identifier (or root-identifier
+                        (and parent-agent
+                             (conversation-identifier
+                              (agent-conversation parent-agent))))
+   :body-function #'task-job--run
+   :terminal-result-function #'task-job--terminal-record
+   :maximum-runtime-milliseconds 0
+   :orchestrator orchestrator
+   :execution-identifier (make-identifier)
+   :definition definition
+   :item item
+   :parent-agent parent-agent
+   :detached-p detached-p))
+
+(defun task-tests--attach-job (orchestrator build-function &key name)
+  "Register the job BUILD-FUNCTION returns without queueing it for a worker.
+
+BUILD-FUNCTION receives the identifier and admission index the pool would have
+assigned. This reaches into the pool's own tables deliberately: these tests need a
+job that is findable and counted but that no worker will ever pick up, and
+admission offers no such thing on purpose."
+  (let* ((pool (task-orchestrator-pool orchestrator))
+         (index (incf (cl-jobpond::job-pool--next-index pool)))
+         (identifier (format nil "~A-~D"
+                             (or (task--identifier-fragment name) "job")
+                             index))
+         (job (funcall build-function identifier index)))
+    (with-lock-held ((cl-jobpond::job-pool--lock pool))
+      (setf (gethash identifier (cl-jobpond::job-pool--jobs pool)) job)
+      (incf (cl-jobpond::job-pool--live-count pool)))
+    job))
+
+(defun task-tests--publish-terminal (job state result &key report)
+  "Publish one terminal STATE for JOB the way a pool worker would."
+  (cl-jobpond::job--publish-terminal job state result :report report))
 
 (-> task-tests--child-viewer
     (configuration task-job
@@ -587,7 +653,7 @@
 (defun task-tests--child-viewer
     (configuration job &key (depth 1) registry)
   "Return a non-running child agent whose identity is JOB."
-  (let ((identifier (getf (task-job-identity job) :id)))
+  (let ((identifier (job-identifier job)))
     (make-instance
      'task-child-agent
      :configuration configuration
@@ -612,7 +678,7 @@
 (defun task-tests--terminal-result
     (job &key (status :success) (output "done") error)
   "Return one portable terminal RESULT for JOB."
-  (let ((identifier (getf (task-job-identity job) :id)))
+  (let ((identifier (job-identifier job)))
     (list :id identifier
           :name identifier
           :agent (task-agent-definition-name (task-job-definition job))

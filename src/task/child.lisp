@@ -395,7 +395,7 @@ boundary cannot fit within that budget."
              (format nil "Task artifact pathname is already occupied: ~A"
                      target)
              :tool-name "task.run"
-             :task-id (getf (task-job-identity job) :id)))
+             :task-id (job-identifier job)))
     (unwind-protect
          (progn
            (with-open-file
@@ -417,7 +417,7 @@ boundary cannot fit within that budget."
                     (format nil "Task artifact pathname became occupied: ~A"
                             target)
                     :tool-name "task.run"
-                    :task-id (getf (task-job-identity job) :id)))
+                    :task-id (job-identifier job)))
            (rename-file temporary target)
            target)
       (when (probe-file temporary) (delete-file temporary)))))
@@ -450,11 +450,11 @@ boundary cannot fit within that budget."
          (output (task--result-output completion progress provider-result))
          (duration
           (task--milliseconds-between
-           (or (task-job-started-at job) (task-job-created-at job))
+           (or (job-started-at job) (job-created-at job))
            (get-internal-real-time)))
          (base
-          (list :id (getf (task-job-identity job) :id) :name
-                (getf (task-job-identity job) :display-name) :agent
+          (list :id (job-identifier job) :name
+                (task-job-display-name job) :agent
                 (task-agent-definition-name (task-job-definition job))
                 :agent-source
                 (task-agent-definition-source (task-job-definition job))
@@ -486,8 +486,8 @@ boundary cannot fit within that budget."
          (tail (task-progress-output-tail progress))
          (model (and parent
                      (configuration-model (agent-configuration parent)))))
-    (list :id (getf (task-job-identity job) :id)
-          :name (getf (task-job-identity job) :display-name)
+    (list :id (job-identifier job)
+          :name (task-job-display-name job)
           :agent (task-agent-definition-name (task-job-definition job))
           :agent-source (task-agent-definition-source
                          (task-job-definition job))
@@ -502,7 +502,7 @@ boundary cannot fit within that budget."
           :usage (task-progress-usage progress)
           :duration-ms
           (task--milliseconds-between
-           (or (task-job-started-at job) (task-job-created-at job))
+           (or (job-started-at job) (job-created-at job))
            (get-internal-real-time))
           :model model
           :detached (task-job-detached-p job))))

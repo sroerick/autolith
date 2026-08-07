@@ -18,112 +18,153 @@
           (error nil fallback))
         fallback)))
 
-(-> task-orchestrator--apply-limits-locked (task-orchestrator) null)
-(defun task-orchestrator--apply-limits-locked (orchestrator)
-  "Apply environment or hurry-up limits while ORCHESTRATOR is locked."
-  (setf (task-orchestrator-maximum-concurrency orchestrator)
-        (if (task-orchestrator-hurry-up-p orchestrator)
-            *task-hurry-up-maximum-agents*
-            (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
-                                       *task-default-maximum-concurrency*
-                                       :minimum 1
-                                       :maximum *task-maximum-concurrency*))
-        (task-orchestrator-maximum-batch-size orchestrator)
-        (if (task-orchestrator-hurry-up-p orchestrator)
-            *task-hurry-up-maximum-agents*
-            *task-maximum-batch-size*)
-        (task-orchestrator-maximum-live-jobs orchestrator)
-        (if (task-orchestrator-hurry-up-p orchestrator)
-            *task-hurry-up-maximum-agents*
-            *task-maximum-live-jobs*))
+(defun task-orchestrator--apply-limits (orchestrator)
+  "Apply environment or hurry-up admission bounds to ORCHESTRATOR's pool.
+
+Hurry-up mode replaces every admission bound with one small number, because an
+urgent session should not be spending its remaining budget on child agents."
+  (let ((pool (task-orchestrator-pool orchestrator))
+        (hurry-up-p (task-orchestrator-hurry-up-p orchestrator)))
+    (setf (job-pool-maximum-concurrency pool)
+          (if hurry-up-p
+              *task-hurry-up-maximum-agents*
+              (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
+                                         *task-default-maximum-concurrency*
+                                         :minimum 1
+                                         :maximum *task-maximum-concurrency*))
+          (job-pool-maximum-batch-size pool)
+          (if hurry-up-p *task-hurry-up-maximum-agents* *task-maximum-batch-size*)
+          (job-pool-maximum-live-jobs pool)
+          (if hurry-up-p *task-hurry-up-maximum-agents* *task-maximum-live-jobs*)))
   nil)
 
 (-> task-orchestrator-set-hurry-up (task-orchestrator boolean) task-orchestrator)
 (defun task-orchestrator-set-hurry-up (orchestrator enabled-p)
-  "Apply ENABLED-P and its hard admission limits to ORCHESTRATOR."
+  "Apply ENABLED-P and its hard admission limits to ORCHESTRATOR.
+
+This only moves the bounds. Admission starts whatever workers the current bounds
+call for, so changing a limit never costs a session threads it may never use."
   (with-lock-held ((task-orchestrator-lock orchestrator))
     (unless (eq (task-orchestrator-hurry-up-p orchestrator) enabled-p)
       (setf (task-orchestrator-hurry-up-p orchestrator) enabled-p
             (task-orchestrator-hurry-up-admission-count orchestrator)
-            (if enabled-p (task-orchestrator-live-count orchestrator) 0)))
-    (task-orchestrator--apply-limits-locked orchestrator)
-    (task--condition-broadcast
-     (task-orchestrator-condition-variable orchestrator)))
-  (task-orchestrator--ensure-workers orchestrator)
+            (if enabled-p
+                (job-pool-live-count (task-orchestrator-pool orchestrator))
+                0)))
+    (task-orchestrator--apply-limits orchestrator))
   orchestrator)
+
+
+;;;; -- Pool Bounds Seen As Orchestrator State --
+
+(-> task-orchestrator-maximum-concurrency (task-orchestrator) (integer 1))
+(defun task-orchestrator-maximum-concurrency (orchestrator)
+  "Return the child jobs ORCHESTRATOR may run at the same time."
+  (job-pool-maximum-concurrency (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-maximum-batch-size (task-orchestrator) (integer 1))
+(defun task-orchestrator-maximum-batch-size (orchestrator)
+  "Return the children ORCHESTRATOR accepts in one atomic batch."
+  (job-pool-maximum-batch-size (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-maximum-live-jobs (task-orchestrator) (integer 1))
+(defun task-orchestrator-maximum-live-jobs (orchestrator)
+  "Return the combined queued and running children ORCHESTRATOR permits."
+  (job-pool-maximum-live-jobs (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-maximum-runtime-milliseconds
+    (task-orchestrator)
+    (integer 0))
+(defun task-orchestrator-maximum-runtime-milliseconds (orchestrator)
+  "Return ORCHESTRATOR's wall-clock cap for one child, or zero when disabled."
+  (job-pool-maximum-runtime-milliseconds (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-live-count (task-orchestrator) (integer 0))
+(defun task-orchestrator-live-count (orchestrator)
+  "Return ORCHESTRATOR's admitted queued, running, and finalizing children."
+  (job-pool-live-count (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-active-count (task-orchestrator) (integer 0))
+(defun task-orchestrator-active-count (orchestrator)
+  "Return the children ORCHESTRATOR is currently running on workers."
+  (job-pool-active-count (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-lifecycle-state (task-orchestrator) keyword)
+(defun task-orchestrator-lifecycle-state (orchestrator)
+  "Return ORCHESTRATOR's :OPEN, :CLOSING, or :CLOSED lifecycle state."
+  (job-pool-lifecycle-state (task-orchestrator-pool orchestrator)))
+
+(-> task-orchestrator-shutdown-p (task-orchestrator) boolean)
+(defun task-orchestrator-shutdown-p (orchestrator)
+  "Return true when ORCHESTRATOR has stopped accepting new children."
+  (not (eq (task-orchestrator-lifecycle-state orchestrator) :open)))
+
+
+;;;; -- Construction and Refresh --
 
 (-> task-orchestrator-create () task-orchestrator)
 (defun task-orchestrator-create ()
-  "Create an orchestrator from the current task environment settings."
-  (make-instance 'task-orchestrator
-                 :maximum-concurrency
-                 (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
-                                            *task-default-maximum-concurrency*
-                                            :minimum 1
-                                            :maximum
-                                            *task-maximum-concurrency*)
-                 :maximum-batch-size *task-maximum-batch-size*
-                 :maximum-live-jobs *task-maximum-live-jobs*
-                 :maximum-depth
-                 (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
-                                            *task-default-maximum-depth*
-                                            :minimum 1)
-                 :maximum-runtime-milliseconds
-                 (task--environment-integer
-                  "AUTOLITH_TASK_MAX_RUNTIME_MS"
-                  *task-default-maximum-runtime-milliseconds*
-                  :minimum 0)))
-
-(-> task-orchestrator--reap-dead-threads-locked
-    (task-orchestrator)
-    null)
-(defun task-orchestrator--reap-dead-threads-locked (orchestrator)
-  "Forget dead runtime threads and complete an ownerless shutdown."
-  (let ((owner (task-orchestrator-close-owner orchestrator)))
-    (when (and owner (not (thread-alive-p owner)))
-      (setf (task-orchestrator-close-owner orchestrator) nil)))
-  (setf (task-orchestrator-worker-threads orchestrator)
-        (remove-if-not #'thread-alive-p
-                       (task-orchestrator-worker-threads orchestrator)))
-  (let ((monitor (task-orchestrator-monitor-thread orchestrator)))
-    (when (and monitor (not (thread-alive-p monitor)))
-      (setf (task-orchestrator-monitor-thread orchestrator) nil)))
-  (when (and (eq (task-orchestrator-lifecycle-state orchestrator) :closing)
-             (null (task-orchestrator-close-owner orchestrator))
-             (null (task-orchestrator-worker-threads orchestrator))
-             (null (task-orchestrator-monitor-thread orchestrator)))
-    (setf (task-orchestrator-lifecycle-state orchestrator) :closed
-          (task-orchestrator-active-count orchestrator) 0)
-    (task--condition-broadcast
-     (task-orchestrator-condition-variable orchestrator)))
-  nil)
+  "Create an orchestrator and its worker pool from the task environment."
+  (let* ((pool
+           (make-job-pool
+            :name "Autolith task"
+            :job-class 'task-job
+            :maximum-concurrency
+            (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
+                                       *task-default-maximum-concurrency*
+                                       :minimum 1
+                                       :maximum *task-maximum-concurrency*)
+            :maximum-batch-size *task-maximum-batch-size*
+            :maximum-live-jobs *task-maximum-live-jobs*
+            :maximum-runtime-milliseconds
+            (task--environment-integer
+             "AUTOLITH_TASK_MAX_RUNTIME_MS"
+             *task-default-maximum-runtime-milliseconds*
+             :minimum 0)
+            :terminal-retention-limit *task-terminal-retention-limit*
+            ;; Most sessions never spawn a child agent, and a session that has
+            ;; not spawned one must stay single threaded so it can still save its
+            ;; own image. Admission starts the workers when they are first needed.
+            :start-threads-p nil))
+         (orchestrator
+           (make-instance 'task-orchestrator
+                          :pool pool
+                          :maximum-depth
+                          (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
+                                                     *task-default-maximum-depth*
+                                                     :minimum 1))))
+    (job-pool-add-listener pool #'task--pool-event-listener)
+    orchestrator))
 
 (-> task-orchestrator-refresh (task-orchestrator) task-orchestrator)
 (defun task-orchestrator-refresh (orchestrator)
   "Apply current limits to ORCHESTRATOR and ensure its reusable workers."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (task-orchestrator--reap-dead-threads-locked orchestrator)
-    (when (eq (task-orchestrator-lifecycle-state orchestrator) :closing)
-      (error 'task-error
-             :message "The task runtime is still shutting down."
-             :tool-name "task.run"))
-    (when (eq (task-orchestrator-lifecycle-state orchestrator) :closed)
-      (setf (task-orchestrator-lifecycle-state orchestrator) :open))
-    (task-orchestrator--apply-limits-locked orchestrator)
-    (setf (task-orchestrator-maximum-depth orchestrator)
-          (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
-                                     *task-default-maximum-depth* :minimum 1)
-          (task-orchestrator-maximum-runtime-milliseconds orchestrator)
+  (let ((pool (task-orchestrator-pool orchestrator)))
+    (with-lock-held ((task-orchestrator-lock orchestrator))
+      (task-orchestrator--apply-limits orchestrator)
+      (setf (task-orchestrator-maximum-depth orchestrator)
+            (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
+                                       *task-default-maximum-depth* :minimum 1)))
+    (setf (job-pool-maximum-runtime-milliseconds pool)
           (task--environment-integer
            "AUTOLITH_TASK_MAX_RUNTIME_MS"
            *task-default-maximum-runtime-milliseconds*
-           :minimum 0)
-          (task-orchestrator-shutdown-p orchestrator) nil)
-    (task--condition-broadcast
-     (task-orchestrator-condition-variable orchestrator)))
-  (task-orchestrator--ensure-workers orchestrator)
-  (task-orchestrator--ensure-monitor orchestrator)
+           :minimum 0))
+    ;; A detached pool dropped its listeners along with its job table, so this
+    ;; registration has to be repeated rather than assumed to have survived.
+    (job-pool-add-listener pool #'task--pool-event-listener)
+    ;; The pool reaps threads that died before deciding whether it is still
+    ;; closing, so a close that timed out and then finished reopens here.
+    (handler-case
+        (job-pool-refresh pool)
+      (job-pool-closed ()
+        (error 'task-error
+               :message "The task runtime is still shutting down."
+               :tool-name "task.run"))))
   orchestrator)
+
+
+;;;; -- Listeners --
 
 (defun task-orchestrator-add-listener (orchestrator listener)
   "Register LISTENER for portable task events and return it."
@@ -171,298 +212,73 @@
          (trimmed (string-trim '(#\HYPHEN-MINUS) mapped)))
     (and (non-empty-string-p trimmed) trimmed)))
 
-(-> task-orchestrator--create-identity
-    (task-orchestrator (option string) string)
-    list)
-(defun task-orchestrator--create-identity
-    (orchestrator requested-name agent-type)
-  "Reserve a child identity while ORCHESTRATOR's lock is held."
-  (incf (task-orchestrator-next-index orchestrator))
-  (let* ((index (task-orchestrator-next-index orchestrator))
-         (adjectives
-          #("amber" "brisk" "calm" "clear" "keen" "quiet" "rapid" "steady"
-            "vivid" "wise"))
-         (nouns
-          #("badger" "falcon" "heron" "lynx" "otter" "raven" "sparrow" "tern"
-            "wolf" "wren"))
-         (generated
-          (format nil "~A-~A"
-                  (aref adjectives (mod (1- index) (length adjectives)))
-                  (aref nouns
-                        (mod (floor (1- index) (length adjectives))
-                             (length nouns)))))
-         (base (or (task--identifier-fragment requested-name) generated))
-         (suffix-text (format nil "-~D" index))
-         (base-limit
-           (max 0
-                (- *task-identifier-maximum-characters*
-                   (length suffix-text))))
-         (candidate
-           (concatenate 'string
-                        (subseq base 0 (min (length base) base-limit))
-                        suffix-text)))
-    (setf (gethash candidate (task-orchestrator-names orchestrator)) t)
-    (list :id candidate
-          :display-name
-          (if requested-name
-              (subseq requested-name
-                      0
-                      (min (length requested-name)
-                           *task-identifier-maximum-characters*))
-              candidate)
-          :agent-type agent-type
-          :index index)))
+(-> task-orchestrator--child-name (task-orchestrator (option string)) string)
+(defun task-orchestrator--child-name (orchestrator requested-name)
+  "Return the readable name a new child of ORCHESTRATOR is admitted under.
 
-(-> task-orchestrator-create-identity
-    (task-orchestrator (option string) string)
-    list)
-(defun task-orchestrator-create-identity
-    (orchestrator requested-name agent-type)
-  "Reserve and return a stable unique child identity plist."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (task-orchestrator--create-identity orchestrator requested-name agent-type)))
+A supplied name passes through: the pool bounds it and appends the admission index
+to make it unique. A child given no name still gets a readable one, since a task
+identifier is what an agent uses to refer to its own children."
+  (if (non-empty-string-p requested-name)
+      requested-name
+      (let ((index (with-lock-held ((task-orchestrator-lock orchestrator))
+                     (incf (task-orchestrator-next-name-index orchestrator))))
+            (adjectives
+              #("amber" "brisk" "calm" "clear" "keen" "quiet" "rapid" "steady"
+                "vivid" "wise"))
+            (nouns
+              #("badger" "falcon" "heron" "lynx" "otter" "raven" "sparrow" "tern"
+                "wolf" "wren")))
+        (format nil "~A-~A"
+                (aref adjectives (mod (1- index) (length adjectives)))
+                (aref nouns
+                      (mod (floor (1- index) (length adjectives))
+                           (length nouns)))))))
 
-(-> task-orchestrator--worker-loop (task-orchestrator) null)
-(defun task-orchestrator--worker-loop (orchestrator)
-  "Run queued jobs on one reusable worker until ORCHESTRATOR closes."
-  (loop
-    (let ((job nil))
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (loop
-          (when (task-orchestrator-shutdown-p orchestrator)
-            (return-from task-orchestrator--worker-loop nil))
-          (when (and (task-orchestrator-queue orchestrator)
-                     (< (task-orchestrator-active-count orchestrator)
-                        (task-orchestrator-maximum-concurrency orchestrator)))
-            (setf job (pop (task-orchestrator-queue orchestrator)))
-            (incf (task-orchestrator-active-count orchestrator))
-            (return))
-          (condition-wait
-           (task-orchestrator-condition-variable orchestrator)
-           (task-orchestrator-lock orchestrator))))
-      (unwind-protect
-           (handler-case
-               (task-job--execute job)
-             (serious-condition (condition)
-               (handler-case
-                   (unless (task-job-terminal-p job)
-                     (unless
-                         (task-job--publish-terminal
-                          job
-                          :failed
-                          (task--failed-result job :failed
-                                               (princ-to-string condition))
-                          :report
-                          (bounded-string (princ-to-string condition)))
-                       (unless (task-job-terminal-p job)
-                         (task-job--force-terminal-failure
-                          job condition condition))))
-                 (serious-condition (publication-condition)
-                   (task-job--force-terminal-failure
-                    job condition publication-condition)))))
-        (with-lock-held ((task-orchestrator-lock orchestrator))
-          (decf (task-orchestrator-active-count orchestrator))
-          (task--condition-broadcast
-           (task-orchestrator-condition-variable orchestrator)))))))
 
-(-> task-orchestrator--ensure-workers (task-orchestrator) null)
-(defun task-orchestrator--ensure-workers (orchestrator)
-  "Ensure ORCHESTRATOR has enough reusable scheduler workers."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (setf (task-orchestrator-worker-threads orchestrator)
-          (remove-if-not #'thread-alive-p
-                         (task-orchestrator-worker-threads orchestrator)))
-    (when (eq (task-orchestrator-lifecycle-state orchestrator) :open)
-      (loop repeat (max 0
-                        (- (task-orchestrator-maximum-concurrency orchestrator)
-                           (length
-                            (task-orchestrator-worker-threads orchestrator))))
-            for index from
-              (length (task-orchestrator-worker-threads orchestrator))
-            for thread =
-              (make-thread
-               (lambda () (task-orchestrator--worker-loop orchestrator))
-               :name (format nil "Autolith task worker ~D" (1+ index)))
-            do (push thread (task-orchestrator-worker-threads orchestrator)))
-      (task--condition-broadcast
-       (task-orchestrator-condition-variable orchestrator))))
+;;;; -- Pool Events Seen As Task Events --
+
+(defun task--pool-event-listener (channel payload)
+  "Re-emit one pool CHANNEL event in Autolith's own task vocabulary.
+
+The pool reports only that a job started or became terminal; Autolith's observers
+want the child role, the parent tool call, and the conversation file. Only the job
+can answer that, so the event carries it. A job of another class is ignored."
+  (let ((job (getf payload :job)))
+    (when (and (typep job 'task-job) (eq channel :job-lifecycle))
+      (let ((status (getf payload :status)))
+        (task-orchestrator-emit
+         (task-job-orchestrator job)
+         :task-subagent-lifecycle
+         (task-job--lifecycle-event job
+                                    status
+                                    (if (eq status :started)
+                                        nil
+                                        (job-result job)))))))
   nil)
 
-(-> task-orchestrator--monitor-loop (task-orchestrator) null)
-(defun task-orchestrator--monitor-loop (orchestrator)
-  "Cancel running jobs whose runtime deadlines have elapsed."
-  (loop
-    (let ((expired nil)
-          (jobs nil))
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (when (task-orchestrator-shutdown-p orchestrator)
-          (return-from task-orchestrator--monitor-loop nil))
-        (setf jobs
-              (loop for job being the hash-values of
-                      (task-orchestrator-jobs orchestrator)
-                    collect job)))
-      (let ((now (get-internal-real-time)))
-        (dolist (job jobs)
-          (with-lock-held ((task-job-lock job))
-            (when (and (eq (task-job-state job) :running)
-                       (task-job-deadline job)
-                       (>= now (task-job-deadline job)))
-              (push job expired)))))
-      (dolist (job expired)
-        (task-job-cancel job :timeout))
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (unless (task-orchestrator-shutdown-p orchestrator)
-          (condition-wait
-           (task-orchestrator-condition-variable orchestrator)
-           (task-orchestrator-lock orchestrator)
-           :timeout 0.1))))))
 
-(-> task-orchestrator--ensure-monitor (task-orchestrator) null)
-(defun task-orchestrator--ensure-monitor (orchestrator)
-  "Ensure ORCHESTRATOR has one deadline monitor when runtime caps are enabled."
-  (with-lock-held ((task-orchestrator-lock orchestrator))
-    (let ((monitor (task-orchestrator-monitor-thread orchestrator)))
-      (when (and (plusp
-                  (task-orchestrator-maximum-runtime-milliseconds orchestrator))
-                 (eq (task-orchestrator-lifecycle-state orchestrator) :open)
-                 (not (and monitor (thread-alive-p monitor))))
-        (setf (task-orchestrator-monitor-thread orchestrator)
-              (make-thread
-               (lambda () (task-orchestrator--monitor-loop orchestrator))
-               :name "Autolith task deadline monitor")))))
-  nil)
+;;;; -- Shutdown --
 
 (-> task-orchestrator-close (task-orchestrator) boolean)
 (defun task-orchestrator-close (orchestrator)
-  "Cancel all jobs, stop reusable threads, and report complete shutdown."
-  (let ((owner-p nil)
-        (jobs nil)
-        (threads nil)
-        (deadline (+ (get-internal-real-time)
-                     (* *task-shutdown-timeout-seconds*
-                        internal-time-units-per-second))))
-    (with-lock-held ((task-orchestrator-lock orchestrator))
-      (task-orchestrator--reap-dead-threads-locked orchestrator)
-      (case (task-orchestrator-lifecycle-state orchestrator)
-        (:closed
-         (return-from task-orchestrator-close t))
-        (:closing
-         (let ((owner (task-orchestrator-close-owner orchestrator)))
-           (unless (and owner
-                        (not (eq owner (current-thread)))
-                        (thread-alive-p owner))
-             (setf owner-p t
-                   (task-orchestrator-close-owner orchestrator)
-                   (current-thread)
-                   jobs
-                   (loop for job being the hash-values of
-                           (task-orchestrator-jobs orchestrator)
-                         collect job)
-                   threads
-                   (remove nil
-                           (cons
-                            (task-orchestrator-monitor-thread orchestrator)
-                            (copy-list
-                             (task-orchestrator-worker-threads
-                              orchestrator))))))))
-        (otherwise
-         (setf owner-p t
-               (task-orchestrator-close-owner orchestrator) (current-thread)
-               (task-orchestrator-lifecycle-state orchestrator) :closing
-               (task-orchestrator-shutdown-p orchestrator) t
-               (task-orchestrator-queue orchestrator) nil
-               jobs
-               (loop for job being the hash-values of
-                       (task-orchestrator-jobs orchestrator)
-                     collect job)
-               threads
-               (remove nil
-                       (cons (task-orchestrator-monitor-thread orchestrator)
-                             (copy-list
-                              (task-orchestrator-worker-threads
-                               orchestrator)))))
-         (task--condition-broadcast
-          (task-orchestrator-condition-variable orchestrator)))))
-    (unless owner-p
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (loop while (and (eq (task-orchestrator-lifecycle-state orchestrator)
-                             :closing)
-                         (task-orchestrator-close-owner orchestrator)
-                         (< (get-internal-real-time) deadline))
-              for remaining =
-                (/ (max 0 (- deadline (get-internal-real-time)))
-                   internal-time-units-per-second)
-              do (condition-wait
-                  (task-orchestrator-condition-variable orchestrator)
-                  (task-orchestrator-lock orchestrator)
-                  :timeout remaining))
-        (return-from task-orchestrator-close
-          (eq (task-orchestrator-lifecycle-state orchestrator) :closed))))
-    (dolist (job jobs)
-      (task-job-cancel job :shutdown))
-    (loop
-      for live = (remove-if-not
-                  (lambda (thread)
-                    (and (not (eq thread (current-thread)))
-                         (thread-alive-p thread)))
-                  threads)
-      until (or (null live)
-                (>= (get-internal-real-time) deadline))
-      do (sleep 0.01))
-    (dolist (thread threads)
-      (when (and (not (eq thread (current-thread)))
-                 (not (thread-alive-p thread)))
-        (join-thread thread)))
-    (let ((live
-            (remove-if-not
-             (lambda (thread)
-               (and (not (eq thread (current-thread)))
-                    (thread-alive-p thread)))
-             threads)))
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (setf (task-orchestrator-worker-threads orchestrator)
-              (intersection live
-                            (task-orchestrator-worker-threads orchestrator)
-                            :test #'eq)
-              (task-orchestrator-monitor-thread orchestrator)
-              (and (member (task-orchestrator-monitor-thread orchestrator)
-                           live
-                           :test #'eq)
-                   (task-orchestrator-monitor-thread orchestrator))
-              (task-orchestrator-lifecycle-state orchestrator)
-              (if live :closing :closed)
-              (task-orchestrator-close-owner orchestrator) nil
-              (task-orchestrator-active-count orchestrator)
-              (if live (task-orchestrator-active-count orchestrator) 0))
-        (task--condition-broadcast
-         (task-orchestrator-condition-variable orchestrator)))
-      (null live))))
+  "Cancel all children, stop the pool's threads, and report complete shutdown."
+  (job-pool-close (task-orchestrator-pool orchestrator)))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
 (defun task-orchestrator-detach (orchestrator)
   "Remove closed runtime state before an image save or registry replacement."
+  (handler-case
+      (job-pool-detach (task-orchestrator-pool orchestrator))
+    (job-pool-detach-refused (condition)
+      (error 'task-error
+             :message
+             (if (eq (job-pool-detach-refused-reason condition) :not-closed)
+                 "Task runtime must close before it can detach."
+                 "Task runtime cannot detach while its threads are alive.")
+             :tool-name "task.run")))
   (with-lock-held ((task-orchestrator-lock orchestrator))
-    (unless (eq (task-orchestrator-lifecycle-state orchestrator) :closed)
-      (error 'task-error
-             :message "Task runtime must close before it can detach."
-             :tool-name "task.run"))
-    (when (or (some #'thread-alive-p
-                    (task-orchestrator-worker-threads orchestrator))
-              (let ((monitor (task-orchestrator-monitor-thread orchestrator)))
-                (and monitor (thread-alive-p monitor))))
-      (error 'task-error
-             :message "Task runtime cannot detach while its threads are alive."
-             :tool-name "task.run"))
-    (setf (task-orchestrator-worker-threads orchestrator) nil
-          (task-orchestrator-monitor-thread orchestrator) nil
-          (task-orchestrator-queue orchestrator) nil
-          (task-orchestrator-close-owner orchestrator) nil
-          (task-orchestrator-active-count orchestrator) 0
-          (task-orchestrator-live-count orchestrator) 0
-          (task-orchestrator-terminal-identifiers orchestrator) nil
-          (task-orchestrator-listeners orchestrator) nil)
-    (clrhash (task-orchestrator-jobs orchestrator))
-    (clrhash (task-orchestrator-names orchestrator)))
+    (setf (task-orchestrator-listeners orchestrator) nil))
   nil)
 
 (defmethod tool-runtime-identity ((tool task-orchestrator-tool))
@@ -533,29 +349,50 @@
          (setf (task-progress-current-tool progress) nil)))
       (setf (task-progress-updated-at progress) (get-internal-real-time)
             event
-            (list :id (getf (task-job-identity job) :id)
+            (list :id (job-identifier job)
                   :status (task-progress-status progress)
                   :current-tool (task-progress-current-tool progress)
                   :request-count (task-progress-request-count progress))))
     (task-orchestrator-emit (task-job-orchestrator job) :task-subagent-progress
                             event)
-    (let ((reason
-            (with-lock-held ((task-job-lock job))
-              (and (not (task-job--terminal-state-p (task-job-state job)))
-                   (task-job-cancellation-reason job)))))
-      (when reason
-        (error 'task-aborted
-               :message
-               (format nil "Task ~A was ~A."
-                       (getf (task-job-identity job) :id)
-                       reason)
-               :reason reason))))
+    ;; Every observed child event is also a cancellation point, so a child whose
+    ;; controller gave up stops at its next provider or tool boundary even when
+    ;; an interrupt could not be delivered to it.
+    (job-check-cancellation job))
   nil)
 
-(-> task-job--terminal-state-p (keyword) boolean)
-(defun task-job--terminal-state-p (state)
-  "Return true when STATE is a published terminal task state."
+(-> task--terminal-state-p (keyword) boolean)
+(defun task--terminal-state-p (state)
+  "Return true when STATE is a published terminal task state.
+
+Snapshots carry a state rather than a job, so this is still needed alongside the
+pool's own JOB-TERMINAL-P."
   (not (null (member state '(:completed :failed :aborted) :test #'eq))))
+
+(-> task-job-display-name (task-job) non-empty-string)
+(defun task-job-display-name (job)
+  "Return the name JOB is presented under in results and transcripts.
+
+A child admitted with a name keeps it; one named for it falls back to its
+identifier, which is generated to be readable for this reason."
+  (or (job-name job) (job-identifier job)))
+
+(-> task-job-identity (task-job) list)
+(defun task-job-identity (job)
+  "Return JOB's stable identity plist.
+
+The pool owns the identifier and index, so this assembles what a child session is
+handed rather than storing a second copy."
+  (list :id (job-identifier job)
+        :display-name (task-job-display-name job)
+        :index (job-index job)))
+
+(-> task-job-root-conversation-identifier (task-job) non-empty-string)
+(defun task-job-root-conversation-identifier (job)
+  "Return the primary conversation identifier owning JOB's task tree.
+
+A task tree is a pool job tree, named by the conversation that started it."
+  (job-root-identifier job))
 
 (-> task-job-agent-name (task-job) non-empty-string)
 (defun task-job-agent-name (job)
@@ -580,7 +417,7 @@
   "Return JOB progress using lifecycle values captured under the job lock."
   (let ((progress (task-job-progress job)))
     (with-lock-held ((task-progress-lock progress))
-      (list :id (getf (task-job-identity job) :id)
+      (list :id (job-identifier job)
             :agent (task-job-agent-name job)
             :status (task-progress-status progress)
             :current-tool (task-progress-current-tool progress)
@@ -605,26 +442,24 @@
 (-> task-progress-snapshot (task-job) list)
 (defun task-progress-snapshot (job)
   "Return a coherent portable snapshot of JOB's current progress."
-  (with-lock-held ((task-job-lock job))
+  (let ((snapshot (job-snapshot job)))
     (task-progress--snapshot job
                              :parent (task-job-parent-agent job)
-                             :result (task-job-result job)
-                             :ended-at (task-job-ended-at job))))
+                             :result (getf snapshot :result)
+                             :ended-at (getf snapshot :ended-at))))
 
-(-> task-job-terminal-p (task-job) boolean)
-(defun task-job-terminal-p (job)
-  "Return true when JOB cannot make another state transition."
-  (with-lock-held ((task-job-lock job))
-    (task-job--terminal-state-p (task-job-state job))))
+(-> task-job-snapshot (task-job) list)
+(defun task-job-snapshot (job)
+  "Return JOB's coherent portable lifecycle, progress, and result snapshot.
 
-(-> task-job--snapshot-locked (task-job) list)
-(defun task-job--snapshot-locked (job)
-  "Return JOB's snapshot while its lifecycle lock is held."
-  (let ((result (copy-tree (task-job-result job))))
-    (list :job-id (getf (task-job-identity job) :id)
+The lifecycle fields are read once through the pool snapshot so they cannot mix
+values from either side of a terminal transition."
+  (let* ((snapshot (job-snapshot job))
+         (result (copy-tree (getf snapshot :result))))
+    (list :job-id (job-identifier job)
           :execution-id (task-job-execution-identifier job)
           :type :task
-          :state (task-job-state job)
+          :state (getf snapshot :state)
           :detached (task-job-detached-p job)
           :agent (task-job-agent-name job)
           :assignment
@@ -634,55 +469,41 @@
           (task-progress--snapshot job
                                    :parent (task-job-parent-agent job)
                                    :result result
-                                   :ended-at (task-job-ended-at job))
+                                   :ended-at (getf snapshot :ended-at))
           :result result
-          :cancellation-reason (task-job-cancellation-reason job)
-          :condition-report (task-job-condition-report job))))
-
-(-> task-job-snapshot (task-job) list)
-(defun task-job-snapshot (job)
-  "Return JOB's coherent portable lifecycle, progress, and result snapshot."
-  (with-lock-held ((task-job-lock job))
-    (task-job--snapshot-locked job)))
+          :cancellation-reason (getf snapshot :cancellation-reason)
+          :condition-report (getf snapshot :condition-report))))
 
 (defun task-orchestrator-find-job (orchestrator identifier)
   "Return IDENTIFIER's job or signal a typed task error."
-  (let ((job
-         (with-lock-held ((task-orchestrator-lock orchestrator))
-           (gethash identifier (task-orchestrator-jobs orchestrator)))))
-    (or job
-        (error 'task-error :message
-               (format nil "No task job named ~A exists." identifier)
-               :tool-name "job.get" :task-id identifier))))
+  (handler-case
+      (job-pool-find-job (task-orchestrator-pool orchestrator) identifier)
+    (job-not-found ()
+      (error 'task-error :message
+             (format nil "No task job named ~A exists." identifier)
+             :tool-name "job.get" :task-id identifier))))
 
 (defun task-orchestrator-list-jobs (orchestrator)
   "Return all jobs sorted by child index."
-  (let ((jobs nil))
-    (with-lock-held ((task-orchestrator-lock orchestrator))
-      (maphash
-       (lambda (identifier job) (declare (ignore identifier)) (push job jobs))
-       (task-orchestrator-jobs orchestrator)))
-    (sort jobs #'< :key (lambda (job) (getf (task-job-identity job) :index)))))
+  (job-pool-list-jobs (task-orchestrator-pool orchestrator)))
 
 (-> task-job-live-activity (task-job) (option list))
 (defun task-job-live-activity (job)
   "Return JOB's lightweight queued or running presentation snapshot."
-  (with-lock-held ((task-job-lock job))
-    (let ((state (task-job-state job)))
-      (when (member state '(:queued :running) :test #'eq)
-        (let ((progress (task-job-progress job))
-              (identity (task-job-identity job)))
-          (with-lock-held ((task-progress-lock progress))
-            (list :id (getf identity :id)
-                  :index (getf identity :index)
-                  :agent (task-job-agent-name job)
-                  :state state
-                  :current-tool (task-progress-current-tool progress)
-                  :assignment
-                  (bounded-string
-                   (getf (task-job-item job) :task)
-                   :limit *task-retained-assignment-limit*)
-                  :detached (task-job-detached-p job))))))))
+  (let ((state (job-state job)))
+    (when (member state '(:queued :running) :test #'eq)
+      (let ((progress (task-job-progress job)))
+        (with-lock-held ((task-progress-lock progress))
+          (list :id (job-identifier job)
+                :index (job-index job)
+                :agent (task-job-agent-name job)
+                :state state
+                :current-tool (task-progress-current-tool progress)
+                :assignment
+                (bounded-string
+                 (getf (task-job-item job) :task)
+                 :limit *task-retained-assignment-limit*)
+                :detached (task-job-detached-p job)))))))
 
 (-> task-orchestrator-live-activities (task-orchestrator) list)
 (defun task-orchestrator-live-activities (orchestrator)
@@ -698,10 +519,8 @@
   (not
    (null
     (if (typep viewer 'task-child-agent)
-        (member (getf (task-job-identity
-                       (task-child-agent-job viewer))
-                      :id)
-                (task-job-owner-identifiers job)
+        (member (job-identifier (task-child-agent-job viewer))
+                (job-owner-identifiers job)
                 :test #'string=)
         (string=
          (task-job-root-conversation-identifier job)
@@ -722,9 +541,11 @@
 (defun task-orchestrator-find-visible-job
     (orchestrator identifier viewer tool-name)
   "Return VIEWER's visible IDENTIFIER or signal a non-disclosing task error."
-  (let ((job
-         (with-lock-held ((task-orchestrator-lock orchestrator))
-           (gethash identifier (task-orchestrator-jobs orchestrator)))))
+  (let ((job (handler-case
+                 (job-pool-find-job (task-orchestrator-pool orchestrator)
+                                    identifier)
+               (job-not-found ()
+                 nil))))
     (if (and job (task-job-visible-to-agent-p job viewer))
         job
         (error 'task-error
@@ -733,135 +554,24 @@
                :tool-name tool-name
                :task-id identifier))))
 
-(-> task-job--request-cancellation (task-job keyword) boolean)
-(defun task-job--request-cancellation (job reason)
-  "Request first-writer cancellation REASON for JOB without walking descendants."
-  (let ((thread nil)
-        (run-token nil)
-        (queued-p nil)
-        (cancel-p nil)
-        (orchestrator (task-job-orchestrator job)))
-    (with-lock-held ((task-job-lock job))
-      (unless (or (task-job--terminal-state-p (task-job-state job))
-                  (task-job-publication-claimed-p job)
-                  (task-job-cancellation-reason job))
-        (setf (task-job-cancellation-reason job) reason
-              thread (task-job-thread job)
-              run-token (task-job-run-token job)
-              queued-p (eq (task-job-state job) :queued)
-              cancel-p t)))
-    (when cancel-p
-      (with-lock-held ((task-orchestrator-lock orchestrator))
-        (setf (task-orchestrator-queue orchestrator)
-              (remove job (task-orchestrator-queue orchestrator) :test #'eq))
-        (task--condition-broadcast
-         (task-orchestrator-condition-variable orchestrator)))
-      (when queued-p
-        (task-job--publish-terminal
-         job
-         :aborted
-         (task--failed-result
-          job
-          :aborted
-          (format nil "Task ~A was ~A before it started."
-                  (getf (task-job-identity job) :id)
-                  reason)))))
-    (when (and cancel-p thread run-token (thread-alive-p thread))
-      (interrupt-thread thread
-                        (lambda ()
-                          (when (and (eq *task-current-job* job)
-                                     (not (eq *task-terminal-publication-job*
-                                              job))
-                                     (stringp *task-current-run-token*)
-                                     (string=
-                                      *task-current-run-token*
-                                      run-token))
-                            (error 'task-aborted
-                                   :message
-                                   (format nil "Task ~A was ~A."
-                                           (getf (task-job-identity job) :id)
-                                           reason)
-                                   :reason reason)))))
-    cancel-p))
-
 (-> task-job-cancel (task-job keyword) (values boolean list))
 (defun task-job-cancel (job reason)
-  "Cancel JOB and every retained live descendant, returning accepted identities."
-  (let* ((orchestrator (task-job-orchestrator job))
-         (identifier (getf (task-job-identity job) :id))
-         (accepted-p (task-job--request-cancellation job reason))
-         (accepted-descendants nil))
-    (loop
-      with accepted-this-pass = nil
-      do
-         (setf accepted-this-pass nil)
-         (let ((descendants
-                 (with-lock-held ((task-orchestrator-lock orchestrator))
-                   (sort
-                    (loop for candidate being the hash-values of
-                            (task-orchestrator-jobs orchestrator)
-                          when (member identifier
-                                       (task-job-owner-identifiers candidate)
-                                       :test #'string=)
-                            collect candidate)
-                    #'<
-                    :key (lambda (candidate)
-                           (getf (task-job-identity candidate) :index))))))
-           (dolist (descendant descendants)
-             (when (task-job--request-cancellation descendant reason)
-               (let ((descendant-identifier
-                       (getf (task-job-identity descendant) :id)))
-                 (pushnew descendant-identifier accepted-descendants
-                          :test #'string=)
-                 (setf accepted-this-pass t)))))
-      while accepted-this-pass)
-    (values accepted-p
-            (sort accepted-descendants #'string<))))
+  "Cancel JOB and every retained live descendant, returning accepted identities.
 
-(-> task-job-help-join (task-job) boolean)
-(defun task-job-help-join (job)
-  "Run queued JOB inline when a child waiter would otherwise occupy a worker."
-  (let ((claimed-p nil)
-        (orchestrator (task-job-orchestrator job)))
-    (with-lock-held ((task-job-lock job))
-      (when (and (eq (task-job-state job) :queued)
-                 (null (task-job-cancellation-reason job))
-                 (not (task-job-publication-claimed-p job)))
-        (with-lock-held ((task-orchestrator-lock orchestrator))
-          (when (member job (task-orchestrator-queue orchestrator) :test #'eq)
-            (setf (task-orchestrator-queue orchestrator)
-                  (remove job
-                          (task-orchestrator-queue orchestrator)
-                          :test #'eq)
-                  claimed-p t)
-            (task--condition-broadcast
-             (task-orchestrator-condition-variable orchestrator))))))
-    (when claimed-p
-      (task-job--execute job))
-    claimed-p))
+One pass over the subtree is enough. JOB is cancelled before its descendants are
+walked, and admission refuses a child whose parent already carries a cancellation
+reason, so a job cancelled here cannot add to the subtree behind the walk."
+  (multiple-value-bind (accepted-p cascaded)
+      (job-cancel job :reason reason :cascade-p t)
+    (values accepted-p
+            (sort (mapcar #'job-identifier cascaded) #'string<))))
 
 (-> task-job-await
     (task-job (option (real 0)))
     (values list boolean))
 (defun task-job-await (job timeout-seconds)
   "Wait up to TIMEOUT-SECONDS and return a snapshot plus terminal flag."
-  (let ((deadline
-         (and timeout-seconds
-              (+ (get-internal-real-time)
-                 (* timeout-seconds internal-time-units-per-second)))))
-    (with-lock-held ((task-job-lock job))
-      (loop until (task-job--terminal-state-p (task-job-state job))
-            for now = (get-internal-real-time)
-            for remaining =
-              (and deadline
-                   (/ (max 0 (- deadline now))
-                      internal-time-units-per-second))
-            when (and deadline (<= remaining 0))
-              return nil
-            do (condition-wait
-                (task-job-condition-variable job)
-                (task-job-lock job)
-                :timeout remaining))))
-  (let ((snapshot (task-job-snapshot job)))
-    (values snapshot
-            (task-job--terminal-state-p (getf snapshot :state)))))
+  (multiple-value-bind (pool-snapshot terminal-p)
+      (job-await job :timeout-seconds timeout-seconds)
+    (declare (ignore pool-snapshot))
+    (values (task-job-snapshot job) terminal-p)))

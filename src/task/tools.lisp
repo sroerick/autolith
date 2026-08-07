@@ -345,7 +345,7 @@
     (snapshot &key artifact-path (preview-limit 0) include-progress-p)
   "Return one bounded native job record from SNAPSHOT."
   (let* ((state (getf snapshot :state))
-         (terminal-p (task-job--terminal-state-p state))
+         (terminal-p (task--terminal-state-p state))
          (result (getf snapshot :result))
          (progress (getf snapshot :progress))
          (artifact-available-p
@@ -658,7 +658,7 @@
                      detached
                      (remove-if-not #'task-job-detached-p admitted))
                (dolist (job inline)
-                 (task-job--execute job)))
+                 (job-run-inline job)))
              (dolist (job synchronous) (task-job-await job nil))
              (let* ((snapshots (mapcar #'task-job-snapshot jobs))
                     (synchronous-snapshots
@@ -673,7 +673,7 @@
                     (duration
                      (if jobs
                          (task--milliseconds-between
-                          (reduce #'min jobs :key #'task-job-created-at)
+                          (reduce #'min jobs :key #'job-created-at)
                           (get-internal-real-time))
                          0))
                     (artifact-root
@@ -829,7 +829,7 @@
                        :tool-name "job.wait"))
               (when (and (plusp timeout)
                          (typep viewer 'task-child-agent))
-                (task-job-help-join job))
+                (job-run-inline job))
               (multiple-value-bind (snapshot terminal-p)
                   (task-job-await job timeout)
                 (multiple-value-bind (form content)

@@ -51,6 +51,8 @@
                 #:job-pool-closed
                 #:job-pool-descendant-jobs
                 #:job-pool-detach
+                #:job-pool-detach-refused
+                #:job-pool-detach-refused-reason
                 #:job-pool-emit
                 #:job-pool-error
                 #:job-pool-error-message
@@ -62,6 +64,7 @@
                 #:job-pool-maximum-concurrency
                 #:job-pool-maximum-live-jobs
                 #:job-pool-maximum-runtime-milliseconds
+                #:job-pool-queued-count
                 #:job-pool-refresh
                 #:job-pool-remove-listener
                 #:job-pool-submit-batch
@@ -69,6 +72,7 @@
                 #:job-root-identifier
                 #:job-run-inline
                 #:job-run-token
+                #:job-snapshot
                 #:job-started-at
                 #:job-state
                 #:job-terminal-p

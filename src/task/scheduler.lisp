@@ -132,264 +132,128 @@
           :blocking-p
           (and (task-agent-definition-blocking-p definition) t))))
 
-(-> task-orchestrator--retain-terminal-locked
-    (task-orchestrator task-job)
-    null)
-(defun task-orchestrator--retain-terminal-locked (orchestrator job)
-  "Account for terminal JOB while its lifecycle lock is held."
-  (unless (task-job-retained-p job)
-    (setf (task-job-retained-p job) t)
-    (with-lock-held ((task-orchestrator-lock orchestrator))
-      (when (plusp (task-orchestrator-live-count orchestrator))
-        (decf (task-orchestrator-live-count orchestrator)))
-      (let ((identifier (getf (task-job-identity job) :id)))
-        (setf (task-orchestrator-terminal-identifiers orchestrator)
-              (nconc (task-orchestrator-terminal-identifiers orchestrator)
-                     (list identifier)))
-        (loop while (> (length
-                        (task-orchestrator-terminal-identifiers orchestrator))
-                       *task-terminal-retention-limit*)
-              for expired =
-                (pop (task-orchestrator-terminal-identifiers orchestrator))
-              do (remhash expired (task-orchestrator-jobs orchestrator))
-                 (remhash expired (task-orchestrator-names orchestrator))))
-      (task--condition-broadcast
-       (task-orchestrator-condition-variable orchestrator))))
-  nil)
-
-(-> task-orchestrator--retain-terminal (task-orchestrator task-job) null)
-(defun task-orchestrator--retain-terminal (orchestrator job)
-  "Account for terminal JOB and evict the oldest excess summary."
-  (with-lock-held ((task-job-lock job))
-    (task-orchestrator--retain-terminal-locked orchestrator job))
-  nil)
-
 (-> task-job--lifecycle-event (task-job keyword list) list)
 (defun task-job--lifecycle-event (job state result)
   "Return JOB's portable terminal lifecycle event."
-  (list :id (getf (task-job-identity job) :id)
+  (list :id (job-identifier job)
         :agent (task-job-agent-name job)
         :agent-source (task-job-agent-source job)
         :status state
         :session-file (getf result :conversation-file)
         :parent-tool-call-id (task-job-parent-call-id job)
-        :index (getf (task-job-identity job) :index)
+        :index (job-index job)
         :detached (task-job-detached-p job)))
 
-(-> task-job--publish-terminal
-    (task-job keyword list &key (:report (option string)))
-    boolean)
-(defun task-job--publish-terminal (job requested-state result &key report)
-  "Claim and publish exactly one coherent terminal RESULT for JOB."
-  (let ((*task-terminal-publication-job* job)
-        (publish-p nil)
-        (state requested-state)
-        (final-result nil)
-        (definition-summary nil)
-        (event nil))
-    (with-lock-held ((task-job-lock job))
-      (unless (or (task-job--terminal-state-p (task-job-state job))
-                  (task-job-publication-claimed-p job))
-        (when (task-job-cancellation-reason job)
-          (setf state :aborted))
-        (setf (task-job-publication-claimed-p job) t
-              publish-p t)))
-    (when publish-p
-      (let ((*task-terminal-publication-job* job))
-        (handler-case
-            (progn
-              (setf final-result
-                    (if (and (eq state :aborted)
-                             (not (eq (getf result :status) :aborted)))
-                        (task--failed-result
-                         job
-                         :aborted
-                         (format nil "Task ~A was ~A."
-                                 (getf (task-job-identity job) :id)
-                                 (task-job-cancellation-reason job)))
-                        (copy-list result))
-                    (getf final-result :status)
-                    (case state
-                      (:completed :success)
-                      (:aborted :aborted)
-                      (otherwise :failed)))
-              (setf definition-summary
-                    (task--agent-definition-summary (task-job-definition job))
-                    (getf final-result :agent-definition)
-                    definition-summary)
-              (handler-case
-                  (setf final-result
-                        (append
-                         final-result
-                         (list
-                          :output-path
-                          (namestring
-                           (task--write-result-artifact job final-result)))))
-                (error (condition)
-                  (setf state :failed
-                        (getf final-result :status) :failed
-                        (getf final-result :error)
-                        (format nil "Could not persist task artifact: ~A"
-                                condition)
-                        report
-                        (or report
-                            (bounded-string
-                             (princ-to-string condition)
-                             :limit *task-retained-output-limit*)))))
-              (setf final-result
-                    (task-job--compact-result
-                     final-result
-                     :artifact-available-p
-                     (and (getf final-result :output-path) t))
-                    report
-                    (and report
-                         (bounded-string
-                          report :limit *task-retained-output-limit*)))
-              (with-lock-held ((task-job-lock job))
-                (task-job--compact-progress job state)
-                (setf (task-job-state job) state
-                      (task-job-publication-claimed-p job) nil
-                      (task-job-result job) final-result
-                      (task-job-condition-report job) report
-                      (task-job-ended-at job) (get-internal-real-time)
-                      (task-job-item job) (task-job--compact-item job)
-                      (task-job-parent-agent job) nil
-                      (task-job-inherited-reference-p job) nil
-                      (task-job-inherited-reference-items job) nil
-                      (task-job-command-authorization-function job) nil
-                      (task-job-tool-authorization-function job) nil
-                      (task-job-thread job) nil
-                      (task-job-run-token job) nil
-                      (task-job-deadline job) nil
-                      event (task-job--lifecycle-event job state final-result)
-                      (task-job-definition-summary job) definition-summary
-                      (task-job-definition job) nil)
-                (task-orchestrator--retain-terminal-locked
-                 (task-job-orchestrator job) job)
-                (task--condition-broadcast (task-job-condition-variable job)))
-              (task-orchestrator-emit
-               (task-job-orchestrator job) :task-subagent-lifecycle event))
-          (serious-condition (condition)
-            (task-job--force-terminal-failure job condition condition)))))
-    publish-p))
+(-> task-job--terminal-record
+    (task-job keyword t (option string))
+    (values list (option string) keyword))
+(defun task-job--terminal-record (job state result report)
+  "Return JOB's terminal record for STATE, releasing what it must not retain.
 
-(-> task-job--force-terminal-failure (task-job condition condition) null)
-(defun task-job--force-terminal-failure
-    (job execution-condition publication-condition)
-  "Force JOB terminal when normal terminal publication itself fails."
-  (let* ((cancellation-reason
-           (with-lock-held ((task-job-lock job))
-             (task-job-cancellation-reason job)))
-         (state (if cancellation-reason :aborted :failed))
-         (status (if cancellation-reason :aborted :failed))
-         (report
-           (bounded-string
-            (format nil "Task failure: ~A; publication failure: ~A"
-                    execution-condition publication-condition)
-            :limit *task-retained-output-limit*))
+Runs inside the pool's publication claim, so the result artifact is written exactly
+once however many writers raced for the job. The order matters: a missing result is
+rebuilt while the role is still available, the artifact is written before the result
+is compacted, and the parent session and borrowed capabilities are dropped last.
+
+The child's reported status decides the terminal state, since the pool only sees
+that a body returned. An artifact that cannot be written downgrades the state to
+:FAILED rather than claiming a success whose output nobody can find."
+  (let* ((reported (and (listp result) (getf result :status)))
+         (final-state (case reported
+                        (:success :completed)
+                        (:aborted :aborted)
+                        (:failed :failed)
+                        (otherwise state)))
+         (final-result (and (listp result) (copy-list result)))
+         (final-report report)
          (definition-summary
            (or (task-job-definition-summary job)
-               (task--agent-definition-summary (task-job-definition job))))
-         (result
-           (list :id (getf (task-job-identity job) :id)
-                 :name (getf (task-job-identity job) :display-name)
-                 :agent (task-job-agent-name job)
-                 :status status
-                 :output "(no retained output)"
-                 :error report
-                 :yielded-p nil
-                 :structured-output-present-p nil
-                 :agent-definition definition-summary
-                 :detached (task-job-detached-p job)))
-         (event nil))
-    (with-lock-held ((task-job-lock job))
-      (unless (task-job--terminal-state-p (task-job-state job))
-        (task-job--compact-progress job state)
-        (setf (task-job-state job) state
-              (task-job-publication-claimed-p job) nil
-              (task-job-result job) result
-              (task-job-condition-report job) report
-              (task-job-ended-at job) (get-internal-real-time)
-              (task-job-item job) (task-job--compact-item job)
-              (task-job-parent-agent job) nil
-              (task-job-inherited-reference-p job) nil
-              (task-job-inherited-reference-items job) nil
-              (task-job-command-authorization-function job) nil
-              (task-job-tool-authorization-function job) nil
-              (task-job-thread job) nil
-              (task-job-run-token job) nil
-              (task-job-deadline job) nil
-              event (task-job--lifecycle-event job state result)
-              (task-job-definition-summary job) definition-summary
-              (task-job-definition job) nil)
-        (task-orchestrator--retain-terminal-locked
-         (task-job-orchestrator job) job)))
-    (with-lock-held ((task-job-lock job))
-      (task--condition-broadcast (task-job-condition-variable job)))
-    (when event
-      (task-orchestrator-emit
-       (task-job-orchestrator job) :task-subagent-lifecycle event))
-    nil))
+               (and (task-job-definition job)
+                    (task--agent-definition-summary (task-job-definition job))))))
+    (unless final-result
+      (setf final-result
+            (task--failed-result job
+                                 (if (eq final-state :completed)
+                                     :failed
+                                     final-state)
+                                 (or final-report "The child produced no result."))
+            final-state
+            (if (eq final-state :completed) :failed final-state)))
+    (setf (getf final-result :status)
+          (case final-state
+            (:completed :success)
+            (:aborted :aborted)
+            (otherwise :failed))
+          (getf final-result :agent-definition) definition-summary)
+    (handler-case
+        (setf final-result
+              (append final-result
+                      (list :output-path
+                            (namestring
+                             (task--write-result-artifact job final-result)))))
+      (error (condition)
+        (setf final-state :failed
+              (getf final-result :status) :failed
+              (getf final-result :error)
+              (format nil "Could not persist task artifact: ~A" condition)
+              final-report
+              (or final-report
+                  (bounded-string (princ-to-string condition)
+                                  :limit *task-retained-output-limit*)))))
+    (setf final-result
+          (task-job--compact-result final-result
+                                    :artifact-available-p
+                                    (and (getf final-result :output-path) t))
+          final-report
+          (and final-report
+               (bounded-string final-report
+                               :limit *task-retained-output-limit*)))
+    (task-job--compact-progress job final-state)
+    (setf (task-job-item job) (task-job--compact-item job)
+          (task-job-definition-summary job) definition-summary
+          (task-job-definition job) nil
+          (task-job-parent-agent job) nil
+          (task-job-inherited-reference-p job) nil
+          (task-job-inherited-reference-items job) nil
+          (task-job-command-authorization-function job) nil
+          (task-job-tool-authorization-function job) nil)
+    (values final-result final-report final-state)))
 
-(-> task-job--execute (task-job) null)
-(defun task-job--execute (job)
-  "Run JOB on the current reusable worker and publish one terminal result."
-  (let* ((orchestrator (task-job-orchestrator job))
-         (token (make-identifier))
-         (started-p nil)
-         (runtime-milliseconds
-          (task-orchestrator-maximum-runtime-milliseconds orchestrator)))
-    (with-lock-held ((task-job-lock job))
-      (when (and (eq (task-job-state job) :queued)
-                 (null (task-job-cancellation-reason job)))
-        (let ((now (get-internal-real-time)))
-          (setf (task-job-state job) :running
-                (task-job-thread job) (current-thread)
-                (task-job-run-token job) token
-                (task-job-started-at job) now
-                (task-job-deadline job)
-                (and (plusp runtime-milliseconds)
-                     (+ now
-                        (round (* runtime-milliseconds
-                                  internal-time-units-per-second)
-                               1000)))
-                started-p t)
-          (task-job--set-progress-state job :running))))
-    (when started-p
-      (task-orchestrator-emit
-       orchestrator
-       :task-subagent-lifecycle
-       (list :id (getf (task-job-identity job) :id)
-             :agent (task-agent-definition-name (task-job-definition job))
-             :agent-source
-             (task-agent-definition-source (task-job-definition job))
-             :status :started
-             :parent-tool-call-id (task-job-parent-call-id job)
-             :index (getf (task-job-identity job) :index)
-             :detached (task-job-detached-p job)))
-      (let ((*task-current-job* job)
-            (*task-current-run-token* token))
-        (handler-case
-            (let* ((result (task-run-child job))
-                   (status (getf result :status))
-                   (state (cond
-                            ((eq status :success) :completed)
-                            ((eq status :aborted) :aborted)
-                            (t :failed))))
-              (task-job--publish-terminal job state result))
-          (task-aborted (condition)
-            (task-job--publish-terminal
-             job
-             :aborted
-             (task--failed-result job :aborted (princ-to-string condition))
-             :report (bounded-string (princ-to-string condition))))
-          (error (condition)
-            (task-job--publish-terminal
-             job
-             :failed
-             (task--failed-result job :failed (princ-to-string condition))
-             :report (bounded-string (princ-to-string condition))))))))
-  nil)
+(-> task-job--cancelled-ancestor-reason (task-job) (option keyword))
+(defun task-job--cancelled-ancestor-reason (job)
+  "Return the reason an ancestor of JOB was cancelled, or NIL when none was.
+
+A child admitted just as its parent was cancelled misses the cascade, which only
+walks the subtree that existed when it ran. Checking ancestry closes that window
+before the child does any work. An ancestor already evicted from retention counts
+as live: a parent that finished normally is no reason to stop a detached child."
+  (let ((pool (job-pool job)))
+    (dolist (identifier (job-owner-identifiers job))
+      (let ((ancestor (handler-case
+                          (job-pool-find-job pool identifier)
+                        (job-not-found ()
+                          nil))))
+        (when ancestor
+          (let ((reason (job-cancellation-reason ancestor)))
+            (when reason
+              (return reason))))))))
+
+(-> task-job--run (task-job) list)
+(defun task-job--run (job)
+  "Run JOB's child agent on a pool worker and return its portable result.
+
+The pool has already moved JOB to :RUNNING and armed its cancellation guard, so
+this only mirrors that state into the progress record job tools read, refuses to
+start under a cancelled ancestor, and hands over to the child."
+  (task-job--set-progress-state job :running)
+  (let ((reason (task-job--cancelled-ancestor-reason job)))
+    (when reason
+      (error 'job-aborted
+             :message (format nil "Task ~A was ~(~A~) with its parent."
+                              (job-identifier job) reason)
+             :identifier (job-identifier job)
+             :reason reason)))
+  (task-run-child job))
 
 (-> task-parent-root-conversation-identifier (agent) non-empty-string)
 (defun task-parent-root-conversation-identifier (parent)
@@ -403,57 +267,81 @@
   "Return the task identifiers authorized to inspect PARENT's descendants."
   (if (typep parent 'task-child-agent)
       (let ((job (task-child-agent-job parent)))
-        (append (task-job-owner-identifiers job)
-                (list (getf (task-job-identity job) :id))))
+        (append (job-owner-identifiers job)
+                (list (job-identifier job))))
       nil))
 
-(-> task-orchestrator--live-job-count (task-orchestrator) (integer 0))
-(defun task-orchestrator--live-job-count (orchestrator)
-  "Return queued, running, and finalizing jobs while the lock is held."
-  (task-orchestrator-live-count orchestrator))
+(defun task-orchestrator--refuse-admission (orchestrator condition)
+  "Re-signal pool refusal CONDITION as the typed task error task.run reports."
+  (error 'task-error
+         :message
+         (typecase condition
+           (job-pool-capacity-exceeded
+            (if (eq (job-pool-capacity-exceeded-limit-kind condition) :batch-size)
+                (format nil "A task batch may contain at most ~D children."
+                        (task-orchestrator-maximum-batch-size orchestrator))
+                (format nil "The task runtime admits at most ~D live jobs."
+                        (task-orchestrator-maximum-live-jobs orchestrator))))
+           (t "The task runtime is shutting down."))
+         :tool-name "task.run"))
+
+(defun task-orchestrator--check-hurry-up (orchestrator count)
+  "Refuse COUNT further children once hurry-up mode has spent its allowance.
+
+The pool caps how many children are live at once; this is the cumulative budget
+for the whole interval, a session policy the pool knows nothing about."
+  (with-lock-held ((task-orchestrator-lock orchestrator))
+    (when (and (task-orchestrator-hurry-up-p orchestrator)
+               (> (+ (task-orchestrator-hurry-up-admission-count orchestrator)
+                     count)
+                  *task-hurry-up-maximum-agents*))
+      (error 'task-error
+             :message
+             (format nil
+                     "Hurry-up mode permits at most ~D child agents before it is turned off."
+                     *task-hurry-up-maximum-agents*)
+             :tool-name "task.run")))
+  nil)
+
+(defun task-orchestrator--note-hurry-up-admission (orchestrator count)
+  "Charge COUNT admitted children against the current hurry-up allowance."
+  (with-lock-held ((task-orchestrator-lock orchestrator))
+    (when (task-orchestrator-hurry-up-p orchestrator)
+      (incf (task-orchestrator-hurry-up-admission-count orchestrator) count)))
+  nil)
+
+(defun task-orchestrator--refuse-cancelled-parent (parent-job)
+  "Signal that PARENT-JOB was cancelled before it could admit a child."
+  (error 'job-aborted
+         :message (format nil "Task ~A was cancelled before child admission."
+                          (job-identifier parent-job))
+         :identifier (job-identifier parent-job)
+         :reason (or (job-cancellation-reason parent-job) :shutdown)))
 
 (defun task-orchestrator-start-jobs
     (orchestrator parent-agent entries
      &key parent-call-id
        command-authorization-function
        tool-authorization-function)
-  "Atomically admit ENTRIES and return jobs plus nested synchronous inline jobs."
-  (when (and (typep parent-agent 'task-child-agent)
-             (not *task-admission-parent-locked-p*))
+  "Atomically admit ENTRIES and return jobs plus nested synchronous inline jobs.
+
+A cancelled parent is refused here so the asking agent gets a prompt error instead
+of a child that aborts a moment later. This refusal races the parent's own
+cancellation and is only a courtesy; TASK-JOB--RUN's ancestry check is the
+guarantee."
+  (when (typep parent-agent 'task-child-agent)
     (let ((parent-job (task-child-agent-job parent-agent)))
-      (with-lock-held ((task-job-lock parent-job))
-        (when (or (task-job-cancellation-reason parent-job)
-                  (task-job--terminal-state-p (task-job-state parent-job)))
-          (error 'task-aborted
-                 :message
-                 (format nil "Task ~A was cancelled before child admission."
-                         (getf (task-job-identity parent-job) :id))
-                 :reason
-                 (or (task-job-cancellation-reason parent-job) :shutdown)))
-        (let ((*task-admission-parent-locked-p* t))
-          (return-from task-orchestrator-start-jobs
-            (task-orchestrator-start-jobs
-             orchestrator parent-agent entries
-             :parent-call-id parent-call-id
-             :command-authorization-function command-authorization-function
-             :tool-authorization-function tool-authorization-function))))))
-  (let ((jobs nil)
-        (inline nil)
-        (queued nil)
-        (reserved-identifiers nil)
-        (count (length entries))
+      (when (or (job-cancellation-requested-p parent-job)
+                (job-terminal-p parent-job))
+        (task-orchestrator--refuse-cancelled-parent parent-job))))
+  (let ((count (length entries))
         (root-conversation-identifier
           (task-parent-root-conversation-identifier parent-agent))
         (owner-identifiers (task-parent-owner-identifiers parent-agent))
         (reference-enabled-entries (make-hash-table :test #'eq))
         (reference-byte-limit nil)
         (inherited-reference-items nil))
-    (when (> count (task-orchestrator-maximum-batch-size orchestrator))
-      (error 'task-error
-             :message
-             (format nil "A task batch may contain at most ~D children."
-                     (task-orchestrator-maximum-batch-size orchestrator))
-             :tool-name "task.run"))
+    (task-orchestrator--check-hurry-up orchestrator count)
     (dolist (entry entries)
       (let* ((definition (getf entry :definition))
              (child-configuration
@@ -473,89 +361,52 @@
       (setf inherited-reference-items
             (conversation-inherited-reference-snapshot
              (agent-conversation parent-agent) reference-byte-limit)))
-    (with-lock-held ((task-orchestrator-lock orchestrator))
-      (when (or (task-orchestrator-shutdown-p orchestrator)
-                (not (eq (task-orchestrator-lifecycle-state orchestrator)
-                         :open)))
-        (error 'task-error
-               :message "The task runtime is shutting down."
-               :tool-name "task.run"))
-      (when (> (+ (task-orchestrator--live-job-count orchestrator) count)
-               (task-orchestrator-maximum-live-jobs orchestrator))
-        (error 'task-error
-               :message
-               (format nil "The task runtime admits at most ~D live jobs."
-                       (task-orchestrator-maximum-live-jobs orchestrator))
-               :tool-name "task.run"))
-      (when (and (task-orchestrator-hurry-up-p orchestrator)
-                 (> (+ (task-orchestrator-hurry-up-admission-count orchestrator)
-                       count)
-                    *task-hurry-up-maximum-agents*))
-        (error 'task-error
-               :message
-               (format nil
-                       "Hurry-up mode permits at most ~D child agents before it is turned off."
-                       *task-hurry-up-maximum-agents*)
-               :tool-name "task.run"))
-      (handler-case
-          (dolist (entry entries)
-            (let* ((definition (getf entry :definition))
-                   (item (getf entry :item))
-                   (detached-p (getf entry :detached))
-                   (identity
-                     (task-orchestrator--create-identity
-                      orchestrator
-                      (getf item :name)
-                      (task-agent-definition-name definition))))
-              (push (getf identity :id) reserved-identifiers)
-              (let ((job
-                      (make-instance
-                       'task-job
-                       :orchestrator orchestrator
-                       :identity identity
-                       :execution-identifier (make-identifier)
-                       :definition definition
-                       :item item
-                       :parent-agent parent-agent
-                       :inherited-reference-p
-                        (not (null
-                              (gethash entry reference-enabled-entries)))
-                       :inherited-reference-items
-                        (and (gethash entry reference-enabled-entries)
-                             inherited-reference-items)
-                       :root-conversation-identifier
-                       root-conversation-identifier
-                       :owner-identifiers owner-identifiers
-                       :parent-call-id parent-call-id
-                       :detached-p detached-p
-                       :command-authorization-function
-                       command-authorization-function
-                       :tool-authorization-function
-                       tool-authorization-function)))
-                (push job jobs)
-                (if (and (typep parent-agent 'task-child-agent)
-                         (not detached-p))
-                    (push job inline)
-                    (push job queued)))))
-        (error (condition)
-          (dolist (identifier reserved-identifiers)
-            (remhash identifier (task-orchestrator-names orchestrator)))
-          (error condition)))
-      (setf jobs (nreverse jobs)
-            inline (nreverse inline)
-            queued (nreverse queued)
-            (task-orchestrator-queue orchestrator)
-            (nconc (task-orchestrator-queue orchestrator) queued))
-      (dolist (job jobs)
-        (setf (gethash (getf (task-job-identity job) :id)
-                       (task-orchestrator-jobs orchestrator))
-              job))
-      (incf (task-orchestrator-live-count orchestrator) count)
-      (when (task-orchestrator-hurry-up-p orchestrator)
-        (incf (task-orchestrator-hurry-up-admission-count orchestrator) count))
-      (task--condition-broadcast
-       (task-orchestrator-condition-variable orchestrator)))
-    (values jobs inline)))
+    (let ((jobs
+            (handler-case
+                (job-pool-submit-batch
+                 (task-orchestrator-pool orchestrator)
+                 (mapcar
+                  (lambda (entry)
+                    (let* ((item (getf entry :item))
+                           (inherited-p
+                             (not (null (gethash entry
+                                                 reference-enabled-entries))))
+                           (nested-synchronous-p
+                             (and (typep parent-agent 'task-child-agent)
+                                  (not (getf entry :detached)))))
+                      (list :function #'task-job--run
+                            :terminal-result-function #'task-job--terminal-record
+                            :name (task-orchestrator--child-name
+                                   orchestrator (getf item :name))
+                            ;; A child a child agent waits for runs on the
+                            ;; waiting worker rather than occupying a second one,
+                            ;; so a deep synchronous chain cannot starve the pool.
+                            :inline-only-p nested-synchronous-p
+                            :owner-identifiers owner-identifiers
+                            :root-identifier root-conversation-identifier
+                            :initargs
+                            (list :orchestrator orchestrator
+                                  :execution-identifier (make-identifier)
+                                  :definition (getf entry :definition)
+                                  :item item
+                                  :parent-agent parent-agent
+                                  :inherited-reference-p inherited-p
+                                  :inherited-reference-items
+                                  (and inherited-p inherited-reference-items)
+                                  :parent-call-id parent-call-id
+                                  :detached-p (getf entry :detached)
+                                  :command-authorization-function
+                                  command-authorization-function
+                                  :tool-authorization-function
+                                  tool-authorization-function))))
+                  entries))
+              (job-pool-error (condition)
+                (task-orchestrator--refuse-admission orchestrator condition)))))
+      (task-orchestrator--note-hurry-up-admission orchestrator count)
+      (values jobs
+              (if (typep parent-agent 'task-child-agent)
+                  (remove-if #'task-job-detached-p jobs)
+                  nil)))))
 
 (defun task-orchestrator-start-job
     (orchestrator
@@ -573,5 +424,5 @@
        :command-authorization-function command-authorization-function
        :tool-authorization-function tool-authorization-function)
     (dolist (job inline)
-      (task-job--execute job))
+      (job-run-inline job))
     (first jobs)))

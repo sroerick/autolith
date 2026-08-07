@@ -223,6 +223,7 @@
     (run-markdown-tests)
     (test-release-scripts)
     (test-release-server)
+    (task-tests--close-orchestrators)
     (run-application-tests))
   (format t "~&~:D Autolith tests passed.~%" *test-count*)
   t)

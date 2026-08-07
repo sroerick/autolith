@@ -603,7 +603,7 @@
             job :status :success :output "already terminal")))
     (unwind-protect
          (progn
-           (task-job--publish-terminal job :completed job-result)
+           (task-tests--publish-terminal job :completed job-result)
            (labels ((rejected-p (namespace name arguments)
                       "Return true when actual registry dispatch rejects ARGUMENTS."
                       (not
@@ -636,7 +636,7 @@
                  "job" "wait"
                  (format nil
                          "{\"id\":~A,\"timeout-seconds\":~A}"
-                         (json-encode (getf (task-job-identity job) :id))
+                         (json-encode (job-identifier job))
                          value))
                 (format nil
                         "job.wait rejects explicit timeout-seconds ~A"
@@ -991,10 +991,10 @@
                        (getf fixture :completion))))
                (test-assert
                 (and (tool-result-success-p result)
-                     (task-job--publish-terminal
+                     (task-tests--publish-terminal
                       (getf fixture :job) :completed durable)
                      (string=
-                      (getf (task-job-result (getf fixture :job)) :label)
+                      (getf (job-result (getf fixture :job)) :label)
                       label))
                 "a maximum-length yield label survives terminal compaction")))
            (let* ((definition

@@ -81,11 +81,10 @@
                (test-assert
                 (task-tests--wait-until
                  (lambda ()
-                   (with-lock-held ((task-orchestrator-lock orchestrator))
-                     (and (zerop
+                   (and (zerop
                            (task-orchestrator-active-count orchestrator))
                           (zerop
-                           (task-orchestrator-live-count orchestrator)))))
+                           (task-orchestrator-live-count orchestrator))))
                  2)
                 "cancelled ordinary tool execution releases scheduler accounting")))
         (task-tests--release-blocking-tool blocking-tool)
@@ -102,7 +101,7 @@
     (unwind-protect
          (progn
            (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS")
-           (let ((orchestrator (task-orchestrator-create)))
+           (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
               (and
                (zerop
@@ -198,15 +197,13 @@
                                   :aborted)
                               (task-tests--wait-until
                                (lambda ()
-                                 (with-lock-held
-                                     ((task-orchestrator-lock orchestrator))
-                                   (and
+                                 (and
                                     (zerop
                                      (task-orchestrator-active-count
                                       orchestrator))
                                     (zerop
                                      (task-orchestrator-live-count
-                                      orchestrator)))))
+                                      orchestrator))))
                                2))
                          "a deadline publishes one timeout result and releases scheduler accounting")))
                  (task-tests--release-blocking-tool blocking-tool)
@@ -277,7 +274,7 @@
                     (parent (first jobs))
                     (descendant (second jobs))
                     (descendant-id
-                      (getf (task-job-identity descendant) :id)))
+                      (job-identifier descendant)))
                (test-assert (= (length jobs) 2)
                             "nested cancellation observes parent and descendant")
                (multiple-value-bind (accepted-p descendants)
@@ -298,12 +295,11 @@
                (test-assert
                 (task-tests--wait-until
                  (lambda ()
-                   (with-lock-held ((task-orchestrator-lock orchestrator))
-                     (and (zerop
+                   (and (zerop
                            (task-orchestrator-active-count orchestrator))
                           (zerop
                            (task-orchestrator-live-count orchestrator))
-                          (null (task-orchestrator-queue orchestrator)))))
+                          (null (task-tests--queued-jobs orchestrator))))
                  2)
                 "nested parent cancellation leaves no orphan or live-count leak")))
         (task-tests--release-blocking-tool blocking-tool)
@@ -323,7 +319,12 @@
 
 (-> test-task-admission-cancellation-barrier () null)
 (defun test-task-admission-cancellation-barrier ()
-  "Test that nested admission and parent cancellation form one atomic boundary."
+  "Test that a child admitted after a cascade scanned is still stopped.
+
+Admission no longer holds the parent's lifecycle lock, so a child can be admitted
+after a cascading cancellation has already walked the subtree. What closes that
+window is the ancestry check a child makes before it runs, and this exercises
+exactly that race."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (definition
@@ -337,7 +338,7 @@
            (task-tests--primary-agent configuration "admission-primary")))
     (unwind-protect
          (progn
-           (let* ((orchestrator (task-orchestrator-create))
+           (let* ((orchestrator (task-tests--orchestrator))
                   (parent
                     (task-tests--register-job
                      orchestrator primary definition :name "race-parent"))
@@ -364,7 +365,7 @@
              (unwind-protect
                   (progn
                     (bordeaux-threads:acquire-lock
-                     (task-orchestrator-lock orchestrator))
+                     (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
                     (setf orchestrator-lock-held-p t
                           admission-thread
                           (make-thread
@@ -379,12 +380,8 @@
                                  (setf admission-condition condition))))
                            :name "Autolith admission race"))
                     (test-assert
-                     (task-tests--wait-until
-                      (lambda ()
-                        (task-tests--lock-held-by-another-p
-                         (task-job-lock parent)))
-                      2)
-                     "nested admission holds the parent lifecycle lock before commit")
+                     (not (task-tests--wait-until (lambda () admitted) 1))
+                     "nested admission cannot commit while admission is locked")
                     (setf cancel-thread
                           (make-thread
                            (lambda ()
@@ -399,7 +396,7 @@
                       2)
                      "competing cancellation reaches the parent barrier")
                     (bordeaux-threads:release-lock
-                     (task-orchestrator-lock orchestrator))
+                     (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
                     (setf orchestrator-lock-held-p nil)
                     (join-thread admission-thread)
                     (setf admission-thread nil)
@@ -408,29 +405,43 @@
                     (let* ((child (first admitted))
                            (child-id
                              (and child
-                                  (getf (task-job-identity child) :id))))
+                                  (job-identifier child))))
+                      (declare (ignore child-id))
                       (test-assert
                        (and (null admission-condition)
                             (= (length admitted) 1)
                             cancel-accepted-p
-                            (equal cancelled-descendants (list child-id))
-                            (eq (task-job-state parent) :aborted)
-                            (eq (task-job-state child) :aborted)
+                            (null cancelled-descendants)
+                            (eq (job-state parent) :aborted)
                             (member
-                             (getf (task-job-identity parent) :id)
-                             (task-job-owner-identifiers child)
-                             :test #'string=)
-                            (zerop
-                             (task-orchestrator-live-count orchestrator)))
-                       "admission that wins the barrier is visible to cascading cancellation")))
+                             (job-identifier parent)
+                             (job-owner-identifiers child)
+                             :test #'string=))
+                       "a child can be admitted after the cascade has scanned")
+                      (test-assert
+                       (task-tests--wait-until
+                        (lambda () (job-terminal-p child))
+                        5)
+                       "a child admitted after the cascade still terminalizes")
+                      (test-assert
+                       (and (eq (job-state child) :aborted)
+                            (search "with its parent"
+                                    (or (getf (job-result child) :error) "")))
+                       "its cancelled ancestor stops it before it does any work")
+                      (test-assert
+                       (task-tests--wait-until
+                        (lambda ()
+                          (zerop (task-orchestrator-live-count orchestrator)))
+                        5)
+                       "the raced admission leaks no live capacity")))
                (when orchestrator-lock-held-p
                  (bordeaux-threads:release-lock
-                  (task-orchestrator-lock orchestrator)))
+                  (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator))))
                (when admission-thread
                  (join-thread admission-thread))
                (when cancel-thread
                  (join-thread cancel-thread))))
-           (let* ((orchestrator (task-orchestrator-create))
+           (let* ((orchestrator (task-tests--orchestrator))
                   (parent
                     (task-tests--register-job
                      orchestrator primary definition
@@ -453,15 +464,15 @@
                     (task-orchestrator-start-jobs
                      orchestrator viewer (list entry))
                     nil)
-                (task-aborted ()
+                (job-aborted ()
                   t))
               "admission loses atomically when parent cancellation wins")
              (test-assert
               (and (= (hash-table-count
-                       (task-orchestrator-jobs orchestrator))
+                       (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                       1)
                    (zerop (task-orchestrator-live-count orchestrator))
-                   (= (task-orchestrator-next-index orchestrator) 1))
+                   (= (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator)) 1))
               "cancel-first admission consumes no identity or live capacity")))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
@@ -483,7 +494,7 @@
   "Test coherent snapshots, forced failure, and terminal role compaction."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
          (secret
            "AUTOLITH-TERMINAL-ROLE-INSTRUCTION-SENTINEL-71D21A")
          (definition
@@ -520,7 +531,7 @@
                               (*print-case* :downcase))
                           (handler-case
                               (setf publication-result
-                                    (task-job--publish-terminal
+                                    (task-tests--publish-terminal
                                      job :completed result))
                             (condition (condition)
                               (setf publication-condition condition)))))
@@ -544,8 +555,8 @@
                                 (null (getf snapshot :result)))
                            "a concurrent snapshot never exposes a partial terminal result")))
                       (test-assert
-                       (with-lock-held ((task-job-lock job))
-                         (task-job-publication-claimed-p job))
+                       (with-lock-held ((cl-jobpond::job--lock job))
+                         (cl-jobpond::job--publication-claimed-p job))
                        "snapshot sampling occurs while terminal publication is claimed"))
                  (task-tests--release-publication-barrier barrier))
                (join-thread thread))
@@ -562,8 +573,8 @@
                      (null publication-condition)
                      (eq (getf snapshot :state) :completed)
                      (eq (getf (getf snapshot :result) :status) :success)
-                     (null (task-job-publication-claimed-p job))
-                     (task-job-retained-p job)
+                     (null (cl-jobpond::job--publication-claimed-p job))
+                     (cl-jobpond::job--retained-p job)
                      (zerop (task-orchestrator-live-count orchestrator))
                      (listp artifact)
                      (= (getf artifact :portable-integer) 42))
@@ -604,7 +615,7 @@
                         (lambda ()
                           (handler-case
                               (setf publication-result
-                                    (task-job--publish-terminal
+                                    (task-tests--publish-terminal
                                      job :completed result))
                             (condition (condition)
                               (setf publication-condition condition))))
@@ -630,8 +641,8 @@
                        (null publication-condition)
                        (eq (getf snapshot :state) :failed)
                        (eq (getf terminal-result :status) :failed)
-                       (task-job-retained-p job)
-                       (null (task-job-publication-claimed-p job))
+                       (cl-jobpond::job--retained-p job)
+                       (null (cl-jobpond::job--publication-claimed-p job))
                        (null (task-job-definition job))
                        (not
                         (and (null output-path)
@@ -658,7 +669,7 @@
   "Test that terminal waiters wake before arbitrary lifecycle listeners run."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
          (definition
            (task-agent-definition-create
             :name "wakeup-order"
@@ -698,16 +709,16 @@
            (setf waiter
                  (make-thread
                   (lambda ()
-                    (with-lock-held ((task-job-lock job))
+                    (with-lock-held ((cl-jobpond::job--lock job))
                       (with-lock-held (ready-lock)
                         (setf waiter-ready-p t)
                         (task--condition-broadcast ready-condition))
                       (loop until
-                            (task-job--terminal-state-p
-                             (task-job-state job))
+                            (task--terminal-state-p
+                             (job-state job))
                             do (condition-wait
-                                (task-job-condition-variable job)
-                                (task-job-lock job))))
+                                (cl-jobpond::job--condition-variable job)
+                                (cl-jobpond::job--lock job))))
                     (setf waiter-returned-p t))
                   :name "Autolith terminal waiter"))
            (test-assert
@@ -716,7 +727,7 @@
            (setf publisher
                  (make-thread
                   (lambda ()
-                    (task-job--publish-terminal job :completed result))
+                    (task-tests--publish-terminal job :completed result))
                   :name "Autolith listener-blocked publisher"))
            (test-assert
             (task-tests--wait-until (lambda () listener-reached-p) 2)
@@ -741,8 +752,8 @@
       (when publisher
         (join-thread publisher))
       (when waiter
-        (with-lock-held ((task-job-lock job))
-          (task--condition-broadcast (task-job-condition-variable job)))
+        (with-lock-held ((cl-jobpond::job--lock job))
+          (task--condition-broadcast (cl-jobpond::job--condition-variable job)))
         (join-thread waiter))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
@@ -753,8 +764,8 @@
   "Test conversation ownership, child ancestry, and opaque job lookup errors."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
-         (missing-orchestrator (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
+         (missing-orchestrator (task-tests--orchestrator))
          (definition
            (task-agent-definition-create
             :name "visibility"
@@ -786,17 +797,17 @@
                 (foreign
                   (task-tests--register-job
                    orchestrator primary-b definition :name "foreign"))
-                (root-a-id (getf (task-job-identity root-a) :id))
+                (root-a-id (job-identifier root-a))
                 (descendant-a-id
-                  (getf (task-job-identity descendant-a) :id))
-                (sibling-a-id (getf (task-job-identity sibling-a) :id))
+                  (job-identifier descendant-a))
+                (sibling-a-id (job-identifier sibling-a))
                 (sibling-descendant-id
-                  (getf (task-job-identity sibling-descendant) :id))
-                (foreign-id (getf (task-job-identity foreign) :id)))
+                  (job-identifier sibling-descendant))
+                (foreign-id (job-identifier foreign)))
            (test-assert
             (equal
              (mapcar
-              (lambda (job) (getf (task-job-identity job) :id))
+              (lambda (job) (job-identifier job))
               (task-orchestrator-list-visible-jobs orchestrator primary-a))
              (list root-a-id descendant-a-id
                    sibling-a-id sibling-descendant-id))
@@ -804,14 +815,14 @@
            (test-assert
             (equal
              (mapcar
-              (lambda (job) (getf (task-job-identity job) :id))
+              (lambda (job) (job-identifier job))
               (task-orchestrator-list-visible-jobs orchestrator primary-b))
              (list foreign-id))
             "another primary cannot see the first conversation's task tree")
            (test-assert
             (equal
              (mapcar
-              (lambda (job) (getf (task-job-identity job) :id))
+              (lambda (job) (job-identifier job))
               (task-orchestrator-list-visible-jobs orchestrator viewer-a))
              (list descendant-a-id))
             "a child sees descendants but not itself, its parent, or siblings")
@@ -833,8 +844,8 @@
                         "job.~A does not disclose whether an invisible identifier exists"
                         operation))))
            (test-assert
-            (and (eq (task-job-state foreign) :queued)
-                 (null (task-job-cancellation-reason foreign)))
+            (and (eq (job-state foreign) :queued)
+                 (null (job-cancellation-reason foreign)))
             "invisible get, wait, and cancel attempts cannot mutate the job"))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
@@ -845,7 +856,7 @@
   "Test content-aware native pagination at the maximum job.list page size."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
          (agent-name
            (concatenate 'string "a" (make-string 63 :initial-element #\z)))
          (requested-name (make-string 64 :initial-element #\n))
@@ -942,7 +953,7 @@
 (-> test-task-refresh-after-delayed-close () null)
 (defun test-task-refresh-after-delayed-close ()
   "Test reopening after a timed-out close's final worker exits later."
-  (let* ((orchestrator (task-orchestrator-create))
+  (let* ((orchestrator (task-tests--orchestrator))
          (barrier-lock (make-lock "Autolith delayed close test"))
          (barrier (make-condition-variable))
          (started-p nil)
@@ -961,13 +972,19 @@
            (test-assert
             (task-tests--wait-until (lambda () started-p) 2)
             "the delayed closing worker reaches its barrier")
-           (with-lock-held ((task-orchestrator-lock orchestrator))
-             (setf (task-orchestrator-worker-threads orchestrator)
+           ;; A real close first, so the pool's own workers and deadline monitor
+           ;; are genuinely gone and the only thread left alive is the one this
+           ;; test controls.
+           (task-orchestrator-close orchestrator)
+           (with-lock-held ((cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
+             (setf (cl-jobpond::job-pool--monitor-thread (task-orchestrator-pool orchestrator))
+                   nil
+                   (cl-jobpond::job-pool--worker-threads (task-orchestrator-pool orchestrator))
                    (list thread)
-                   (task-orchestrator-lifecycle-state orchestrator) :closing
-                   (task-orchestrator-close-owner orchestrator) nil
-                   (task-orchestrator-shutdown-p orchestrator) t
-                   (task-orchestrator-active-count orchestrator) 1))
+                   (job-pool-lifecycle-state (task-orchestrator-pool orchestrator)) :closing
+                   (cl-jobpond::job-pool--close-owner (task-orchestrator-pool orchestrator)) nil
+                   (cl-jobpond::job-pool--shutdown-p (task-orchestrator-pool orchestrator)) t
+                   (cl-jobpond::job-pool--active-count (task-orchestrator-pool orchestrator)) 1))
            (test-assert
             (handler-case
                 (progn
@@ -982,18 +999,17 @@
            (join-thread thread)
            (task-orchestrator-refresh orchestrator)
            (test-assert
-            (with-lock-held ((task-orchestrator-lock orchestrator))
-              (and (eq (task-orchestrator-lifecycle-state orchestrator)
+            (and (eq (job-pool-lifecycle-state (task-orchestrator-pool orchestrator))
                        :open)
-                   (null (task-orchestrator-close-owner orchestrator))
-                   (not (task-orchestrator-shutdown-p orchestrator))
+                   (null (cl-jobpond::job-pool--close-owner (task-orchestrator-pool orchestrator)))
+                   (not (cl-jobpond::job-pool--shutdown-p (task-orchestrator-pool orchestrator)))
                    (zerop (task-orchestrator-active-count orchestrator))
                    (plusp
                     (length
-                     (task-orchestrator-worker-threads orchestrator)))
+                     (cl-jobpond::job-pool--worker-threads (task-orchestrator-pool orchestrator))))
                    (every
                     #'thread-alive-p
-                    (task-orchestrator-worker-threads orchestrator))))
+                    (cl-jobpond::job-pool--worker-threads (task-orchestrator-pool orchestrator))))
             "refresh reaps the delayed death and reopens a fresh worker pool"))
       (with-lock-held (barrier-lock)
         (setf released-p t)
@@ -1008,7 +1024,7 @@
   "Test terminal-parent cascades and exactly-once terminal publication."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
          (definition
            (task-agent-definition-create
             :name "lifecycle"
@@ -1032,19 +1048,19 @@
                 (parent-result
                   (task-tests--terminal-result
                    parent :status :success :output "parent complete"))
-                (parent-id (getf (task-job-identity parent) :id))
+                (parent-id (job-identifier parent))
                 (viewer
                   (task-tests--child-viewer configuration parent))
                 (descendant
                   (task-tests--register-job
                    orchestrator viewer definition :name "live-descendant"))
                 (descendant-id
-                  (getf (task-job-identity descendant) :id))
+                  (job-identifier descendant))
                 (unrelated
                   (task-tests--register-job
                    orchestrator primary definition :name "unrelated")))
            (test-assert
-            (task-job--publish-terminal parent :completed parent-result)
+            (task-tests--publish-terminal parent :completed parent-result)
             "the parent publishes its first terminal result")
            (multiple-value-bind (parent-accepted-p descendants)
                (task-job-cancel parent :terminate)
@@ -1053,15 +1069,15 @@
                    (equal descendants (list descendant-id)))
               "cancelling a terminal parent still cancels its live descendants"))
            (test-assert
-            (and (eq (task-job-state parent) :completed)
-                 (eq (task-job-state descendant) :aborted)
-                 (eq (task-job-state unrelated) :queued)
-                 (null (task-job-cancellation-reason unrelated)))
+            (and (eq (job-state parent) :completed)
+                 (eq (job-state descendant) :aborted)
+                 (eq (job-state unrelated) :queued)
+                 (null (job-cancellation-reason unrelated)))
             "terminal-parent cancellation preserves parent and unrelated states")
            (let ((event-count (length events))
                  (terminal-count
-                   (length (task-orchestrator-terminal-identifiers
-                            orchestrator))))
+                   (length (cl-jobpond::job-pool--terminal-identifiers
+                            (task-orchestrator-pool orchestrator)))))
              (multiple-value-bind (parent-accepted-p descendants)
                  (task-job-cancel parent :terminate)
                (test-assert
@@ -1069,11 +1085,11 @@
                      (null descendants)
                      (= (length events) event-count)
                      (= (length
-                         (task-orchestrator-terminal-identifiers orchestrator))
+                         (cl-jobpond::job-pool--terminal-identifiers (task-orchestrator-pool orchestrator)))
                         terminal-count))
                 "duplicate cancellation publishes no second result or event")))
            (dolist (job (list parent descendant))
-             (let* ((result (task-job-result job))
+             (let* ((result (job-result job))
                     (pathname (getf result :output-path))
                     (artifact
                       (and pathname
@@ -1107,7 +1123,7 @@
                           (loop until released-p
                                 do (condition-wait barrier barrier-lock)))
                         (let ((claimed-p
-                                (task-job--publish-terminal
+                                (task-tests--publish-terminal
                                  race-job :completed result)))
                           (with-lock-held (claim-lock)
                             (push claimed-p claims)))))
@@ -1124,11 +1140,11 @@
                    (task--condition-broadcast barrier))
                  (join-thread first-thread)
                  (join-thread second-thread)))
-             (let* ((race-id (getf (task-job-identity race-job) :id))
+             (let* ((race-id (job-identifier race-job))
                     (terminal-occurrences
                       (count race-id
-                             (task-orchestrator-terminal-identifiers
-                              orchestrator)
+                             (cl-jobpond::job-pool--terminal-identifiers
+                              (task-orchestrator-pool orchestrator))
                              :test #'string=))
                     (event-occurrences
                       (count race-id events
@@ -1140,7 +1156,7 @@
                      (= terminal-occurrences 1)
                      (= event-occurrences 1)
                      (probe-file
-                      (getf (task-job-result race-job) :output-path)))
+                      (getf (job-result race-job) :output-path)))
                 "concurrent duplicate publication claims one artifact and event"))))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
@@ -1161,7 +1177,7 @@
            (task-tests--primary-agent configuration "capacity-primary")))
     (unwind-protect
          (progn
-           (let* ((orchestrator (task-orchestrator-create))
+           (let* ((orchestrator (task-tests--orchestrator))
                   (live
                     (task-tests--register-job
                      orchestrator primary definition :name "live-sentinel"))
@@ -1171,7 +1187,7 @@
                         (task-tests--register-job
                          orchestrator primary definition
                          :name (format nil "retained-~2,'0D" index)))
-                      (identifier (getf (task-job-identity job) :id))
+                      (identifier (job-identifier job))
                       (result
                         (task-tests--terminal-result
                          job
@@ -1179,33 +1195,27 @@
                          :output (format nil "terminal result ~D" index))))
                  (push identifier identifiers)
                  (test-assert
-                  (task-job--publish-terminal job :completed result)
+                  (task-tests--publish-terminal job :completed result)
                   "each retained job publishes exactly once")))
              (setf identifiers (nreverse identifiers))
              (let ((first-id (first identifiers))
                    (last-id (car (last identifiers)))
-                   (live-id (getf (task-job-identity live) :id)))
+                   (live-id (job-identifier live)))
                (test-assert
                 (and (= (length
-                         (task-orchestrator-terminal-identifiers orchestrator))
+                         (cl-jobpond::job-pool--terminal-identifiers (task-orchestrator-pool orchestrator)))
                         *task-terminal-retention-limit*)
                      (= (hash-table-count
-                         (task-orchestrator-jobs orchestrator))
-                        (1+ *task-terminal-retention-limit*))
-                     (= (hash-table-count
-                         (task-orchestrator-names orchestrator))
+                         (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                         (1+ *task-terminal-retention-limit*))
                      (= (task-orchestrator-live-count orchestrator) 1)
                      (null
                       (gethash first-id
-                               (task-orchestrator-jobs orchestrator)))
-                     (null
-                      (gethash first-id
-                               (task-orchestrator-names orchestrator)))
+                               (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))))
                      (gethash last-id
-                              (task-orchestrator-jobs orchestrator))
+                              (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                      (eq (gethash live-id
-                                  (task-orchestrator-jobs orchestrator))
+                                  (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                          live))
                 "retention keeps exactly 64 newest terminals without evicting live jobs")
                (test-assert
@@ -1213,19 +1223,19 @@
                  (lambda (identifier)
                    (let* ((job
                             (gethash identifier
-                                     (task-orchestrator-jobs orchestrator)))
+                                     (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))))
                           (pathname
                             (and job
-                                 (getf (task-job-result job) :output-path))))
+                                 (getf (job-result job) :output-path))))
                      (and job
-                          (task-job-terminal-p job)
+                          (job-terminal-p job)
                           pathname
                           (listp
                            (task-tests--read-exact-native-value
                             (uiop:read-file-string pathname))))))
-                 (task-orchestrator-terminal-identifiers orchestrator))
+                 (cl-jobpond::job-pool--terminal-identifiers (task-orchestrator-pool orchestrator)))
                 "every retained identifier maps to one terminal job and readable artifact")))
-           (let* ((orchestrator (task-orchestrator-create))
+           (let* ((orchestrator (task-tests--orchestrator))
                   (entries
                     (lambda (offset count)
                       (loop for index from offset below (+ offset count)
@@ -1239,18 +1249,17 @@
                                    :context nil
                                    :async t)
                              :detached t)))))
-             (dotimes (batch 4)
-               (task-orchestrator-start-jobs
-                orchestrator primary
-                (funcall entries (* batch 16) 16)))
-             (let ((next-index (task-orchestrator-next-index orchestrator))
+             ;; Capacity is filled with children no worker will ever pick up, so
+             ;; the bound is measured rather than raced against jobs finishing.
+             (dotimes (index *task-maximum-live-jobs*)
+               (task-tests--register-job
+                orchestrator primary definition
+                :name (format nil "live-~2,'0D" index)))
+             (let ((next-index (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator)))
                    (job-count
                      (hash-table-count
-                      (task-orchestrator-jobs orchestrator)))
-                   (name-count
-                     (hash-table-count
-                      (task-orchestrator-names orchestrator)))
-                   (queue-count (length (task-orchestrator-queue orchestrator)))
+                      (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))))
+                   (queue-count (length (cl-jobpond::job-pool--queue (task-orchestrator-pool orchestrator))))
                    (live-count (task-orchestrator-live-count orchestrator)))
                (test-assert
                 (= live-count *task-maximum-live-jobs*)
@@ -1266,15 +1275,12 @@
                     t))
                 "admission beyond 64 live jobs fails")
                (test-assert
-                (and (= (task-orchestrator-next-index orchestrator)
+                (and (= (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator))
                         next-index)
                      (= (hash-table-count
-                         (task-orchestrator-jobs orchestrator))
+                         (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator)))
                         job-count)
-                     (= (hash-table-count
-                         (task-orchestrator-names orchestrator))
-                        name-count)
-                     (= (length (task-orchestrator-queue orchestrator))
+                     (= (length (cl-jobpond::job-pool--queue (task-orchestrator-pool orchestrator)))
                         queue-count)
                      (= (task-orchestrator-live-count orchestrator)
                         live-count))
@@ -1288,7 +1294,7 @@
   "Test that evicted generated identities remain unique across live ancestry."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
-         (orchestrator  (task-orchestrator-create))
+         (orchestrator  (task-tests--orchestrator))
          (definition
            (task-agent-definition-create
             :name "identity-retention"
@@ -1301,7 +1307,7 @@
          (let* ((parent
                   (task-tests--register-job
                    orchestrator primary definition :name nil))
-                (parent-id (getf (task-job-identity parent) :id))
+                (parent-id (job-identifier parent))
                 (viewer (task-tests--child-viewer configuration parent))
                 (descendant
                   (task-tests--register-job
@@ -1309,7 +1315,7 @@
                 (parent-result
                   (task-tests--terminal-result
                    parent :status :success :output "parent terminal")))
-           (task-job--publish-terminal parent :completed parent-result)
+           (task-tests--publish-terminal parent :completed parent-result)
            (dotimes (index *task-terminal-retention-limit*)
              (let* ((job
                       (task-tests--register-job
@@ -1318,25 +1324,22 @@
                     (result
                       (task-tests--terminal-result
                        job :status :success :output "filler terminal")))
-               (task-job--publish-terminal job :completed result)))
+               (task-tests--publish-terminal job :completed result)))
            (let* ((replacement
                     (task-tests--register-job
                      orchestrator primary definition :name nil))
                   (replacement-id
-                    (getf (task-job-identity replacement) :id)))
+                    (job-identifier replacement)))
              (test-assert
               (and (null
                     (gethash parent-id
-                             (task-orchestrator-jobs orchestrator)))
-                   (null
-                    (gethash parent-id
-                             (task-orchestrator-names orchestrator)))
+                             (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))))
                    (member parent-id
-                           (task-job-owner-identifiers descendant)
+                           (job-owner-identifiers descendant)
                            :test #'string=)
                    (not (string= replacement-id parent-id))
-                   (> (getf (task-job-identity replacement) :index)
-                      (getf (task-job-identity parent) :index))
+                   (> (job-index replacement)
+                      (job-index parent))
                    (= (task-orchestrator-live-count orchestrator) 2))
               "eviction never permits a generated ancestor identity to be reused")))
       (uiop:delete-directory-tree root :validate t
@@ -1348,7 +1351,7 @@
   "Test stable lightweight projection of queued and running task jobs."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (orchestrator (task-orchestrator-create))
+         (orchestrator (task-tests--orchestrator))
          (definition
            (task-agent-definition-create
             :name "activity"
@@ -1367,8 +1370,8 @@
                  running
                  (task-tests--register-job
                   orchestrator primary definition :name "running-child"))
-           (with-lock-held ((task-job-lock running))
-             (setf (task-job-state running) ':running)
+           (with-lock-held ((cl-jobpond::job--lock running))
+             (setf (job-state running) ':running)
              (task-job--set-progress-state running ':running))
            (task-progress-note-status
             running ':tool-call-started
@@ -1382,7 +1385,7 @@
                               (getf activity :id))
                             activities)
                     (mapcar (lambda (job)
-                              (getf (task-job-identity job) :id))
+                              (job-identifier job))
                             (list queued running)))
                    (eq (getf (first activities) :state) ':queued)
                    (eq (getf (second activities) :state) ':running)
@@ -1391,7 +1394,7 @@
                    (string= (getf (second activities) :agent) "activity")
                    (getf (second activities) :detached))
               "live activity snapshots are ordered, bounded task summaries"))
-           (task-job--publish-terminal
+           (task-tests--publish-terminal
             queued
             ':completed
             (task-tests--terminal-result
@@ -1400,9 +1403,9 @@
             (equal (mapcar (lambda (activity)
                              (getf activity :id))
                            (task-orchestrator-live-activities orchestrator))
-                   (list (getf (task-job-identity running) :id)))
+                   (list (job-identifier running)))
             "terminal publication immediately removes a child snapshot")
-           (task-job--publish-terminal
+           (task-tests--publish-terminal
             running
             ':completed
             (task-tests--terminal-result
@@ -1411,8 +1414,8 @@
             (null (task-orchestrator-live-activities orchestrator))
             "no task presentation remains after every child is terminal"))
       (dolist (job (remove nil (list queued running)))
-        (unless (task-job-terminal-p job)
-          (task-job--publish-terminal
+        (unless (job-terminal-p job)
+          (task-tests--publish-terminal
            job
            ':aborted
            (task-tests--terminal-result
@@ -1471,13 +1474,12 @@
                   (idle-p
                     (task-tests--wait-until
                      (lambda ()
-                       (with-lock-held ((task-orchestrator-lock orchestrator))
-                         (and
+                       (and
                           (zerop
                            (task-orchestrator-active-count orchestrator))
                           (loop for job being the hash-values of
-                                (task-orchestrator-jobs orchestrator)
-                                always (task-job-terminal-p job)))))
+                                (cl-jobpond::job-pool--jobs (task-orchestrator-pool orchestrator))
+                                always (job-terminal-p job))))
                      1))
                   (jobs (task-orchestrator-list-jobs orchestrator))
                   (details (tool-result-details result))
@@ -1489,19 +1491,18 @@
                      (lambda (job)
                        (task-tests--read-exact-native-value
                         (uiop:read-file-string
-                         (getf (task-job-result job) :output-path))))
+                         (getf (job-result job) :output-path))))
                      jobs))
                   (workers
-                    (with-lock-held ((task-orchestrator-lock orchestrator))
-                      (copy-list
-                       (task-orchestrator-worker-threads orchestrator)))))
+                    (copy-list
+                       (cl-jobpond::job-pool--worker-threads (task-orchestrator-pool orchestrator)))))
              (list :success-p (tool-result-success-p result)
                  :content content
                  :native-content native-content
                  :details details
                  :artifact-forms artifact-forms
                  :job-count (length jobs)
-                 :all-terminal-p (every #'task-job-terminal-p jobs)
+                 :all-terminal-p (every #'job-terminal-p jobs)
                  :heavy-references-cleared-p
                  (every (lambda (job)
                           (and (null (task-job-parent-agent job))
@@ -1511,7 +1512,7 @@
                                 (task-job-command-authorization-function job))
                                (null
                                 (task-job-tool-authorization-function job))
-                               (null (task-job-thread job))))
+                               (null (cl-jobpond::job--thread job))))
                         jobs)
                  :worker-count (length workers)
                  :workers-alive-p (every #'thread-alive-p workers)
@@ -1533,20 +1534,18 @@
                  (task-test-provider-request-count provider)
                  :scheduler-idle-p idle-p
                  :active-count
-                 (with-lock-held ((task-orchestrator-lock orchestrator))
-                   (task-orchestrator-active-count orchestrator))
+                 (task-orchestrator-active-count orchestrator)
                  :live-count
-                 (with-lock-held ((task-orchestrator-lock orchestrator))
-                   (task-orchestrator-live-count orchestrator))
+                 (task-orchestrator-live-count orchestrator)
                  :artifacts-exist-p
                  (every (lambda (job)
-                          (let ((path (getf (task-job-result job)
+                          (let ((path (getf (job-result job)
                                            :output-path)))
                             (and path (probe-file path))))
                         jobs)
                  :private-transcripts-p
                  (every (lambda (job)
-                          (let ((path (getf (task-job-result job)
+                          (let ((path (getf (job-result job)
                                            :conversation-file)))
                             (and path (search "/tasks/" path))))
                         jobs)
@@ -1844,7 +1843,7 @@
                    (< (getf observation :duration-ms) 1000))
               "a child can await detached work at concurrency one without starvation"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999" 1)
-           (let ((orchestrator (task-orchestrator-create)))
+           (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
               (= (task-orchestrator-maximum-concurrency orchestrator)
                  *task-maximum-concurrency*)

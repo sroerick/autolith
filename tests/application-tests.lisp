@@ -3777,11 +3777,18 @@
               (thread-alive-p
                (application-input-controller-reader-thread controller))
               "the responsive terminal reader starts independently")
-             (test-assert
-              (application-input-controller-call-with-reader-paused
-               controller
-               #'sbcl-generations::checkpoint--single-threaded-p)
-              "pausing input leaves checkpoint work on the only Lisp thread")
+             (let ((survivors
+                     (application-input-controller-call-with-reader-paused
+                      controller
+                      (lambda ()
+                        (unless (sbcl-generations::checkpoint--single-threaded-p)
+                          (mapcar #'bordeaux-threads:thread-name
+                                  (bordeaux-threads:all-threads)))))))
+               (test-assert
+                (null survivors)
+                (format nil
+                        "pausing input leaves checkpoint work on the only Lisp thread, saw ~S"
+                        survivors)))
              (test-assert
               (thread-alive-p
                (application-input-controller-reader-thread controller))
@@ -4957,10 +4964,10 @@
                      new-orchestrator
                      (not (eq old-orchestrator new-orchestrator))
                      (eq
-                      (task-orchestrator-lifecycle-state old-orchestrator)
+                      (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
                       ':closed)
                      (eq
-                      (task-orchestrator-lifecycle-state new-orchestrator)
+                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
                       ':open))
                 "conversation switching retires and replaces task runtimes")
                (tool-registry-close-runtime-state new-registry)
@@ -5112,11 +5119,11 @@
                      workspace-orchestrator
                      (not (eq old-orchestrator workspace-orchestrator))
                      (eq
-                      (task-orchestrator-lifecycle-state old-orchestrator)
+                      (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
                       ':closed)
                      (eq
-                      (task-orchestrator-lifecycle-state
-                       workspace-orchestrator)
+                      (job-pool-lifecycle-state
+                       (task-orchestrator-pool workspace-orchestrator))
                       ':open))
                 "a workspace switch replaces and restarts task runtimes")
                (let ((active-configuration
@@ -5167,8 +5174,8 @@
                    (= workspace-close-count 1)
                    (= workspace-resume-count 1)
                    (eq
-                    (task-orchestrator-lifecycle-state
-                     workspace-orchestrator)
+                    (job-pool-lifecycle-state
+                     (task-orchestrator-pool workspace-orchestrator))
                     ':open)
                    (tool-registry-find
                     workspace-registry "transition" "workspace-new"))
@@ -5224,12 +5231,12 @@
                  (test-assert
                   (and
                    (eq
-                    (task-orchestrator-lifecycle-state
-                     workspace-orchestrator)
+                    (job-pool-lifecycle-state
+                     (task-orchestrator-pool workspace-orchestrator))
                     ':closed)
                    (eq
-                    (task-orchestrator-lifecycle-state
-                     conversation-orchestrator)
+                    (job-pool-lifecycle-state
+                     (task-orchestrator-pool conversation-orchestrator))
                     ':open)
                    (not
                     (eq workspace-orchestrator
@@ -5298,8 +5305,8 @@
                      (not (conversation-lease-held-p attempted-lease))
                      (zerop conversation-close-count)
                      (eq
-                      (task-orchestrator-lifecycle-state
-                       conversation-orchestrator)
+                      (job-pool-lifecycle-state
+                       (task-orchestrator-pool conversation-orchestrator))
                       ':open)
                      (tool-registry-find
                       conversation-registry
@@ -5447,7 +5454,7 @@
                (and
                 (application-task-presentation-listener application)
                 (eq
-                 (task-orchestrator-lifecycle-state old-orchestrator)
+                 (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
                  ':open)
                 (if (eq operation ':working-directory)
                     ;; Workspace switches quiesce the old runtime before
@@ -5455,12 +5462,12 @@
                     ;; creates or closes the candidate registry.
                     (and
                      (eq
-                      (task-orchestrator-lifecycle-state new-orchestrator)
+                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
                       ':open)
                      (zerop new-close-count))
                     (and
                      (eq
-                      (task-orchestrator-lifecycle-state new-orchestrator)
+                      (job-pool-lifecycle-state (task-orchestrator-pool new-orchestrator))
                       ':closed)
                      (= new-close-count 1))))
                "runtime retirement rollback resumes old tasks and closes new tasks")
@@ -5807,7 +5814,7 @@
                       (eq (application-worker application) old-worker)
                       (eq (application-agent application) old-agent)
                       (eq
-                       (task-orchestrator-lifecycle-state old-orchestrator)
+                       (job-pool-lifecycle-state (task-orchestrator-pool old-orchestrator))
                        ':open)
                       (application-task-presentation-listener application)
                       (not old-worker-stopped-p))
@@ -5865,12 +5872,12 @@
                         image-transition-p
                         (application-task-presentation-listener application)
                         (eq
-                         (task-orchestrator-lifecycle-state
-                          old-orchestrator)
+                         (job-pool-lifecycle-state
+                          (task-orchestrator-pool old-orchestrator))
                          ':open)
                         (eq
-                         (task-orchestrator-lifecycle-state
-                          new-orchestrator)
+                         (job-pool-lifecycle-state
+                          (task-orchestrator-pool new-orchestrator))
                          ':closed)
                         (equal
                          mcp-registration-snapshot
@@ -5944,8 +5951,7 @@
            (application-connect-task-presentation application)
            (application-connect-task-presentation application)
            (test-assert
-            (= (with-lock-held ((task-orchestrator-lock orchestrator))
-                 (length (task-orchestrator-listeners orchestrator)))
+            (= (length (task-orchestrator-listeners orchestrator))
                1)
             "reconnection retains exactly one task presentation listener")
            (setf queued
@@ -5954,8 +5960,8 @@
                  running
                  (task-tests--register-job
                   orchestrator primary definition :name "running-agent"))
-           (with-lock-held ((task-job-lock running))
-             (setf (task-job-state running) ':running)
+           (with-lock-held ((cl-jobpond::job--lock running))
+             (setf (job-state running) ':running)
              (task-job--set-progress-state running ':running))
            (task-progress-note-status
             running ':tool-call-started
@@ -5968,7 +5974,7 @@
                    (string= (getf (second activities) :current-tool)
                             "search.content"))
               "one progress event projects every queued and running child"))
-           (task-job--publish-terminal
+           (task-tests--publish-terminal
             queued
             ':completed
             (task-tests--terminal-result
@@ -5978,9 +5984,9 @@
              (mapcar (lambda (activity)
                        (getf activity :id))
                      (terminal-ui-agent-activities ui))
-             (list (getf (task-job-identity running) :id)))
+             (list (job-identifier running)))
             "terminal lifecycle events remove only their finished child")
-           (task-job--publish-terminal
+           (task-tests--publish-terminal
             running
             ':completed
             (task-tests--terminal-result
@@ -5988,7 +5994,7 @@
            (task-orchestrator-emit
             orchestrator
             ':task-subagent-progress
-            (list :id (getf (task-job-identity running) :id)))
+            (list :id (job-identifier running)))
            (test-assert
             (null (terminal-ui-agent-activities ui))
             "late progress cannot resurrect a terminal child")
@@ -5998,13 +6004,12 @@
              (null (application-task-presentation-orchestrator application))
              (null (application-task-presentation-listener application))
              (zerop
-              (with-lock-held ((task-orchestrator-lock orchestrator))
-                (length (task-orchestrator-listeners orchestrator)))))
+              (length (task-orchestrator-listeners orchestrator))))
             "disconnect removes the exact observer and retained scheduler link"))
       (application-disconnect-task-presentation application)
       (dolist (job (remove nil (list queued running)))
-        (unless (task-job-terminal-p job)
-          (task-job--publish-terminal
+        (unless (job-terminal-p job)
+          (task-tests--publish-terminal
            job
            ':aborted
            (task-tests--terminal-result

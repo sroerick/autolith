@@ -1240,8 +1240,8 @@
                                (application-agent application))
                               old-registry)
                              (eq
-                              (task-orchestrator-lifecycle-state
-                               old-orchestrator)
+                              (job-pool-lifecycle-state
+                               (task-orchestrator-pool old-orchestrator))
                               ':open)
                              (application-task-presentation-listener
                               application)
@@ -1302,8 +1302,8 @@
                                context-reset-p
                                (not new-registry-closed-p)
                                (eq
-                                (task-orchestrator-lifecycle-state
-                                 new-orchestrator)
+                                (job-pool-lifecycle-state
+                                 (task-orchestrator-pool new-orchestrator))
                                 ':open)
                                (application-task-presentation-listener
                                 application))

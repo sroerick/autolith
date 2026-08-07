@@ -61,22 +61,7 @@
              (task-agent-definition-error-field condition)
              (task-agent-definition-error-cause condition)))))
 
-(define-condition task-aborted
-    (serious-condition)
-  ((message
-    :initarg :message
-    :reader task-aborted-message
-    :type string
-    :documentation "The concise cancellation explanation for retained results.")
-   (reason
-    :initarg :reason
-    :reader task-aborted-reason
-    :type keyword
-    :documentation "The structured reason the child run was interrupted."))
-  (:documentation
-   "An internal control condition unwinding a deliberately interrupted child.")
-  (:report (lambda (condition stream)
-             (write-string (task-aborted-message condition) stream))))
+;;; A cancelled child unwinds on CL-JOBPOND:JOB-ABORTED.
 
 (define-condition task-yield-error
     (task-error)

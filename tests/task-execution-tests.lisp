@@ -62,13 +62,13 @@
                                 "arguments" "{}")
                    context)
                   nil)
-              (task-aborted (condition)
-                (and (eq (task-aborted-reason condition) :test-cancel)
-                     (string= (task-aborted-message condition)
+              (job-aborted (condition)
+                (and (eq (job-aborted-reason condition) :test-cancel)
+                     (string= (job-aborted-message condition)
                               "Task test was cancelled.")))
               (condition ()
                 nil))
-            "tool registry dispatch propagates task-aborted as control flow"))
+            "tool registry dispatch propagates job-aborted as control flow"))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
   nil)
@@ -170,7 +170,7 @@
                      :instructions "Use only explicitly child-safe extensions."
                      :tools :all
                      :source :test))
-                  (orchestrator (task-orchestrator-create)))
+                  (orchestrator (task-tests--orchestrator)))
              (tool-registry-register
               parent-registry
               (make-instance 'task-test-default-deny-tool
@@ -366,25 +366,18 @@
                                :required ("answer"))
                      :source :test))
                   (completion (make-instance 'task-completion))
-                  (orchestrator (task-orchestrator-create))
+                  (orchestrator (task-tests--orchestrator))
                   (parent (agent-create
                            :configuration configuration
                            :provider (make-instance 'model-provider)
                            :conversation (conversation-create configuration)
                            :tool-registry (make-instance 'tool-registry)
                            :worker nil))
-                  (job (make-instance 'task-job
-                                      :orchestrator orchestrator
-                                      :identity (list :id "yield-test" :index 1)
-                                      :execution-identifier (make-identifier)
-                                      :definition definition
-                                      :item (list :task "Yield")
-                                      :parent-agent parent
-                                      :root-conversation-identifier
-                                      (conversation-identifier
-                                       (agent-conversation parent))
-                                      :owner-identifiers nil
-                                      :detached-p nil))
+                  (job (task-tests--make-job orchestrator
+                                            :identifier "yield-test"
+                                            :definition definition
+                                            :item (list :task "Yield")
+                                            :parent-agent parent))
                   (child (make-instance 'task-child-agent
                                         :configuration configuration
                                         :provider (make-instance 'model-provider)
@@ -432,7 +425,7 @@
             :description "Exercise the shared child runtime."
             :instructions "Yield after checking authorization."
             :source ':test))
-         (orchestrator (task-orchestrator-create))
+         (orchestrator (task-tests--orchestrator))
          (parent
            (agent-create
             :configuration configuration
@@ -441,18 +434,11 @@
             :tool-registry (make-instance 'tool-registry)
             :worker nil))
          (job
-           (make-instance 'task-job
-                          :orchestrator orchestrator
-                          :identity (list :id "runtime-child" :index 1)
-                          :execution-identifier (make-identifier)
-                          :definition definition
-                          :item (list :task "Exercise the shared loop.")
-                          :parent-agent parent
-                          :root-conversation-identifier
-                          (conversation-identifier
-                           (agent-conversation parent))
-                          :owner-identifiers nil
-                          :detached-p nil))
+           (task-tests--make-job orchestrator
+                                 :identifier "runtime-child"
+                                 :definition definition
+                                 :item (list :task "Exercise the shared loop.")
+                                 :parent-agent parent))
          (completion (make-instance 'task-completion))
          (conversation
            (conversation-create configuration :identifier "task-shared-loop"))

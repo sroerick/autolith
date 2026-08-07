@@ -52,8 +52,8 @@
   :version "git-95d81947e6d080826104086fda8c48a4db336db0"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/cl-jobpond.git" :ref "6a7e4f34c403f5bd306c4d9b4c4dd9dc50a711dd")
-  :version "git-6a7e4f34c403f5bd306c4d9b4c4dd9dc50a711dd"))
+  :initargs (:remote-url "https://github.com/luciusmagn/cl-jobpond.git" :ref "4f7679be1b760450b8d497b0ec3119ee0f716995")
+  :version "git-4f7679be1b760450b8d497b0ec3119ee0f716995"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "cb7951ea203329d7d1d226bfc1e8224bd5c7d9bd")
