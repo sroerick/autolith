@@ -51,13 +51,17 @@
            (let* ((pathname
                     (task-tests--write-text
                      (merge-pathnames "block-comment.sexp" directory)
-                     "(:name \"block-comment\" #| outer #| nested |# comment |# :description \"Commented role\" :instructions \"Accept standard block comments.\")"))
+                     "#| leading |#(:name\"block-comment\"#| outer #| nested |# comment |#:description\"Commented role\":instructions #| value |#\"Accept standard block comments.\")"))
                   (definition
                     (task-parse-agent-file pathname :project)))
              (test-assert
-              (string= (task-agent-definition-name definition)
-                       "block-comment")
-              "native role parsing accepts nested standard block comments"))
+              (and (string= (task-agent-definition-name definition)
+                            "block-comment")
+                   (string= (task-agent-definition-description definition)
+                            "Commented role")
+                   (string= (task-agent-definition-instructions definition)
+                            "Accept standard block comments."))
+              "native role parsing accepts standard keyword, string, and block-comment adjacency"))
            (let* ((pathname
                     (merge-pathnames "deeply-nested.sexp" directory))
                   (source
@@ -136,7 +140,7 @@
              (task-tests--agent-definition-error
               (task-tests--write-text
                (merge-pathnames "unknown-keyword.sexp" directory)
-               "(:name \"unknown-keyword\" :description \"Unknown keyword\" :instructions \"Reject before interning it.\" :autolith-task-reader-keyword-leak-71d21a t)")
+               "(:name\"unknown-keyword\":description\"Unknown keyword\":instructions\"Reject adjacent unknown keywords before interning them.\":autolith-task-reader-keyword-leak-71d21a\"rejected\")")
               :project)
              (test-assert
               (and (null (find-symbol bare-name '#:autolith))

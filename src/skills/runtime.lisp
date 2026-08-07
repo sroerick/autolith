@@ -661,7 +661,8 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
 (defun skill--read-one-form (source)
   "Read and return exactly one native form from bounded SOURCE."
   (handler-case
-      (read-source source (skill--source-grammar))
+      (read-source (native-source-normalize-reader-boundaries source)
+                   (skill--source-grammar))
     (sexp-config-error (condition)
       (skill--definition-fail (skill--source-diagnostic-kind condition)
                               "~A"
@@ -675,7 +676,9 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
     (sexp-config-error (condition)
       (skill--definition-fail (skill--source-diagnostic-kind condition)
                               "~A"
-                              (sexp-config-error-message condition)))))(-> skill--normalize-description (string) string)
+                              (sexp-config-error-message condition)))))
+
+(-> skill--normalize-description (string) string)
 (defun skill--normalize-description (description)
   "Return DESCRIPTION with whitespace runs collapsed for catalog display."
   (string-trim

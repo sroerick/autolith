@@ -370,6 +370,15 @@ related operations."
               :invalid-syntax))))
     (unwind-protect
          (progn
+            (skill-tests--write
+             skills
+             "adjacent/SKILL.sexp"
+             "(:autolith-skill :version 1 :name\"adjacent\" :description\"Reader-equivalent boundaries.\" :instructions\"Accept adjacent strings.\")")
+            (let ((catalog (skill-catalog-discover (list skills))))
+              (test-assert
+               (skill-catalog-find catalog "adjacent")
+               "native Skill parsing accepts a string adjacent to its keyword"))
+            (skill-tests--delete-root skills)
            (dolist (case cases)
              (destructuring-bind (directory content expected-kind) case
                (skill-tests--write

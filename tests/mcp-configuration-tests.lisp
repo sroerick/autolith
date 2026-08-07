@@ -121,6 +121,17 @@
            (test-assert
             (string= (file-namestring pathname) "mcp.sexp")
             "native MCP configuration has one XDG mcp.sexp entry point")
+            (test-mcp-configuration--write
+             pathname
+             "(:version 1 :servers ((:name\"adjacent\" :transport (:type :stdio :command\"/bin/true\") :approval :deny :trusted-read-only-tools () :child-tools ())))")
+            (let ((definitions (mcp-configuration-read configuration)))
+              (test-assert
+               (and (= (length definitions) 1)
+                    (string=
+                     (mcp-server-configuration-name (first definitions))
+                     "adjacent"))
+               "native MCP parsing accepts a string adjacent to its keyword"))
+            (delete-file pathname)
            (labels
                ((read-nonregular-source (source-pathname)
                   "Read SOURCE-PATHNAME in a bounded thread and return its condition."

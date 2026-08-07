@@ -41,6 +41,7 @@
                              (:file "core/source-files")
                              (:file "core/streams")
                              (:file "configuration/settings")
+                             (:file "configuration/native-source")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")

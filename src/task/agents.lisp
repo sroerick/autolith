@@ -519,7 +519,9 @@ the offending object rather than only reporting that one was rejected."
                   pathname source definition-name))
                (form
                  (handler-case
-                     (read-source contents (task-agent--source-grammar))
+                     (read-source
+                      (native-source-normalize-reader-boundaries contents)
+                      (task-agent--source-grammar))
                    (sexp-config-error (condition)
                      (task-agent-definition--error
                       :pathname pathname :source source
