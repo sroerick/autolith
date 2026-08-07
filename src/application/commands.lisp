@@ -141,6 +141,38 @@
                  "No papercut matches ~S. Run /papercuts to list current reports."
                  identifier))))))
 
+(-> application-papercut-close-entry (application string) (or string list))
+(defun application-papercut-close-entry (application identifier)
+  "Close one active papercut selected by IDENTIFIER and return feedback."
+  (let ((configuration (application-configuration application)))
+    (multiple-value-bind (papercut status matches)
+        (papercut-resolve configuration identifier)
+      (case status
+        (:found
+         (papercut-close
+          configuration
+          (papercut-identifier papercut)
+          :resolution "Closed through /papercut-close.")
+         (list
+          (terminal-span ':success "PAPERCUT CLOSED  ")
+          (terminal-span
+           ':strong
+           (sanitize-text (papercut-title papercut) :single-line-p t))))
+        (:ambiguous
+         (append
+          (list (terminal-span
+                 ':failure
+                 (format nil
+                         "Papercut ID ~A is ambiguous. Enter more characters.~%"
+                         (sanitize-text identifier :single-line-p t)))
+                (terminal-span ':dim "Matching reports:~%"))
+          (loop for match in matches
+                append (application--papercut-list-row match))))
+        (otherwise
+         (format nil
+                 "No active papercut matches ~S. Run /papercuts to list reports."
+                 identifier))))))
+
 
 ;;;; -- Usage Status --
 
@@ -1719,6 +1751,24 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
         (application-present
          application
          "Usage: /papercut ID. Run /papercuts to list reports.")))
+  ':continue)
+
+(define-application-command application--builtin-papercut-close-command
+    (:name "/papercut-close"
+     :argument "ID"
+     :description "close one resolved papercut report"
+     :tip "removes a fixed or obsolete report from /papercuts."
+     :busy-behavior :hold
+     :terminal-behavior :shared)
+    (application invocation)
+  (let ((identifier (application-command-invocation-argument invocation)))
+    (if identifier
+        (application-present
+         application
+         (application-papercut-close-entry application identifier))
+        (application-present
+         application
+         "Usage: /papercut-close ID. Run /papercuts to list reports.")))
   ':continue)
 
 (define-application-command application--builtin-skills-command

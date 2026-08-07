@@ -498,10 +498,13 @@ successful result is a prominent terminal report that remains visible in compact
 mode. The system prompt must encourage its use for real user-visible problems,
 not routine progress, ordinary uncertainty, or final-answer content.
 
-Users inspect reports with =/papercuts=, which lists current-workspace reports
-newest first, and =/papercut ID=, which expands one complete report. The list
-shows a stable short identifier and the expansion command. Unique identifier
+Users inspect active reports with =/papercuts=, which lists current-workspace
+reports newest first, and =/papercut ID=, which expands one complete report. The
+list shows a stable short identifier and the expansion command. Unique identifier
 prefixes are accepted; ambiguous prefixes must be reported without guessing.
+=/papercut-close ID= appends a durable closure tombstone for a fixed or obsolete
+report. Closed reports no longer appear in active lookup, while the original
+report and its closure remain in the append-only log.
 
 ** 5.4 =agenda.*=
 

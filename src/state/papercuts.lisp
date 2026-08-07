@@ -11,6 +11,9 @@
 (defparameter *papercut-content-limit* 8000
   "The maximum characters in one papercut report.")
 
+(defparameter *papercut-resolution-limit* 1000
+  "The maximum characters in one papercut closure resolution.")
+
 (defparameter *papercut-short-identifier-length* 8
   "The characters shown when a papercut identifier is abbreviated.")
 
@@ -81,6 +84,39 @@
         :title (papercut-title papercut)
         :content (papercut-content papercut)
         :source-conversation (papercut-source-conversation papercut)))
+
+(-> papercut--closed-record (string string timestamp) list)
+(defun papercut--closed-record (identifier resolution closed-at)
+  "Return one portable closure record for IDENTIFIER and RESOLUTION."
+  (list :papercut-closed
+        :version *papercut-format-version*
+        :id identifier
+        :closed-at closed-at
+        :resolution resolution))
+
+(-> papercut--validate-closed-record (pathname list) string)
+(defun papercut--validate-closed-record (pathname record)
+  "Validate closure RECORD from PATHNAME and return its identifier."
+  (let ((version (getf (rest record) :version))
+        (identifier (getf (rest record) :id))
+        (closed-at (getf (rest record) :closed-at))
+        (resolution (getf (rest record) :resolution)))
+    (unless (and (eql version *papercut-format-version*)
+                 (non-empty-string-p identifier)
+                 (typep closed-at 'timestamp))
+      (error 'papercut-error
+             :message "A papercut closure record has invalid metadata."
+             :pathname pathname
+             :identifier (and (stringp identifier) identifier)))
+    (handler-case
+        (papercut--validate-text
+         resolution "closure resolution" *papercut-resolution-limit*)
+      (papercut-error (condition)
+        (error 'papercut-error
+               :message (autolith-error-message condition)
+               :pathname pathname
+               :identifier identifier)))
+    identifier))
 
 (-> papercut--record->papercut (pathname list) papercut)
 (defun papercut--record->papercut (pathname record)
@@ -173,30 +209,52 @@
                    :pathname pathname
                    :identifier nil))))
       (let ((seen (make-hash-table :test #'equal))
-            (papercuts nil))
+            (active (make-hash-table :test #'equal)))
         (dolist (record (rest records))
           (unless (and (listp record) (keywordp (first record)))
             (error 'papercut-error
                    :message "A persistent papercut record is not a keyword list."
                    :pathname pathname
                    :identifier nil))
-          (unless (eq (first record) :papercut)
-            (error 'papercut-error
-                   :message (format nil "Unsupported persistent papercut record ~S."
-                                    (first record))
-                   :pathname pathname
-                   :identifier nil))
-          (let ((papercut (papercut--record->papercut pathname record)))
-            (when (gethash (papercut-identifier papercut) seen)
-              (error 'papercut-error
-                     :message (format nil
-                                      "Persistent papercut identifier ~A occurs more than once."
-                                      (papercut-identifier papercut))
-                     :pathname pathname
-                     :identifier (papercut-identifier papercut)))
-            (setf (gethash (papercut-identifier papercut) seen) t)
-            (push papercut papercuts)))
-        (sort papercuts
+          (case (first record)
+            (:papercut
+             (let* ((papercut (papercut--record->papercut pathname record))
+                    (identifier (papercut-identifier papercut)))
+               (when (gethash identifier seen)
+                 (error 'papercut-error
+                        :message (format nil
+                                         "Persistent papercut identifier ~A occurs more than once."
+                                         identifier)
+                        :pathname pathname
+                        :identifier identifier))
+               (setf (gethash identifier seen) t
+                     (gethash identifier active) papercut)))
+            (:papercut-closed
+             (let ((identifier
+                     (papercut--validate-closed-record pathname record)))
+               (unless (gethash identifier seen)
+                 (error 'papercut-error
+                        :message (format nil
+                                         "Papercut closure references unknown identifier ~A."
+                                         identifier)
+                        :pathname pathname
+                        :identifier identifier))
+               (unless (gethash identifier active)
+                 (error 'papercut-error
+                        :message (format nil
+                                         "Papercut identifier ~A is closed more than once."
+                                         identifier)
+                        :pathname pathname
+                        :identifier identifier))
+               (remhash identifier active)))
+            (otherwise
+             (error 'papercut-error
+                    :message (format nil "Unsupported persistent papercut record ~S."
+                                     (first record))
+                    :pathname pathname
+                    :identifier nil))))
+        (sort (loop for papercut being the hash-values of active
+                    collect papercut)
               (lambda (left right)
                 (or (> (papercut-reported-at left)
                        (papercut-reported-at right))
@@ -292,6 +350,38 @@ matching reports for :AMBIGUOUS."
                :content validated-content
                :source-conversation source-conversation)))
         (papercut--append-record configuration (papercut--record papercut))
+        papercut))))
+
+(-> papercut-close (configuration string &key (:resolution string)) papercut)
+(defun papercut-close (configuration identifier &key resolution)
+  "Close active papercut IDENTIFIER with a durable RESOLUTION and return it."
+  (unless (non-empty-string-p identifier)
+    (error 'papercut-error
+           :message "Papercut identifier must be a non-empty string."
+           :pathname (configuration-papercut-path configuration)
+           :identifier nil))
+  (let ((validated-resolution
+          (papercut--validate-text
+           resolution "closure resolution" *papercut-resolution-limit*))
+        (workspace (namestring (configuration-working-directory configuration))))
+    (with-lock-held (*papercut-lock*)
+      (let ((papercut
+              (find-if
+               (lambda (candidate)
+                 (and (string= identifier (papercut-identifier candidate))
+                      (string= workspace (papercut-workspace candidate))))
+               (papercut--load-unlocked configuration))))
+        (unless papercut
+          (error 'papercut-error
+                 :message (format nil
+                                  "No active papercut ~A exists in this workspace."
+                                  identifier)
+                 :pathname (configuration-papercut-path configuration)
+                 :identifier identifier))
+        (papercut--append-record
+         configuration
+         (papercut--closed-record
+          identifier validated-resolution (get-universal-time)))
         papercut))))
 
 

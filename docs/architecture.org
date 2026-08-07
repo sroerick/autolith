@@ -111,13 +111,15 @@ the next complete record is appended.
 
 ** =state/papercuts.lisp= and =tools/papercut.lisp=
 
-Own the append-only papercut report log and the model-facing =papercut.report=
-tool. Each report is tied to the current workspace and source conversation,
-remains outside conversation files and saved cores, and is never silently
-replaced or removed by the model. Successful reports remain visible in compact
-terminal mode through a dedicated prominent result card. The read-only
-=/papercuts= and =/papercut ID= commands list reports and show complete bodies;
-unique identifier prefixes are accepted without guessing ambiguous matches.
+Own the append-only papercut report and closure log and the model-facing
+=papercut.report= tool. Each report is tied to the current workspace and source
+conversation, remains outside conversation files and saved cores, and is never
+silently replaced or removed by the model. Successful reports remain visible in
+compact terminal mode through a dedicated prominent result card. The read-only
+=/papercuts= and =/papercut ID= commands list active reports and show complete
+bodies; =/papercut-close ID= appends a durable closure tombstone for fixed or
+obsolete reports. Unique identifier prefixes are accepted without guessing
+ambiguous matches.
 
 The design was informed by OpenAI Codex commit
 =5bed6447998c754d154dbd796517310b8f04d4ce=. That implementation uses SQLite

@@ -861,10 +861,12 @@ prominently, including when compact presentation is enabled. Papercuts are
 reports for the user, not ordinary progress updates or a replacement for the
 final answer.
 
-Use =/papercuts= to list the newest reports. Each row shows a short stable ID and
-an exact =/papercut ID= expansion command. Use =/papercut ID= to display the
-complete title and report body. Unique prefixes are accepted; the command reports
-ambiguous prefixes instead of guessing.
+Use =/papercuts= to list the newest active reports. Each row shows a short stable
+ID and an exact =/papercut ID= expansion command. Use =/papercut ID= to display
+the complete title and report body. Use =/papercut-close ID= after fixing or
+confirming an obsolete report; this appends a closure record without deleting the
+original report. Unique prefixes are accepted; commands report ambiguous prefixes
+instead of guessing.
 
 * Workspace, search, memory, agenda, Lisp, and self tools
 

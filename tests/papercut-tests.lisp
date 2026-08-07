@@ -90,7 +90,32 @@
                   t))
               "papercut bodies have a hard size bound")
              (test-assert (papercut-find configuration (papercut-identifier second))
-                          "multiple papercut reports retain distinct identifiers"))
+                          "multiple papercut reports retain distinct identifiers")
+             (let ((closed
+                     (papercut-report
+                      configuration
+                      :title "Obsolete report"
+                      :content "This report is ready to close.")))
+               (papercut-close
+                configuration
+                (papercut-identifier closed)
+                :resolution "The underlying problem was fixed.")
+               (test-assert
+                (and (= (length (papercut-list configuration)) 2)
+                     (null (papercut-find
+                            configuration (papercut-identifier closed))))
+                "papercut closure tombstones remove reports from active state")
+               (test-assert
+                (handler-case
+                    (progn
+                      (papercut-close
+                       configuration
+                       (papercut-identifier closed)
+                       :resolution "Duplicate closure must fail.")
+                      nil)
+                  (papercut-error ()
+                    t))
+                "papercuts cannot be closed more than once")))
            (let* ((result
                     (papercut-tests--call
                      registry
@@ -216,10 +241,27 @@
                      (search (papercut-content report) detail-output)
                      (not (search "~%" detail-output)))
                 "/papercut expands the complete report body")))
+           (recording-terminal-reset terminal)
+           (let ((report (first (papercut-list configuration))))
+             (test-assert
+              (eq (application-command
+                   application
+                   (format nil "/papercut-close ~A"
+                           (papercut-short-identifier report)))
+                  ':continue)
+              "/papercut-close remains inside the interactive application")
+             (test-assert
+              (and (search "PAPERCUT CLOSED"
+                           (recording-terminal-output terminal))
+                   (null (papercut-find
+                          configuration (papercut-identifier report))))
+              "/papercut-close persists a closure tombstone"))
            (test-assert (search "/papercuts" (application-help))
                         "interactive help includes /papercuts")
            (test-assert (search "/papercut ID" (application-help))
-                        "interactive help includes /papercut ID"))
+                        "interactive help includes /papercut ID")
+           (test-assert (search "/papercut-close ID" (application-help))
+                        "interactive help includes /papercut-close ID"))
       (ignore-errors (terminal-ui-stop ui))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
