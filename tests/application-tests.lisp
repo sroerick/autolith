@@ -4854,9 +4854,9 @@
          (root (test-configuration-root configuration))
          (timestamp 3992846378)
          (first-identifier
-           (conversation-identifier-from-seed timestamp 0))
+           (identifier-from-seed timestamp 0))
          (second-identifier
-           (conversation-identifier-from-seed timestamp 1)))
+           (identifier-from-seed timestamp 1)))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
@@ -4864,7 +4864,7 @@
             configuration
             first-identifier
             (lambda ()
-              (let ((*conversation-identifier-random-index-function*
+              (let ((*random-index-function*
                       (lambda (limit)
                         (declare (ignore limit))
                         0)))

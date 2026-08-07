@@ -107,6 +107,7 @@
                 #:identifier-clear-reservations
                 #:identifier-display
                 #:identifier-error
+                #:identifier-error-message
                 #:identifier-from-seed
                 #:identifier-generate
                 #:identifier-normalize

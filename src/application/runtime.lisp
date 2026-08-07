@@ -753,7 +753,7 @@ newly acquired lease."
   "Create and claim a fresh conversation, probing another seed on lease races."
   (let ((last-conflict nil)
         (created-at (or timestamp (get-universal-time))))
-    (loop repeat (conversation-identifier-base)
+    (loop repeat (identifier-base)
           do (let ((conversation
                      (conversation-create
                       configuration :created-at created-at)))

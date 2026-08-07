@@ -144,7 +144,7 @@ exit \"$status\""
              (typep replacement-pid '(integer 1))))
        (let ((conversation-id (getf (rest record) :conversation-id)))
          (or (null conversation-id)
-             (conversation-identifier-stored-p conversation-id)))
+             (identifier-p conversation-id)))
        (stringp (or (getf (rest record) :draft) ""))))
 
 (-> localgroup-handoff--disk-record (list) list)

@@ -50,7 +50,7 @@
        (= (length value) 6)
        (conversation-identifier-migration--legacy-identifier-p
         (getf value :old))
-       (conversation-identifier-stored-p (getf value :new))
+       (identifier-p (getf value :new))
        (typep (getf value :created-at) 'timestamp)
        (loop for key in value by #'cddr
              always (member key '(:old :new :created-at) :test #'eq))))

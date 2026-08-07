@@ -316,7 +316,7 @@
                                    count (eq key :history-floor-sequence))
                              1)
                          (= (getf properties :version) 1)
-                         (conversation-identifier-stored-p
+                         (identifier-p
                           resolved-conversation-id)
                          (typep rendered-sequence '(integer 0))
                          (or (not history-floor-present-p)
