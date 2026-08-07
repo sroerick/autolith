@@ -75,11 +75,13 @@ Codex. Renewable credentials come only from Autolith's own device flow.
 Owns Autolith's browser-assisted device authorization, polling, PKCE exchange, and
 publication into Autolith's private credential store.
 
-** =conversation-identifiers.lisp= and =conversation-identifier-migration.lisp=
+** =idsmall=, =conversation/identifiers.lisp=, and identifier migration
 
-Own the short Bitcoin Base58 conversation identifier derivation, display
-normalization, collision probing, and the retained legacy alias map. Migration
-is a process-locked sequence of atomic file replacements and directory renames.
+The pinned =idsmall= dependency owns short Bitcoin Base58 identifier derivation,
+display normalization, and bounded collision probing. Autolith's identifier
+adapter translates library conditions into its conversation condition protocol.
+=conversation/identifier-migration.lisp= owns the retained legacy alias map and
+the process-locked sequence of atomic file replacements and directory renames.
 Its readable phase record is published before mutation and after each boundary,
 so startup can safely repeat every operation after interruption. It rewrites
 conversation, memory, crash, and task-artifact references, preserves activity
@@ -299,6 +301,26 @@ records plus launcher-group and replacement-PID acknowledgements prevent a late
 replacement from racing lease restoration. Checkpoint quiescence reuses the same
 endpoint identity without carrying runtime threads into a generation.
 
+** =sexp-config= and native configuration adapters
+
+The pinned =sexp-config= dependency owns restricted lexical preflight, bounded
+one-form reading, isolated reader packages, and structural grammar validation
+for =SKILL.sexp=, native MCP configuration, and child-agent role files.
+=configuration/native-source.lisp= supplies one narrow compatibility adapter for
+standard keyword-to-string token boundaries until the dependency accepts them
+directly. Each consumer retains its own field vocabulary, semantic validation,
+file confinement, and diagnostics.
+
+** =cl-jobpond= and =task/=
+
+The pinned =cl-jobpond= dependency owns bounded atomic admission, reusable worker
+threads, deadlines, cancellation state, progress publication, retention, and
+shutdown. Autolith's task layer owns agent definitions, tool authority, ancestry,
+context snapshots, artifacts, provider execution, and parent-child cancellation.
+Its orchestrator lock serializes naming and hurry-up policy with admission; a
+narrow private pool-lock adapter publishes all mutable library limits as one
+worker-visible policy update.
+
 ** =agent.lisp=
 
 Coordinates one turn at a time: persist user input, stream a response, append
@@ -309,15 +331,15 @@ steps, tool batches, and individual tool calls have no arbitrary count ceiling;
 user interruption and unrecoverable provider or agent errors remain the stopping
 boundaries.
 
-** =generations.lisp=
+** =sbcl-generations= and =state/generations.lisp=
 
-Owns compatible manifests and the Linux and macOS SBCL coordinator-and-saver
-fork checkpoint backend. An unpublished core must boot and identify its exact
-tracked source commit together with its private image commit and mutation-history
-Git commit before its core, manifest, and selection become visible. Checkpoint
-preparation commits pending reconstructible mutations and writes a complete
-=reconstruct.lisp= beside every new core. Manifest version 3 records all three
-identities; versions 1 and 2 remain readable.
+The pinned =sbcl-generations= dependency owns retained-generation storage,
+manifest-compatible inventory, coordinator-and-saver forks, boot probes, and
+atomic core publication on Linux and macOS. Autolith retains its atomic selection
+and provenance layer, checkpoint quiescence, credential clearing, inherited
+worker detachment, exact tracked/private commit checks, and complete
+=reconstruct.lisp= publication. An unpublished core must boot and identify all
+required identities before its core, manifest, and selection become visible.
 
 ** =main.lisp=
 

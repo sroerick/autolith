@@ -154,9 +154,9 @@ a user-local init.lisp change, or a private image commit.
   requested timeout without a product maximum. The sandbox still enforces the
   selected deadline and bounded output. Invalid encoded bytes are replaced at
   the command-sandbox boundary so status and surrounding diagnostics survive.
-- Scope and location: tracked project work in =src/tools/workspace.lisp=,
-  =src/tools/seatbelt.lisp=, the shell schema, specification, guide, and
-  workspace-tool regressions.
+- Scope and location: tracked project work in =src/tools/workspace.lisp=, the
+  pinned =cl-exec-sandbox= integration, the shell schema, specification, guide,
+  and workspace-tool regressions.
 - Verification: a requested 900-second timeout is retained, invalid UTF-8 shell
   output completes with replacement characters and its exit status, truncation
   remains bounded, and the complete 3,567-test repository check passes.
@@ -213,6 +213,29 @@ a user-local init.lisp change, or a private image commit.
   check. The stuck v0.23.2 container was manually stopped before deployment.
 - Removal condition: the release build moves to an execution boundary with native
   bounded runtime, complete descendant cleanup, and equivalent diagnostics.
+
+** Extracted runtime library boundaries
+
+- Problem: Autolith carried duplicate implementations for compact identifiers,
+  restricted native configuration parsing, retained generations, child-job
+  scheduling, and macOS command-policy translation.
+- Behavior: pinned =idsmall=, =sexp-config=, =sbcl-generations=, =cl-jobpond=,
+  and =cl-exec-sandbox= now own those reusable mechanics. Autolith retains its
+  product-specific migration, validation, provenance, atomic state, authority,
+  cancellation, and output policies. Two narrow compatibility adapters preserve
+  standard keyword-to-string reader boundaries and publish task pool limits under
+  the library's worker lock.
+- Scope and location: tracked project work in =src/conversation/=,
+  =src/configuration/native-source.lisp=, =src/mcp/=, =src/skills/=,
+  =src/state/generations.lisp=, =src/task/=, =src/tools/workspace.lisp=,
+  dependency locks, Nix packaging, architecture documentation, and regressions.
+- Verification: parser adjacency, checkpoint fork detachment, concurrent hurry-up
+  admission and policy updates, invalid UTF-8 shell output, dependency builds,
+  and the complete 3,582-test repository check pass.
+- Removal condition: =sexp-config= accepts standard terminating-macro boundaries
+  directly and =cl-jobpond= exposes one public atomic pool-policy update operation;
+  remove the corresponding Autolith adapters independently when each condition is
+  met.
 
 * Candidates
 
