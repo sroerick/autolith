@@ -631,197 +631,51 @@ stall discovery."
        "Could not read SKILL.sexp: ~A"
        condition))))
 
-(-> skill--preflight-source (string) null)
-(defun skill--preflight-source (source)
-  "Reject unsupported reader syntax and excessive parenthesis depth in SOURCE."
-  (let ((depth 0)
-        (in-string-p nil)
-        (escaped-p nil)
-        (in-comment-p nil))
-    (labels
-        ((delimiter-p (character)
-           (find character
-                 '(#\( #\) #\; #\Space #\Tab #\Newline #\Return #\Page)))
+(-> skill--source-grammar () source-grammar)
+(defun skill--source-grammar ()
+  "Return the bounded native data grammar one SKILL.sexp may use.
 
-         (native-keyword-token-p (token)
-           (and (plusp (length token))
-                (char= (char token 0) #\:)
-                (some
-                 (lambda (keyword)
-                   (string-equal
-                    token
-                    (format nil ":~A" (symbol-name keyword))))
-                 *skill-native-keywords*)))
+The grammar is rebuilt for every read so that a live change to the keyword or
+bound policy takes effect without reloading this file. Charging list length to
+the depth budget keeps one bound over both nesting and length, and withholding
+COMMON-LISP from the reader package keeps a bare symbol from naming anything."
+  (make-source-grammar
+   :label "SKILL.sexp"
+   :keywords *skill-native-keywords*
+   :maximum-depth *skill-form-depth-limit*
+   :maximum-nodes *skill-form-node-limit*
+   :list-tails-increase-depth-p t
+   :common-lisp-symbols-permitted-p nil))
 
-         (validate-keyword-token (start)
-           (let* ((end
-                    (or
-                     (position-if #'delimiter-p source :start start)
-                     (length source)))
-                  (token (subseq source start end)))
-             (when (find-if
-                    (lambda (character)
-                      (find character '(#\: #\\ #\| #\#)))
-                    token
-                    :start 1)
-               (skill--definition-fail
-                :invalid-syntax
-                "SKILL.sexp does not permit escaped or package-qualified symbols."))
-             (unless (native-keyword-token-p token)
-               (skill--definition-fail
-                :unknown-field
-                "SKILL.sexp contains unknown keyword token ~A."
-                token)))))
-      (loop for character across source
-            for index from 0
-            do
-               (cond
-                 (in-comment-p
-                  (when (char= character #\Newline)
-                    (setf in-comment-p nil)))
-                 (in-string-p
-                  (cond
-                    (escaped-p
-                     (setf escaped-p nil))
-                    ((char= character #\\)
-                     (setf escaped-p t))
-                    ((char= character #\")
-                     (setf in-string-p nil))))
-                 ((char= character #\;)
-                  (setf in-comment-p t))
-                 ((char= character #\")
-                  (setf in-string-p t))
-                 ((find character '(#\# #\' #\` #\, #\\ #\|))
-                  (skill--definition-fail
-                   :invalid-syntax
-                   "SKILL.sexp uses unsupported reader syntax ~S."
-                   character))
-                 ((char= character #\:)
-                  (when
-                      (and (plusp index)
-                           (not
-                            (delimiter-p
-                             (char source (1- index)))))
-                    (skill--definition-fail
-                     :invalid-syntax
-                     "SKILL.sexp does not permit package-qualified symbols."))
-                  (validate-keyword-token index))
-                 ((char= character #\()
-                  (incf depth)
-                  (when (> depth *skill-form-depth-limit*)
-                    (skill--definition-fail
-                     :data-too-deep
-                     "SKILL.sexp exceeds the structural depth limit of ~D."
-                     *skill-form-depth-limit*)))
-                 ((char= character #\))
-                  (decf depth)
-                  (when (minusp depth)
-                    (skill--definition-fail
-                     :invalid-syntax
-                     "SKILL.sexp contains an unmatched closing parenthesis."))))))
-    (when in-string-p
-      (skill--definition-fail
-       :invalid-syntax
-       "SKILL.sexp contains an unterminated string."))
-    (unless (zerop depth)
-      (skill--definition-fail
-       :invalid-syntax
-       "SKILL.sexp contains unbalanced parentheses."))
-    nil))
-
-(-> skill--unsupported-reader-syntax (stream character) t)
-(defun skill--unsupported-reader-syntax (stream character)
-  "Reject CHARACTER as unsupported SKILL.sexp reader syntax."
-  (declare (ignore stream))
-  (skill--definition-fail
-   :invalid-syntax
-   "SKILL.sexp uses unsupported reader syntax ~S."
-   character))
-
-(-> skill--fresh-readtable () readtable)
-(defun skill--fresh-readtable ()
-  "Return a fresh standard readtable restricted to native skill data syntax."
-  (let ((readtable (copy-readtable nil)))
-    (dolist (character '(#\# #\' #\` #\,))
-      (set-macro-character character
-                           #'skill--unsupported-reader-syntax
-                           nil
-                           readtable))
-    readtable))
+(-> skill--source-diagnostic-kind (sexp-config-error) skill-diagnostic-kind)
+(defun skill--source-diagnostic-kind (condition)
+  "Return the skill diagnostic kind reporting CONDITION."
+  (case (sexp-config-error-kind condition)
+    (:unknown-field ':unknown-field)
+    (:data-too-deep ':data-too-deep)
+    (:data-too-large ':data-too-large)
+    ((:invalid-structure :invalid-value) ':invalid-structure)
+    (otherwise ':invalid-syntax)))
 
 (-> skill--read-one-form (string) t)
 (defun skill--read-one-form (source)
-  "Read and return exactly one form from bounded SOURCE."
-  (skill--preflight-source source)
+  "Read and return exactly one native form from bounded SOURCE."
   (handler-case
-      (let ((reader-package
-              (make-package
-               (format nil
-                       "AUTOLITH-SKILL-READER-~A"
-                       (make-identifier))
-               :use nil)))
-        (unwind-protect
-             (let ((*package* reader-package)
-                   (*read-eval* nil)
-                   (*read-suppress* nil)
-                   (*read-base* 10)
-                   (*readtable* (skill--fresh-readtable))
-                   (end (list :end)))
-               (with-input-from-string (stream source)
-                 (let ((form (read stream nil end)))
-                   (when (eq form end)
-                     (skill--definition-fail
-                      :invalid-syntax
-                      "SKILL.sexp contains no form."))
-                   (unless (eq (read stream nil end) end)
-                     (skill--definition-fail
-                      :invalid-syntax
-                      "SKILL.sexp must contain exactly one top-level form."))
-                   form)))
-          (delete-package reader-package)))
-    (skill--definition-error (condition)
-      (error condition))
-    (error (condition)
-      (skill--definition-fail
-       :invalid-syntax
-       "Could not read SKILL.sexp: ~A"
-       condition))))
+      (read-source source (skill--source-grammar))
+    (sexp-config-error (condition)
+      (skill--definition-fail (skill--source-diagnostic-kind condition)
+                              "~A"
+                              (sexp-config-error-message condition)))))
 
 (-> skill--validate-tree (t) null)
 (defun skill--validate-tree (form)
   "Reject improper, circular, shared, deep, or oversized FORM structure."
-  (let ((seen (make-hash-table :test #'eq))
-        (nodes 0))
-    (labels
-        ((walk (value depth list-tail-p)
-           (when (> depth *skill-form-depth-limit*)
-             (skill--definition-fail
-              :data-too-deep
-              "SKILL.sexp exceeds the structural depth limit of ~D."
-              *skill-form-depth-limit*))
-           (incf nodes)
-           (when (> nodes *skill-form-node-limit*)
-             (skill--definition-fail
-              :data-too-large
-              "SKILL.sexp exceeds the structural node limit of ~D."
-              *skill-form-node-limit*))
-           (cond
-             ((consp value)
-              (when (gethash value seen)
-                (skill--definition-fail
-                 :invalid-structure
-                 "SKILL.sexp contains circular or shared list structure."))
-              (setf (gethash value seen) t)
-              (walk (first value) (1+ depth) nil)
-              (walk (rest value) (1+ depth) t))
-             ((and list-tail-p value)
-              (skill--definition-fail
-               :invalid-structure
-               "SKILL.sexp contains an improper list.")))))
-      (walk form 0 nil))
-    nil))
-
-(-> skill--normalize-description (string) string)
+  (handler-case
+      (progn (validate-tree form (skill--source-grammar)) nil)
+    (sexp-config-error (condition)
+      (skill--definition-fail (skill--source-diagnostic-kind condition)
+                              "~A"
+                              (sexp-config-error-message condition)))))(-> skill--normalize-description (string) string)
 (defun skill--normalize-description (description)
   "Return DESCRIPTION with whitespace runs collapsed for catalog display."
   (string-trim
@@ -959,7 +813,6 @@ stall discovery."
          file-character-limit
          :root root)
       (let ((form (skill--read-one-form source)))
-        (skill--validate-tree form)
         (unless (and (consp form)
                      (eq (first form) ':autolith-skill))
           (skill--definition-fail
