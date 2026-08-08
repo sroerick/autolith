@@ -190,6 +190,33 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: child providers support reliable resumable handoff at
   arbitrary forced deadlines without losing in-progress context or work.
 
+** Bounded child activity traces
+
+- Problem: during long programming tasks, child agents could remain on one tool
+  such as =lisp.eval= for minutes while the one-line live strip exposed only that
+  tool name. Operators could not distinguish active work from a stuck child,
+  especially when the primary model was waiting for a blocking child.
+- Behavior: task progress retains eight completed tool milestones and the active
+  tool's elapsed duration. Detached children show the newest three milestones on
+  their compact row, with older activity collapsed to an ellipsis. Blocking
+  children are explicitly labelled and receive an indented row with up to six
+  milestones plus the assignment when the terminal-height budget permits.
+  Running blockers receive expansion priority, short terminals preserve a useful
+  primary row and overflow summary, and only tool activity is shown, never hidden
+  reasoning. The projection remains ephemeral and outside conversation history.
+- Scope and location: tracked project work in =src/task/state.lisp=,
+  =src/task/runtime.lisp=, =src/task/scheduler.lisp=, =src/terminal/ui.lisp=,
+  task, terminal, and application presentation tests, the specification, and the
+  guide.
+- Verification: chronological ordering, eight-item retention, active-tool timing,
+  injected clock isolation, sanitization, compact and expanded trace limits,
+  blocking priority, short-terminal row budgets, overflow, animation, and terminal
+  cleanup pass in focused checks. The complete repository check passes 3,841
+  tests.
+- Removal condition: a replacement task inspector provides equally immediate,
+  bounded, viewport-aware child progress and blocking visibility without exposing
+  hidden reasoning or adding durable transcript state.
+
 ** Actionable public Nix smoke annotations
 
 - Problem: unauthenticated GitHub Actions logs were unavailable, and generic

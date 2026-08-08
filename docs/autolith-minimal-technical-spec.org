@@ -712,10 +712,20 @@ Terminal publication is single-writer even when completion and cancellation race
 The interactive UI projects every queued and running job into a bounded live
 strip immediately above the modeline. Rows remain in stable creation order,
 running rows animate on one coalesced cadence, and terminal jobs disappear.
-Task workers publish state only; the input reader performs terminal painting so
+Each task snapshot retains at most eight completed tool names in chronological
+presentation order and exports elapsed milliseconds rather than a process-clock
+timestamp. The UI anchors that duration to its own monotonic clock. A detached
+running row shows at most three milestones and marks omitted older work with an
+ellipsis; the active tool includes live elapsed time. A blocking child is
+labelled on its primary row and receives an indented row with at most six
+milestones and its assignment when the viewport budget permits. Running
+blocking children have expansion priority over queued blocking children. The
+strip adapts its visible-agent and expansion counts to terminal height, never
+shows more than eight agents, and summarizes overflow when space permits. Task
+workers publish state only; the input reader performs terminal painting so
 concurrent progress cannot interleave escape sequences or force one repaint per
-event. This projection is ephemeral and never enters durable conversation
-history.
+event. This projection contains no hidden reasoning, is ephemeral, and never
+enters durable conversation history.
 
 While conversation compaction is active, the UI inserts one bright ASCII row
 directly above the modeline and below any child-agent strip. The row says
