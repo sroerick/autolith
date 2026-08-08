@@ -4232,7 +4232,7 @@
        (lambda (active-application input
                 &key steering-function tools-p tool-allowlist
                      tool-restriction-p goal-continuations-p
-                     fatal-agent-loop-errors-p)
+                     fatal-agent-loop-errors-p &allow-other-keys)
          (declare (ignore steering-function))
          (setf observed
                (list active-application input tools-p tool-allowlist
@@ -7001,7 +7001,7 @@
 
 (-> test-pending-input-persistence () null)
 (defun test-pending-input-persistence ()
-  "Test unprocessed follow-ups and steering survive restart and shutdown races."
+  "Test active, steering, recalled, and legacy pending input survives safely."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (terminal (make-instance 'recording-terminal :columns 60))
@@ -7015,17 +7015,49 @@
                           :ui ui))
          (controller nil)
          (restored nil)
-         (restored-after-shutdown nil))
+         (restored-after-append nil)
+         (restored-after-shutdown nil)
+         (legacy-controller nil))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
            (conversation-append-user-message conversation "seed")
            (terminal-ui-start ui)
            (setf controller (application-input-controller-create application))
-           (application-input-controller--enqueue controller ':message "active turn")
-           (application-input-controller--next-work controller)
-           (application-input-controller--enqueue-steering controller "steer later")
-           (application-input-controller--enqueue controller ':message "follow later")
+           (application-input-controller--enqueue
+            controller ':message "active turn")
+           (test-assert
+            (equal (application-input-controller--next-work controller)
+                   '(:message "active turn"))
+            "dispatch returns the accepted active message")
+           (let ((active-identifier
+                   (application-input-controller-active-work-identifier
+                    controller)))
+             (test-assert
+              (and (non-empty-string-p active-identifier)
+                   (equal (application-input-controller-active-work controller)
+                          '(:message "active turn")))
+              "dispatch keeps identified active work durable before append")
+             (multiple-value-bind (form complete-p)
+                 (snapshot-read
+                  (configuration-pending-inputs-path
+                   configuration (conversation-pathname conversation)))
+               (let ((active-form (and complete-p
+                                       (getf (rest form) :active-work))))
+                 (test-assert
+                  (and complete-p
+                       (= (getf (rest form) :version) 2)
+                       (string= (getf active-form :identifier)
+                                active-identifier)
+                       (equal (getf active-form :work)
+                              '(:message "active turn")))
+                  "version-two snapshots represent dispatched active work"))))
+           (application-input-controller--enqueue-steering
+            controller "first steering")
+           (application-input-controller--enqueue-steering
+            controller "second steering")
+           (application-input-controller--enqueue
+            controller ':message "follow later")
            (test-assert
             (application-input-controller--recall-follow-up controller)
             "pending persistence can hold one recalled follow-up")
@@ -7033,86 +7065,123 @@
             (not
              (application-input-controller--cycle-follow-up
               controller "edited follow later"))
-            "cycling a lone recalled follow-up only updates its durable content")
+            "editing a lone recall preserves its virtual FIFO position")
+           (let* ((entries
+                    (application-input-controller--take-steering controller))
+                  (first-entry (first entries)))
+             (test-assert
+              (and (= (length entries) 2)
+                   (equal (mapcar #'agent-steering-input-content entries)
+                          '("first steering" "second steering"))
+                   (= (length
+                       (application-input-controller-steering-in-flight-items
+                        controller))
+                      2))
+              "taking steering durably moves each message in flight")
+             ;; Simulate a crash after the first append but before its observer
+             ;; acknowledgement updates the pending snapshot.
+             (conversation-append-user-message
+              conversation
+              (agent-steering-input-content first-entry)
+              :pending-input-identifier
+              (agent-steering-input-identifier first-entry)))
            (application-input-controller-stop controller)
-           (setf controller nil)
-           (test-assert
-            (probe-file
-             (configuration-pending-inputs-path
-              configuration (conversation-pathname conversation)))
-            "pending inputs are written before controller stop")
-           (rename-file
-            (configuration-pending-inputs-path
-             configuration (conversation-pathname conversation))
-            (configuration-legacy-pending-inputs-path configuration))
-           (let* ((other-conversation
-                    (conversation-create configuration
-                                         :identifier "pending-inputs-other"))
-                  (other-application
-                    (make-instance 'application
-                                   :configuration configuration
-                                   :conversation other-conversation
-                                   :ui ui))
-                  (other-controller nil))
-             (unwind-protect
-                  (progn
-                    (setf other-controller
-                          (application-input-controller-create other-application))
-                    (application-input-controller--enqueue
-                     other-controller ':message "other follow-up")
-                    (application-input-controller-stop other-controller)
-                    (setf other-controller nil)
-                    (test-assert
-                     (probe-file
-                      (configuration-pending-inputs-path
-                       configuration
-                       (conversation-pathname other-conversation)))
-                     "another conversation keeps its own pending snapshot")
-                    (test-assert
-                     (probe-file
-                      (configuration-legacy-pending-inputs-path configuration))
-                     "another conversation cannot erase the legacy snapshot"))
-               (when other-controller
-                 (application-input-controller-stop other-controller))))
-           (setf restored (application-input-controller-create application))
-           (test-assert
-            (and
-             (probe-file
-              (configuration-pending-inputs-path
-               configuration (conversation-pathname conversation)))
-             (not
-              (probe-file
-               (configuration-legacy-pending-inputs-path configuration))))
-            "loading a legacy snapshot migrates it to the conversation path")
-           (test-assert
-            (equal (application-input-controller-steering-items restored)
-                   '("steer later"))
-            "steering is restored for the same conversation")
+           (setf controller nil
+                 restored (application-input-controller-create application))
            (test-assert
             (equal (application-input-controller-work-items restored)
-                   '((:message "edited follow later")))
-            "a recalled follow-up is restored at its virtual FIFO position")
-           ;; Reproduce an enqueue publisher delayed until ordinary shutdown
-           ;; has persisted and cleared the process-local queues.
-           (application-input-controller--prepare-shutdown restored ':interrupt)
-           (application-input-controller--publish-counts restored)
+                   '((:message "active turn")
+                     (:message "edited follow later")))
+            "active and recalled work restore in original FIFO order")
+           (test-assert
+            (equal (application-input-controller-steering-items restored)
+                   '("second steering"))
+            "already appended steering is filtered while later steering survives")
+           (test-assert
+            (equal (application-input-controller--next-work restored)
+                   '(:message "active turn"))
+            "restored active work dispatches before queued follow-ups")
+           (let ((active-identifier
+                   (application-input-controller-active-work-identifier restored)))
+             ;; Simulate the corresponding active-message append before its
+             ;; acknowledgement callback can publish the cleared snapshot.
+             (conversation-append-user-message
+              conversation
+              "active turn"
+              :pending-input-identifier active-identifier))
            (application-input-controller-stop restored)
-           (setf restored nil)
-           (setf restored-after-shutdown
+           (setf restored nil
+                 restored-after-append
                  (application-input-controller-create application))
            (test-assert
             (equal
+             (application-input-controller-work-items restored-after-append)
+             '((:message "second steering")
+               (:message "edited follow later")))
+            "a durably appended active message is not restored twice")
+           (test-assert
+            (null
              (application-input-controller-steering-items
-              restored-after-shutdown)
-             '("steer later"))
-            "a delayed publisher cannot erase shutdown steering")
+              restored-after-append))
+            "steering becomes ordinary ordered work when its old turn is durable")
+           ;; Reproduce a publisher delayed until ordinary shutdown has persisted
+           ;; and cleared the process-local queues.
+           (application-input-controller--prepare-shutdown
+            restored-after-append ':interrupt)
+           (application-input-controller--publish-counts restored-after-append)
+           (application-input-controller-stop restored-after-append)
+           (setf restored-after-append nil
+                 restored-after-shutdown
+                 (application-input-controller-create application))
            (test-assert
             (equal
              (application-input-controller-work-items restored-after-shutdown)
-             '((:message "edited follow later")))
-            "a delayed publisher cannot erase shutdown follow-ups"))
+             '((:message "second steering")
+               (:message "edited follow later")))
+            "a delayed publisher cannot erase shutdown pending input")
+           (let* ((legacy-conversation
+                    (conversation-create configuration
+                                         :identifier "pending-legacy"))
+                  (legacy-application
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation legacy-conversation
+                                   :ui ui))
+                  (legacy-pathname
+                    (configuration-legacy-pending-inputs-path configuration))
+                  (canonical-pathname
+                    (configuration-pending-inputs-path
+                     configuration
+                     (conversation-pathname legacy-conversation))))
+             (snapshot-write
+              legacy-pathname
+              (list :pending-inputs
+                    :version 1
+                    :conversation-id "pending-legacy"
+                    :steering '("legacy steering")
+                    :work '((:message "legacy follow-up"))))
+             (setf legacy-controller
+                   (application-input-controller-create legacy-application))
+             (test-assert
+              (equal (application-input-controller-work-items legacy-controller)
+                     '((:message "legacy steering")
+                       (:message "legacy follow-up")))
+              "legacy steering and work migrate into executable FIFO order")
+             (test-assert
+              (and (probe-file canonical-pathname)
+                   (not (probe-file legacy-pathname)))
+              "legacy pending input migrates to its conversation-scoped path")
+             (multiple-value-bind (form complete-p)
+                 (snapshot-read canonical-pathname)
+               (test-assert
+                (and complete-p (= (getf (rest form) :version) 2))
+                "legacy migration publishes the current pending format"))))
+      (when legacy-controller
+        (application-input-controller-stop legacy-controller))
       (when restored-after-shutdown
         (application-input-controller-stop restored-after-shutdown))
+      (when restored-after-append
+        (application-input-controller-stop restored-after-append))
       (when restored
         (application-input-controller-stop restored))
       (when controller
@@ -7163,7 +7232,7 @@
             (list
              (list
               'application--run-message-input
-              (lambda (application input &key steering-function)
+              (lambda (application input &key steering-function &allow-other-keys)
                 (declare (ignore application steering-function))
                 (push (if (stringp input)
                           input
@@ -7269,7 +7338,7 @@
                   nil))
                (list
                 'application--run-message-input
-                (lambda (app input &key steering-function)
+                (lambda (app input &key steering-function &allow-other-keys)
                   (declare (ignore app input steering-function))
                   ':rate-limited)))
               (lambda ()

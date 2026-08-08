@@ -63,11 +63,23 @@
     :accessor application-input-controller-work-items
     :type list
     :documentation "FIFO message and command work submitted by the reader.")
+   (initial-work-items
+    :initarg :initial-work-items
+    :initform nil
+    :accessor application-input-controller-initial-work-items
+    :type list
+    :documentation "Ordered startup work excluded from durable pending input.")
    (steering-items
     :initform nil
     :accessor application-input-controller-steering-items
     :type list
     :documentation "FIFO user messages waiting for the active turn's next tool boundary.")
+   (steering-in-flight-items
+    :initform nil
+    :accessor application-input-controller-steering-in-flight-items
+    :type list
+    :documentation
+    "Identified steering messages drained but not yet durably acknowledged.")
    (follow-up-edit-index
     :initform nil
     :accessor application-input-controller-follow-up-edit-index
@@ -94,6 +106,16 @@
     :accessor application-input-controller-active-p
     :type boolean
     :documentation "Whether the main thread is processing one work item.")
+   (active-work
+    :initform nil
+    :accessor application-input-controller-active-work
+    :type (option list)
+    :documentation "The ordinary pending work item currently being dispatched.")
+   (active-work-identifier
+    :initform nil
+    :accessor application-input-controller-active-work-identifier
+    :type (option string)
+    :documentation "The durable identifier of ACTIVE-WORK, when present.")
    (queued-work-paused-p
     :initform nil
     :accessor application-input-controller-queued-work-paused-p
@@ -327,12 +349,16 @@ second reports whether shutdown was prepared."
                 (application-input-controller-turn-cancellation-delivery-pending-p
                  controller)
                 t))
-        ;; Persist unprocessed follow-ups before clearing process-local queues
-        ;; so the next session can restore them for this conversation.
+        ;; Persist every accepted input before clearing process-local queues so
+        ;; an ordinary restart can restore it for this conversation.
         (application-input-controller--persist-pending controller)
         (setf (application-input-controller-stopping-p controller) t
+              (application-input-controller-initial-work-items controller) nil
               (application-input-controller-work-items controller) nil
               (application-input-controller-steering-items controller) nil
+              (application-input-controller-steering-in-flight-items controller) nil
+              (application-input-controller-active-work controller) nil
+              (application-input-controller-active-work-identifier controller) nil
               (application-input-controller-follow-up-edit-index controller) nil
               (application-input-controller-follow-up-edit-work controller) nil)
         (sb-thread:condition-broadcast
@@ -433,30 +459,189 @@ The caller must hold CONTROLLER's lock."
         (application-input-controller--insert-work-at work-items index work)
         work-items)))
 
+(-> application-input--pending-form
+    ((or string user-message-input))
+    (or string list))
+(defun application-input--pending-form (input)
+  "Return a portable durable form for pending user INPUT."
+  (etypecase input
+    (string
+     (copy-seq input))
+    (user-message-input
+     (list :user-message-input
+           :version 1
+           :text (copy-seq (user-message-input-text input))
+           :image-pathnames
+           (mapcar #'namestring
+                   (user-message-input-image-pathnames input))))))
+
+(-> application-input--restore-pending-form
+    (t)
+    (option (or string user-message-input)))
+(defun application-input--restore-pending-form (form)
+  "Return validated pending input restored from durable FORM."
+  (cond
+    ((stringp form)
+     (copy-seq form))
+    ((and (listp form)
+          (eq (first form) ':user-message-input)
+          (= (or (getf (rest form) :version) 0) 1))
+     (let ((text (getf (rest form) :text))
+           (image-names (getf (rest form) :image-pathnames)))
+       (when (and (stringp text)
+                  (listp image-names)
+                  (every #'stringp image-names))
+         (handler-case
+             (let ((image-pathnames (mapcar #'pathname image-names)))
+               (when (every #'uiop:absolute-pathname-p image-pathnames)
+                 (user-message-input-create
+                  :text (copy-seq text)
+                  :image-pathnames image-pathnames)))
+           (error ()
+             nil)))))
+    (t
+     nil)))
+
+(-> application-input-controller--pending-work-entry-form
+    (list)
+    (option list))
+(defun application-input-controller--pending-work-entry-form (work)
+  "Return the durable form for one restorable WORK item."
+  (when (application-input-controller--follow-up-work-p work)
+    (list (first work)
+          (application-input--pending-form (second work)))))
+
 (-> application-input-controller--pending-work-form (list) list)
 (defun application-input-controller--pending-work-form (work-items)
   "Return durable forms for WORK-ITEMS that can be restored after restart."
-  (loop for work in work-items
-        for kind = (first work)
-        for input = (second work)
-        when (and (member kind '(:message :command) :test #'eq)
-                  (typep input '(or string user-message-input)))
-          collect (list kind (application-input--text input))))
+  (remove nil
+          (mapcar #'application-input-controller--pending-work-entry-form
+                  work-items)))
+
+(-> application-input-controller--restore-work-item (t) (option list))
+(defun application-input-controller--restore-work-item (form)
+  "Return one validated in-memory work item restored from durable FORM."
+  (when (and (listp form)
+             (member (first form) '(:message :command) :test #'eq))
+    (let ((input (application-input--restore-pending-form (second form))))
+      (when input
+        (list (first form) input)))))
 
 (-> application-input-controller--restore-work-items (list) list)
 (defun application-input-controller--restore-work-items (forms)
   "Return in-memory work items restored from durable FORMS."
-  (loop for form in forms
-        when (and (listp form)
-                  (member (first form) '(:message :command) :test #'eq)
-                  (stringp (second form)))
-          collect (list (first form) (copy-seq (second form)))))
+  (remove nil
+          (mapcar #'application-input-controller--restore-work-item forms)))
+
+(-> application-input-controller--pending-steering-entry-form
+    (agent-steering-input)
+    list)
+(defun application-input-controller--pending-steering-entry-form (entry)
+  "Return the durable form for identified in-flight steering ENTRY."
+  (list :identifier (copy-seq (agent-steering-input-identifier entry))
+        :input (application-input--pending-form
+                (agent-steering-input-content entry))))
+
+(-> application-input-controller--restore-steering-entry
+    (t)
+    (option agent-steering-input))
+(defun application-input-controller--restore-steering-entry (form)
+  "Return one validated identified steering entry restored from FORM."
+  (when (listp form)
+    (let ((identifier (getf form :identifier))
+          (input (application-input--restore-pending-form (getf form :input))))
+      (when (and (non-empty-string-p identifier) input)
+        (agent-steering-input-create
+         :identifier (copy-seq identifier)
+         :content input)))))
+
+(-> application-input-controller--pending-state
+    (list string)
+    (option list))
+(defun application-input-controller--pending-state (form conversation-identifier)
+  "Return normalized validated pending state from durable FORM."
+  (when (and (listp form)
+             (eq (first form) ':pending-inputs)
+             (stringp (getf (rest form) :conversation-id))
+             (string= (getf (rest form) :conversation-id)
+                      conversation-identifier))
+    (let ((version (or (getf (rest form) :version) 0)))
+      (case version
+        (1
+         (let* ((steering-forms (getf (rest form) :steering))
+                (work-forms (getf (rest form) :work))
+                (steering
+                  (and (listp steering-forms)
+                       (mapcar #'application-input--restore-pending-form
+                               steering-forms)))
+                (work
+                  (and (listp work-forms)
+                       (mapcar #'application-input-controller--restore-work-item
+                               work-forms))))
+           (when (and (listp steering-forms)
+                      (listp work-forms)
+                      (every #'identity steering)
+                      (every #'identity work))
+             (list :snapshot-identifier (make-identifier)
+                   :active-work nil
+                   :active-work-identifier nil
+                   :steering-in-flight-items nil
+                   :steering-items steering
+                   :work-items work
+                   :legacy-p t))))
+        (2
+         (let* ((snapshot-identifier
+                  (getf (rest form) :snapshot-identifier))
+                (active-form (getf (rest form) :active-work))
+                (active-work
+                  (and active-form
+                       (application-input-controller--restore-work-item
+                        (getf active-form :work))))
+                (active-work-identifier
+                  (and active-form (getf active-form :identifier)))
+                (in-flight-forms (getf (rest form) :steering-in-flight))
+                (in-flight
+                  (and (listp in-flight-forms)
+                       (mapcar
+                        #'application-input-controller--restore-steering-entry
+                        in-flight-forms)))
+                (steering-forms (getf (rest form) :steering))
+                (steering
+                  (and (listp steering-forms)
+                       (mapcar #'application-input--restore-pending-form
+                               steering-forms)))
+                (work-forms (getf (rest form) :work))
+                (work
+                  (and (listp work-forms)
+                       (mapcar #'application-input-controller--restore-work-item
+                               work-forms))))
+           (when (and (non-empty-string-p snapshot-identifier)
+                      (or (null active-form)
+                          (and (non-empty-string-p active-work-identifier)
+                               active-work))
+                      (listp in-flight-forms)
+                      (every #'identity in-flight)
+                      (listp steering-forms)
+                      (every #'identity steering)
+                      (listp work-forms)
+                      (every #'identity work))
+             (list :snapshot-identifier (copy-seq snapshot-identifier)
+                   :active-work active-work
+                   :active-work-identifier
+                   (and active-work-identifier
+                        (copy-seq active-work-identifier))
+                   :steering-in-flight-items in-flight
+                   :steering-items steering
+                   :work-items work
+                   :legacy-p nil))))
+        (otherwise
+         nil)))))
 
 (-> application-input-controller--persist-pending
     (application-input-controller)
     null)
 (defun application-input-controller--persist-pending (controller)
-  "Atomically publish CONTROLLER's unprocessed follow-ups and steering."
+  "Atomically publish CONTROLLER's accepted but unprocessed input."
   (let* ((application (application-input-controller-application controller))
          (configuration
            (and (slot-boundp application 'configuration)
@@ -468,28 +653,54 @@ The caller must hold CONTROLLER's lock."
                (typep conversation 'conversation))
       (handler-case
           (let* ((pathname
-                  (configuration-pending-inputs-path
-                   configuration (conversation-pathname conversation)))
+                   (configuration-pending-inputs-path
+                    configuration (conversation-pathname conversation)))
+                 (active-work
+                   (application-input-controller-active-work controller))
+                 (active-work-identifier
+                   (application-input-controller-active-work-identifier controller))
+                 (active-work-form
+                   (and active-work
+                        active-work-identifier
+                        (let ((work-form
+                                (application-input-controller--pending-work-entry-form
+                                 active-work)))
+                          (and work-form
+                               (list :identifier active-work-identifier
+                                     :work work-form)))))
+                 (steering-in-flight
+                   (mapcar
+                    #'application-input-controller--pending-steering-entry-form
+                    (application-input-controller-steering-in-flight-items
+                     controller)))
                  (steering
-                   (mapcar #'application-input--text
+                   (mapcar #'application-input--pending-form
                            (application-input-controller-steering-items
                             controller)))
                  (work
                    (application-input-controller--pending-work-form
                     (application-input-controller--virtual-work-items
-                     controller)))
-                 (form
-                   (list :pending-inputs
-                         :version 1
-                         :conversation-id (conversation-identifier conversation)
-                         :steering steering
-                         :work work)))
-            (if (and (null steering) (null work))
+                     controller))))
+            (if (and (null active-work-form)
+                     (null steering-in-flight)
+                     (null steering)
+                     (null work))
                 (when (probe-file pathname)
                   (delete-file pathname))
                 (progn
                   (ensure-directories-exist pathname)
-                  (snapshot-write pathname form))))
+                  (snapshot-write
+                   pathname
+                   (list :pending-inputs
+                         :version 2
+                         :snapshot-identifier (make-identifier)
+                         :conversation-id
+                         (conversation-identifier conversation)
+                         :active-work active-work-form
+                         :steering-in-flight steering-in-flight
+                         :steering steering
+                         :work work)
+                   :mode #o600))))
         (error ()
           nil))))
   nil)
@@ -498,7 +709,7 @@ The caller must hold CONTROLLER's lock."
     (application-input-controller)
     null)
 (defun application-input-controller--load-pending (controller)
-  "Restore unprocessed follow-ups and steering for CONTROLLER's conversation."
+  "Restore accepted pending input for CONTROLLER's conversation."
   (let* ((application (application-input-controller-application controller))
          (configuration
            (and (slot-boundp application 'configuration)
@@ -522,30 +733,69 @@ The caller must hold CONTROLLER's lock."
           (handler-case
               (multiple-value-bind (form complete-p)
                   (snapshot-read source-pathname)
-                (when (and complete-p
-                           (listp form)
-                           (eq (first form) :pending-inputs)
-                           (= (or (getf (rest form) :version) 0) 1)
-                           (string= (getf (rest form) :conversation-id)
-                                    (conversation-identifier conversation)))
-                  (let ((steering (getf (rest form) :steering))
-                        (work (getf (rest form) :work)))
-                    (when (listp steering)
-                      (setf (application-input-controller-steering-items
-                             controller)
-                            (mapcar #'copy-seq
-                                    (remove-if-not #'stringp steering))))
-                    (when (listp work)
-                      (setf (application-input-controller-work-items controller)
-                            (append
-                             (application-input-controller--restore-work-items
-                              work)
-                             (application-input-controller-work-items
-                              controller)))))
-                  (when (equal source-pathname legacy-pathname)
-                    (application-input-controller--persist-pending controller)
-                    (when (probe-file pathname)
-                      (delete-file legacy-pathname)))))
+                (let ((state
+                        (and complete-p
+                             (application-input-controller--pending-state
+                              form (conversation-identifier conversation)))))
+                  (when state
+                    (let* ((persisted-identifiers
+                             (conversation-pending-input-identifiers conversation))
+                           (active-work
+                             (getf state :active-work))
+                           (active-work-identifier
+                             (getf state :active-work-identifier))
+                           (restore-active-p
+                             (and active-work
+                                  (not
+                                   (member active-work-identifier
+                                           persisted-identifiers
+                                           :test #'string=))))
+                           (in-flight
+                             (remove-if
+                              (lambda (entry)
+                                (member
+                                 (agent-steering-input-identifier entry)
+                                 persisted-identifiers
+                                 :test #'string=))
+                              (getf state :steering-in-flight-items)))
+                           (steering
+                             (append
+                              (mapcar #'agent-steering-input-content in-flight)
+                              (getf state :steering-items)))
+                           (restored-work
+                             (append
+                              (when restore-active-p
+                                (list active-work))
+                              (unless restore-active-p
+                                (mapcar (lambda (input)
+                                          (list ':message input))
+                                        steering))
+                              (getf state :work-items))))
+                      (with-lock-held
+                          ((application-input-controller-lock controller))
+                        (setf
+                         (application-input-controller-active-work controller) nil
+                         (application-input-controller-active-work-identifier
+                          controller)
+                         nil
+                         (application-input-controller-steering-in-flight-items
+                          controller)
+                         nil
+                         (application-input-controller-steering-items controller)
+                         (if restore-active-p
+                             (append steering
+                                     (application-input-controller-steering-items
+                                      controller))
+                             (application-input-controller-steering-items
+                              controller))
+                         (application-input-controller-work-items controller)
+                         (append restored-work
+                                 (application-input-controller-work-items
+                                  controller)))
+                        (application-input-controller--persist-pending controller))
+                      (when (equal source-pathname legacy-pathname)
+                        (when (probe-file pathname)
+                          (delete-file legacy-pathname)))))))
             (error ()
               nil))))))
   nil)
@@ -591,7 +841,10 @@ snapshot after shutdown cleared the process-local queues."
    (null
     (with-lock-held ((application-input-controller-lock controller))
       (or (application-input-controller-active-p controller)
+          (application-input-controller-initial-work-items controller)
           (application-input-controller-work-items controller)
+          (application-input-controller-steering-items controller)
+          (application-input-controller-steering-in-flight-items controller)
           (application-input-controller-follow-up-edit-work controller))))))
 
 (-> application-input-controller--follow-up-editing-p
@@ -663,20 +916,15 @@ snapshot after shutdown cleared the process-local queues."
     null)
 (defun application-input-controller--record-failure
     (controller condition backtrace)
-  "Record reader CONDITION, discard pending work, and wake the main thread."
+  "Record reader CONDITION, preserve pending input, and wake the main thread."
   (let ((active-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-failure controller)
         (setf (application-input-controller-failure controller) condition
               (application-input-controller-failure-backtrace controller) backtrace
-              (application-input-controller-work-items controller) nil
-              (application-input-controller-steering-items controller) nil
-              (application-input-controller-follow-up-edit-index controller) nil
-              (application-input-controller-follow-up-edit-work controller) nil
               (application-input-controller-stopping-p controller) t)
-        ;; Reader failure deliberately discards queued work, unlike ordinary
-        ;; shutdown, so finalize an empty durable snapshot before publishers
-        ;; begin skipping stopping controllers.
+        ;; A reader failure is a fatal process failure. Publish every accepted input
+        ;; before later stopping-state publishers begin skipping persistence.
         (application-input-controller--persist-pending controller))
       (setf active-p (application-input-controller-active-p controller))
       (sb-thread:condition-broadcast
@@ -794,14 +1042,71 @@ snapshot after shutdown cleared the process-local queues."
     (application-input-controller)
     list)
 (defun application-input-controller--take-steering (controller)
-  "Return and consume CONTROLLER's messages for the completed tool boundary."
-  (let ((messages nil))
+  "Move queued steering into durable in-flight entries and return them."
+  (let ((entries nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
-        (setf messages (application-input-controller-steering-items controller)
-              (application-input-controller-steering-items controller) nil)))
+        (setf entries
+              (mapcar
+               (lambda (input)
+                 (agent-steering-input-create
+                  :identifier (make-identifier)
+                  :content input))
+               (application-input-controller-steering-items controller))
+              (application-input-controller-steering-in-flight-items controller)
+              (nconc
+               (application-input-controller-steering-in-flight-items controller)
+               entries)
+              (application-input-controller-steering-items controller) nil)
+        ;; The old snapshot still contains queued steering if this atomic
+        ;; replacement fails, while the new snapshot names every in-flight item.
+        (application-input-controller--persist-pending controller)))
     (application-input-controller--publish-counts controller)
-    messages))
+    entries))
+
+(-> application-input-controller--acknowledge-active-work
+    (application-input-controller non-empty-string)
+    boolean)
+(defun application-input-controller--acknowledge-active-work
+    (controller identifier)
+  "Forget active work IDENTIFIER after its user message is durable."
+  (let ((acknowledged-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (when (and (application-input-controller-active-work controller)
+                 (string=
+                  identifier
+                  (or (application-input-controller-active-work-identifier
+                       controller)
+                      "")))
+        (setf (application-input-controller-active-work controller) nil
+              (application-input-controller-active-work-identifier controller) nil
+              acknowledged-p t)
+        (application-input-controller--persist-pending controller)))
+    acknowledged-p))
+
+(-> application-input-controller--acknowledge-steering
+    (application-input-controller non-empty-string)
+    boolean)
+(defun application-input-controller--acknowledge-steering (controller identifier)
+  "Forget exactly one in-flight steering IDENTIFIER after durable append."
+  (let ((acknowledged-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (let ((entry
+              (find identifier
+                    (application-input-controller-steering-in-flight-items
+                     controller)
+                    :key #'agent-steering-input-identifier
+                    :test #'string=)))
+        (when entry
+          (setf (application-input-controller-steering-in-flight-items controller)
+                (delete entry
+                        (application-input-controller-steering-in-flight-items
+                         controller)
+                        :test #'eq
+                        :count 1)
+                acknowledged-p t)
+          (application-input-controller--persist-pending controller))))
+    acknowledged-p))
 
 (-> application-input-controller--request-exit
     (application-input-controller keyword)
@@ -1719,7 +2024,7 @@ commit their busy policy before the recalled work is removed."
          (controller
            (make-instance 'application-input-controller
                           :application application
-                          :work-items (copy-tree initial-work-items)
+                          :initial-work-items (copy-tree initial-work-items)
                           :later-state later-state
                           :pending-later-entries
                           (copy-list (later-state-entries later-state))
@@ -1746,8 +2051,19 @@ commit their busy policy before the recalled work is removed."
           (return))
         (cond
           ((and (not (application-localgroup-paused-p application))
+                (application-input-controller-initial-work-items controller))
+           (setf work
+                 (pop
+                  (application-input-controller-initial-work-items controller))
+                 (application-input-controller-active-p controller) t)
+           (return))
+          ((and (not (application-localgroup-paused-p application))
+                (null (application-input-controller-initial-work-items controller))
                 (null (application-input-controller-work-items controller))
                 (null (application-input-controller-steering-items controller))
+                (null
+                 (application-input-controller-steering-in-flight-items
+                  controller))
                 (null
                  (application-input-controller-follow-up-edit-index controller)))
            (let ((mode (application-localgroup-take-ready-handoff application)))
@@ -1765,10 +2081,20 @@ commit their busy policy before the recalled work is removed."
                   0)))
            (setf work (pop (application-input-controller-work-items controller))
                  (application-input-controller-active-p controller) t)
+           (if (application-input-controller--follow-up-work-p work)
+               (setf (application-input-controller-active-work controller) work
+                     (application-input-controller-active-work-identifier controller)
+                     (make-identifier))
+               (setf (application-input-controller-active-work controller) nil
+                     (application-input-controller-active-work-identifier controller)
+                     nil))
            (when (application-input-controller-follow-up-edit-index controller)
              (decf
               (application-input-controller-follow-up-edit-index controller)))
-          (return)))
+           ;; The prior snapshot retains queued WORK until this atomic replacement
+           ;; durably represents it as active work.
+           (application-input-controller--persist-pending controller)
+           (return)))
         (let* ((later-wait
                  (application-input-controller--later-wait-seconds
                   controller (get-universal-time)))
@@ -1806,7 +2132,12 @@ commit their busy policy before the recalled work is removed."
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
         (let ((steering-items
-                (application-input-controller-steering-items controller)))
+                (append
+                 (mapcar
+                  #'agent-steering-input-content
+                  (application-input-controller-steering-in-flight-items
+                   controller))
+                 (application-input-controller-steering-items controller))))
           (when steering-items
             (setf (application-input-controller-work-items controller)
                   (append (mapcar (lambda (input)
@@ -1817,11 +2148,15 @@ commit their busy policy before the recalled work is removed."
               (incf
                (application-input-controller-follow-up-edit-index controller)
                (length steering-items))))
-          (setf (application-input-controller-steering-items controller) nil)))
+          (setf (application-input-controller-steering-in-flight-items controller)
+                nil
+                (application-input-controller-steering-items controller) nil)))
       (setf clear-notice-p
             (or (application-input-controller-turn-cancellation-p controller)
                 (application-input-controller-interrupt-deadline controller))
             (application-input-controller-active-p controller) nil
+            (application-input-controller-active-work controller) nil
+            (application-input-controller-active-work-identifier controller) nil
             (application-input-controller-turn-cancellation-p controller) nil
             (application-input-controller-turn-cancellation-delivery-pending-p
              controller)
@@ -1857,10 +2192,14 @@ commit their busy policy before the recalled work is removed."
     (with-lock-held ((application-input-controller-lock controller))
       (setf (application-input-controller-stopping-p controller) t
             (application-input-controller-reader-paused-p controller) t
+            (application-input-controller-initial-work-items controller) nil
             (application-input-controller-work-items controller) nil
             (application-input-controller-steering-items controller) nil
+            (application-input-controller-steering-in-flight-items controller) nil
             (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
+            (application-input-controller-active-work controller) nil
+            (application-input-controller-active-work-identifier controller) nil
             (application-input-controller-queued-work-paused-p controller) nil
             (application-input-controller-follow-up-edit-index controller) nil
             (application-input-controller-follow-up-edit-work controller) nil
@@ -1901,6 +2240,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 (-> application--run-message-input
     (application (or string user-message-input)
      &key (:steering-function (option function))
+          (:steering-persisted-function (option function))
+          (:user-message-persisted-function (option function))
+          (:pending-input-identifier (option non-empty-string))
           (:tools-p boolean)
           (:tool-allowlist (option list))
           (:tool-restriction-p boolean)
@@ -1908,10 +2250,11 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (:fatal-agent-loop-errors-p boolean))
     keyword)
 (defun application--run-message-input
-    (application input &key steering-function (tools-p t)
-                            tool-allowlist (tool-restriction-p nil)
-                            (goal-continuations-p t)
-                            (fatal-agent-loop-errors-p t))
+    (application input
+     &key steering-function steering-persisted-function
+          user-message-persisted-function pending-input-identifier (tools-p t)
+          tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
+          (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling."
   (let ((signal-backtrace nil))
     (handler-bind
@@ -1925,6 +2268,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              application
              input
              :steering-function steering-function
+             :steering-persisted-function steering-persisted-function
+             :user-message-persisted-function user-message-persisted-function
+             :pending-input-identifier pending-input-identifier
              :tools-p tools-p
              :tool-allowlist tool-allowlist
              :tool-restriction-p tool-restriction-p
@@ -2058,10 +2404,17 @@ provider reset deadline, or a five-minute fallback when no reset is known."
         (with-lock-held ((application-input-controller-lock controller))
           (setf pending
                 (append
+                 (mapcar
+                  (lambda (entry)
+                    (list ':message (agent-steering-input-content entry)))
+                  (application-input-controller-steering-in-flight-items
+                   controller))
                  (mapcar (lambda (input)
                            (list ':message input))
                          (application-input-controller-steering-items controller))
                  (application-input-controller-work-items controller))
+                (application-input-controller-steering-in-flight-items controller)
+                nil
                 (application-input-controller-steering-items controller) nil
                 (application-input-controller-work-items controller) nil))
         (dolist (item pending)
@@ -2116,7 +2469,10 @@ provider reset deadline, or a five-minute fallback when no reset is known."
     null)
 (defun application-input-controller--run-work (controller work)
   "Run one submitted WORK item on the application main thread."
-  (let ((application (application-input-controller-application controller)))
+  (let ((application (application-input-controller-application controller))
+        (pending-input-identifier
+          (with-lock-held ((application-input-controller-lock controller))
+            (application-input-controller-active-work-identifier controller))))
     (case (first work)
       (:message
        (let ((result
@@ -2125,7 +2481,16 @@ provider reset deadline, or a five-minute fallback when no reset is known."
                 (second work)
                 :steering-function
                 (lambda ()
-                  (application-input-controller--take-steering controller)))))
+                  (application-input-controller--take-steering controller))
+                :steering-persisted-function
+                (lambda (identifier)
+                  (application-input-controller--acknowledge-steering
+                   controller identifier))
+                :user-message-persisted-function
+                (lambda (identifier)
+                  (application-input-controller--acknowledge-active-work
+                   controller identifier))
+                :pending-input-identifier pending-input-identifier)))
          (when (eq result ':rate-limited)
            (application-input-controller--defer-after-rate-limit controller))))
       (:recovery-diagnosis
