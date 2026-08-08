@@ -245,6 +245,45 @@ a user-local init.lisp change, or a private image commit.
   remove the corresponding Autolith adapters independently when each condition is
   met.
 
+** Crash-safe recovery input vaults
+
+- Problem: accepted follow-ups, commands, and steering could exist only in the
+  active controller when its Lisp image crashed. Recovery could then load a
+  durable pending snapshot into executable queues, and active Ctrl-C allowed
+  preserved queued work to resume as soon as cancellation completed.
+- Behavior: active Ctrl-C now holds queued follow-ups and unconsumed steering
+  until explicit new input resumes them. Pending snapshots preserve active work,
+  in-flight steering, stable identities, recovery provenance, and a durable
+  steering-order prefix. Recovery imports pending input idempotently into a
+  conversation-scoped vault before controller creation, starts with pending
+  loading disabled, keeps crash diagnosis first, and never submits recovered
+  input automatically. Startup warns while captures or storage failures remain.
+  =/vault= shows bounded chronological previews, =/vault-restore= transactionally
+  prepends captures in their exact active, restored-prefix, in-flight steering,
+  queued steering, and remaining-work order, and =/vault-discard= deletes only
+  attributed current-conversation state. Corrupt bytes remain unchanged and
+  ordinary ingress is blocked while persistence is unsafe; unattributed corrupt
+  process-global legacy state remains preserved and ignored.
+- Scope and location: tracked project work in =src/agent/runtime.lisp=,
+  =src/application/runtime.lisp=, =src/conversation/store.lisp=,
+  =src/terminal/responsive-input.lisp=, =src/configuration/settings.lisp=,
+  =src/application/recovery-input-vault.lisp=, =src/startup/main.lisp=, ASDF
+  wiring, regressions, README, guide, and specification. The implementation
+  commits are =b9a63f0=, =0c7a1e0=, =4ec8398=, =feca0f2=, =9d083c0=,
+  =7b482ee=, and =34c9dc4=.
+- Verification: vault import, legacy isolation, corruption preservation,
+  unattributed legacy handling, ordered restore, active restored-work crashes,
+  both rollback paths, scoped discard, disabled ordinary and recalled ingress,
+  recovery and ordinary startup, pending persistence, steering promotion,
+  quiescence, active interruption, command scheduling, diagnosis ordering and
+  tool surface, resume guidance, and responsive model input pass one per fresh
+  SBCL process under a 60-second timeout. Relevant parenthesis checks and
+  =git diff --check= pass. The complete repository check was intentionally not
+  run for this focused task.
+- Removal condition: a replacement input controller provides equivalent
+  conversation-scoped atomic persistence, explicit crash recovery, exact ordering,
+  corruption preservation, and transactional restore without this vault layer.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

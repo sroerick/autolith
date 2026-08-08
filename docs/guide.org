@@ -387,6 +387,9 @@ prefix from before selection. The commands are:
 /resume         pick a saved conversation to resume
 /conversations  list saved conversations
 /history        load the preceding 500 transcript entries
+/vault          inspect input preserved after an active-image crash
+/vault-restore  restore vaulted input before newer queued work
+/vault-discard  discard this conversation's vaulted input
 /cwd PATH       change the active workspace
 /auth [PROVIDER] authenticate the active or named provider
 /model          pick a registered model and reasoning effort
@@ -1148,6 +1151,30 @@ duplicated. A forwarded bare =resume= is consumed as part of that restoration
 and does not reopen the conversation picker. An explicit =resume ID= command
 overrides checkpoint-time conversation state and retains ordinary resume
 behavior.
+
+Before the recovered input controller is created, recovery validates the current
+conversation's durable pending-input snapshot and moves it into a
+conversation-scoped vault. The controller always starts without loading that
+snapshot, so crash diagnosis remains its first work item and recovered input is
+never submitted automatically. Every startup warns while vaulted input or a
+storage failure remains.
+
+=/vault= shows captures chronologically with bounded, sanitized previews.
+=/vault-restore= transactionally places every capture before newer queued work.
+Within each capture the order is active work, any older restored work prefix,
+steering already in flight, queued steering, then the remaining follow-ups and
+commands. Steering accepted while restored work runs remains after that older
+prefix across a later crash. =/vault-discard= removes only the current
+conversation's vault and any blocked pending snapshot attributable to it.
+
+A corrupt or truncated pending snapshot or vault is preserved byte for byte.
+Recovery disables pending-input persistence and blocks ordinary messages,
+recalled Enter submissions, and non-vault commands rather than risk losing or
+executing that state. The three exact vault controls remain available:
+=/vault= reports the validation failure, =/vault-restore= refuses an unsafe
+restore, and =/vault-discard= can remove attributed current-conversation state.
+An unreadable process-global legacy pending snapshot cannot be safely attributed,
+so recovery preserves and ignores it; scoped discard does not remove it.
 
 When the launcher supplies a valid bounded crash capsule, the resumed
 application queues one diagnosis turn before ordinary input. The model receives

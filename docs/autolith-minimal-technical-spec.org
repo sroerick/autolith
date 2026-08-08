@@ -1002,7 +1002,7 @@ with a distinguished recovery status.
 
 * 8. Persistence
 
-Autolith persists ten kinds of state:
+Autolith persists eleven kinds of state:
 
 - Source in Git.
 - Conversations as S-expression files.
@@ -1015,6 +1015,8 @@ Autolith persists ten kinds of state:
 - User-authored executable and declarative configuration, including native MCP
   definitions and Skills, under their configured discovery roots.
 - Per-project =AUTOLITH.org= offer decisions under the state root.
+- Conversation-scoped pending interactive input and recovery-vault captures as
+  atomic S-expression snapshots under the state root.
 
 ** 8.1 Conversation Files
 
@@ -1072,6 +1074,14 @@ conversation only after the old active process has exited. Conversation
 listing, picker metadata, and transcript history reads do not claim leases.
 Child tasks own separate private transcripts and never claim the primary
 conversation lease.
+
+Accepted interactive input that is not yet represented by a durable conversation
+record is published atomically in a conversation-scoped pending-input snapshot.
+The snapshot includes active work already dispatched from the controller,
+steering in flight, queued steering, queued follow-up messages and commands, a
+stable snapshot identifier, recovery-capture provenance, and the durable prefix
+that keeps older restored work ahead of later steering. Ordinary startup may
+load this snapshot. Recovery startup must vault it instead.
 
 When a crash leaves a complete provider function-call record without a
 correlated complete tool-result record, loading must append an explicit
@@ -1398,6 +1408,47 @@ rendered and history cursors before starting interactive work. A bare =resume=
 forwarded from the failed process must not open the conversation picker again.
 An explicit =resume ID= overrides the recovered conversation and retains
 ordinary resume behavior.
+
+Before constructing the recovered input controller, startup strictly validates
+the current conversation's pending snapshot and recovery vault. A valid pending
+snapshot becomes one chronological vault capture keyed by its stable snapshot
+identifier. Recovery atomically publishes the vault before deleting the pending
+snapshot, so repeating an interrupted import is idempotent. A valid legacy
+process-global snapshot is migrated only when its conversation identity matches.
+An unreadable or unattributed process-global legacy snapshot is preserved and
+ignored because scoped recovery cannot safely claim or delete it.
+
+The recovered controller is always created without loading pending input.
+Pending-input persistence remains enabled only when import and validation
+succeed. Consequently a capsule-backed diagnosis is the scheduler's first work
+item and no recovered input is submitted automatically. Startup warns while a
+capture or storage failure remains and states: =Nothing was submitted
+automatically.= It directs the user to =/vault=, =/vault-restore=, and
+=/vault-discard=.
+
+=/vault= presents captures chronologically with bounded sanitized previews.
+=/vault-restore= prepends every capture before newer controller work. Within each
+capture the exact order is active work, the durable prefix restored from older
+captures, steering already in flight, queued steering, then remaining follow-up
+messages and commands. The promotion prefix keeps steering accepted during
+restored active work after the older restored sequence across another crash.
+
+Restore is a durable transaction. It first publishes a pending snapshot that
+contains the restored work and the source capture identifiers, then deletes the
+vault, removes that provenance, and republishes the pending snapshot. A failure
+restores the prior controller state and recreates the vault before replacing the
+provenance-bearing snapshot. If vault recreation itself fails, that pending
+snapshot remains the authoritative copy and pending-input persistence is
+disabled rather than risking duplication or loss.
+
+=/vault-discard= deletes only the current conversation's vault and any blocked
+pending snapshot attributable to it. Corrupt or truncated pending and vault
+files are preserved byte for byte during validation. While such a failure keeps
+persistence disabled, ordinary messages, recalled Enter submissions, and
+non-vault commands are rejected. The three exact vault controls remain admitted
+so the user can inspect the failure, observe an unsafe restore refusal, or
+explicitly discard attributed state. Scoped discard never removes an
+unattributed corrupt process-global legacy snapshot.
 
 When a valid bounded crash capsule is available, startup queues exactly one
 model diagnosis turn before ordinary input. The turn receives the restored

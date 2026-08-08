@@ -148,6 +148,15 @@ Shift-Tab cycle command suggestions. Messages can be drafted and queued while
 AL is responding. Empty Tab recalls the newest queued follow-up; Shift-Tab then
 cycles older follow-ups for editing. Type =/help= for commands.
 
+After an active-image crash, recovery moves accepted but unprocessed input into
+a conversation-scoped vault and never submits it automatically. Startup warns
+while vaulted input or a storage problem remains. Use =/vault= for bounded
+chronological previews, =/vault-restore= to place recovered work before newer
+queued work in its original order, or =/vault-discard= to remove only that
+conversation's attributed recovery state. Corrupt recovery state is preserved
+unchanged and blocks ordinary submissions until it is safely resolved or
+discarded.
+
 * Repository map
 
 - =src/= contains the active agent in the single =autolith= package.
@@ -170,14 +179,14 @@ Autolith keeps user-authored Lisp, native MCP configuration, user Skills, and
 child-agent definitions under =${XDG_CONFIG_HOME:-~/.config}/autolith/=.
 Project Skills live below the project root's =.autolith/skills/=, and Autolith
 may provide lower-precedence bundled Skills. Credentials, preferences, exact
-command approvals, deferred inputs, live-mutation journals, and atomic
-selections belong under =${XDG_STATE_HOME:-~/.local/state}/autolith/=, together
-with the readable cached release availability and a private Git history of
-durable mutation snapshots. Conversations, canonical
-image commits, memories, generations, runtimes, matching implementation source,
-and worker images live under =${XDG_DATA_HOME:-~/.local/share}/autolith/=. Credentials
-never belong in Git, conversation files, memories, journals, manifests, or
-saved cores.
+command approvals, deferred and pending inputs, conversation-scoped recovery
+input vaults, live-mutation journals, and atomic selections belong under
+=${XDG_STATE_HOME:-~/.local/state}/autolith/=, together with the readable cached
+release availability and a private Git history of durable mutation snapshots.
+Conversations, canonical image commits, memories, generations, runtimes,
+matching implementation source, and worker images live under
+=${XDG_DATA_HOME:-~/.local/share}/autolith/=. Credentials never belong in Git,
+conversation files, memories, journals, manifests, or saved cores.
 
 Source remains authoritative for clean rebuilds. Saved cores retain exact live
 states; private image commits and each generation's =reconstruct.lisp= retain
