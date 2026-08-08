@@ -1547,14 +1547,16 @@ and exact cancellation.
 
 Ctrl-C with a nonempty idle input clears the draft. With an empty idle input it
 exits the interface without showing a force-exit confirmation. During an active
-turn, Escape or Ctrl-C cancels only that turn, preserves the draft and queued
-messages, and returns to the prompt. Active Ctrl-C shows a transient
-force-exit notice only if cancellation remains pending long enough for the
-option to be useful. A second Ctrl-C within 2.5 seconds
-restores the terminal and forces exit with status 130. The force option ends when
-cancellation finishes. Escape never opens or counts toward forced exit. Ordinary
-shutdown of a conversation with durable records displays the exact command that
-resumes its identifier; an empty conversation has no resume command.
+turn, Escape cancels only that turn, preserves the draft and queued messages,
+and permits queued work to continue normally. Active Ctrl-C cancels only the
+current turn, preserves the draft, and holds queued follow-ups plus unconsumed
+steering until explicit new input resumes them. It briefly explains the hold
+after cancellation. Active Ctrl-C still opens the transient 2.5-second force-exit
+window; a second Ctrl-C restores the terminal and forces exit with status 130.
+The force option ends when cancellation finishes. Escape never opens or counts
+toward forced exit. Ordinary shutdown of a conversation with durable records
+displays the exact command that resumes its identifier; an empty conversation
+has no resume command.
 
 Only command-line =autolith resume= may offer to create a missing root
 =AUTOLITH.org=. A resumed conversation qualifies when its recorded activity

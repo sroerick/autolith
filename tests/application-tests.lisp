@@ -1240,7 +1240,7 @@
 
 (-> test-active-turn-interrupt-events () null)
 (defun test-active-turn-interrupt-events ()
-  "Test Ctrl-C and Escape request turn-only cancellation without data loss."
+  "Test active Ctrl-C holds follow-ups while Escape permits continuation."
   (dolist (event '(:interrupt :escape))
     (let* ((now 10)
            (terminal (make-instance 'recording-terminal :columns 80))
@@ -1282,6 +1282,10 @@
       (test-assert
        (application-input-controller-turn-cancellation-p controller)
        "the cancellation lifecycle remains active until work cleanup finishes")
+      (test-assert
+       (eq (application-input-controller-queued-work-paused-p controller)
+           (eq event ':interrupt))
+       "only active Ctrl-C pauses queued work after cancellation")
       (test-assert
        (eq (not (null
                  (application-input-controller-interrupt-deadline controller)))
@@ -1326,9 +1330,23 @@
       (test-assert
        (and (not (application-input-controller-turn-cancellation-p controller))
             (null
-             (application-input-controller-interrupt-deadline controller))
-            (null (terminal-ui-notice ui)))
-       "work cleanup ends the cancellation lifecycle and force window")))
+             (application-input-controller-interrupt-deadline controller)))
+       "work cleanup ends the cancellation lifecycle and force window")
+      (test-assert
+       (eq (not (null (terminal-ui-notice ui)))
+           (eq event ':interrupt))
+       "only Ctrl-C explains that queued work remains held")
+      (when (eq event ':interrupt)
+        (test-assert
+         (application-input-controller-queued-work-paused-p controller)
+         "Ctrl-C leaves queued work paused after cancellation cleanup")
+        (application-input-controller--enqueue
+         controller ':message "explicitly resume")
+        (test-assert
+         (and
+          (not (application-input-controller-queued-work-paused-p controller))
+          (null (terminal-ui-notice ui)))
+         "new explicit input resumes held queued work and clears its notice"))))
   nil)
 
 (-> test-idle-interrupt-exits-without-force-hint () null)

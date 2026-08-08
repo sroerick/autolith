@@ -37,7 +37,10 @@ a user-local init.lisp change, or a private image commit.
   performs balanced best-effort cleanup. Terminal mode detection checks the input
   file descriptor's POSIX TTY status before inspecting termios, so stopping and
   restarting the UI for line-oriented secret prompts remains interactive even
-  when the Lisp stream wrapper reports noninteractive.
+  when the Lisp stream wrapper reports noninteractive. During an active turn,
+  Escape cancels and permits queued work to continue; Ctrl-C cancels and holds
+  queued follow-ups plus unconsumed steering until explicit input resumes them,
+  while retaining its second-press force-exit window.
 - Scope and location: tracked project work in =src/terminal/input.lisp=,
   =src/terminal/protocol.lisp=, =src/terminal/stream.lisp=,
   =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
@@ -45,8 +48,9 @@ a user-local init.lisp change, or a private image commit.
 - Verification: modified Enter, enhanced Tab, Shift-Tab, Ctrl-D, physical EOF,
   legacy input, bracketed, literal Ctrl-V, raw string-stream, OS-pipe multiline
   paste, ordinary buffered keys, protocol ordering, follow-up cycling,
-  descriptor-backed terminal restart, and cleanup regressions pass in focused
-  checks. The complete repository check passes 3,734 tests.
+  active-interrupt queue holding and resumption, descriptor-backed terminal
+  restart, and cleanup regressions pass in focused checks. The complete repository
+  check passes 3,734 tests.
 - Removal condition: Clinedi natively decodes the bare Kitty control reports and
   terminals reliably bracket every paste path, so Autolith can remove its
   compatibility reader without losing Escape or multiline paste semantics.

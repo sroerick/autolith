@@ -326,12 +326,14 @@ commands that cannot run during an active turn are scheduled as follow-up work
 and run at the first opportunity after the current response finishes; the live
 region previews them alongside queued messages, and Tab with an empty draft
 recalls the newest one for editing. Nonmodal commands such as =/compact= retain
-responsive input while they run. During an active turn, Escape or Ctrl-C
-cancels only the current turn, preserves the draft and queued messages, and
-returns to the prompt. Active Ctrl-C opens a 2.5-second force-exit window while
-cancellation is pending; pressing Ctrl-C again during that window restores the
-terminal and forces Autolith to exit. A cancellation that finishes promptly
-never announces the window it no longer offers. Escape never opens or counts
+responsive input while they run. During an active turn, Escape cancels only the
+current turn, preserves the draft and queued messages, and permits queued work to
+continue normally. Ctrl-C cancels the current turn and holds queued follow-ups and
+unconsumed steering at the prompt until the user submits new input. It briefly
+explains the hold after cancellation. Active Ctrl-C also opens a 2.5-second
+force-exit window while cancellation is pending; pressing Ctrl-C again during that
+window restores the terminal and forces Autolith to exit. A cancellation that
+finishes promptly never announces the force window. Escape never opens or counts
 toward forced exit.
 
 A fresh conversation stays in memory until its first durable record. Starting
@@ -347,12 +349,13 @@ not remove anything from durable conversation storage, provider context, or
 compaction input.
 
 =Ctrl-C= clears a nonempty input draft while idle. At an empty prompt it exits
-Autolith without a confirmation notice. During an active turn, Escape or Ctrl-C
-cancels only the current turn without clearing the draft or queued messages and
-returns to the prompt. Active Ctrl-C opens a 2.5-second force-exit window while
-cancellation is pending. Pressing Ctrl-C again during that window restores the
-terminal and forces exit with status 130. The option ends when cancellation
-finishes. Escape never opens or counts toward forced exit.
+Autolith without a confirmation notice. During an active turn, Escape cancels only
+the current turn and allows preserved queued work to continue. Ctrl-C cancels the
+current turn without clearing the draft, then holds queued follow-ups and steering
+until explicit new input resumes them. Active Ctrl-C opens a 2.5-second force-exit
+window while cancellation is pending. Pressing Ctrl-C again during that window
+restores the terminal and forces exit with status 130. The option ends when
+cancellation finishes. Escape never opens or counts toward forced exit.
 
 A hint offering forced exit appears only once a cancellation outlives a brief
 delay, so a turn that stops promptly returns to the prompt without advertising

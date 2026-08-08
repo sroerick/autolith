@@ -137,16 +137,16 @@ the checkout without validating or rebuilding that image.
 
 Enter submits. Shift-Enter, Ctrl-Enter, or Alt-Enter inserts a newline. While
 idle, Ctrl-C clears a draft or exits an empty prompt without confirmation.
-During an active turn, Escape or Ctrl-C cancels only that turn without clearing
-the draft or queued messages and returns to the prompt. Only active Ctrl-C opens
-a 2.5-second force-exit window while cancellation is pending; pressing Ctrl-C
+During an active turn, Escape cancels that turn and permits queued work to
+continue. Ctrl-C cancels the turn and holds queued follow-ups and unconsumed
+steering until explicit new input resumes them. Only active Ctrl-C opens a
+2.5-second force-exit window while cancellation is pending; pressing Ctrl-C
 again in that window forces exit and prints the resume command. A turn that
 cancels promptly never announces that window. Escape never forces exit. Up and
-Down move across visual
-input rows before falling back to history. Tab and Shift-Tab cycle command
-suggestions. Messages can be drafted and queued while AL is responding. Empty
-Tab recalls the newest queued follow-up; Shift-Tab then cycles older follow-ups
-for editing. Type =/help= for commands.
+Down move across visual input rows before falling back to history. Tab and
+Shift-Tab cycle command suggestions. Messages can be drafted and queued while
+AL is responding. Empty Tab recalls the newest queued follow-up; Shift-Tab then
+cycles older follow-ups for editing. Type =/help= for commands.
 
 * Repository map
 

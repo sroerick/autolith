@@ -11,6 +11,9 @@
 (defparameter *application-interrupt-hint-delay-seconds* 1/4
   "Seconds a cancellation may run before its force-exit hint becomes worth showing.")
 
+(defparameter *application-interrupted-queue-notice-seconds* 8
+  "Seconds an active Ctrl-C explains that queued work remains paused.")
+
 (-> application-input-controller--interrupt-window-text () string)
 (defun application-input-controller--interrupt-window-text ()
   "Return the force-exit window as concise user-facing seconds."
@@ -91,6 +94,12 @@
     :accessor application-input-controller-active-p
     :type boolean
     :documentation "Whether the main thread is processing one work item.")
+   (queued-work-paused-p
+    :initform nil
+    :accessor application-input-controller-queued-work-paused-p
+    :type boolean
+    :documentation
+    "Whether an explicit interruption is holding queued work for user review.")
    (localgroup-handoff-p
     :initform nil
     :accessor application-input-controller-localgroup-handoff-p
@@ -690,16 +699,24 @@ snapshot after shutdown cleared the process-local queues."
     boolean)
 (defun application-input-controller--enqueue (controller kind input)
   "Append one work item of KIND carrying INPUT and report acceptance."
-  (let ((queued-p nil))
+  (let ((queued-p nil)
+        (resumed-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (or (application-input-controller-stopping-p controller)
                   (application-input-controller-localgroup-handoff-p controller))
-        (setf (application-input-controller-work-items controller)
+        (setf resumed-p
+              (application-input-controller-queued-work-paused-p controller)
+              (application-input-controller-queued-work-paused-p controller) nil
+              (application-input-controller-work-items controller)
               (nconc (application-input-controller-work-items controller)
                      (list (list kind (application-input--copy input))))
               queued-p t)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
+    (when resumed-p
+      (terminal-ui-set-notice
+       (application-ui (application-input-controller-application controller))
+       nil))
     (application-input-controller--publish-counts controller)
     queued-p))
 
@@ -709,14 +726,18 @@ snapshot after shutdown cleared the process-local queues."
 (defun application-input-controller--queue-input (controller input)
   "Queue INPUT, restoring a recalled follow-up to its virtual FIFO position."
   (let ((work (application-input-controller--input-work input))
-        (queued-p nil))
+        (queued-p nil)
+        (resumed-p nil))
     (when work
       (with-lock-held ((application-input-controller-lock controller))
         (unless (or (application-input-controller-stopping-p controller)
                     (application-input-controller-localgroup-handoff-p controller))
           (let ((index
                   (application-input-controller-follow-up-edit-index controller)))
-            (setf (application-input-controller-work-items controller)
+            (setf resumed-p
+                  (application-input-controller-queued-work-paused-p controller)
+                  (application-input-controller-queued-work-paused-p controller) nil
+                  (application-input-controller-work-items controller)
                   (if index
                       (application-input-controller--insert-work-at
                        (application-input-controller-work-items controller)
@@ -730,6 +751,10 @@ snapshot after shutdown cleared the process-local queues."
                   queued-p t))
           (sb-thread:condition-broadcast
            (application-input-controller-condition-variable controller))))
+      (when resumed-p
+        (terminal-ui-set-notice
+         (application-ui (application-input-controller-application controller))
+         nil))
       (application-input-controller--publish-counts controller))
     queued-p))
 
@@ -738,23 +763,31 @@ snapshot after shutdown cleared the process-local queues."
     null)
 (defun application-input-controller--enqueue-steering (controller input)
   "Queue INPUT for the active turn, or promote it before follow-ups if that turn ended."
-  (with-lock-held ((application-input-controller-lock controller))
-    (unless (or (application-input-controller-stopping-p controller)
-                (application-input-controller-localgroup-handoff-p controller))
-      (if (application-input-controller-active-p controller)
-          (setf (application-input-controller-steering-items controller)
-                (nconc (application-input-controller-steering-items controller)
-                       (list (application-input--copy input))))
-          (progn
-            (push (list ':message (application-input--copy input))
-                  (application-input-controller-work-items controller))
-            (when (application-input-controller-follow-up-edit-index controller)
-              (incf
-               (application-input-controller-follow-up-edit-index
-                controller)))))
-      (sb-thread:condition-broadcast
-       (application-input-controller-condition-variable controller))))
-  (application-input-controller--publish-counts controller)
+  (let ((resumed-p nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless (or (application-input-controller-stopping-p controller)
+                  (application-input-controller-localgroup-handoff-p controller))
+        (setf resumed-p
+              (application-input-controller-queued-work-paused-p controller)
+              (application-input-controller-queued-work-paused-p controller) nil)
+        (if (application-input-controller-active-p controller)
+            (setf (application-input-controller-steering-items controller)
+                  (nconc (application-input-controller-steering-items controller)
+                         (list (application-input--copy input))))
+            (progn
+              (push (list ':message (application-input--copy input))
+                    (application-input-controller-work-items controller))
+              (when (application-input-controller-follow-up-edit-index controller)
+                (incf
+                 (application-input-controller-follow-up-edit-index
+                  controller)))))
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller))))
+    (when resumed-p
+      (terminal-ui-set-notice
+       (application-ui (application-input-controller-application controller))
+       nil))
+    (application-input-controller--publish-counts controller))
   nil)
 
 (-> application-input-controller--take-steering
@@ -796,14 +829,18 @@ snapshot after shutdown cleared the process-local queues."
       (application-input-controller-turn-cancellation-p controller)))))
 
 (-> application-input-controller--request-active-turn-cancellation
-    (application-input-controller &key (:force-exit-window-p boolean))
+    (application-input-controller
+     &key (:force-exit-window-p boolean)
+          (:pause-queued-work-p boolean))
     boolean)
 (defun application-input-controller--request-active-turn-cancellation
-    (controller &key force-exit-window-p)
+    (controller &key force-exit-window-p pause-queued-work-p)
   "Atomically request cancellation only for CONTROLLER's current active turn.
 
 When FORCE-EXIT-WINDOW-P is true, arm the repeated-Ctrl-C option before
-cancellation can finish and schedule the hint that explains it."
+cancellation can finish and schedule the hint that explains it. When
+PAUSE-QUEUED-WORK-P is true, hold follow-ups after cancellation until explicit
+new input resumes them."
   (let ((accepted-p nil)
         (message
           (and force-exit-window-p
@@ -818,6 +855,8 @@ cancellation can finish and schedule the hint that explains it."
               (application-input-controller-turn-cancellation-delivery-pending-p
                controller)
               t
+              (application-input-controller-queued-work-paused-p controller)
+              pause-queued-work-p
               accepted-p t)
         (when force-exit-window-p
           (let ((now
@@ -1195,7 +1234,9 @@ commit their busy policy before the recalled work is removed."
              nil)
             ((and (eq event ':interrupt)
                   (application-input-controller--request-active-turn-cancellation
-                   controller :force-exit-window-p t))
+                   controller
+                   :force-exit-window-p t
+                   :pause-queued-work-p t))
              nil)
             ((and (eq event ':escape)
                   (or
@@ -1715,6 +1756,8 @@ commit their busy policy before the recalled work is removed."
                      (application-input-controller-active-p controller) t)
                (return))))
           ((and (not (application-localgroup-paused-p application))
+                (not
+                 (application-input-controller-queued-work-paused-p controller))
                 (application-input-controller-work-items controller)
                 (not
                  (eql
@@ -1725,7 +1768,7 @@ commit their busy policy before the recalled work is removed."
            (when (application-input-controller-follow-up-edit-index controller)
              (decf
               (application-input-controller-follow-up-edit-index controller)))
-           (return)))
+          (return)))
         (let* ((later-wait
                  (application-input-controller--later-wait-seconds
                   controller (get-universal-time)))
@@ -1758,7 +1801,8 @@ commit their busy policy before the recalled work is removed."
     null)
 (defun application-input-controller--finish-work (controller)
   "Finish current work and promote unconsumed steering before queued follow-ups."
-  (let ((clear-notice-p nil))
+  (let ((clear-notice-p nil)
+        (pause-notice nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
         (let ((steering-items
@@ -1773,7 +1817,7 @@ commit their busy policy before the recalled work is removed."
               (incf
                (application-input-controller-follow-up-edit-index controller)
                (length steering-items))))
-        (setf (application-input-controller-steering-items controller) nil)))
+          (setf (application-input-controller-steering-items controller) nil)))
       (setf clear-notice-p
             (or (application-input-controller-turn-cancellation-p controller)
                 (application-input-controller-interrupt-deadline controller))
@@ -1784,12 +1828,25 @@ commit their busy policy before the recalled work is removed."
             nil
             (application-input-controller-interrupt-deadline controller) nil
             (application-input-controller-interrupt-hint-time controller) nil)
+      (when (and
+             (application-input-controller-queued-work-paused-p controller)
+             (application-input-controller-work-items controller))
+        (setf pause-notice
+              (format nil
+                      "Interrupted. ~D queued item~:P held; submit input to resume."
+                      (length
+                       (application-input-controller-work-items controller)))))
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
-    (when clear-notice-p
-      (terminal-ui-set-notice
-       (application-ui (application-input-controller-application controller))
-       nil))
+    (cond (pause-notice
+           (terminal-ui-set-notice
+            (application-ui (application-input-controller-application controller))
+            pause-notice
+            :duration-seconds *application-interrupted-queue-notice-seconds*))
+          (clear-notice-p
+           (terminal-ui-set-notice
+            (application-ui (application-input-controller-application controller))
+            nil)))
     (application-input-controller--publish-counts controller))
   nil)
 
@@ -1804,6 +1861,7 @@ commit their busy policy before the recalled work is removed."
             (application-input-controller-steering-items controller) nil
             (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
+            (application-input-controller-queued-work-paused-p controller) nil
             (application-input-controller-follow-up-edit-index controller) nil
             (application-input-controller-follow-up-edit-work controller) nil
             (application-input-controller-turn-cancellation-p controller) nil
