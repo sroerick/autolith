@@ -42,6 +42,11 @@
     :accessor localgroup-attachment-queue
     :type list
     :documentation "FIFO serialized packets awaiting the writer.")
+    (queue-tail
+     :initform nil
+     :accessor localgroup-attachment-queue-tail
+     :type (option cons)
+     :documentation "The final cons cell of the FIFO packet queue.")
    (queued-characters
     :initform 0
     :accessor localgroup-attachment-queued-characters
@@ -80,7 +85,11 @@
             (when (and (localgroup-attachment-closed-p attachment)
                        (null (localgroup-attachment-queue attachment)))
               (return-from localgroup-attachment--writer-loop nil))
-            (let ((packet (pop (localgroup-attachment-queue attachment))))
+            (let* ((cell (localgroup-attachment-queue attachment))
+                   (packet (first cell)))
+              (setf (localgroup-attachment-queue attachment) (rest cell))
+              (when (null (localgroup-attachment-queue attachment))
+                (setf (localgroup-attachment-queue-tail attachment) nil))
               (decf (localgroup-attachment-queued-characters attachment)
                     (length packet))
               packet))
@@ -91,6 +100,7 @@
   (with-lock-held ((localgroup-attachment-lock attachment))
     (setf (localgroup-attachment-closed-p attachment) t
           (localgroup-attachment-queue attachment) nil
+          (localgroup-attachment-queue-tail attachment) nil
           (localgroup-attachment-queued-characters attachment) 0)
     (condition-notify (localgroup-attachment-condition-variable attachment)))
   (localgroup-attachment--close-stream attachment)
@@ -125,15 +135,18 @@
                *localgroup-attachment-queue-character-limit*)
             (setf (localgroup-attachment-closed-p attachment) t
                   (localgroup-attachment-queue attachment) nil
+                  (localgroup-attachment-queue-tail attachment) nil
                   (localgroup-attachment-queued-characters attachment) 0
                   close-p t)
-            (setf (localgroup-attachment-queue attachment)
-                  (nconc (localgroup-attachment-queue attachment)
-                         (list text))
-                  (localgroup-attachment-queued-characters attachment)
-                  (+ (localgroup-attachment-queued-characters attachment)
-                     (length text))
-                  accepted-p t))
+            (let ((cell (list text)))
+              (if (localgroup-attachment-queue attachment)
+                  (setf (rest (localgroup-attachment-queue-tail attachment)) cell
+                        (localgroup-attachment-queue-tail attachment) cell)
+                  (setf (localgroup-attachment-queue attachment) cell
+                        (localgroup-attachment-queue-tail attachment) cell))
+              (incf (localgroup-attachment-queued-characters attachment)
+                    (length text))
+              (setf accepted-p t)))
         (condition-notify
          (localgroup-attachment-condition-variable attachment))))
     (when close-p
@@ -147,6 +160,7 @@
     (with-lock-held ((localgroup-attachment-lock attachment))
       (setf (localgroup-attachment-closed-p attachment) t
             (localgroup-attachment-queue attachment) nil
+            (localgroup-attachment-queue-tail attachment) nil
             (localgroup-attachment-queued-characters attachment) 0
             writer (localgroup-attachment-writer-thread attachment))
       (condition-notify
