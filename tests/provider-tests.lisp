@@ -93,7 +93,7 @@
                     :body (make-string-input-stream
                            "{\"error\":{\"message\":\"input item is not supported\"}}")
                     :status 400
-                    :headers '(("x-request-id" . "request-400"))
+                    :headers '(("request-id" . "request-400"))
                     :uri nil
                     :method :post)))
              (test-assert
@@ -101,14 +101,29 @@
                   (progn
                     (provider-signal-http-failure provider stream-condition)
                     nil)
-                (provider-error (error)
-                  (and (= (provider-error-status error) 400)
-                       (search "input item is not supported"
-                               (format nil "~A" error))
-                       (search "input item is not supported"
-                               (or (provider-error-response error) ""))
-                       t)))
+                 (provider-error (error)
+                   (and (= (provider-error-status error) 400)
+                        (string= (provider-error-request-id error)
+                                 "request-400")
+                        (search "input item is not supported"
+                                (format nil "~A" error))
+                        (search "input item is not supported"
+                                (or (provider-error-response error) ""))
+                        t)))
               "a streamed failure body reaches both the message and the response"))
+            (test-assert
+             (handler-case
+                 (progn
+                   (provider--signal-http-status-failure
+                    provider 400
+                    :headers '(("request-id" . "request-direct"))
+                    :raw-body "direct failure")
+                   nil)
+               (provider-error (error)
+                 (and (= (provider-error-status error) 400)
+                      (string= (provider-error-request-id error)
+                               "request-direct"))))
+             "direct HTTP status failures retain the common request-id header")
            (dolist (status '(500 502 503 504 507))
              (let ((transient-condition
                      (make-condition

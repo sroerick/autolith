@@ -995,6 +995,14 @@ checkpoint."
       (t
        nil))))
 
+(-> provider--response-request-id (t) (option string))
+(defun provider--response-request-id (headers)
+  "Return a provider request identifier from common response HEADERS."
+  (let ((request-id
+          (or (response-header headers "x-request-id")
+              (response-header headers "request-id"))))
+    (and (non-empty-string-p request-id) request-id)))
+
 ;;;; -- Rate Limit Snapshots --
 
 (-> provider--parse-decimal (string) (option real))
@@ -1162,14 +1170,14 @@ are decoded as UTF-8."
                (format nil "The provider rejected the current ~A credentials."
                        (provider-account-label provider))
                :status status
-               :request-id (response-header headers "x-request-id")
+               :request-id (provider--response-request-id headers)
                :response nil)
         (error (if (provider--retryable-http-status-p status)
                    'provider-retryable-error
                    'provider-error)
                :message (provider--http-error-message status body)
                :status status
-               :request-id (response-header headers "x-request-id")
+               :request-id (provider--response-request-id headers)
                :response (and body (bounded-string body :limit 2000)))))
   nil)
 
@@ -1194,14 +1202,14 @@ are decoded as UTF-8."
                :message (format nil "The provider rejected the current ~A credentials."
                                 (provider-account-label provider))
                :status status
-               :request-id (response-header headers "x-request-id")
+               :request-id (provider--response-request-id headers)
                :response nil)
         (error (if (provider--retryable-http-status-p status)
                    'provider-retryable-error
                    'provider-error)
                :message (provider--http-error-message status body)
                :status status
-               :request-id (response-header headers "x-request-id")
+               :request-id (provider--response-request-id headers)
                :response (and body (bounded-string body :limit 2000))))))
 
 
@@ -1247,7 +1255,7 @@ are decoded as UTF-8."
   (error 'response-stream-error
          :message message
          :status nil
-         :request-id (response-header headers "x-request-id")
+         :request-id (provider--response-request-id headers)
          :response nil))
 
 (-> provider--signal-transport-failure (string &key (:retryable-p boolean)) null)
@@ -1425,7 +1433,8 @@ are decoded as UTF-8."
   (let ((error-request-id (and error-object
                                (json-get error-object "request_id")))
         (event-request-id (json-get event "request_id"))
-        (header-request-id (response-header headers "x-request-id")))
+        (header-request-id
+          (provider--response-request-id headers)))
     (cond
       ((non-empty-string-p error-request-id)
        error-request-id)
@@ -1787,7 +1796,7 @@ streaming turns and native compaction requests."
   (error 'provider-error
          :message "The provider returned an invalid native compaction response."
          :status status
-         :request-id (response-header headers "x-request-id")
+         :request-id (provider--response-request-id headers)
          :response nil))
 
 (-> provider--decode-native-compaction-response

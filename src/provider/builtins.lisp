@@ -38,6 +38,26 @@
   (fireworks-api-key-login (provider-credential-manager provider)
                            :stream (or stream *standard-output*)))
 
+(-> provider--anthropic-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--anthropic-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in Anthropic provider from registry metadata."
+  (declare (ignore reasoning-summaries-p))
+  (provider-family-create ':anthropic configuration))
+
+(-> provider--anthropic-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--anthropic-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Prompt for and save the built-in Anthropic provider's API key."
+  (declare (ignore open-browser-p))
+  (anthropic-api-key-login (provider-credential-manager provider)
+                           :stream (or stream *standard-output*)))
+
+
 (register-provider
  "chatgpt"
  :description "ChatGPT Codex subscription"
@@ -68,4 +88,20 @@
  :factory #'provider--fireworks-registration-factory
  :authenticator #'provider--fireworks-registration-authenticator
  :endpoint *fireworks-responses-endpoint*
+ :source ':builtin)
+
+(register-provider
+ "anthropic"
+ :description "Anthropic API (pay-per-token)"
+ :family ':anthropic
+ :protocol ':messages
+ :models '((:name "claude-opus-5" :context-window 200000
+            :reasoning-efforts ("low" "medium" "high"))
+           (:name "claude-sonnet-5" :context-window 200000
+            :reasoning-efforts ("low" "medium" "high"))
+           (:name "claude-haiku-4-5-20251001" :context-window 200000
+            :reasoning-efforts ("low" "medium" "high")))
+ :factory #'provider--anthropic-registration-factory
+ :authenticator #'provider--anthropic-registration-authenticator
+ :endpoint *anthropic-messages-endpoint*
  :source ':builtin)

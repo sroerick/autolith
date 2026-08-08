@@ -52,6 +52,21 @@
 (defparameter *default-fireworks-model* "accounts/fireworks/models/kimi-k3"
   "The Fireworks model identifier offered by default.")
 
+;; The public Anthropic Messages API, verified against claude-haiku-4-5 on
+;; 2026-08-08: the endpoint accepts the streaming Messages dialect with a
+;; top-level system field, strictly alternating user/assistant messages,
+;; input_schema function tools, and tool_choice {"type": "auto"}.
+(defparameter *anthropic-messages-endpoint*
+  "https://api.anthropic.com/v1/messages"
+  "The Anthropic Messages API endpoint.")
+
+(defparameter *anthropic-models-endpoint*
+  "https://api.anthropic.com/v1/models"
+  "The Anthropic models endpoint used to validate API keys.")
+
+(defparameter *anthropic-api-version* "2023-06-01"
+  "The Anthropic API version header sent with every request.")
+
 (defparameter *grok-oauth-scopes*
   '("openid" "profile" "email" "offline_access"
     "grok-cli:access" "api:access"

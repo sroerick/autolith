@@ -160,6 +160,7 @@
     (test-openai-compatible-provider-registration-identity)
      (test-provider-sse-bounds)
     (test-openai-compatible-provider)
+    (test-anthropic-provider)
     (test-fireworks-provider)
     (test-resource-protocol)
     (test-resource-edit-operation-schema)
