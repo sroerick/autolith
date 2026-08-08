@@ -1562,6 +1562,272 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-conversation-picker-search () null)
+(defun test-conversation-picker-search ()
+  "Test durable message-only search indexes, rebuilding, and scan races."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "search-index"))
+         (pathname (conversation-pathname conversation))
+         (search-pathname (conversation-picker-search-pathname pathname))
+         (expected (list "user needle" "assistant needle")))
+    (labels ((find-with-scan-count ()
+               "Find the index and return how many source scans it required."
+               (let ((count 0)
+                     (map-records-function
+                       (symbol-function 'conversation--map-records)))
+                 (values
+                  (test-call-with-function-replacements
+                   (list
+                    (list
+                     'conversation--map-records
+                     (lambda (mapped-pathname function &key (start-position 0))
+                       (incf count)
+                       (funcall map-records-function
+                                mapped-pathname
+                                function
+                                :start-position start-position))))
+                   (lambda ()
+                     (conversation-picker-search-find pathname)))
+                  count))))
+      (unwind-protect
+           (progn
+             (conversation-append-user-message conversation "user needle")
+             (conversation-append-provider-item
+              conversation
+              (json-object
+               "type" "message"
+               "role" "assistant"
+               "content" (json-array
+                          (json-object
+                           "type" "output_text"
+                           "text" "assistant needle"))))
+             (let ((message-revision
+                     (conversation-picker-search-revision-read pathname)))
+               (conversation-append-provider-item
+                conversation
+                (json-object
+                 "type" "reasoning"
+                 "summary" (json-array
+                            (json-object
+                             "type" "summary_text"
+                             "text" "reasoning secret"))))
+               (conversation-append-record
+                conversation
+                (list :tool-result :status ':ok :output "tool secret"))
+               (conversation-append-record
+                conversation
+                (list :summary :content "summary secret"))
+               (test-assert
+                (= (conversation-picker-search-revision-read pathname)
+                   message-revision)
+                "non-message records do not advance the search revision"))
+             (let ((index (conversation-picker-search-read pathname)))
+               (test-assert
+                (and index
+                     (equal (conversation-picker-search-index-messages index)
+                            expected)
+                     (string=
+                      (conversation-picker-search-index-text index)
+                      "user needle
+assistant needle"))
+                "append publication indexes only chronological visible messages"))
+             (multiple-value-bind (index scan-count)
+                 (find-with-scan-count)
+               (test-assert
+                (and index (zerop scan-count))
+                "a valid search sidecar avoids scanning the conversation log"))
+             (let ((loaded (conversation-load pathname)))
+               (test-assert
+                (equal (conversation-picker-search-messages loaded) expected)
+                "conversation replay reconstructs the complete search corpus")
+               (conversation-append-user-message loaded "later user")
+               (setf expected (append expected (list "later user")))
+               (test-assert
+                (equal
+                 (conversation-picker-search-index-messages
+                  (conversation-picker-search-read pathname))
+                 expected)
+                "a loaded conversation publishes historical and newly appended text")
+               (delete-file search-pathname)
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (= scan-count 1)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "a missing search sidecar rebuilds from the complete log once"))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index (zerop scan-count))
+                  "the rebuilt search sidecar serves later reads without scanning"))
+               (snapshot-write search-pathname '(:malformed))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (= scan-count 1)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "a malformed search sidecar rebuilds once"))
+               (with-open-file (stream search-pathname
+                                       :direction :output
+                                       :if-exists :supersede
+                                       :external-format :utf-8)
+                 (write-string "(:conversation-picker-search" stream))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (= scan-count 1)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "a truncated search sidecar rebuilds once"))
+              (let* ((metadata (conversation-picker-metadata-read pathname))
+                     (revision
+                       (conversation-picker-search-revision-read pathname))
+                     (message-count
+                       (conversation-picker-metadata-search-message-count metadata)))
+                (conversation-picker-search-write
+                 pathname
+                 (make-instance
+                  'conversation-picker-search-index
+                  :source-revision (1- revision)
+                  :message-count message-count
+                  :messages (make-list message-count :initial-element "stale"))))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (= scan-count 1)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "a stale search revision rebuilds once"))
+               (let ((map-records-function
+                       (symbol-function 'conversation--map-records)))
+                 (test-assert
+                  (null
+                   (test-call-with-function-replacements
+                    (list
+                     (list
+                      'conversation--map-records
+                      (lambda (mapped-pathname function
+                               &key (start-position 0))
+                        (multiple-value-prog1
+                            (funcall map-records-function
+                                     mapped-pathname
+                                     function
+                                     :start-position start-position)
+                          (conversation-append-user-message
+                           loaded "racing message")))))
+                    (lambda ()
+                      (conversation-picker-search-scan pathname))))
+                  "a searchable append racing a scan rejects the stale snapshot"))
+               (setf expected (append expected (list "racing message")))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (zerop scan-count)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "the racing append publishes the complete current corpus"))
+               (let ((log-append-function (symbol-function 'log-append))
+                     (pre-append-index nil)
+                     (append-failed-p nil))
+                 (handler-case
+                     (test-call-with-function-replacements
+                      (list
+                       (list
+                        'log-append
+                        (lambda (&rest arguments)
+                          (setf pre-append-index
+                                (conversation-picker-search-find pathname))
+                          (apply log-append-function arguments)
+                          (error "simulated failure after durable log append"))))
+                      (lambda ()
+                        (conversation-append-user-message
+                         loaded "post-append crash message")))
+                   (conversation-invariant-error ()
+                     (setf append-failed-p t)))
+                 (test-assert
+                  (and append-failed-p
+                       pre-append-index
+                       (equal
+                        (conversation-picker-search-index-messages
+                         pre-append-index)
+                        expected))
+                  "a pre-append scan can publish only the old searchable corpus")
+                 (let ((stale-index
+                         (conversation-picker-search-index-from-record
+                          (snapshot-read search-pathname))))
+                   (test-assert
+                    (and stale-index
+                         (equal
+                          (conversation-picker-search-index-messages stale-index)
+                          expected))
+                    "the simulated crash leaves the pre-append sidecar on disk"))
+                 (test-assert
+                  (null (conversation-picker-search-read pathname))
+                  "stale picker metadata rejects the stale post-append sidecar")
+                 (test-assert
+                  (conversation-picker-metadata-find pathname)
+                  "picker metadata can rebuild independently after the crash")
+                 (test-assert
+                  (null (conversation-picker-search-read pathname))
+                  "current metadata still rejects a sidecar from the old file")
+                 (setf expected
+                       (append expected (list "post-append crash message")))
+                 (let ((rebuilt (conversation-picker-search-find pathname)))
+                   (test-assert
+                    (and rebuilt
+                         (equal
+                          (conversation-picker-search-index-messages rebuilt)
+                          expected))
+                    "a later find rebuilds search after the post-append crash")))
+               (delete-file search-pathname)
+               (with-open-file (stream pathname
+                                       :direction :output
+                                       :if-exists :append
+                                       :external-format :utf-8)
+                 (write-string "(:provider-item" stream))
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (= scan-count 2)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "an incomplete log tail rebuilds both stale picker projections"))
+               (let ((reloaded (conversation-load pathname)))
+                 (test-assert
+                  (and (conversation-incomplete-tail-p reloaded)
+                       (equal
+                        (conversation-picker-search-messages reloaded)
+                        expected))
+                  "replay retains the complete search corpus before tail repair")
+                 (conversation-append-user-message reloaded "after repair")
+                 (setf expected (append expected (list "after repair")))
+                 (test-assert
+                  (and (not (conversation-incomplete-tail-p reloaded))
+                       (equal
+                        (conversation-picker-search-index-messages
+                         (conversation-picker-search-read pathname))
+                        expected))
+                  "tail repair republishes the complete searchable history"))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+  nil)
+
+
 (-> test-conversation-deletion () null)
 (defun test-conversation-deletion ()
   "Test deletion ownership checks and private artifact cleanup."
@@ -1570,6 +1836,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
          (conversation
            (conversation-create configuration :identifier "delete-me"))
          (pathname (conversation-pathname conversation))
+         (sidecars (conversation-picker-sidecar-pathnames pathname))
          (image-root
            (merge-pathnames "conversation-images/delete-me/"
                             (configuration-data-root configuration)))
@@ -1580,6 +1847,8 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
     (unwind-protect
          (progn
            (conversation-append-user-message conversation "temporary")
+            (test-assert (every #'probe-file sidecars)
+                         "conversation appends publish all picker sidecars")
            (snapshot-write (merge-pathnames "image.sexp" image-root)
                            '(:image))
            (snapshot-write (merge-pathnames "task/result.sexp" task-root)
@@ -1602,6 +1871,8 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                         "deletion returns the removed conversation pathname")
            (test-assert (not (probe-file pathname))
                         "deletion removes the conversation file")
+            (test-assert (notany #'probe-file sidecars)
+                         "deletion removes all picker sidecars")
            (test-assert (not (probe-file image-root))
                         "deletion removes private image artifacts")
            (test-assert (not (probe-file task-root))
@@ -1619,6 +1890,8 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                      configuration
                      :identifier "cleanup-failure"))
                   (failed-pathname (conversation-pathname failed))
+                  (failed-sidecars
+                    (conversation-picker-sidecar-pathnames failed-pathname))
                   (failed-image-root
                     (merge-pathnames
                      "conversation-images/cleanup-failure/"
@@ -1642,6 +1915,9 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
               "artifact cleanup failures report the committed deletion")
              (test-assert (not (probe-file failed-pathname))
                           "cleanup failure cannot leave a broken resumable conversation")
+              (test-assert
+               (notany #'probe-file failed-sidecars)
+               "committed deletion removes sidecars before artifact cleanup")
              (test-assert (probe-file failed-image-root)
                           "cleanup failure leaves undeleted artifacts recoverable")))
       (when lease

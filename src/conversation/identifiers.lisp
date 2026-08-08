@@ -79,3 +79,53 @@ would let a second allocation in the same second choose the same identifier."
         (error 'conversation-identifier-error
                :message (identifier-error-message condition)
                :value timestamp)))))
+
+
+;;;; -- Conversation Picker Sidecar Paths --
+
+(-> conversation-picker-metadata-pathname (pathname) pathname)
+(defun conversation-picker-metadata-pathname (conversation-pathname)
+  "Return the compact picker-cache pathname for CONVERSATION-PATHNAME."
+  (let* ((conversation-root
+           (uiop:pathname-directory-pathname conversation-pathname))
+         (data-root
+           (uiop:pathname-parent-directory-pathname conversation-root)))
+    (merge-pathnames
+     (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
+     (merge-pathnames "conversation-picker/" data-root))))
+
+
+(-> conversation-picker-revision-pathname (pathname) pathname)
+(defun conversation-picker-revision-pathname (conversation-pathname)
+  "Return the durable picker-cache revision pathname for CONVERSATION-PATHNAME."
+  (make-pathname :type "revision"
+                 :defaults
+                 (conversation-picker-metadata-pathname conversation-pathname)))
+
+
+(-> conversation-picker-search-pathname (pathname) pathname)
+(defun conversation-picker-search-pathname (conversation-pathname)
+  "Return the durable message-search pathname for CONVERSATION-PATHNAME."
+  (let ((metadata-pathname
+          (conversation-picker-metadata-pathname conversation-pathname)))
+    (make-pathname :name (format nil "~A.search"
+                                 (pathname-name metadata-pathname))
+                   :type "sexp"
+                   :defaults metadata-pathname)))
+
+
+(-> conversation-picker-search-revision-pathname (pathname) pathname)
+(defun conversation-picker-search-revision-pathname (conversation-pathname)
+  "Return the durable message-search revision path for CONVERSATION-PATHNAME."
+  (make-pathname :type "revision"
+                 :defaults
+                 (conversation-picker-search-pathname conversation-pathname)))
+
+
+(-> conversation-picker-sidecar-pathnames (pathname) list)
+(defun conversation-picker-sidecar-pathnames (conversation-pathname)
+  "Return every picker sidecar pathname owned by CONVERSATION-PATHNAME."
+  (list (conversation-picker-metadata-pathname conversation-pathname)
+        (conversation-picker-revision-pathname conversation-pathname)
+        (conversation-picker-search-pathname conversation-pathname)
+        (conversation-picker-search-revision-pathname conversation-pathname)))

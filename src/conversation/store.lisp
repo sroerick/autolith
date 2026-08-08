@@ -134,6 +134,21 @@
     :type (integer 0)
     :documentation
     "Accumulated seconds of agent work, excluding gaps before user messages.")
+   (picker-search-messages
+    :initform nil
+    :accessor conversation-picker-search-messages
+    :type list
+    :documentation "Chronological durable user and assistant message text.")
+   (picker-search-messages-tail
+    :initform nil
+    :accessor conversation-picker-search-messages-tail
+    :type list
+    :documentation "The final message-text cons for constant-time search indexing.")
+   (picker-search-message-count
+    :initform 0
+    :accessor conversation-picker-search-message-count
+    :type (integer 0)
+    :documentation "The count of durable user and assistant search messages.")
    (picker-preview
     :initform nil
     :accessor conversation-picker-preview
@@ -148,12 +163,16 @@
 
 (defmethod initialize-instance
     :after ((conversation conversation) &key &allow-other-keys)
-  "Initialize CONVERSATION's constant-time provider projection tail."
+  "Initialize CONVERSATION's constant-time projection tails."
   (unless (conversation-prompt-cache-key conversation)
     (setf (conversation-prompt-cache-key conversation)
           (conversation-identifier conversation)))
   (setf (conversation-input-items-tail conversation)
-        (last (conversation-input-items conversation))))
+        (last (conversation-input-items conversation))
+        (conversation-picker-search-messages-tail conversation)
+        (last (conversation-picker-search-messages conversation))
+        (conversation-picker-search-message-count conversation)
+        (length (conversation-picker-search-messages conversation))))
 
 (defmethod (setf conversation-input-items)
     :around ((items list) (conversation conversation))
@@ -207,6 +226,11 @@ discarded items are pruned here rather than retained for the session."
     :reader conversation-picker-metadata-user-turn-count
     :type (integer 0)
     :documentation "The count of durable user-message records.")
+   (search-message-count
+    :initarg :search-message-count
+    :reader conversation-picker-metadata-search-message-count
+    :type (integer 0)
+    :documentation "The count of indexed durable user and assistant messages.")
    (preview
     :initarg :preview
     :reader conversation-picker-metadata-preview
@@ -218,6 +242,25 @@ discarded items are pruned here rather than retained for the session."
     :type boolean
     :documentation "Whether indexing stopped before an interrupted final form."))
   (:documentation "A validated compact cache of one conversation's picker fields."))
+
+
+(defclass conversation-picker-search-index ()
+  ((source-revision
+    :initarg :source-revision
+    :reader conversation-picker-search-index-source-revision
+    :type (integer 0)
+    :documentation "The durable message-search revision captured with the log.")
+   (message-count
+    :initarg :message-count
+    :reader conversation-picker-search-index-message-count
+    :type (integer 0)
+    :documentation "The count of indexed durable user and assistant messages.")
+   (messages
+    :initarg :messages
+    :reader conversation-picker-search-index-messages
+    :type list
+    :documentation "Chronological durable user and assistant message text."))
+  (:documentation "A validated durable search index for one conversation picker."))
 
 
 ;;;; -- Primary Application Ownership --
@@ -444,13 +487,19 @@ reports an operating-system failure."
            (error ()
              nil)))))))
 
-(-> conversation--note-preview (conversation list) null)
-(defun conversation--note-preview (conversation record)
-  "Retain RECORD's newest user or assistant text for picker metadata."
-  (let ((preview (conversation--record-preview record)))
-    (when preview
-      (setf (conversation-picker-preview conversation) preview)))
-  nil)
+
+(-> conversation--note-picker-search-message (conversation string) string)
+(defun conversation--note-picker-search-message (conversation message)
+  "Retain MESSAGE as the newest preview and append it to the search corpus."
+  (setf (conversation-picker-preview conversation) message)
+  (let ((cell (list message))
+        (tail (conversation-picker-search-messages-tail conversation)))
+    (if tail
+        (setf (rest tail) cell)
+        (setf (conversation-picker-search-messages conversation) cell))
+    (setf (conversation-picker-search-messages-tail conversation) cell)
+    (incf (conversation-picker-search-message-count conversation))
+    message))
 
 (-> conversation--note-activity (conversation list) null)
 (defun conversation--note-activity (conversation record)
@@ -496,23 +545,6 @@ reports an operating-system failure."
 
 ;;;; -- Conversation Picker Metadata --
 
-(-> conversation-picker-metadata-pathname (pathname) pathname)
-(defun conversation-picker-metadata-pathname (conversation-pathname)
-  "Return the compact picker-cache pathname for CONVERSATION-PATHNAME."
-  (let* ((conversation-root
-           (uiop:pathname-directory-pathname conversation-pathname))
-         (data-root
-           (uiop:pathname-parent-directory-pathname conversation-root)))
-    (merge-pathnames
-     (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
-     (merge-pathnames "conversation-picker/" data-root))))
-
-(-> conversation-picker-revision-pathname (pathname) pathname)
-(defun conversation-picker-revision-pathname (conversation-pathname)
-  "Return the durable picker-cache revision pathname for CONVERSATION-PATHNAME."
-  (make-pathname :type "revision"
-                 :defaults
-                 (conversation-picker-metadata-pathname conversation-pathname)))
 
 (-> conversation-picker-revision-read (pathname) (integer 0))
 (defun conversation-picker-revision-read (conversation-pathname)
@@ -584,6 +616,8 @@ reports an operating-system failure."
         :source-revision (conversation-picker-metadata-source-revision metadata)
         :working-seconds (conversation-picker-metadata-working-seconds metadata)
         :user-turn-count (conversation-picker-metadata-user-turn-count metadata)
+        :search-message-count
+        (conversation-picker-metadata-search-message-count metadata)
         :preview (conversation-picker-metadata-preview metadata)
         :incomplete-tail-p
         (conversation-picker-metadata-incomplete-tail-p metadata)))
@@ -600,6 +634,7 @@ reports an operating-system failure."
           (source-revision (getf (rest record) :source-revision))
           (working-seconds (getf (rest record) :working-seconds))
           (user-turn-count (getf (rest record) :user-turn-count))
+          (search-message-count (getf (rest record) :search-message-count))
           (preview (getf (rest record) :preview))
           (incomplete-tail-p (getf (rest record) :incomplete-tail-p)))
       (when (and (typep source-size '(integer 0))
@@ -607,6 +642,7 @@ reports an operating-system failure."
                  (typep source-revision '(integer 0))
                  (typep working-seconds '(integer 0))
                  (typep user-turn-count '(integer 0))
+                 (typep search-message-count '(integer 0))
                  (or (null preview) (stringp preview))
                  (typep incomplete-tail-p 'boolean))
         (make-instance 'conversation-picker-metadata
@@ -615,6 +651,7 @@ reports an operating-system failure."
                        :source-revision source-revision
                        :working-seconds working-seconds
                        :user-turn-count user-turn-count
+                       :search-message-count search-message-count
                        :preview preview
                        :incomplete-tail-p incomplete-tail-p)))))
 
@@ -672,9 +709,178 @@ reports an operating-system failure."
                        (conversation-pathname conversation))
                       :working-seconds (conversation-working-seconds conversation)
                       :user-turn-count (conversation-user-turn-count conversation)
+                      :search-message-count
+                      (conversation-picker-search-message-count conversation)
                       :preview (conversation-picker-preview conversation)
                       :incomplete-tail-p
                       (conversation-incomplete-tail-p conversation)))))
+  nil)
+
+
+;;;; -- Conversation Picker Search --
+
+(-> conversation-picker-search-revision-read (pathname) (integer 0))
+(defun conversation-picker-search-revision-read (conversation-pathname)
+  "Return CONVERSATION-PATHNAME's durable message-search revision, or zero."
+  (let ((revision-pathname
+          (conversation-picker-search-revision-pathname conversation-pathname)))
+    (if (probe-file revision-pathname)
+        (handler-case
+            (multiple-value-bind (record complete-p)
+                (snapshot-read revision-pathname)
+              (let ((revision
+                      (and complete-p
+                           (listp record)
+                           (eq (first record)
+                               :conversation-picker-search-revision)
+                           (= (or (getf (rest record) :version) 0) 1)
+                           (getf (rest record) :value))))
+                (if (typep revision '(integer 0))
+                    revision
+                    0)))
+          (error ()
+            0))
+        0)))
+
+
+(-> conversation-picker-search-revision-write
+    (pathname (integer 0))
+    (integer 0))
+(defun conversation-picker-search-revision-write
+    (conversation-pathname revision)
+  "Atomically record REVISION before searchable message text changes."
+  (let ((revision-pathname
+          (conversation-picker-search-revision-pathname conversation-pathname)))
+    (ensure-directories-exist revision-pathname)
+    (snapshot-write revision-pathname
+                    (list :conversation-picker-search-revision
+                          :version 1
+                          :value revision))
+    revision))
+
+
+(-> conversation-picker-search-invalidate (conversation) (integer 0))
+(defun conversation-picker-search-invalidate (conversation)
+  "Advance CONVERSATION's message-search revision before its log changes."
+  (let ((pathname (conversation-pathname conversation)))
+    (handler-case
+        (conversation-picker-search-revision-write
+         pathname
+         (1+ (conversation-picker-search-revision-read pathname)))
+      (error (condition)
+        (error 'conversation-invariant-error
+               :message
+               (format nil
+                       "Could not invalidate conversation picker search: ~A"
+                       condition)
+               :pathname pathname
+               :sequence (conversation-next-sequence conversation))))))
+
+
+(-> conversation-picker-search--messages-p (t) boolean)
+(defun conversation-picker-search--messages-p (value)
+  "Return true when VALUE is a finite proper list of strings."
+  (handler-case
+      (not
+       (null
+        (and (listp value)
+             (or (null value) (list-length value))
+             (every #'stringp value))))
+    (type-error ()
+      nil)))
+
+
+(-> conversation-picker-search-index-record
+    (conversation-picker-search-index)
+    list)
+(defun conversation-picker-search-index-record (index)
+  "Return INDEX as one portable atomically published search form."
+  (list :conversation-picker-search
+        :version 1
+        :source-revision
+        (conversation-picker-search-index-source-revision index)
+        :message-count
+        (conversation-picker-search-index-message-count index)
+        :messages
+        (conversation-picker-search-index-messages index)))
+
+
+(-> conversation-picker-search-index-from-record
+    (t)
+    (option conversation-picker-search-index))
+(defun conversation-picker-search-index-from-record (record)
+  "Return the validated picker search INDEX represented by RECORD, or NIL."
+  (handler-case
+      (when (and (listp record)
+                 (eq (first record) :conversation-picker-search)
+                 (= (or (getf (rest record) :version) 0) 1))
+        (let ((source-revision (getf (rest record) :source-revision))
+              (message-count (getf (rest record) :message-count))
+              (messages (getf (rest record) :messages)))
+          (when (and (typep source-revision '(integer 0))
+                     (typep message-count '(integer 0))
+                     (conversation-picker-search--messages-p messages)
+                     (= message-count (length messages)))
+            (make-instance 'conversation-picker-search-index
+                           :source-revision source-revision
+                           :message-count message-count
+                           :messages messages))))
+    (error ()
+      nil)))
+
+
+(-> conversation-picker-search-read
+    (pathname)
+    (option conversation-picker-search-index))
+(defun conversation-picker-search-read (pathname)
+  "Return PATHNAME's valid current-log message-search sidecar, or NIL."
+  (let ((metadata (conversation-picker-metadata-read pathname)))
+    (when metadata
+      (let ((search-pathname (conversation-picker-search-pathname pathname)))
+        (when (probe-file search-pathname)
+          (handler-case
+              (multiple-value-bind (record complete-p)
+                  (snapshot-read search-pathname)
+                (let ((index
+                        (and complete-p
+                             (conversation-picker-search-index-from-record record))))
+                  (when (and index
+                             (= (conversation-picker-search-revision-read pathname)
+                                (conversation-picker-search-index-source-revision
+                                 index))
+                             (= (conversation-picker-search-index-message-count index)
+                                (conversation-picker-metadata-search-message-count
+                                 metadata)))
+                    index)))
+            (error ()
+              nil)))))))
+
+
+(-> conversation-picker-search-write
+    (pathname conversation-picker-search-index)
+    conversation-picker-search-index)
+(defun conversation-picker-search-write (pathname index)
+  "Atomically publish INDEX as PATHNAME's validated message-search sidecar."
+  (let ((search-pathname (conversation-picker-search-pathname pathname)))
+    (ensure-directories-exist search-pathname)
+    (snapshot-write search-pathname
+                    (conversation-picker-search-index-record index))
+    index))
+
+
+(-> conversation-picker-search-publish (conversation) null)
+(defun conversation-picker-search-publish (conversation)
+  "Best-effort publish CONVERSATION's durable user/assistant search corpus."
+  (ignore-errors
+    (let ((pathname (conversation-pathname conversation)))
+      (conversation-picker-search-write
+       pathname
+       (make-instance
+        'conversation-picker-search-index
+        :source-revision (conversation-picker-search-revision-read pathname)
+        :message-count (conversation-picker-search-message-count conversation)
+        :messages (copy-list
+                   (conversation-picker-search-messages conversation))))))
   nil)
 
 (-> conversation-create
@@ -734,10 +940,12 @@ reports an operating-system failure."
            (sequenced (list* (first record)
                              :seq sequence
                              :time (get-universal-time)
-                             (rest record))))
-      ;; Advance the durable picker revision before the log changes so a
-      ;; concurrent scan cannot stamp a pre-append summary with a post-append
-      ;; identity.
+                             (rest record)))
+           (picker-search-message (conversation--record-preview sequenced)))
+      ;; Advance durable sidecar revisions before the log changes so a concurrent
+      ;; scan cannot stamp pre-append state with a post-append revision.
+      (when picker-search-message
+        (conversation-picker-search-invalidate conversation))
       (conversation-picker-metadata-invalidate conversation)
       (handler-case
           (if (conversation-persisted-p conversation)
@@ -765,10 +973,14 @@ reports an operating-system failure."
                  :sequence sequence)))
       (incf (conversation-next-sequence conversation))
       (conversation--note-activity conversation sequenced)
-      (conversation--note-preview conversation sequenced)
+      (when picker-search-message
+        (conversation--note-picker-search-message
+         conversation picker-search-message))
       (when (eq (first sequenced) :goal)
         (setf (conversation-latest-goal-record conversation) sequenced))
       (conversation-picker-metadata-publish conversation)
+      (when picker-search-message
+        (conversation-picker-search-publish conversation))
       sequenced)))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
@@ -1623,6 +1835,7 @@ invariant errors while callback conditions propagate unchanged."
   "Scan PATHNAME once to create exact metadata for its resume-picker cache."
   (let ((working-seconds 0)
         (user-turn-count 0)
+        (search-message-count 0)
         (last-activity-at nil)
         (preview nil)
         (header-seen-p nil)
@@ -1631,40 +1844,43 @@ invariant errors while callback conditions propagate unchanged."
         (multiple-value-bind (initial-size initial-write-date)
             (conversation--file-identity pathname)
           (let ((initial-revision (conversation-picker-revision-read pathname)))
-          (multiple-value-bind (position incomplete-tail-p count)
-              (conversation--map-records
-               pathname
-               (lambda (record)
-                 (if header-seen-p
-                     (progn
-                       (incf record-count)
-                       (multiple-value-setq
-                           (working-seconds user-turn-count last-activity-at)
-                         (conversation--activity-after-record
-                          record
-                          :working-seconds working-seconds
-                          :user-turn-count user-turn-count
-                          :last-activity-at last-activity-at))
-                       (let ((record-preview (conversation--record-preview record)))
-                         (when record-preview
-                           (setf preview record-preview))))
-                     (setf header-seen-p t))))
-            (declare (ignore position count))
-            (when (and header-seen-p (plusp record-count))
-              (multiple-value-bind (final-size final-write-date)
-                  (conversation--file-identity pathname)
-                (when (and (= initial-size final-size)
-                           (= initial-write-date final-write-date)
-                           (= initial-revision
-                              (conversation-picker-revision-read pathname)))
-                  (make-instance 'conversation-picker-metadata
-                                 :source-size initial-size
-                                 :source-write-date initial-write-date
-                                 :source-revision initial-revision
-                                 :working-seconds working-seconds
-                                 :user-turn-count user-turn-count
-                                 :preview preview
-                                 :incomplete-tail-p incomplete-tail-p)))))))
+            (multiple-value-bind (position incomplete-tail-p count)
+                (conversation--map-records
+                 pathname
+                 (lambda (record)
+                   (if header-seen-p
+                       (progn
+                         (incf record-count)
+                         (multiple-value-setq
+                             (working-seconds user-turn-count last-activity-at)
+                           (conversation--activity-after-record
+                            record
+                            :working-seconds working-seconds
+                            :user-turn-count user-turn-count
+                            :last-activity-at last-activity-at))
+                         (let ((record-preview
+                                 (conversation--record-preview record)))
+                           (when record-preview
+                             (incf search-message-count)
+                             (setf preview record-preview))))
+                       (setf header-seen-p t))))
+              (declare (ignore position count))
+              (when (and header-seen-p (plusp record-count))
+                (multiple-value-bind (final-size final-write-date)
+                    (conversation--file-identity pathname)
+                  (when (and (= initial-size final-size)
+                             (= initial-write-date final-write-date)
+                             (= initial-revision
+                                (conversation-picker-revision-read pathname)))
+                    (make-instance 'conversation-picker-metadata
+                                   :source-size initial-size
+                                   :source-write-date initial-write-date
+                                   :source-revision initial-revision
+                                   :working-seconds working-seconds
+                                   :user-turn-count user-turn-count
+                                   :search-message-count search-message-count
+                                   :preview preview
+                                   :incomplete-tail-p incomplete-tail-p)))))))
       (error ()
         nil))))
 
@@ -1678,6 +1894,75 @@ invariant errors while callback conditions propagate unchanged."
           (ignore-errors
             (conversation-picker-metadata-write pathname metadata)))
         metadata)))
+
+
+(-> conversation-picker-search-scan
+    (pathname)
+    (option conversation-picker-search-index))
+(defun conversation-picker-search-scan (pathname)
+  "Scan PATHNAME once for its complete durable user and assistant text."
+  (let ((messages nil)
+        (message-count 0)
+        (header-seen-p nil)
+        (record-count 0))
+    (handler-case
+        (multiple-value-bind (initial-size initial-write-date)
+            (conversation--file-identity pathname)
+          (let ((initial-search-revision
+                  (conversation-picker-search-revision-read pathname)))
+            (multiple-value-bind (position incomplete-tail-p count)
+                (conversation--map-records
+                 pathname
+                 (lambda (record)
+                   (if header-seen-p
+                       (progn
+                         (incf record-count)
+                         (let ((message (conversation--record-preview record)))
+                           (when message
+                             (incf message-count)
+                             (push message messages))))
+                       (setf header-seen-p t))))
+              (declare (ignore position incomplete-tail-p count))
+              (when (and header-seen-p (plusp record-count))
+                (multiple-value-bind (final-size final-write-date)
+                    (conversation--file-identity pathname)
+                  (when (and (= initial-size final-size)
+                             (= initial-write-date final-write-date)
+                             (= initial-search-revision
+                                (conversation-picker-search-revision-read
+                                 pathname)))
+                    (make-instance
+                     'conversation-picker-search-index
+                     :source-revision initial-search-revision
+                     :message-count message-count
+                     :messages (nreverse messages))))))))
+      (error ()
+        nil))))
+
+
+(-> conversation-picker-search-find
+    (pathname)
+    (option conversation-picker-search-index))
+(defun conversation-picker-search-find (pathname)
+  "Return PATHNAME's search index, rebuilding stale picker projections once."
+  (or (conversation-picker-search-read pathname)
+      (when (conversation-picker-metadata-find pathname)
+        (or (conversation-picker-search-read pathname)
+            (let ((index (conversation-picker-search-scan pathname)))
+              (when index
+                (ignore-errors
+                  (conversation-picker-search-write pathname index))
+                (conversation-picker-search-read pathname)))))))
+
+
+(-> conversation-picker-search-index-text
+    (conversation-picker-search-index)
+    string)
+(defun conversation-picker-search-index-text (index)
+  "Return INDEX's chronological message corpus as one searchable string."
+  (format nil
+          "~{~A~^~%~}"
+          (conversation-picker-search-index-messages index)))
 
 (-> conversation--read-records (pathname) (values list boolean))
 (defun conversation--read-records (pathname)
@@ -1736,7 +2021,8 @@ invariant errors while callback conditions propagate unchanged."
          (images-p
            (conversation--property-present-p properties :images))
          (wire-json-p
-           (conversation--property-present-p properties :wire-json)))
+           (conversation--property-present-p properties :wire-json))
+         (picker-search-message (conversation--record-preview record)))
     (when (eq (first record) :tool-result)
       (when (> (count t (list content-blocks-p images-p wire-json-p)) 1)
         (error 'conversation-invariant-error
@@ -1752,7 +2038,9 @@ invariant errors while callback conditions propagate unchanged."
                :pathname (conversation-pathname conversation)
                :sequence sequence)))
     (conversation--note-activity conversation record)
-    (conversation--note-preview conversation record)
+    (when picker-search-message
+      (conversation--note-picker-search-message
+       conversation picker-search-message))
     (when (eq (first record) :goal)
       (setf (conversation-latest-goal-record conversation) record))
     (when (integerp sequence)
@@ -2104,8 +2392,8 @@ conversation."
   (let* ((normalized
            (conversation-identifier-migration-resolve configuration identifier))
          (pathname (conversation-pathname-for-id configuration normalized))
-         (metadata-pathname (conversation-picker-metadata-pathname pathname))
-         (revision-pathname (conversation-picker-revision-pathname pathname))
+         (sidecar-pathnames
+           (conversation-picker-sidecar-pathnames pathname))
          (task-fragment
            (or (conversation-identifier-path-fragment normalized)
                (string-downcase normalized)))
@@ -2140,10 +2428,9 @@ conversation."
                       :sequence nil)))
            (handler-case
                (progn
-                 (when (probe-file metadata-pathname)
-                   (delete-file metadata-pathname))
-                 (when (probe-file revision-pathname)
-                   (delete-file revision-pathname))
+                 (dolist (sidecar-pathname sidecar-pathnames)
+                   (when (probe-file sidecar-pathname)
+                     (delete-file sidecar-pathname)))
                  (dolist (root artifact-roots)
                    (when (probe-file root)
                      (funcall *conversation-delete-directory-tree-function*
