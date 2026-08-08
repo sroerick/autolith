@@ -227,6 +227,7 @@
     (test-release-scripts)
     (test-release-server)
     (task-tests--close-orchestrators)
-    (run-application-tests))
+    (run-application-tests)
+    (run-recovery-input-vault-tests))
   (format t "~&~:D Autolith tests passed.~%" *test-count*)
   t)
