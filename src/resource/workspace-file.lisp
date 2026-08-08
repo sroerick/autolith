@@ -167,6 +167,14 @@
   (and (= (sb-posix:stat-dev left) (sb-posix:stat-dev right))
        (= (sb-posix:stat-ino left) (sb-posix:stat-ino right))))
 
+(-> workspace-file--stable-file-stat-p (t t) boolean)
+(defun workspace-file--stable-file-stat-p (before after)
+  "Return true when an opened file stayed unchanged between two observations."
+  (and (workspace-file--same-file-stat-p before after)
+       (= (sb-posix:stat-size before) (sb-posix:stat-size after))
+       (= (sb-posix:stat-mtime before) (sb-posix:stat-mtime after))
+       (= (sb-posix:stat-ctime before) (sb-posix:stat-ctime after))))
+
 (-> workspace-file--read-content
     (pathname &optional (option tool-context))
     string)
@@ -209,6 +217,14 @@
                             (format nil "Workspace resource ~A changed while it was being observed. Reread it and retry."
                                     (namestring path))
                             :tool-name "resource.read"))
+                    (unless (workspace-file--stable-file-stat-p
+                             stat
+                             (sb-posix:fstat file-descriptor))
+                      (error 'tool-error
+                             :message
+                             (format nil "Workspace resource ~A changed while it was being observed. Reread it and retry."
+                                     (namestring path))
+                             :tool-name "resource.read"))
                    (handler-case
                        (sb-ext:octets-to-string octets :external-format :utf-8)
                      (error ()

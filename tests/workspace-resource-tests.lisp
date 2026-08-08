@@ -177,6 +177,30 @@
                             "uri" uri
                             "base-revision" revision
                             "operations" (coerce operations 'vector))))
+              (let ((path (merge-pathnames "descriptor-growth.txt" workspace))
+                    (descriptor nil))
+                (unwind-protect
+                     (progn
+                       (workspace-resource-tests--write-text path "before")
+                       (setf descriptor
+                             (sb-posix:open (namestring path) sb-posix:o-rdonly))
+                       (let ((before (sb-posix:fstat descriptor)))
+                         (with-open-file (stream path
+                                                 :direction :output
+                                                 :if-exists :append
+                                                 :element-type '(unsigned-byte 8))
+                           (write-sequence
+                            (sb-ext:string-to-octets
+                             "after"
+                             :external-format :utf-8)
+                            stream))
+                         (test-assert
+                          (not (workspace-file--stable-file-stat-p
+                                before
+                                (sb-posix:fstat descriptor)))
+                          "descriptor observations reject files that grow during a read")))
+                  (when descriptor
+                    (sb-posix:close descriptor))))
              (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
                     (other-observation
                       (make-instance 'resource-observation
