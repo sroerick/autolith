@@ -14,6 +14,14 @@
 (defparameter *application-tool-diff-hunks* 3
   "The maximum replacement locations shown for one fs.edit call.")
 
+(defparameter *application-common-lisp-language*
+  (language-find "common-lisp" :errorp nil)
+  "The ColorLisp language used for pathless Common Lisp source previews.")
+
+(defparameter *application-shell-language*
+  (language-find "bash" :errorp nil)
+  "The ColorLisp language used for shell command previews.")
+
 (-> application--display-lines (string) list)
 (defun application--display-lines (text)
   "Return sanitized logical lines from TEXT without trailing blank rows."
@@ -322,19 +330,20 @@ structural discriminator as a readable heading instead."
 
 (-> application--lisp-call-entry (application json-object string) list)
 (defun application--lisp-call-entry (application call argument-name)
-  "Return a Lisp source preview for CALL's ARGUMENT-NAME."
+  "Return a syntax-highlighted Lisp source preview for CALL's ARGUMENT-NAME."
   (let* ((arguments (application--function-call-arguments call))
-         (source (or (and arguments (json-get arguments argument-name)) "")))
+         (source
+           (application--presentation-value
+            (or (and arguments (json-get arguments argument-name)) ""))))
     (application--tool-entry
      application
      :style ':tool
      :header (format nil "▸ ~A" (function-call-canonical-name call))
      :rows (append
-            (application--preview-rows
-             (application--presentation-value source)
-             ':code
-             *application-tool-call-lines*
-             :gutter "│ ")
+            (application--source-change-rows
+             source
+             ':source
+             :language *application-common-lisp-language*)
             (application--restart-call-rows arguments)))))
 
 (-> application--simple-call-entry (application json-object string) list)
@@ -931,6 +940,152 @@ structural discriminator as a readable heading instead."
               (t
                "invalid operation")))))
 
+(-> application--workspace-resource-path (string) (option string))
+(defun application--workspace-resource-path (uri)
+  "Return the decoded source path from a workspace resource URI, or NIL."
+  (let ((prefix "workspace:"))
+    (when (and (uiop:string-prefix-p prefix uri)
+               (> (length uri) (length prefix)))
+      (handler-case
+          (url-decode (subseq uri (length prefix)))
+        (error ()
+          nil)))))
+
+(-> application--workspace-resource-observed-text
+    (application string string &key (:start-line integer) (:end-line integer))
+    (option string))
+(defun application--workspace-resource-observed-text
+    (application uri revision &key start-line end-line)
+  "Return visible observed workspace lines for URI and REVISION, or NIL.
+
+The transcript never reads the current file as a revision-gated preimage. It
+uses only the exact transient observation and only ranges already shown to the
+model."
+  (block nil
+    (unless (and (slot-boundp application 'conversation)
+                 (non-empty-string-p revision)
+                 (plusp start-line)
+                 (<= start-line end-line))
+      (return nil))
+    (let ((conversation (application-conversation application)))
+      (with-recursive-lock-held
+          ((conversation-resource-observation-lock conversation))
+        (let ((state
+                (resource-observation-state-find
+                 (conversation-resource-observations conversation)
+                 revision
+                 'workspace-file-observation-state)))
+          (unless state
+            (return nil))
+          (let* ((observation
+                   (resource-observation-state-observation state))
+                 (lines (workspace-file-observation-lines observation)))
+            (unless (and (string= uri (resource-observation-uri observation))
+                         (workspace-file--range-visible-p
+                          state start-line end-line)
+                         (<= end-line (length lines)))
+              (return nil))
+            (format nil "~{~A~^~%~}"
+                    (loop for line from start-line to end-line
+                          collect (aref lines (1- line))))))))))
+
+(-> application--workspace-resource-operation-change-rows
+    (application json-object
+                 &key (:uri string) (:revision string) (:path string))
+    (option list))
+(defun application--workspace-resource-operation-change-rows
+    (application operation &key uri revision path)
+  "Return source-change rows for one workspace resource edit OPERATION."
+  (let ((name (json-get operation "op"))
+        (start (json-get operation "start-line"))
+        (end (json-get operation "end-line"))
+        (content (json-get operation "content")))
+    (cond
+      ((and (stringp name)
+            (member name '("replace-lines" "delete-lines") :test #'string=)
+            (integerp start)
+            (integerp end)
+            (plusp start)
+            (<= start end)
+            (or (string= name "delete-lines") (stringp content)))
+       (let* ((old-text
+                (application--workspace-resource-observed-text
+                 application uri revision :start-line start :end-line end))
+              (new-text (if (string= name "replace-lines") content "")))
+         (if old-text
+             (application--edit-diff-rows
+              old-text
+              new-text
+              :old-start-line start
+              :path path)
+             (let* ((width (length (princ-to-string end)))
+                    (message
+                      (format nil "observed line~P ~D~:[~;-~D~] unavailable"
+                              (1+ (- end start)) start (< start end) end)))
+               (append
+                (list
+                 (application--edit-line-row
+                  ':removed
+                  message
+                  :width width
+                  :line-number start
+                  :content-spans (list (terminal-span ':dim message))))
+                (when (string= name "replace-lines")
+                  (application--source-change-rows
+                   new-text ':added :path path)))))))
+      ((and (stringp name)
+            (member name '("insert-before" "insert-after" "replace-empty")
+                    :test #'string=)
+            (stringp content))
+       (application--source-change-rows content ':added :path path))
+      (t
+       nil))))
+
+(-> application--workspace-resource-operation-rows
+    (application t &key (:uri string) (:revision string) (:path string))
+    list)
+(defun application--workspace-resource-operation-rows
+    (application operations &key uri revision path)
+  "Return syntax-highlighted line changes for workspace resource OPERATIONS."
+  (cond
+    ((not (and (vectorp operations) (not (stringp operations))))
+     (list (application--tool-section-row "operations unavailable")))
+    ((zerop (length operations))
+     (list (application--tool-section-row "no operations")))
+    (t
+     (let* ((visible-count (min *application-tool-structure-items*
+                                (length operations)))
+            (omitted (- (length operations) visible-count)))
+       (append
+        (loop for index below visible-count
+              for operation = (aref operations index)
+              for first-p = t then nil
+              append
+              (append
+               (unless first-p (list nil))
+               (if (json-object-p operation)
+                    (let ((change-rows
+                            (application--workspace-resource-operation-change-rows
+                             application operation
+                             :uri uri :revision revision :path path)))
+                     (append
+                      (list (application--tool-section-row
+                             (application--resource-operation-heading
+                              operation
+                              (1+ index))))
+                      (or change-rows
+                          (application--structured-object-rows
+                           application operation :excluded-keys '("op")))))
+                   (application--structured-value-rows
+                    application
+                    (format nil "operation ~D" (1+ index))
+                    operation))))
+        (when (plusp omitted)
+          (list nil
+                (list (terminal-span
+                       ':dim
+                       (format nil "… +~D more operation~:P" omitted))))))))))
+
 (-> application--resource-operation-rows (application t) list)
 (defun application--resource-operation-rows (application operations)
   "Return readable verbs, fields, and content previews for resource OPERATIONS."
@@ -992,12 +1147,16 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool resource-edit-tool) (application application) (call hash-table))
-  "Present resource.edit's revision-gated operations without raw JSON."
+  "Present resource.edit operations with source-aware workspace line changes."
   (declare (ignore tool))
   (let* ((arguments (application--function-call-arguments call))
-         (uri (or (and arguments (json-get arguments "uri")) ""))
-         (revision (or (and arguments (json-get arguments "base-revision")) ""))
-         (operations (and arguments (json-get arguments "operations"))))
+         (uri (let ((value (and arguments (json-get arguments "uri"))))
+                (if (stringp value) value "")))
+         (revision
+           (let ((value (and arguments (json-get arguments "base-revision"))))
+             (if (stringp value) value "")))
+         (operations (and arguments (json-get arguments "operations")))
+         (path (application--workspace-resource-path uri)))
     (application--tool-entry
      application
      :style ':tool
@@ -1009,7 +1168,11 @@ structural discriminator as a readable heading instead."
        (list (list :label "uri" :value uri :style ':code)
              (list :label "revision" :value revision :style ':code)))
       (list nil)
-      (application--resource-operation-rows application operations)))))
+      (if path
+           (application--workspace-resource-operation-rows
+            application operations
+            :uri uri :revision revision :path path)
+          (application--resource-operation-rows application operations))))))
 
 (defmethod application-tool-call-entry
     ((tool fs-read-tool) (application application) (call hash-table))
@@ -1042,7 +1205,7 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool fs-write-tool) (application application) (call hash-table))
-  "Present an fs.write destination and content size without its full content."
+  "Present an fs.write destination and syntax-highlighted added content."
   (declare (ignore tool))
   (let* ((arguments (application--function-call-arguments call))
          (path (or (and arguments (json-get arguments "path")) ""))
@@ -1051,15 +1214,16 @@ structural discriminator as a readable heading instead."
      application
      :style ':tool
      :header "▸ fs.write"
-     :rows (append
-            (list (list (terminal-span ':code path)))
-            (application--tool-field-rows
-             application
-             (list (list :label "content"
-                         :value (if (stringp content)
-                                    (format nil "~:D character~:P"
-                                            (length content))
-                                    "unknown size"))))))))
+     :rows
+     (append
+      (list (list (terminal-span ':code path)))
+      (if (stringp content)
+          (append
+           (list (application--tool-section-row
+                  (format nil "content · ~:D character~:P" (length content))))
+           (or (application--source-change-rows content ':added :path path)
+               (list (list (terminal-span ':dim "(empty content)")))))
+          (list (application--tool-section-row "content unavailable")))))))
 
 (-> application--edit-common-prefix-length (vector vector) integer)
 (defun application--edit-common-prefix-length (old-lines new-lines)
@@ -1103,13 +1267,21 @@ structural discriminator as a readable heading instead."
       (make-string width :initial-element #\Space)))
 
 
-(-> application--syntax-lines (string string) (option vector))
-(defun application--syntax-lines (text path)
-  "Return syntax-highlighted display lines for TEXT at PATH, or NIL."
+(-> application--syntax-lines
+    (string &key (:language (option language)) (:path (option string)))
+    (option vector))
+(defun application--syntax-lines (text &key language path)
+  "Return syntax-highlighted display lines for TEXT, or NIL.
+
+LANGUAGE handles pathless source such as eval forms. PATH selects a language
+from a file destination. Sanitization occurs before ColorLisp sees the text."
   (let ((lines (application--display-lines text)))
     (when lines
       (let* ((source (format nil "~{~A~^~%~}" lines))
-             (highlighted (syntax--highlight-lines source :pathname path)))
+             (highlighted
+               (syntax--highlight-lines source
+                                        :language language
+                                        :pathname path)))
         (and highlighted
              (= (length highlighted) (length lines))
              highlighted)))))
@@ -1121,23 +1293,88 @@ structural discriminator as a readable heading instead."
     list)
 (defun application--edit-line-row
     (kind text &key (width 1) line-number content-spans)
-  "Return one numbered context, removed, or added diff row."
-  (let ((style (ecase kind
-                 (:context ':dim)
-                 (:removed ':failure)
-                 (:added ':success)))
-        (marker (ecase kind
-                  (:context " ")
-                  (:removed "-")
-                  (:added "+"))))
+  "Return one source, context, removed, or added row with a semantic ruler."
+  (let* ((style
+           (ecase kind
+             (:source ':success)
+             (:context ':dim)
+             (:removed ':failure)
+             (:added ':success)))
+         (marker
+           (ecase kind
+             (:source nil)
+             (:context " ")
+             (:removed "-")
+             (:added "+")))
+         (gutter
+           (cond
+             ((eq kind ':source)
+              "│ ")
+             (line-number
+              (format nil "~A ~A │ "
+                      marker
+                      (application--edit-line-number-cell line-number width)))
+             (t
+              (format nil "~A │ " marker))))
+         (content-style (if (eq kind ':context) ':dim ':code)))
     (cons
-     (terminal-span
-      style
-      (format nil "~A ~A │ "
-              marker
-              (application--edit-line-number-cell line-number width)))
+     (terminal-span style gutter)
      (or content-spans
-         (list (terminal-span style text))))))
+         (list (terminal-span content-style text))))))
+
+(-> application--source-change-rows
+    (string keyword
+            &key (:path (option string)) (:language (option language))
+                 (:start-line (option integer)) (:limit integer))
+    list)
+(defun application--source-change-rows
+    (text kind &key path language start-line
+                    (limit *application-tool-call-lines*))
+  "Return bounded syntax-highlighted TEXT rows under one semantic change ruler.
+
+KIND is :SOURCE for executable input, :ADDED for inserted text, or :REMOVED for
+deleted text. Source rows use a green ruler without claiming file coordinates."
+  (let ((lines (application--display-lines text)))
+    (when lines
+      (let* ((line-vector (coerce lines 'vector))
+             (highlighted
+               (application--syntax-lines text :language language :path path))
+             (visible-count (min limit (length line-vector)))
+             (omitted (- (length line-vector) visible-count))
+             (width
+               (if start-line
+                   (length
+                    (princ-to-string
+                     (+ start-line (max 0 (1- (length line-vector))))))
+                   1))
+             (noun
+               (ecase kind
+                 (:source nil)
+                 (:removed "removed")
+                 (:added "added"))))
+        (append
+         (loop for index below visible-count
+               for line-number = (and start-line (+ start-line index))
+               collect (application--edit-line-row
+                        kind
+                        (aref line-vector index)
+                        :width width
+                        :line-number line-number
+                        :content-spans (and highlighted
+                                            (aref highlighted index))))
+         (when (plusp omitted)
+           (let* ((line-number (and start-line (+ start-line visible-count)))
+                  (message
+                    (if noun
+                        (format nil "… +~D more ~A line~:P" omitted noun)
+                        (format nil "… +~D more line~:P" omitted))))
+             (list
+              (application--edit-line-row
+               kind
+               message
+               :width width
+               :line-number line-number
+               :content-spans (list (terminal-span ':dim message)))))))))))
 
 (-> application--edit-change-rows
     (vector keyword &key (:start-line (option integer)) (:width integer)
@@ -1162,13 +1399,15 @@ structural discriminator as a readable heading instead."
                     :content-spans (and highlighted-lines
                                         (aref highlighted-lines index))))
      (when (plusp omitted)
-       (let ((line-number (and start-line (+ start-line visible-count))))
+       (let* ((line-number (and start-line (+ start-line visible-count)))
+              (message (format nil "… +~D more ~A line~:P" omitted noun)))
          (list
           (application--edit-line-row
            kind
-           (format nil "… +~D more ~A line~:P" omitted noun)
+           message
            :width width
-           :line-number line-number)))))))
+           :line-number line-number
+           :content-spans (list (terminal-span ':dim message)))))))))
 
 (-> application--edit-diff-rows
     (string string &key (:old-start-line (option integer))
@@ -1182,8 +1421,10 @@ structural discriminator as a readable heading instead."
                             'vector))
          (new-lines (coerce (or (application--display-lines new-text) nil)
                             'vector))
-         (old-highlighted (and path (application--syntax-lines old-text path)))
-         (new-highlighted (and path (application--syntax-lines new-text path)))
+         (old-highlighted
+           (and path (application--syntax-lines old-text :path path)))
+         (new-highlighted
+           (and path (application--syntax-lines new-text :path path)))
          (prefix-length
            (application--edit-common-prefix-length old-lines new-lines))
          (suffix-length
@@ -1364,26 +1605,85 @@ structural discriminator as a readable heading instead."
              :new-text new-text
              :replace-all (and replace-all t))))))
 
-(-> application--shell-command-rows (application string) list)
-(defun application--shell-command-rows (application command)
-  "Return a wrapped shell COMMAND preview with a prompt gutter."
-  (let* ((columns (terminal-columns
-                   (terminal-ui-terminal (application-ui application))))
-         (width (max 8 (- columns 7)))
-         (wrapped
-           (loop for line in (or (application--display-lines command) (list ""))
-                 append (or (wrap-text line width) (list ""))))
-         (visible-count (min *application-tool-call-lines* (length wrapped)))
-         (omitted (- (length wrapped) visible-count)))
+(defmethod application-tool-call-entry
+    ((tool lisp-scratchpad-write-tool)
+     (application application)
+     (call hash-table))
+  "Present scratchpad writes as syntax-highlighted added source."
+  (declare (ignore tool))
+  (let* ((arguments (application--function-call-arguments call))
+         (path (or (and arguments (json-get arguments "path")) ""))
+         (content (and arguments (json-get arguments "content"))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ lisp.scratchpad-write"
+     :rows
+     (append
+      (list (list (terminal-span ':code path)))
+      (if (stringp content)
+          (append
+           (list (application--tool-section-row
+                  (format nil "content · ~:D character~:P" (length content))))
+           (or (application--source-change-rows content ':added :path path)
+               (list (list (terminal-span ':dim "(empty content)")))))
+          (list (application--tool-section-row "content unavailable")))))))
+
+(defmethod application-tool-call-entry
+    ((tool lisp-scratchpad-edit-tool)
+     (application application)
+     (call hash-table))
+  "Present scratchpad replacements as syntax-highlighted removed and added lines."
+  (declare (ignore tool))
+  (let* ((arguments (application--function-call-arguments call))
+         (path (or (and arguments (json-get arguments "path")) ""))
+         (old-text (or (and arguments (json-get arguments "old-text")) ""))
+         (new-text (or (and arguments (json-get arguments "new-text")) ""))
+         (replace-all (and arguments (json-get arguments "replace-all"))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ lisp.scratchpad-edit"
+     :rows
+     (append
+      (list (list (terminal-span ':code path)))
+      (when replace-all
+        (application--tool-field-rows
+         application
+         (list (list :label "scope" :value "all occurrences"))))
+      (list nil)
+      (application--edit-diff-rows old-text new-text :path path)))))
+
+(-> application--shell-command-rows (string) list)
+(defun application--shell-command-rows (command)
+  "Return bounded syntax-highlighted shell source with a green ruler."
+  (let* ((lines (coerce (or (application--display-lines command) (list ""))
+                        'vector))
+         (highlighted
+           (application--syntax-lines
+            command :language *application-shell-language*))
+         (visible-count (min *application-tool-call-lines* (length lines)))
+         (omitted (- (length lines) visible-count)))
     (append
-     (loop for line in (subseq wrapped 0 visible-count)
+     (loop for index below visible-count
+           for line = (aref lines index)
            for first-p = t then nil
-           collect (list (terminal-span ':dim (if first-p "$ " "  "))
-                         (terminal-span ':code line)))
+           for content-spans = (or (and highlighted (aref highlighted index))
+                                   (list (terminal-span ':code line)))
+           collect (application--edit-line-row
+                    ':source
+                    line
+                    :content-spans
+                    (append (list (terminal-span ':dim
+                                                 (if first-p "$ " "  ")))
+                            content-spans)))
      (when (plusp omitted)
-       (list (list (terminal-span
-                    ':dim
-                    (format nil "… +~D more line~:P" omitted))))))))
+       (let ((message (format nil "… +~D more line~:P" omitted)))
+         (list
+          (application--edit-line-row
+           ':source
+           message
+           :content-spans (list (terminal-span ':dim message)))))))))
 
 (defmethod application-tool-call-entry
     ((tool shell-run-tool) (application application) (call hash-table))
@@ -1409,7 +1709,7 @@ structural discriminator as a readable heading instead."
      application
      :style ':tool
      :header "▸ shell.run"
-     :rows (append (application--shell-command-rows application command)
+     :rows (append (application--shell-command-rows command)
                    metadata))))
 
 (defmethod application-tool-call-entry
@@ -1452,11 +1752,13 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool self-set-tool) (application application) (call hash-table))
-  "Present a self.set binding, value form, and selected restart."
+  "Present a self.set binding and syntax-highlighted value form."
   (declare (ignore tool))
   (let* ((arguments (application--function-call-arguments call))
          (symbol (or (and arguments (json-get arguments "symbol")) ""))
-         (value (or (and arguments (json-get arguments "value")) "")))
+         (value
+           (application--presentation-value
+            (or (and arguments (json-get arguments "value")) ""))))
     (application--tool-entry
      application
      :style ':tool
@@ -1466,8 +1768,10 @@ structural discriminator as a readable heading instead."
              application
              (list (list :label "symbol" :value symbol :style ':code)))
             (list (application--tool-section-row "value"))
-            (application--preview-rows
-             value ':code *application-tool-call-lines* :gutter "│ ")
+            (application--source-change-rows
+             value
+             ':source
+             :language *application-common-lisp-language*)
             (application--restart-call-rows arguments)))))
 
 (defmethod application-tool-call-entry

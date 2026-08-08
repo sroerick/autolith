@@ -2412,6 +2412,237 @@
                  "help lists command descriptions"))
   nil)
 
+(-> test-line-change-tool-presentation () null)
+(defun test-line-change-tool-presentation ()
+  "Test syntax-highlighted semantic rulers for source-bearing tool calls."
+  (labels ((call-entry (application namespace name &key arguments)
+             "Render one function call into APPLICATION's transcript."
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" namespace
+               "name" name
+               "arguments" (json-encode arguments))))
+           (workspace-replacement-entry (application uri revision)
+             "Render a two-line workspace replacement for URI and REVISION."
+             (call-entry
+              application "resource" "edit"
+              :arguments
+              (json-object
+               "uri" uri
+               "base-revision" revision
+               "operations"
+               (json-array
+                (json-object
+                 "op" "replace-lines"
+                 "start-line" 4
+                 "end-line" 5
+                 "content" (format nil "(defun new-source ()~%  2)"))))))
+           (assert-unavailable-workspace-entry (entry assertion)
+             "Assert ENTRY never invents an unavailable workspace preimage."
+             (let ((text (markdown-tests--row-text entry)))
+               (test-assert
+                (and (find (terminal-span :failure "- 4 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span :success "+ │ ")
+                           entry :test #'equal)
+                     (find (terminal-span :syntax-function "new-source")
+                           entry :test #'equal)
+                     (not (find (terminal-span :syntax-function "old-source")
+                                entry :test #'equal))
+                     (search "observed lines 4-5 unavailable" text))
+                assertion))))
+    (let* ((application
+             (application-tests--ui-application
+              :columns 100
+              :compact-view-p nil))
+           (source (format nil "(defun highlighted-source ()~%  42)")))
+      (dolist (specification
+               '(("lisp" "eval" "form")
+                 ("lisp" "compile" "form")
+                 ("self" "eval" "form")
+                 ("self" "exercise" "form")
+                 ("self" "redefine" "definition")
+                 ("self" "persist-definition" "definition")))
+        (destructuring-bind (namespace name argument-name) specification
+          (let ((entry
+                  (call-entry
+                   application namespace name
+                   :arguments (json-object argument-name source))))
+            (test-assert
+             (and (find (terminal-span :success "│ ") entry :test #'equal)
+                  (find (terminal-span :syntax-keyword "defun")
+                        entry :test #'equal)
+                  (find (terminal-span :syntax-function "highlighted-source")
+                        entry :test #'equal)
+                  (find (terminal-span :syntax-number "42") entry :test #'equal))
+             (format nil "~A.~A uses a green syntax-highlighted source ruler"
+                     namespace name)))))
+      (let ((entry
+              (call-entry
+               application "self" "set"
+               :arguments
+               (json-object "symbol" "*highlighted-value*"
+                            "value" "(list 1 2)"))))
+        (test-assert
+         (and (find (terminal-span :success "│ ") entry :test #'equal)
+              (find (terminal-span :syntax-function "list") entry :test #'equal)
+              (find (terminal-span :syntax-number "1") entry :test #'equal)
+              (find (terminal-span :syntax-number "2") entry :test #'equal))
+         "self.set syntax-highlights its value form beside a green ruler"))
+      (dolist (specification
+               '(("fs" "write" "src/highlighted.lisp")
+                 ("lisp" "scratchpad-write" "highlighted.lisp")))
+        (destructuring-bind (namespace name path) specification
+          (let* ((entry
+                   (call-entry
+                    application namespace name
+                    :arguments (json-object "path" path "content" source)))
+                 (text (markdown-tests--row-text entry)))
+            (test-assert
+             (and (find (terminal-span :success "+ │ ") entry :test #'equal)
+                  (find (terminal-span :syntax-keyword "defun")
+                        entry :test #'equal)
+                  (find (terminal-span :syntax-function "highlighted-source")
+                        entry :test #'equal)
+                  (not (search "content unavailable" text)))
+             (format nil "~A.~A shows available syntax-highlighted added content"
+                     namespace name)))))
+      (let* ((entry
+               (call-entry
+                application "fs" "write"
+                :arguments
+                (json-object "path" "src/highlighted.unknown"
+                             "content" "plain source")))
+             (text (markdown-tests--row-text entry)))
+        (test-assert
+         (and (find (terminal-span :success "+ │ ") entry :test #'equal)
+              (find (terminal-span :code "plain source") entry :test #'equal)
+              (search "+ │ plain source" text))
+         "writes preserve the green added ruler without a known syntax"))
+      (let* ((entry
+               (call-entry
+                application "lisp" "scratchpad-edit"
+                :arguments
+                (json-object
+                 "path" "highlighted.unknown"
+                 "old-text" "old plain"
+                 "new-text" "new plain")))
+             (text (markdown-tests--row-text entry)))
+        (test-assert
+         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
+              (find (terminal-span :success "+ │ ") entry :test #'equal)
+              (find (terminal-span :code "old plain") entry :test #'equal)
+              (find (terminal-span :code "new plain") entry :test #'equal)
+              (search "- │ old plain" text)
+              (search "+ │ new plain" text))
+         "edits preserve semantic rulers without a known syntax"))
+      (let ((entry
+              (call-entry
+               application "lisp" "scratchpad-edit"
+               :arguments
+               (json-object
+                "path" "highlighted.lisp"
+                "old-text" "(defun old-source () 1)"
+                "new-text" "(defun new-source () 2)"))))
+        (test-assert
+         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
+              (find (terminal-span :success "+ │ ") entry :test #'equal)
+              (find (terminal-span :syntax-function "old-source")
+                    entry :test #'equal)
+              (find (terminal-span :syntax-function "new-source")
+                    entry :test #'equal))
+         "scratchpad edits use red removed and green added syntax rulers"))
+      (let* ((entry
+               (call-entry
+                application "shell" "run"
+                :arguments
+                (json-object "command" "printf '%s\\n' highlighted")))
+             (text (markdown-tests--row-text entry)))
+        (test-assert
+         (and (find (terminal-span :success "│ ") entry :test #'equal)
+              (find (terminal-span :syntax-function "printf")
+                    entry :test #'equal)
+              (search "$ printf" text))
+         "shell.run syntax-highlights executable input beside a green ruler")))
+    (let* ((configuration (test-configuration))
+           (root (test-configuration-root configuration))
+           (conversation
+             (conversation-create configuration :identifier "line-change-resource"))
+           (application
+             (application-tests--ui-application
+              :columns 100
+              :compact-view-p nil))
+           (uri "workspace:src/highlighted.lisp")
+           (revision "Rline-change")
+           (partial-revision "Rline-change-partial")
+           (lines
+             (vector "header" "context" "before"
+                     "(defun old-source ()" "  1)" "after"))
+           (observation
+             (make-instance
+              'workspace-file-observation
+              :uri uri
+              :revision "snapshot-digest"
+              :content (format nil "~{~A~^~%~}" (coerce lines 'list))
+              :lines lines
+              :line-ending (string #\Newline)
+              :final-newline-p t))
+           (state
+             (make-instance
+              'workspace-file-observation-state
+              :alias revision
+              :observation observation
+              :visible-ranges '((1 6))))
+           (partial-state
+             (make-instance
+              'workspace-file-observation-state
+              :alias partial-revision
+              :observation observation
+              :visible-ranges '((1 4)))))
+      (unwind-protect
+           (progn
+             (setf (application-configuration application) configuration
+                   (application-conversation application) conversation)
+             (with-recursive-lock-held
+                 ((conversation-resource-observation-lock conversation))
+               (let ((states
+                       (conversation-resource-observations conversation)))
+                 (setf (gethash revision states) state
+                       (gethash partial-revision states) partial-state
+                       (conversation-resource-observation-order conversation)
+                       (list revision partial-revision))))
+             (let* ((entry
+                      (workspace-replacement-entry application uri revision))
+                    (text (markdown-tests--row-text entry)))
+               (test-assert
+                (and (find (terminal-span :failure "- 4 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span :success "+ │ ")
+                           entry :test #'equal)
+                     (find (terminal-span :syntax-function "old-source")
+                           entry :test #'equal)
+                     (find (terminal-span :syntax-function "new-source")
+                           entry :test #'equal)
+                     (search "- 4 │" text)
+                     (search "+ │" text))
+                "workspace resource edits use the observed red preimage and green replacement"))
+             (assert-unavailable-workspace-entry
+              (workspace-replacement-entry application uri "Rmissing")
+              "workspace resource edits never invent a missing preimage")
+             (assert-unavailable-workspace-entry
+              (workspace-replacement-entry
+               application "workspace:src/mismatch.lisp" revision)
+              "workspace resource edits never use another URI's preimage")
+             (assert-unavailable-workspace-entry
+              (workspace-replacement-entry application uri partial-revision)
+              "workspace resource edits require the full range to be visible"))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
 (-> test-structured-tool-presentation () null)
 (defun test-structured-tool-presentation ()
   "Test resource operations and dynamic tool data never render as raw JSON."
@@ -6988,6 +7219,7 @@
   (test-active-cancellation-interrupt-window-expiry)
   (test-cancellation-completion-clears-interrupt-state)
   (test-transcript-entries)
+  (test-line-change-tool-presentation)
   (test-structured-tool-presentation)
   (test-plan-update-call-presentation)
   (test-task-run-call-presentation)

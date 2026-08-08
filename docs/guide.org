@@ -611,6 +611,10 @@ preferences file with =/trace=. This changes terminal presentation only; every
 call and result remains in durable conversation history and provider context.
 Structured tool arguments and results render as readable nested fields instead
 of raw JSON. Resource edits list each operation and its target range.
+Source-bearing evaluation, compilation, definition, shell, write, and edit
+calls preserve semantic syntax colors. Executable source has a green left
+ruler; inserted lines use a green =+= ruler and removed lines use a red =-=
+ruler, so the distinction remains legible when color is disabled.
 
 With no argument, =/compact= still forces context compaction.
 
