@@ -318,6 +318,236 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-lisp-execution-jobs () null)
+(defun test-lisp-execution-jobs ()
+  "Test inspectable Lisp jobs, named REPL affinity, cancellation, and restart."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (pool (lisp-worker-pool-create configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (primary
+           (task-tests--primary-agent
+            configuration "lisp-execution-primary" registry))
+         (context
+           (make-instance
+            'tool-context
+            :configuration configuration
+            :worker pool
+            :conversation (agent-conversation primary)
+            :registry registry
+            :agent primary
+            :call-id "lisp-execution-test"))
+         (cancel-marker (merge-pathnames "lisp-cancel-started" root))
+         (alpha nil)
+         (beta nil)
+         (cancel-worker nil)
+         (scratch-worker nil))
+    (labels ((run-lisp (name &rest arguments)
+               "Execute lisp.NAME with decoded test ARGUMENTS."
+               (tool-execute
+                (tool-registry-find registry "lisp" name)
+                context
+                (apply #'json-object arguments)))
+
+             (handoff-job (result)
+               "Return RESULT's visible handed-off execution job."
+               (let* ((details (tool-result-details result))
+                      (record (and (listp details)
+                                   (getf (rest details) :job)))
+                      (identifier (and record (getf record :id))))
+                 (and identifier
+                      (task-orchestrator-find-visible-job
+                       orchestrator identifier primary "lisp.eval"))))
+
+             (worker-values (worker form)
+               "Evaluate FORM directly in WORKER and return rendered values."
+               (getf
+                (rest
+                 (lisp-worker-request worker :eval (list :form form)))
+                :values))
+
+             (async-schema-p (name)
+               "Return true when lisp.NAME advertises one async Boolean."
+               (let* ((tool (tool-registry-find registry "lisp" name))
+                      (properties
+                        (and tool
+                             (json-get (tool-parameters tool) "properties")))
+                      (property
+                        (and properties (gethash "async" properties))))
+                 (and (json-object-p property)
+                      (string= (json-get property "type") "boolean")))))
+      (unwind-protect
+           (progn
+             (setf alpha (lisp-worker-pool-start pool "alpha" "pristine")
+                   beta (lisp-worker-pool-start pool "beta" "pristine")
+                   cancel-worker
+                   (lisp-worker-pool-start pool "cancel" "pristine")
+                   scratch-worker
+                   (lisp-worker-pool-start pool "scratch-async" "pristine"))
+             (test-assert
+              (every #'async-schema-p
+                     '("eval" "compile" "load-system" "run-tests"
+                       "scratchpad-run"))
+              "only execution-oriented Lisp tools advertise asynchronous jobs")
+             (test-assert
+              (notany #'async-schema-p
+                      '("describe" "source" "reset" "start" "stop" "repls"
+                        "images" "save-image" "scratchpad-list"
+                        "scratchpad-read" "scratchpad-write" "scratchpad-edit"
+                        "scratchpad-delete"))
+              "Lisp inspection, lifecycle, and scratchpad file tools stay synchronous")
+             (let* ((*tool-execution-blocking-grace-seconds* 5)
+                    (result
+                      (run-lisp "eval"
+                                "form" "(+ 20 22)"
+                                "repl" "alpha")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (not (typep result 'task-tool-result))
+                     (search "42" (tool-result-content result)))
+                "a fast default Lisp evaluation returns its ordinary result"))
+             (let* ((*tool-execution-blocking-grace-seconds* 0.01)
+                    (result
+                      (run-lisp
+                       "eval"
+                       "form"
+                       "(progn (defparameter *async-once* (1+ (if (boundp '*async-once*) *async-once* 0))) (sleep 1) *async-once*)"
+                       "repl" "alpha"))
+                    (details (tool-result-details result))
+                    (job (handoff-job result))
+                    (identifier (and job (session-job-identifier job))))
+               (test-assert
+                (and (typep result 'task-tool-result)
+                     (eq (getf (rest details) :handoff-reason)
+                         :grace-expired)
+                     job
+                     (session-job-detached-p job))
+                "a slow default Lisp evaluation hands off its existing job")
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 5)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :completed)
+                       (string= identifier (getf snapshot :job-id))
+                       (equal (worker-values alpha "*async-once*") '("1"))
+                       (equal (worker-values beta "(boundp '*async-once*)")
+                              '("NIL")))
+                  "the handed-off evaluation runs once in its selected named REPL")))
+             (let* ((result
+                      (run-lisp
+                       "compile"
+                       "form" "(progn (sleep 1) (+ 2 3))"
+                       "repl" "beta"
+                       "async" t))
+                    (details (tool-result-details result))
+                    (job (handoff-job result)))
+               (test-assert
+                (and (typep result 'task-tool-result)
+                     (eq (getf (rest details) :handoff-reason) :requested)
+                     job)
+                "explicit async returns an inspectable Lisp compilation job")
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 5)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :completed)
+                       (search "5" (getf (getf snapshot :result) :content)))
+                  "the asynchronous Lisp compilation retains its result")))
+             (let* ((form
+                      (format nil
+                              "(progn (with-open-file (stream ~A :direction :output :if-exists :supersede :if-does-not-exist :create) (write-string \"started\" stream)) (sleep 30) :done)"
+                              (prin1-to-string cancel-marker)))
+                    (result
+                      (run-lisp "eval"
+                                "form" form
+                                "repl" "cancel"
+                                "async" t))
+                    (job (handoff-job result))
+                    (identifier (and job (session-job-identifier job))))
+               (test-assert
+                (and job
+                     (task-tests--wait-until
+                      (lambda () (probe-file cancel-marker)) 5))
+                "an asynchronous Lisp evaluation reaches its worker before cancellation")
+               (let* ((cancel-result
+                        (tool-execute
+                         (tool-registry-find registry "job" "cancel")
+                         context
+                         (json-object "id" identifier)))
+                      (details (rest (tool-result-details cancel-result))))
+                 (test-assert
+                  (and (tool-result-success-p cancel-result)
+                       (getf details :accepted-p))
+                  "job.cancel accepts cancellation of a running Lisp request"))
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 5)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :aborted)
+                       (eq (getf (getf snapshot :result) :status) :aborted)
+                       (not (lisp-worker-running-p cancel-worker)))
+                  "cancelling a Lisp job aborts it and stops the interrupted REPL")))
+             (let* ((*tool-execution-blocking-grace-seconds* 5)
+                    (result
+                      (run-lisp "eval"
+                                "form" "(+ 40 2)"
+                                "repl" "cancel")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (search "42" (tool-result-content result))
+                     (lisp-worker-running-p cancel-worker)
+                     (eq cancel-worker
+                         (lisp-worker-pool-worker pool "cancel")))
+                "the cancelled named REPL restarts safely for its next request"))
+             (let ((load-result
+                     (let ((*tool-execution-blocking-grace-seconds* 5))
+                       (run-lisp "load-system"
+                                 "system" "asdf"
+                                 "repl" "alpha"))))
+               (test-assert
+                (tool-result-success-p load-result)
+                "lisp.load-system uses the shared execution path"))
+             (let* ((write-result
+                      (run-lisp
+                       "scratchpad-write"
+                       "path" "async-program.lisp"
+                       "content"
+                       (format nil
+                               "(defparameter *async-scratchpad-value* 41)~%~
+                                (sleep 1)~%~
+                                (incf *async-scratchpad-value*)~%")))
+                    (run-result
+                      (run-lisp "scratchpad-run"
+                                "path" "async-program.lisp"
+                                "repl" "scratch-async"
+                                "async" t))
+                    (job (handoff-job run-result)))
+               (test-assert
+                (and (tool-result-success-p write-result)
+                     (typep run-result 'task-tool-result)
+                     job)
+                "lisp.scratchpad-run returns an inspectable execution job")
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 5)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :completed)
+                       (equal
+                        (worker-values
+                         scratch-worker "*async-scratchpad-value*")
+                        '("42")))
+                  "the asynchronous scratchpad loads once into its selected REPL"))))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (ignore-errors (lisp-worker-pool-stop-all pool))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
+
 (-> test-lisp-scratchpad-tools () null)
 (defun test-lisp-scratchpad-tools ()
   "Test conversation-scoped scratchpad files, edits, execution, and cleanup."

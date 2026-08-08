@@ -21,12 +21,14 @@
 
 (-> default-tools--required-form-schema (string) json-object)
 (defun default-tools--required-form-schema (description)
-  "Return a closed schema containing FORM and an optional named REPL."
+  "Return a closed schema containing FORM, a named REPL, and async policy."
   (let ((properties
           (json-object
            "form" (tool-string-property description)
            "repl" (tool-string-property
-                    "The persistent REPL name; defaults to default."))))
+                   "The persistent REPL name; defaults to default.")
+           "async" (tool-boolean-property
+                    "Run as an inspectable background job; defaults to false."))))
     (tool-object-schema properties '("form"))))
 
 (-> default-tools--lisp-repl-control-schema
@@ -609,13 +611,13 @@
           (list
            'lisp-eval-tool
            "lisp" "eval"
-           "Evaluate one Common Lisp form in a named persistent REPL."
+           "Evaluate one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
            (default-tools--required-form-schema
             "One readable Common Lisp form."))
           (list
            'lisp-compile-tool
            "lisp" "compile"
-           "Compile and execute one Common Lisp form in a named persistent REPL."
+           "Compile and execute one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
            (default-tools--required-form-schema
             "One readable Common Lisp form."))
           (list
@@ -669,13 +671,15 @@
           (list
            'lisp-scratchpad-run-tool
            "lisp" "scratchpad-run"
-           "Load one current-conversation scratchpad file into a named persistent REPL."
+           "Load one current-conversation scratchpad file into a named persistent REPL, optionally as an inspectable job."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
                      "The relative scratchpad Lisp file path.")
              "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default."))
+                     "The persistent REPL name; defaults to default.")
+             "async" (tool-boolean-property
+                      "Run as an inspectable background job; defaults to false."))
             '("path")))
           (list
            'lisp-scratchpad-delete-tool
@@ -689,12 +693,14 @@
           (list
            'lisp-load-system-tool
            "lisp" "load-system"
-           "Load one ASDF or Quicklisp system in a named persistent REPL."
+           "Load one ASDF or Quicklisp system in a named persistent REPL, optionally as an inspectable job."
            (tool-object-schema
             (json-object
              "system" (tool-string-property "The ASDF system name.")
              "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default."))
+                     "The persistent REPL name; defaults to default.")
+             "async" (tool-boolean-property
+                      "Run as an inspectable background job; defaults to false."))
             '("system")))
           (list
            'lisp-describe-tool
@@ -723,12 +729,14 @@
           (list
            'lisp-run-tests-tool
            "lisp" "run-tests"
-           "Run ASDF tests for one system in a named persistent REPL."
+           "Run ASDF tests for one system in a named persistent REPL, optionally as an inspectable job."
            (tool-object-schema
             (json-object
              "system" (tool-string-property "The ASDF system name.")
              "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default."))
+                     "The persistent REPL name; defaults to default.")
+             "async" (tool-boolean-property
+                      "Run as an inspectable background job; defaults to false."))
             '("system")))
           (list
            'lisp-reset-tool

@@ -171,6 +171,7 @@
     (test-search-tools)
     (test-lisp-image-manifests)
     (test-lisp-worker-protocol)
+    (test-lisp-execution-jobs)
     (test-lisp-scratchpad-tools)
      (test-lisp-worker-image-snapshot)
     (test-self-tools)

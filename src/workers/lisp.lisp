@@ -295,38 +295,81 @@
               :message "No Lisp worker manager is available."
               :tool-name "lisp.worker")))))
 
+(-> lisp-tool-invoke-execution
+    (tool-context hash-table
+     &key (:tool-name non-empty-string)
+       (:summary string)
+       (:operation-function function))
+    tool-result)
+(defun lisp-tool-invoke-execution
+    (context arguments &key tool-name summary operation-function)
+  "Run one named-worker operation directly or through an inspectable session job.
+
+Cancellation stops the selected worker before unwinding the job, so its next
+request restarts from a clean protocol stream."
+  (let* ((async-p
+           (tool-boolean-argument arguments "async" :tool-name tool-name))
+         (worker (lisp-tool-worker context arguments))
+         (repl-name (lisp-worker-name worker)))
+    (tool-execution-invoke
+     (tool-context-execution-runtime context)
+     (tool-context-agent context)
+     :tool-name tool-name
+     :summary (format nil "Lisp REPL ~A: ~A" repl-name summary)
+     :operation-function
+     (lambda ()
+       (handler-bind ((job-aborted
+                        (lambda (condition)
+                          (declare (ignore condition))
+                          (lisp-worker-stop worker))))
+         (funcall operation-function worker)))
+     :async-p async-p
+     :parent-call-id (tool-context-call-id context))))
+
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Evaluate the required form through CONTEXT's isolated worker."
+  "Evaluate the required form once through CONTEXT's isolated worker."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :eval
-    (list :form (tool-argument arguments "form" :required t)))))
+  (let ((form (tool-argument arguments "form" :required t)))
+    (lisp-tool-invoke-execution
+     context arguments
+     :tool-name "lisp.eval"
+     :summary form
+     :operation-function
+     (lambda (worker)
+       (worker-response-tool-result
+        (lisp-worker-request worker :eval (list :form form)))))))
 
 (defmethod tool-execute ((tool lisp-compile-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Compile and execute the required form through CONTEXT's isolated worker."
+  "Compile and execute the required form once through CONTEXT's worker."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :compile
-    (list :form (tool-argument arguments "form" :required t)))))
+  (let ((form (tool-argument arguments "form" :required t)))
+    (lisp-tool-invoke-execution
+     context arguments
+     :tool-name "lisp.compile"
+     :summary form
+     :operation-function
+     (lambda (worker)
+       (worker-response-tool-result
+        (lisp-worker-request worker :compile (list :form form)))))))
 
 (defmethod tool-execute ((tool lisp-load-system-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Load the required system through CONTEXT's isolated worker."
+  "Load the required system once through CONTEXT's isolated worker."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :load-system
-    (list :system (tool-argument arguments "system" :required t)))))
+  (let ((system (tool-argument arguments "system" :required t)))
+    (lisp-tool-invoke-execution
+     context arguments
+     :tool-name "lisp.load-system"
+     :summary (format nil "Load system ~A" system)
+     :operation-function
+     (lambda (worker)
+       (worker-response-tool-result
+        (lisp-worker-request worker :load-system (list :system system)))))))
 
 (defmethod tool-execute ((tool lisp-describe-tool)
                          (context tool-context)
@@ -355,13 +398,17 @@
 (defmethod tool-execute ((tool lisp-run-tests-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Run the required system's tests through CONTEXT's isolated worker."
+  "Run the required system's tests once through CONTEXT's isolated worker."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :run-tests
-    (list :system (tool-argument arguments "system" :required t)))))
+  (let ((system (tool-argument arguments "system" :required t)))
+    (lisp-tool-invoke-execution
+     context arguments
+     :tool-name "lisp.run-tests"
+     :summary (format nil "Run tests for system ~A" system)
+     :operation-function
+     (lambda (worker)
+       (worker-response-tool-result
+        (lisp-worker-request worker :run-tests (list :system system)))))))
 
 (defmethod tool-execute ((tool lisp-reset-tool)
                          (context tool-context)

@@ -270,36 +270,39 @@
 (defmethod tool-execute ((tool lisp-scratchpad-run-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Load one scratchpad file into the selected named Lisp REPL."
+  "Load one scratchpad file once into the selected named Lisp REPL."
   (declare (ignore tool))
   (let* ((path
            (lisp-scratchpad-path
             context
             (tool-argument arguments "path" :required t)))
-         (repl (lisp-tool-repl-name arguments)))
+         (repl (lisp-tool-repl-name arguments))
+         (form
+           (format nil
+                   "(load ~A :verbose nil :print nil :external-format :utf-8)"
+                   (prin1-to-string path))))
     (cond
       ((uiop:directory-exists-p path)
        (tool-failure (format nil "~A is a directory." path)))
       ((not (probe-file path))
        (tool-failure (format nil "~A does not exist." path)))
       (t
-       (let* ((form
-                (format nil
-                        "(load ~A :verbose nil :print nil :external-format :utf-8)"
-                        (prin1-to-string path)))
-              (result
-                (worker-response-tool-result
-                 (lisp-worker-request
-                  (lisp-tool-worker context arguments)
-                  :eval
-                  (list :form form)))))
-         (if (tool-result-success-p result)
-             (tool-success
-              (format nil "Loaded scratchpad file ~A into Lisp REPL ~A.~%~A"
-                      path
-                      repl
-                      (tool-result-content result)))
-             result))))))
+       (lisp-tool-invoke-execution
+        context arguments
+        :tool-name "lisp.scratchpad-run"
+        :summary (format nil "Load scratchpad ~A" path)
+        :operation-function
+        (lambda (worker)
+          (let ((result
+                  (worker-response-tool-result
+                   (lisp-worker-request worker :eval (list :form form)))))
+            (if (tool-result-success-p result)
+                (tool-success
+                 (format nil "Loaded scratchpad file ~A into Lisp REPL ~A.~%~A"
+                         path
+                         repl
+                         (tool-result-content result)))
+                result))))))))
 
 (defmethod tool-execute ((tool lisp-scratchpad-delete-tool)
                          (context tool-context)
