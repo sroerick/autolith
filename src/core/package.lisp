@@ -94,6 +94,7 @@
                 #:worker-request)
   (:import-from #:clinedi
                 #:line-editor
+                #:grapheme-previous-boundary
                 #:line-editor-text
                 #:line-editor-cursor
                 #:line-editor-history
@@ -106,6 +107,8 @@
                 #:make-selector
                 #:selector-items
                 #:selector-selection
+                #:selector-visible-count
+                #:selector-move
                 #:selector-set-items
                 #:selector-arrange
                 #:selector-handle-event

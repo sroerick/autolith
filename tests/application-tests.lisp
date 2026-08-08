@@ -6535,6 +6535,53 @@
                                        (getf item :description))
                                 :test #'string=)
                           "the active effort is marked current"))
+            (let* ((current-model
+                     (configuration-model
+                      (application-configuration application)))
+                   (selected-model nil)
+                   (visible-count nil))
+              (setf (scripted-terminal-events terminal) (list :submit)
+                    (slot-value terminal 'read-callback)
+                    (lambda ()
+                      (let ((selector (terminal-ui-selector ui)))
+                        (when selector
+                          (setf visible-count
+                                (selector-visible-count selector))))))
+              (unwind-protect
+                   (with-terminal-ui (active-ui ui)
+                     (declare (ignore active-ui))
+                     (setf selected-model
+                           (application--pick-model application)))
+                (setf (slot-value terminal 'read-callback) nil))
+              (test-assert (string= selected-model current-model)
+                           "the model picker opens on the current model")
+              (test-assert (= visible-count 15)
+                           "the model picker can display fifteen candidates"))
+            (let* ((current-effort
+                     (configuration-reasoning-effort
+                      (application-configuration application)))
+                   (selected-effort nil))
+              (setf (scripted-terminal-events terminal) (list :submit))
+              (with-terminal-ui (active-ui ui)
+                (declare (ignore active-ui))
+                (setf selected-effort
+                      (application--pick-reasoning-effort application)))
+              (test-assert (string= selected-effort current-effort)
+                           "the effort picker opens on the current effort"))
+            (setf (scripted-terminal-events terminal)
+                  (list '(:insert "terra") :submit))
+            (with-terminal-ui (active-ui ui)
+              (declare (ignore active-ui))
+              (test-assert
+               (string= (application--pick-model application) "gpt-5.6-terra")
+               "the model picker searches registered model identifiers"))
+            (setf (scripted-terminal-events terminal)
+                  (list '(:insert "low") :submit))
+            (with-terminal-ui (active-ui ui)
+              (declare (ignore active-ui))
+              (test-assert
+               (string= (application--pick-reasoning-effort application) "low")
+               "the effort picker searches supported levels"))
            (application-set-reasoning-effort application "low")
            (test-assert (string= (configuration-reasoning-effort
                                   (application-configuration application))
@@ -6603,7 +6650,7 @@
               "switching models preserves the global effort default"))
            (let ((model-installed-before-effort-p nil))
              (setf (scripted-terminal-events terminal)
-                   (list :history-next :history-next :submit)
+                   (list :history-next :submit)
                    (slot-value terminal 'read-callback)
                    (lambda ()
                      (setf model-installed-before-effort-p

@@ -943,16 +943,24 @@ Return true only when the objective was rewritten."
 (-> application--pick-identifier
     (application &key (:title string) (:items list) (:usage string)
                  (:empty-notice string) (:hint (option string))
+                 (:visible-count (integer 1))
+                 (:initial-name (option string))
+                 (:search-p boolean) (:search-key function)
                  (:on-event (option function)))
     (option string))
 (defun application--pick-identifier
     (application &key (title "select") items (usage "") (empty-notice "")
-                      hint on-event)
+                      hint
+                      (visible-count *terminal-ui-visible-completions*)
+                      initial-name search-p
+                      (search-key #'terminal-ui--picker-default-search-text)
+                      on-event)
   "Pick one identifier from ITEMS interactively, or explain why none was picked.
 
 Signals a usage error on non-interactive terminals, presents EMPTY-NOTICE
-when ITEMS is empty, and returns NIL when the picker is cancelled. HINT and
-ON-EVENT are forwarded to TERMINAL-UI-SELECT."
+when ITEMS is empty, and returns NIL when the picker is cancelled. HINT,
+VISIBLE-COUNT, INITIAL-NAME, SEARCH-P, SEARCH-KEY, and ON-EVENT are forwarded
+to TERMINAL-UI-SELECT."
   (block nil
     (let ((ui (application-ui application)))
       (unless (terminal-interactive-p (terminal-ui-terminal ui))
@@ -967,6 +975,10 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
                   :title title
                   :items items
                   :hint hint
+                  :visible-count visible-count
+                  :initial-name initial-name
+                  :search-p search-p
+                  :search-key search-key
                   :on-event on-event
                   :resize-callback #'application-pending-terminal-size)))
         (let ((controller (application-input-controller application)))
@@ -1107,15 +1119,33 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
        :empty-notice "No saved conversations exist."))))
 
 
+(-> application--pick-model (application) (option string))
+(defun application--pick-model (application)
+  "Prompt for one registered model and return the selected identifier."
+  (let ((configuration (application-configuration application)))
+    (application--pick-identifier
+     application
+     :title "pick the model"
+     :items (application--model-items application)
+     :visible-count 15
+     :initial-name (configuration-model configuration)
+     :search-p t
+     :usage "Usage: /model NAME"
+     :empty-notice "No registered provider models exist.")))
+
+
 (-> application--pick-reasoning-effort (application) (option string))
 (defun application--pick-reasoning-effort (application)
   "Prompt for one supported reasoning effort and return the selected name."
-  (application--pick-identifier
-   application
-   :title "pick the reasoning effort"
-   :items (application--effort-items application)
-   :usage "Usage: /effort LEVEL"
-   :empty-notice "No supported reasoning efforts exist."))
+  (let ((configuration (application-configuration application)))
+    (application--pick-identifier
+     application
+     :title "pick the reasoning effort"
+     :items (application--effort-items application)
+     :initial-name (configuration-reasoning-effort configuration)
+     :search-p t
+     :usage "Usage: /effort LEVEL"
+     :empty-notice "No supported reasoning efforts exist.")))
 
 (-> application--project-adaptation-offer-items () list)
 (defun application--project-adaptation-offer-items ()
@@ -1569,12 +1599,7 @@ ON-EVENT are forwarded to TERMINAL-UI-SELECT."
     (application invocation)
   (let ((model
           (or (application-command-invocation-argument invocation)
-              (application--pick-identifier
-               application
-               :title "pick the model"
-               :items (application--model-items application)
-               :usage "Usage: /model NAME"
-               :empty-notice "No registered provider models exist."))))
+              (application--pick-model application))))
     (when model
       (application-set-model application model)
       (let ((effort (application--pick-reasoning-effort application)))

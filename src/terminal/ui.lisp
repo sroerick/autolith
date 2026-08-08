@@ -19,6 +19,9 @@
 (defparameter *terminal-ui-compaction-head-cells* 5
   "The maximum width of the travelling compaction head.")
 
+(defparameter *terminal-ui-picker-search-character-limit* 256
+  "The maximum number of characters retained in a modal picker search.")
+
 (defparameter *terminal-ui-pending-preview-limit* 3
   "The maximum pending inputs previewed for each delivery class.")
 
@@ -442,6 +445,46 @@ emergency terminal input responsive while another thread owns presentation."
     (if argument
         (format nil "~A ~A" (getf entry :name) argument)
         (getf entry :name))))
+
+(-> terminal-ui--picker-default-search-text (list) string)
+(defun terminal-ui--picker-default-search-text (entry)
+  "Return the searchable visible metadata carried by picker ENTRY."
+  (format nil
+          "~{~A~^ ~}"
+          (loop for key in '(:name :argument :group :tally :description)
+                for value = (getf entry key)
+                when (stringp value)
+                  collect value)))
+
+(-> terminal-ui--picker-search-terms (string) list)
+(defun terminal-ui--picker-search-terms (query)
+  "Return QUERY's non-empty whitespace-separated search terms."
+  (remove-if (lambda (term) (zerop (length term)))
+             (uiop:split-string query
+                                :separator '(#\Space #\Tab #\Newline #\Return))))
+
+(-> terminal-ui--picker-search-match-p (list string function) boolean)
+(defun terminal-ui--picker-search-match-p (entry query search-key)
+  "Return true when every term in QUERY occurs in ENTRY's SEARCH-KEY text."
+  (let ((text (funcall search-key entry)))
+    (unless (stringp text)
+      (error 'terminal-error
+             :message "A picker search key must return a string."
+             :operation ':select
+             :cause nil))
+    (not
+     (null
+      (every (lambda (term)
+               (search term text :test #'char-equal))
+             (terminal-ui--picker-search-terms query))))))
+
+(-> terminal-ui--picker-search-title (string string integer) string)
+(defun terminal-ui--picker-search-title (title query match-count)
+  "Return TITLE annotated with QUERY and MATCH-COUNT when search is active."
+  (if (plusp (length query))
+      (format nil "~A · search: ~A · ~D match~:P"
+              title query match-count)
+      title))
 
 (-> terminal-ui--choice-tally (list) string)
 (defun terminal-ui--choice-tally (entry)
@@ -1328,24 +1371,35 @@ live unfinished line continuing that block, or removes it when NIL."
 (-> terminal-ui-select
     (terminal-ui &key (:title string) (:items list)
                  (:hint (option string))
+                 (:visible-count (integer 1))
+                 (:initial-name (option string))
+                 (:search-p boolean)
+                 (:search-key function)
                  (:resize-callback (option function))
                  (:on-event (option function)))
     (option string))
 (defun terminal-ui-select
-    (ui &key (title "select") items hint resize-callback on-event)
+    (ui &key (title "select") items hint
+             (visible-count *terminal-ui-visible-completions*)
+             initial-name search-p
+             (search-key #'terminal-ui--picker-default-search-text)
+             resize-callback on-event)
   "Run a modal picker over ITEMS and return the selected name, or NIL on cancel.
 
 Items follow the completion entry shape. Up and Down move the selection. Tab
-and Shift-Tab cycle it forward and backward, and Enter accepts it. Other
-ordinary input dismisses the picker with the selected item. Escape, Ctrl-C, or
-end of input cancels. Returns NIL immediately when ITEMS is empty or the
-terminal is not interactive.
+and Shift-Tab cycle it forward and backward, and Enter accepts it. When SEARCH-P
+is true, inserted or pasted text filters candidates, Backspace edits the query,
+and Ctrl-U clears it. Otherwise ordinary input dismisses the picker with the
+selected item. Escape, Ctrl-C, or end of input cancels. Returns NIL immediately
+when ITEMS is empty or the terminal is not interactive.
 
-HINT overrides the default \"enter selects, esc cancels\" suffix after TITLE.
+VISIBLE-COUNT bounds candidate rows, and INITIAL-NAME selects a matching item
+before the first paint. HINT overrides the default picker suffix. SEARCH-KEY
+returns the text searched for each item.
 
-ON-EVENT, when provided, receives (EVENT SELECTOR) before default handling and
-may return:
-  NIL - fall through to ordinary selector handling
+ON-EVENT, when provided, receives (EVENT SELECTOR) before search and default
+handling and may return:
+  NIL - fall through to search or ordinary selector handling
   :CONTINUE - custom handling already applied; continue the modal loop
   (:ACCEPT NAME) - accept NAME and close the picker
   (:CANCEL) - cancel and close the picker
@@ -1356,74 +1410,170 @@ RESIZE-CALLBACK is queried before each blocking read and immediately after the
 read returns. It returns positive pending rows and columns as a cons, or NIL
 when no resize needs to be applied."
   (block nil
-    (labels ((install
-                 (next-title next-items
-                  &optional (next-hint nil next-hint-supplied-p))
-               "Install NEXT-TITLE, NEXT-ITEMS, and optional NEXT-HINT on UI."
-               (unless (and next-items
-                            (every #'terminal-completion-p next-items))
-                 (return nil))
-               (setf (terminal-ui-selector ui)
-                     (make-selector
-                      :items next-items
-                      :visible-count *terminal-ui-visible-completions*
-                      :arrangement ':vertical)
-                     (terminal-ui-selector-title ui) next-title)
-               (when next-hint-supplied-p
-                 (setf (terminal-ui-selector-hint ui) next-hint))
-               t))
-      (unless (and items
-                   (every #'terminal-completion-p items)
-                   (terminal-interactive-p (terminal-ui-terminal ui)))
-        (return nil))
-      (with-terminal-ui-locked (ui)
-        (setf (terminal-ui-selector-hint ui) hint)
-        (install title items))
-      (unwind-protect
-           (loop
-             (with-terminal-ui-locked (ui)
-               (unless (terminal-ui-refresh-size ui resize-callback)
-                 (terminal-ui--repaint-live ui)))
-             (let ((event (terminal-read-event (terminal-ui-terminal ui))))
-               (with-terminal-ui-locked (ui)
-                 (terminal-ui-refresh-size ui resize-callback)
-                 (let ((custom
-                         (and on-event
-                              (funcall on-event event
-                                       (terminal-ui-selector ui)))))
+    (let ((source-items items)
+          (base-title title)
+          (search-query ""))
+      (labels ((selected-name ()
+                 "Return the currently selected item name, or NIL."
+                 (let* ((selector (terminal-ui-selector ui))
+                        (selection (and selector
+                                        (selector-selection selector)))
+                        (selected (and selector
+                                       (nth selection
+                                            (selector-items selector)))))
+                   (and selected (getf selected :name))))
+
+               (select-name (selector name)
+                 "Move SELECTOR to NAME when that candidate exists."
+                 (let ((position
+                         (and name
+                              (position name
+                                        (selector-items selector)
+                                        :key (lambda (entry)
+                                               (getf entry :name))
+                                        :test #'string=))))
+                   (when position
+                     (selector-move selector position))))
+
+               (install-selector (next-items selected-name)
+                 "Install NEXT-ITEMS, retaining SELECTED-NAME when possible."
+                 (let ((selector
+                         (make-selector
+                          :items next-items
+                          :visible-count visible-count
+                          :arrangement ':vertical)))
+                   (select-name selector selected-name)
+                   (setf (terminal-ui-selector ui) selector
+                         (terminal-ui-selector-title ui)
+                         (terminal-ui--picker-search-title
+                          base-title search-query (length next-items)))))
+
+               (install
+                   (next-title next-items
+                    &optional (next-hint nil next-hint-supplied-p))
+                 "Install NEXT-TITLE, NEXT-ITEMS, and optional NEXT-HINT on UI."
+                 (unless (every #'terminal-completion-p next-items)
+                   (return nil))
+                 (setf source-items next-items
+                       base-title next-title
+                       search-query "")
+                 (install-selector source-items nil)
+                 (when next-hint-supplied-p
+                   (setf (terminal-ui-selector-hint ui) next-hint))
+                 t)
+
+               (refresh-search ()
+                 "Filter SOURCE-ITEMS through SEARCH-QUERY and preserve selection."
+                 (let* ((selected-name (selected-name))
+                        (matches
+                          (if (plusp (length search-query))
+                              (remove-if-not
+                               (lambda (entry)
+                                 (terminal-ui--picker-search-match-p
+                                  entry search-query search-key))
+                               source-items)
+                              source-items)))
+                   (install-selector matches selected-name)))
+
+               (append-search (text)
+                 "Append display-safe TEXT to SEARCH-QUERY within its bound."
+                 (let* ((safe-text (sanitize-text text :single-line-p t))
+                        (remaining
+                          (max 0
+                               (- *terminal-ui-picker-search-character-limit*
+                                  (length search-query))))
+                        (addition
+                          (subseq safe-text 0 (min remaining
+                                                   (length safe-text)))))
+                   (setf search-query
+                         (concatenate 'string search-query addition))
+                   (refresh-search)))
+
+               (delete-search ()
+                 "Delete the newest search grapheme and refresh candidates."
+                 (when (plusp (length search-query))
+                   (setf search-query
+                         (subseq search-query
+                                 0
+                                 (grapheme-previous-boundary
+                                  search-query (length search-query)))))
+                 (refresh-search))
+
+               (handle-search-event (event)
+                 "Apply EVENT to picker search and return true when consumed."
+                 (when search-p
                    (cond
-                     ((null custom)
-                      (multiple-value-bind (action item)
-                          (selector-handle-event
-                           (terminal-ui-selector ui) event)
-                        (case action
-                          (:accept
-                           (return (getf item :name)))
-                          (:cancel
-                           (return nil))
-                          (:dismiss
-                           (return (getf item :name)))
-                          (t
-                           nil))))
-                     ((eq custom ':continue)
-                      nil)
-                     ((and (consp custom) (eq (first custom) ':accept))
-                      (return (second custom)))
-                     ((and (consp custom) (eq (first custom) ':cancel))
-                      (return nil))
-                     ((and (consp custom) (eq (first custom) ':replace))
-                      (apply #'install (rest custom)))
+                     ((and (consp event)
+                           (member (first event) '(:insert :paste) :test #'eq)
+                           (stringp (second event)))
+                      (append-search (second event))
+                      t)
+                     ((eq event ':backspace)
+                      (delete-search)
+                      t)
+                     ((eq event ':kill-line)
+                      (setf search-query "")
+                      (refresh-search)
+                      t)
                      (t
-                      (error 'terminal-error
-                             :message
-                             "ON-EVENT returned an unsupported picker action."
-                             :operation ':select
-                             :cause nil)))))))
+                      nil)))))
+        (unless (and items
+                     (every #'terminal-completion-p items)
+                     (terminal-interactive-p (terminal-ui-terminal ui)))
+          (return nil))
         (with-terminal-ui-locked (ui)
-          (setf (terminal-ui-selector ui) nil
-                (terminal-ui-selector-title ui) nil
-                (terminal-ui-selector-hint ui) nil)
-          (terminal-ui--repaint-live ui))))))
+          (setf (terminal-ui-selector-hint ui)
+                (or hint
+                    (and search-p
+                         "type searches, backspace edits, enter selects, esc cancels")))
+          (install title items)
+          (select-name (terminal-ui-selector ui) initial-name))
+        (unwind-protect
+             (loop
+               (with-terminal-ui-locked (ui)
+                 (unless (terminal-ui-refresh-size ui resize-callback)
+                   (terminal-ui--repaint-live ui)))
+               (let ((event (terminal-read-event (terminal-ui-terminal ui))))
+                 (with-terminal-ui-locked (ui)
+                   (terminal-ui-refresh-size ui resize-callback)
+                   (let ((custom
+                           (and on-event
+                                (funcall on-event event
+                                         (terminal-ui-selector ui)))))
+                     (cond
+                       ((null custom)
+                        (unless (handle-search-event event)
+                          (multiple-value-bind (action item)
+                              (selector-handle-event
+                               (terminal-ui-selector ui) event)
+                            (case action
+                              (:accept
+                               (return (getf item :name)))
+                              (:cancel
+                               (return nil))
+                              (:dismiss
+                               (return (getf item :name)))
+                              (t
+                               nil)))))
+                       ((eq custom ':continue)
+                        nil)
+                       ((and (consp custom) (eq (first custom) ':accept))
+                        (return (second custom)))
+                       ((and (consp custom) (eq (first custom) ':cancel))
+                        (return nil))
+                       ((and (consp custom) (eq (first custom) ':replace))
+                        (apply #'install (rest custom)))
+                       (t
+                        (error 'terminal-error
+                               :message
+                               "ON-EVENT returned an unsupported picker action."
+                               :operation ':select
+                               :cause nil)))))))
+          (with-terminal-ui-locked (ui)
+            (setf (terminal-ui-selector ui) nil
+                  (terminal-ui-selector-title ui) nil
+                  (terminal-ui-selector-hint ui) nil)
+            (terminal-ui--repaint-live ui)))))))
 
 
 ;;;; -- Public UI Lifecycle and Events --

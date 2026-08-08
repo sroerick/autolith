@@ -409,9 +409,11 @@ prefix from before selection. The commands are:
 
 =/resume=, =/rollback=, =/model=, and =/effort= open a vertical interactive
 picker; each also accepts an explicit argument. Tab cycles the picker alongside
-Up and Down navigation. The resume picker lists conversations from the current
-directory first and other sessions underneath. Each section is ordered by newest
-activity first. Generations are listed newest first.
+Up and Down navigation. The model and effort pickers start on the current choice
+and filter as you type; Backspace edits the search and Ctrl-U clears it. The model
+picker displays up to fifteen candidate rows. The resume picker lists conversations
+from the current directory first and other sessions underneath. Each section is
+ordered by newest activity first. Generations are listed newest first.
 From the shell, =autolith resume= opens the same picker and may be followed by
 an explicit conversation identifier.
 Conversations remember the directory they were started in, and the picker
@@ -445,11 +447,12 @@ paused goal stays paused, the continuation budget restarts, and a completed
 goal becomes active again. Goals persist with their conversation across
 =/resume=.
 
-=/model= switches between all registered provider models, then prompts for the
-reasoning effort to use. =/models= lists the effective provider registrations and
-models. =/effort= changes only the effort. The available efforts are =none=,
-=low=, =medium=, =high=, =xhigh=, =max=, and =ultra=. Autolith sends the
-user-visible =ultra= choice as provider effort =max=.
+=/model= searches all registered provider models, opens on the current model,
+and then prompts for the reasoning effort to use. =/models= lists the effective
+provider registrations and models. =/effort= searches the active model's supported
+efforts and opens on the current effort. The available efforts are =none=, =low=,
+=medium=, =high=, =xhigh=, =max=, and =ultra=. Autolith sends the user-visible
+=ultra= choice as provider effort =max=.
 Both choices become the global defaults for later launches. =AUTOLITH_MODEL=
 and =AUTOLITH_REASONING_EFFORT= override the saved defaults when set at startup.
 Each conversation also records its latest model and effort, so =/resume= restores

@@ -1958,6 +1958,74 @@
                             "beta")
                    "ordinary picker input retains the selected option")
       (recording-terminal-reset terminal)
+      (setf (scripted-terminal-events terminal) (list :submit))
+      (let ((visible-count nil)
+            (selected-name nil))
+        (test-assert
+         (string=
+          (terminal-ui-select
+           active-ui
+           :title "pick one"
+           :items items
+           :visible-count 15
+           :initial-name "gamma"
+           :on-event
+           (lambda (event selector)
+             (when (eq event ':submit)
+               (setf visible-count (selector-visible-count selector)
+                     selected-name
+                     (getf (nth (selector-selection selector)
+                                (selector-items selector))
+                           :name)))
+             nil))
+          "gamma")
+         "modal pickers accept their initial named selection")
+        (test-assert (= visible-count 15)
+                     "modal pickers honor a custom visible row capacity")
+        (test-assert (string= selected-name "gamma")
+                     "the initial named selection is installed before input"))
+      (recording-terminal-reset terminal)
+      (setf (scripted-terminal-events terminal)
+            (list '(:insert "SECOND") :submit))
+      (test-assert
+       (string= (terminal-ui-select active-ui
+                                    :title "pick one"
+                                    :items items
+                                    :search-p t)
+                "beta")
+       "searchable pickers match visible metadata case-insensitively")
+      (let ((painted (recording-terminal-output terminal)))
+        (test-assert (and (search "search: SECOND" painted)
+                          (search "1 match" painted))
+                     "searchable pickers show their query and match count"))
+      (setf (scripted-terminal-events terminal)
+            (list '(:insert "betx") :backspace :submit))
+      (test-assert
+       (string= (terminal-ui-select active-ui
+                                    :title "pick one"
+                                    :items items
+                                    :search-p t)
+                "beta")
+       "backspace restores matches after deleting one search grapheme")
+      (setf (scripted-terminal-events terminal)
+            (list '(:paste "no matches") :kill-line :history-next :submit))
+      (test-assert
+       (string= (terminal-ui-select active-ui
+                                    :title "pick one"
+                                    :items items
+                                    :search-p t)
+                "beta")
+       "Ctrl-U clears pasted picker search and restores navigation")
+      (setf (scripted-terminal-events terminal)
+            (list '(:insert "absent") :submit :kill-line :submit))
+      (test-assert
+       (string= (terminal-ui-select active-ui
+                                    :title "pick one"
+                                    :items items
+                                    :search-p t)
+                "alpha")
+       "submitting an empty search result keeps the picker open")
+      (recording-terminal-reset terminal)
       (setf (scripted-terminal-events terminal)
             (list '(:insert "d") :submit))
       (let ((mode ':browse))
@@ -1968,6 +2036,7 @@
            :title "browse"
            :items items
            :hint "d deletes"
+           :search-p t
            :on-event
            (lambda (event selector)
              (declare (ignore selector))
