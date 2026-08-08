@@ -246,23 +246,37 @@
                  (make-string inner-width :initial-element #\Box_Drawings_Light_Horizontal)
                  (string right)))))
 
-(-> localgroup--status-divider (list) terminal-styled-text)
-(defun localgroup--status-divider (widths)
-  "Return the semantic divider joining table cells of WIDTHS."
-  (list
-   (terminal-span
-    ':dim
-    (with-output-to-string (stream)
-      (write-char #\Box_Drawings_Light_Vertical_And_Right stream)
-      (loop for width in widths
-            for remaining on widths
-            do (write-string
-                (make-string width
-                             :initial-element #\Box_Drawings_Light_Horizontal)
-                stream)
-               (when (rest remaining)
-                 (write-char #\Box_Drawings_Light_VertICAL_And_Horizontal stream)))
-      (write-char #\Box_Drawings_Light_Vertical_And_Left stream)))))
+(-> localgroup--status-table-border (list keyword) terminal-styled-text)
+(defun localgroup--status-table-border (widths position)
+  "Return the semantic table border at POSITION across cell WIDTHS."
+  (multiple-value-bind (left junction right)
+      (ecase position
+        (:top
+         (values #\Box_Drawings_Light_Vertical_And_Right
+                 #\Box_Drawings_Light_Down_And_Horizontal
+                 #\Box_Drawings_Light_Vertical_And_Left))
+        (:middle
+         (values #\Box_Drawings_Light_Vertical_And_Right
+                 #\Box_Drawings_Light_Vertical_And_Horizontal
+                 #\Box_Drawings_Light_Vertical_And_Left))
+        (:bottom
+         (values #\Box_Drawings_Light_Up_And_Right
+                 #\Box_Drawings_Light_Up_And_Horizontal
+                 #\Box_Drawings_Light_Up_And_Left)))
+    (list
+     (terminal-span
+      ':dim
+      (with-output-to-string (stream)
+        (write-char left stream)
+        (loop for width in widths
+              for remaining on widths
+              do (write-string
+                  (make-string width
+                               :initial-element #\Box_Drawings_Light_Horizontal)
+                  stream)
+                 (when (rest remaining)
+                   (write-char junction stream)))
+        (write-char right stream))))))
 
 (-> localgroup--status-table-row
     (list list list &key (:header-p boolean))
@@ -372,12 +386,16 @@ HEADER-P renders field labels rather than status values."
                       (mapcar #'localgroup--status-field-minimum-width fields)
                       :fill-p t)))
               (localgroup--write-styled-line
-               stream (localgroup--status-divider widths) styled-p)
+               stream
+               (localgroup--status-table-border widths ':top)
+               styled-p)
               (localgroup--write-styled-line
                stream (localgroup--status-table-row nil fields widths :header-p t)
                styled-p)
               (localgroup--write-styled-line
-               stream (localgroup--status-divider widths) styled-p)
+               stream
+               (localgroup--status-table-border widths ':middle)
+               styled-p)
               (loop for status in statuses
                     for remaining on statuses
                     do (localgroup--write-styled-line
@@ -385,26 +403,33 @@ HEADER-P renders field labels rather than status values."
                         styled-p)
                        (when (rest remaining)
                          (localgroup--write-styled-line
-                          stream (localgroup--status-divider widths) styled-p))))
-            (loop for status in statuses
-                  for remaining on statuses
-                  do (localgroup--write-styled-line
-                      stream (localgroup--status-card-row status inner-width)
-                      styled-p)
-                     (when (rest remaining)
-                       (localgroup--write-styled-line
-                        stream
-                        (localgroup--status-box-border
-                         #\Box_Drawings_Light_Vertical_And_Right
-                         #\Box_Drawings_Light_Vertical_And_Left
-                         inner-width)
-                        styled-p))))
-        (localgroup--write-styled-line
-         stream
-         (localgroup--status-box-border #\Box_Drawings_Light_Up_And_Right
-                                        #\Box_Drawings_Light_Up_And_Left
-                                        inner-width)
-         styled-p)))
+                          stream
+                          (localgroup--status-table-border widths ':middle)
+                          styled-p)))
+              (localgroup--write-styled-line
+               stream
+               (localgroup--status-table-border widths ':bottom)
+               styled-p))
+            (progn
+              (loop for status in statuses
+                    for remaining on statuses
+                    do (localgroup--write-styled-line
+                        stream (localgroup--status-card-row status inner-width)
+                        styled-p)
+                       (when (rest remaining)
+                         (localgroup--write-styled-line
+                          stream
+                          (localgroup--status-box-border
+                           #\Box_Drawings_Light_Vertical_And_Right
+                           #\Box_Drawings_Light_Vertical_And_Left
+                           inner-width)
+                          styled-p)))
+              (localgroup--write-styled-line
+               stream
+               (localgroup--status-box-border #\Box_Drawings_Light_Up_And_Right
+                                              #\Box_Drawings_Light_Up_And_Left
+                                              inner-width)
+               styled-p)))))
   nil)
 
 (-> localgroup--print-response (list stream &key (:styled-p boolean)) null)

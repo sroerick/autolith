@@ -253,13 +253,27 @@
            (narrow-output
              (with-output-to-string (stream)
                (localgroup-print-statuses
-                (list status) :stream stream :styled-p nil :columns 24))))
+                (list status) :stream stream :styled-p nil :columns 24)))
+           (plain-lines
+             (remove ""
+                     (uiop:split-string plain-output :separator '(#\Newline))
+                     :test #'string=)))
       (test-assert
        (and (search "┌" plain-output)
             (search (identifier-display (getf (rest status) :session-id)) plain-output)
             (search "/tmp/example" plain-output)
             (not (search (string #\Escape) plain-output)))
        "localgroup status renders a plain box-drawing table without ANSI controls")
+      (let ((table-top (third plain-lines))
+            (table-middle (fifth plain-lines))
+            (table-bottom (first (last plain-lines))))
+        (test-assert
+         (and (find #\Box_Drawings_Light_Down_And_Horizontal table-top)
+              (not
+               (find #\Box_Drawings_Light_Vertical_And_Horizontal table-top))
+              (find #\Box_Drawings_Light_Vertical_And_Horizontal table-middle)
+              (find #\Box_Drawings_Light_Up_And_Horizontal table-bottom))
+         "localgroup table borders use top, interior, and bottom column junctions"))
       (test-assert
        (and (search (terminal-style-sequence ':brand) styled-output)
             (search (terminal-style-sequence ':success) styled-output))
