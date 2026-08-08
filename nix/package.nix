@@ -8,6 +8,7 @@ let
     else "-shared";
   expectedSbclVersion = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl.version");
   expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
+  fffSourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/fff/commit");
 
   clColorist = pkgs.sbcl.buildASDFSystem {
     pname = "cl-colorist";
@@ -100,8 +101,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "clifff";
-      rev = "29c19b6bdb1d19e1ceb3ed5279eed5b81b0872d8";
-      hash = "sha256-oDAr7M8uqS7P4YGp3Azw9V83cy7ik1MQ3q1shW/3tZs=";
+      rev = "8bf3ebb0985108593cad105d31639cedbe9e5373";
+      hash = "sha256-PAp4odBnJG/NcGZRjuQCQBpm75QZgNbq/cQcMHccgtw=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
@@ -218,14 +219,14 @@ let
 
   fffLibrary = pkgs.rustPlatform.buildRustPackage {
     pname = "fff-c";
-    version = "0.9.6";
+    version = "0.10.3";
     src = pkgs.fetchFromGitHub {
       owner = "dmtrKovalenko";
       repo = "fff";
-      rev = "44a5b259570730a4236ecbf06673d43ef7b2263e";
-      hash = "sha256-TfXlPzdGHvDrXWD2S24UgwkUAMGHR8w5FeWhW4h1tWs=";
+      rev = fffSourceCommit;
+      hash = "sha256-pE4DsaCvlvgTKJtyV8uGhAQvbJpxpgXlIkoVh8I15qw=";
     };
-    cargoHash = "sha256-QxEp8Cw45SywJRoCPZayC6MnK/wSN2Bk6PIZ/8NqEk4=";
+    cargoHash = "sha256-iRQa3K5/E520hbq6yO+RRG8pjJBTamj/nm13XCHNOZs=";
     cargoBuildFlags = [ "-p" "fff-c" ];
     cargoTestFlags = [ "-p" "fff-c" ];
     nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];

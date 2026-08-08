@@ -179,9 +179,9 @@ results to =clifff=. The pinned =clifff= dependency owns the CFFI binding,
 workspace index, readable result data, bounded presentation, supervised helper
 protocol, process retry, and rebuildable database reset. One registry shares
 one worker across fuzzy path, glob, content, and multi-pattern search; the
-helper process owns the single native fff engine. The Rust library is built from
-pinned fff commit
-=44a5b259570730a4236ecbf06673d43ef7b2263e= and published privately under the
+helper process owns the single native fff engine. The Rust library is fff
+v0.10.3, built from pinned commit
+=e2cad2f09ea617d4c024f396f21d80e557f23a17= and published privately under the
 Autolith data root. It is neither a command subprocess nor a program installed
 on the user's =PATH=. This integration was reviewed against that exact upstream
 commit's generated C header and Rust implementation.

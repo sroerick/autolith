@@ -3,8 +3,8 @@
 ;;;; -- Search Tool Configuration --
 
 (defparameter *fff-source-commit*
-  "44a5b259570730a4236ecbf06673d43ef7b2263e"
-  "The reviewed fff source revision built by Autolith bootstrap.")
+  "e2cad2f09ea617d4c024f396f21d80e557f23a17"
+  "The reviewed fff v0.10.3 source revision built by Autolith bootstrap.")
 
 (defparameter *search-default-result-limit* 20
   "The default number of fff results returned to the model.")

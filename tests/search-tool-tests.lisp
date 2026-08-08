@@ -31,6 +31,15 @@
     (write-string content stream))
   nil)
 
+(-> search-tests--bootstrap-source-commit (configuration) string)
+(defun search-tests--bootstrap-source-commit (configuration)
+  "Return the fff revision selected by CONFIGURATION's bootstrap source."
+  (string-trim
+   '(#\Space #\Tab #\Newline #\Return)
+   (uiop:read-file-string
+    (merge-pathnames "native/fff/commit"
+                     (configuration-source-root configuration)))))
+
 (-> search-tests--call
     (tool-registry tool-context string string &rest t)
     tool-result)
@@ -70,6 +79,15 @@
          (progn
            (test-assert (probe-file library)
                         "bootstrap installs the private fff library")
+            (test-assert
+             (string= (search-tests--bootstrap-source-commit
+                       default-configuration)
+                      *fff-source-commit*)
+             "bootstrap and runtime use one pinned fff source revision")
+            (unless configured-library
+              (test-assert
+               (search--installed-manifest-valid-p library)
+               "bootstrap installs a manifest matching the pinned fff source"))
            (sb-posix:setenv "AUTOLITH_FFF_LIBRARY" (namestring library) 1)
            (ensure-directories-exist workspace-root)
            (search-tests--write-file

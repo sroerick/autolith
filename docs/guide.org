@@ -956,8 +956,8 @@ the complete tool operation; CPU time measures work consumed by the Autolith
 process. Calls rejected before execution and results synthesized during crash
 repair have no invented timing.
 
-Bootstrap builds fff revision
-=44a5b259570730a4236ecbf06673d43ef7b2263e= from its locked Rust source and
+Bootstrap builds fff v0.10.3 at revision
+=e2cad2f09ea617d4c024f396f21d80e557f23a17= from its locked Rust source and
 publishes =libfff_c.so= on Linux or =libfff_c.dylib= on macOS under
 =${XDG_DATA_HOME:-~/.local/share}/autolith/native/fff/=. The library is loaded
 through its C ABI inside Autolith and is never installed on =PATH= or into the
