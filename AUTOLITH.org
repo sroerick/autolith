@@ -284,6 +284,42 @@ a user-local init.lisp change, or a private image commit.
   conversation-scoped atomic persistence, explicit crash recovery, exact ordering,
   corruption preservation, and transactional restore without this vault layer.
 
+** Async-first delegation and inspectable execution jobs
+
+- Problem: =task.run= made independent work block unless each caller opted into
+  asynchronous execution. Long =shell.run= and Lisp execution calls also held
+  the provider tool turn until completion, preventing useful concurrent work and
+  inspectable cancellation; retrying after an apparent stall risked duplicate
+  side effects.
+- Behavior: every non-blocking child role now detaches by default and
+  =blocking: true= is the explicit wait policy; the inverse =async= argument
+  remains a compatibility input. Authorized shell commands and execution-oriented
+  Lisp calls are admitted to one shared session job runtime exactly once.
+  =async: true= hands off immediately. An ordinary call waits for a reloadable
+  ten-second grace and returns normally when already complete, otherwise it hands
+  off the same live job without rerunning it. =job.list=, =job.get=, =job.wait=,
+  and =job.cancel= expose bounded state and terminal results. Shell cancellation
+  terminates and reaps the external process. Lisp cancellation stops the selected
+  named worker, whose next request restarts from the same base image and a clean
+  protocol stream.
+- Scope and location: tracked project work in =src/task/=,
+  =src/tools/registry.lisp=, =src/tools/workspace.lisp=,
+  =src/workers/lisp.lisp=, =src/workers/scratchpad.lisp=,
+  =src/tools/defaults.lisp=, the prompt, specification, guide, dependency locks,
+  Nix pins, and task, shell, and Lisp regressions. The pinned command sandbox fix
+  is =cl-exec-sandbox= revision =0a5c7a2=.
+- Verification: default and explicit blocking delegation, compatibility argument
+  conflicts, mixed batches, exact job identities, session visibility, retention,
+  fast results, grace-period handoff, exactly-once side effects, synchronous shell
+  authorization, bounded captured policy, shell process cancellation, named REPL
+  affinity, Lisp cancellation and restart, system loading, and scratchpad loading
+  pass. The command sandbox passes 65 tests, and the complete Autolith repository
+  check passes 3,835 tests.
+- Removal condition: a replacement execution protocol natively provides the same
+  asynchronous default, explicit blocking, exactly-once handoff, session-scoped
+  inspection, bounded retention, cancellation cleanup, and worker restart
+  guarantees with less project-specific scheduling code.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

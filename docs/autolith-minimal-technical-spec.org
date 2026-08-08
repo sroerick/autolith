@@ -430,6 +430,18 @@ REPL name and default to =default=. A nonexistent REPL starts from pristine
 SBCL. An explicit start or reset may instead select any compatible saved worker
 image. An existing REPL never changes its base image implicitly.
 
+The execution-oriented =lisp.eval=, =lisp.compile=, =lisp.load-system=,
+=lisp.run-tests=, and =lisp.scratchpad-run= operations accept an optional
+=async= Boolean. They resolve and capture the selected named worker, and any
+scratchpad path, before execution-job admission. =async= true returns an
+inspectable job immediately. Otherwise Autolith submits the operation once and
+waits for up to ten seconds; a fast completion returns the ordinary tool result,
+while a slower operation hands off the same already-running job without
+re-execution. Cancelling a running Lisp execution stops that worker before the
+job publishes =:aborted=, and the next request restarts the same named worker
+from its existing base image. Inspection, source, REPL lifecycle, and image
+operations remain synchronous.
+
 Initial operations should include:
 
 - =lisp.eval=
@@ -570,6 +582,14 @@ Invalid encoded output bytes are replaced so decoding cannot discard the exit
 status and captured diagnostics. Timeout termination and active-turn cancellation
 remain process-control boundaries independent of the requested duration.
 
+Argument validation and command authorization complete before execution-job
+admission. The admitted operation captures the resolved command, directory,
+sandbox policy, timeout, and output bound exactly once. =async= true returns an
+inspectable job immediately. Without =async=, Autolith waits for up to ten
+seconds and returns the ordinary result when it is already terminal; otherwise
+it hands off the same live job rather than rerunning the command. Cancelling a
+running command terminates and reaps its external process.
+
 This command boundary limits accidental damage from external programs. It does
 not make Autolith a hostile-code sandbox because filesystem, Lisp worker, and
 active-image tools remain separately privileged capabilities.
@@ -650,6 +670,12 @@ The primary session owns its conversation's root jobs. A child owns only jobs
 created below its own task identity, so its =job.*= tools cannot inspect or
 control its parent, siblings, unrelated trees, or jobs from another primary
 conversation.
+
+The same session ownership, bounded retention, and =job.list=, =job.get=,
+=job.wait=, and =job.cancel= interfaces apply to shell and Lisp execution jobs.
+They retain a bounded tool name, operation summary, progress, and terminal
+outcome. Their operation body is submitted exactly once and released after
+terminal publication.
 
 =task.agents= is the read-only discovery interface. It reports only roles the
 caller may select, including effective name, description, source, pathname,

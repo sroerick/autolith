@@ -616,6 +616,17 @@ never its parent, siblings, unrelated task trees, or another conversation's
 jobs. Child transcripts and complete result artifacts remain in private task
 storage outside the normal conversation picker.
 
+The same job tools inspect external-command and Lisp execution jobs. =shell.run=,
+=lisp.eval=, =lisp.compile=, =lisp.load-system=, =lisp.run-tests=, and
+=lisp.scratchpad-run= accept =async: true= to return a job identity immediately
+after synchronous argument, path, and command-authorization checks. Without
+=async=, Autolith submits the operation once and waits for up to ten seconds. A
+fast completion returns the ordinary tool result; a slower operation hands off
+the same already-running job instead of starting it again. =job.cancel=
+terminates and reaps an external command, or stops an interrupted named Lisp
+worker so its next request restarts from the same base image with a clean
+protocol stream.
+
 =/compact on=, the default, renders a concise aligned summary for each
 =task.run= assignment and hides successful routine tool results while retaining
 failures, file-write and file-edit results, and arbitrary execution results from
@@ -933,6 +944,9 @@ uniform-indentation mismatch, and =shell.run= executes one external command with
 combined bounded output. It defaults to a 60-second timeout but accepts any
 positive requested duration without a product maximum. Invalid encoded output
 bytes are shown as replacement characters rather than failing the result.
+=async: true= returns the authorized command as an inspectable job immediately;
+an ordinary call uses the shared ten-second grace before handing off the same
+execution.
 Unknown commands ask before execution. Allowing once or permanently runs the
 command with an isolated network and a read-only host filesystem except for the
 workspace and temporary directories. A permanent approval matches the exact
@@ -1009,6 +1023,11 @@ saved image, =reset= deliberately replaces one from a selected image, =stop=
 forgets one, and =repls= shows the live pool. Separate REPLs never share heap
 objects with each other or the active agent, so pristine and instrumented
 behavior can be compared side by side.
+
+=lisp.eval=, =lisp.compile=, =lisp.load-system=, =lisp.run-tests=, and
+=lisp.scratchpad-run= accept =async: true= and otherwise use the shared
+ten-second grace before handing off a still-running job. Inspection, source,
+REPL lifecycle, and image operations remain synchronous.
 
 =lisp.source= uses SBCL's live definition metadata to map functions, macros,
 compiler optimizers, source transforms, transforms, VOPs, and IR1 converters
