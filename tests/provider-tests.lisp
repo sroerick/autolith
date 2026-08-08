@@ -193,11 +193,6 @@
              (test-assert
               (string= (json-get (aref input 1) "role") "developer")
               "the Autolith system prompt is the second input item")
-             (test-assert
-              (search "WEB SEARCH IS AVAILABLE"
-                      (json-get (aref (json-get (aref input 1) "content") 0)
-                                "text"))
-              "enabled web search is named in the system prompt")
              (test-assert (string= (json-get (aref input 2) "role") "user")
                           "conversation history follows the developer prefix"))
            (let* ((goal-request

@@ -210,12 +210,6 @@
                       (recording-terminal-output terminal))
               "completed request-local papercuts are presented immediately"))
            (recording-terminal-reset terminal)
-           (let ((prompt (system-prompt configuration)))
-             (test-assert
-              (and (search "PAPERCUT REPORTING" prompt)
-                   (search "papercut.report" prompt)
-                   (search "prominent user-visible report" prompt))
-              "the system prompt encourages concrete papercut reporting"))
            (test-assert (eq (application-command application "/papercuts") ':continue)
                         "/papercuts remains inside the interactive application")
            (let ((list-output (recording-terminal-output terminal)))

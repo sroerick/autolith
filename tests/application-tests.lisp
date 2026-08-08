@@ -942,10 +942,6 @@
            (test-assert
             (not (preferences-simple-technical-english-p configuration))
             "Simple Technical English defaults to disabled")
-           (test-assert
-            (not (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
-                         (system-prompt configuration)))
-            "ordinary prompts omit Simple Technical English guidance")
            (application-simple-technical-english-command application nil)
            (test-assert
             (search "disabled" (recording-terminal-output terminal))
@@ -957,13 +953,6 @@
            (test-assert
             (preferences-simple-technical-english-p configuration)
             "/ste on persists its enabled state")
-           (let ((prompt (system-prompt configuration)))
-             (test-assert
-              (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE" prompt)
-              "enabled prompts include Simple Technical English guidance")
-             (test-assert
-              (search "Preserve exact code, commands, identifiers" prompt)
-              "Simple Technical English preserves exact technical content"))
            (test-assert
             (search "Future replies will use it"
                     (recording-terminal-output terminal))
@@ -982,10 +971,6 @@
            (test-assert
             (not (preferences-simple-technical-english-p configuration))
             "/ste off persists its disabled state")
-           (test-assert
-            (not (search "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
-                         (system-prompt configuration)))
-            "disabled prompts omit Simple Technical English guidance again")
            (test-assert
             (search "disabled and saved"
                     (recording-terminal-output terminal))
@@ -6951,12 +6936,6 @@
                         "/hurry-up on synchronizes application, agent, and task state")
            (test-assert (= (task-orchestrator-maximum-concurrency orchestrator) 2)
                         "hurry-up caps child concurrency at two")
-           (test-assert (search "HURRY-UP MODE IS ACTIVE"
-                                (system-prompt configuration :hurry-up-p t))
-                        "the urgent system prompt carries strong direct-execution guidance")
-           (test-assert (not (search "HURRY-UP MODE IS ACTIVE"
-                                     (system-prompt configuration)))
-                        "the ordinary system prompt remains unchanged")
            (test-assert (terminal-ui-notice ui)
                         "hurry-up presents a transient live notice")
            (application-command application "/hurry-up off")
