@@ -998,6 +998,409 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+
+;;;; -- Startup Integration --
+
+(-> recovery-input-vault-tests--startup-application
+    (configuration string terminal &key (:recovery-startup-p boolean))
+    application)
+(defun recovery-input-vault-tests--startup-application
+    (configuration identifier terminal &key (recovery-startup-p nil))
+  "Return a complete minimal startup application for one test conversation."
+  (let ((conversation
+          (conversation-create configuration :identifier identifier)))
+    (conversation-append-user-message conversation "seed")
+    (make-instance 'application
+                   :configuration configuration
+                   :conversation conversation
+                   :provider nil
+                   :tool-registry (make-instance 'tool-registry)
+                   :worker nil
+                   :agent nil
+                   :ui (terminal-ui-create :terminal terminal)
+                   :recovery-startup-p recovery-startup-p)))
+
+(-> test-recovery-input-vault-recovery-startup () null)
+(defun test-recovery-input-vault-recovery-startup ()
+  "Test recovery startup vaults pending input before controller creation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 90))
+         (application
+           (recovery-input-vault-tests--startup-application
+            configuration
+            "recovery-vault-startup"
+            terminal
+            :recovery-startup-p t))
+         (conversation (application-conversation application))
+         (pending-pathname
+           (configuration-pending-inputs-path
+            configuration (conversation-pathname conversation)))
+         (vault-pathname
+           (configuration-recovery-input-vault-path
+            configuration (conversation-pathname conversation)))
+         (original-create
+           (symbol-function 'application-input-controller-create))
+         (observed-load-pending-p :unset)
+         (observed-persistence-p :unset)
+         (pending-at-create-p :unset)
+         (vault-at-create-p :unset)
+         (observed-first-work :unset)
+         (observed-work :unset)
+         (observed-steering :unset))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (ensure-directories-exist pending-pathname)
+           (snapshot-write
+            pending-pathname
+            (list :pending-inputs
+                  :version 2
+                  :snapshot-identifier "startup-pending"
+                  :conversation-id (conversation-identifier conversation)
+                  :active-work nil
+                  :steering-in-flight nil
+                  :steering '("recovered steering")
+                  :work '((:message "recovered follow-up"))
+                  :vault-capture-identifiers nil
+                  :steering-promotion-prefix-count 0)
+            :mode #o600)
+           (test-call-with-function-replacements
+            (list
+             (list
+              'application-input-controller-create
+              (lambda (run-application
+                       &key initial-work-items (load-pending-p t)
+                            (pending-persistence-enabled-p t))
+                (setf observed-load-pending-p load-pending-p
+                      observed-persistence-p pending-persistence-enabled-p
+                      pending-at-create-p (not (null (probe-file pending-pathname)))
+                      vault-at-create-p (not (null (probe-file vault-pathname))))
+                (funcall original-create
+                         run-application
+                         :initial-work-items initial-work-items
+                         :load-pending-p load-pending-p
+                         :pending-persistence-enabled-p
+                         pending-persistence-enabled-p)))
+             (list
+              'application-input-controller--run-work
+              (lambda (controller work)
+                (setf observed-first-work (copy-tree work)
+                      observed-work
+                      (copy-tree
+                       (application-input-controller-work-items controller))
+                      observed-steering
+                      (copy-list
+                       (application-input-controller-steering-items controller)))
+                (with-lock-held ((application-input-controller-lock controller))
+                  (setf (application-input-controller-stopping-p controller) t)
+                  (sb-thread:condition-broadcast
+                   (application-input-controller-condition-variable controller)))
+                nil))
+             (list 'localgroup-start
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil))
+             (list 'localgroup-stop
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil)))
+            (lambda ()
+              (application-run
+               application :recovery-diagnosis "diagnose recovered crash")))
+           (let ((output (recording-terminal-output terminal))
+                 (captures
+                   (application-recovery-input-vault-captures application)))
+             (test-assert
+              (and (null observed-load-pending-p)
+                   observed-persistence-p
+                   (null pending-at-create-p)
+                   vault-at-create-p
+                   (not (probe-file pending-pathname))
+                   (probe-file vault-pathname))
+              "recovery import completes before a nonloading controller is created")
+             (test-assert
+              (and (equal observed-first-work
+                          '(:recovery-diagnosis "diagnose recovered crash"))
+                   (null observed-work)
+                   (null observed-steering))
+              "the real scheduler selects recovery diagnosis before any user input")
+             (test-assert
+              (and (= (length captures) 1)
+                   (null (getf (first captures) :steering-items))
+                   (equal (getf (first captures) :work-items)
+                          '((:message "recovered steering")
+                            (:message "recovered follow-up"))))
+              "startup places recovered pending input only in the vault")
+             (test-assert
+              (and (search "Nothing was submitted automatically." output)
+                   (search "/vault" output)
+                   (search "/vault-restore" output)
+                   (search "/vault-discard" output))
+              "recovery startup warns how to inspect, restore, or discard vaulted input")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-recovery-input-vault-corrupt-startup () null)
+(defun test-recovery-input-vault-corrupt-startup ()
+  "Test corrupt recovery storage blocks ingress without loading pending input."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 90))
+         (application
+           (recovery-input-vault-tests--startup-application
+            configuration
+            "recovery-vault-corrupt-startup"
+            terminal
+            :recovery-startup-p t))
+         (conversation (application-conversation application))
+         (pending-pathname
+           (configuration-pending-inputs-path
+            configuration (conversation-pathname conversation)))
+         (vault-pathname
+           (configuration-recovery-input-vault-path
+            configuration (conversation-pathname conversation)))
+         (original-create
+           (symbol-function 'application-input-controller-create))
+         (pending-octets nil)
+         (vault-octets nil)
+         (observed-load-pending-p :unset)
+         (observed-persistence-p :unset)
+         (observed-first-work :unset)
+         (observed-work :unset)
+         (observed-steering :unset)
+         (ingress-blocked-p nil)
+         (vault-inspect-executed-p nil)
+         (vault-controls-admitted-p nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (ensure-directories-exist pending-pathname)
+           (snapshot-write
+            pending-pathname
+            (list :pending-inputs
+                  :version 2
+                  :snapshot-identifier "corrupt-startup-pending"
+                  :conversation-id (conversation-identifier conversation)
+                  :active-work nil
+                  :steering-in-flight nil
+                  :steering nil
+                  :work '((:message "preserve pending bytes"))
+                  :vault-capture-identifiers nil
+                  :steering-promotion-prefix-count 0)
+            :mode #o600)
+           (ensure-directories-exist vault-pathname)
+           (with-open-file (stream vault-pathname
+                                   :direction :output
+                                   :if-exists :supersede
+                                   :if-does-not-exist :create
+                                   :external-format :utf-8)
+             (write-string "(:recovery-input-vault :version 1" stream))
+           (setf pending-octets
+                 (recovery-input-vault-tests--octets pending-pathname)
+                 vault-octets
+                 (recovery-input-vault-tests--octets vault-pathname))
+           (test-call-with-function-replacements
+            (list
+             (list
+              'application-input-controller-create
+              (lambda (run-application
+                       &key initial-work-items (load-pending-p t)
+                            (pending-persistence-enabled-p t))
+                (setf observed-load-pending-p load-pending-p
+                      observed-persistence-p pending-persistence-enabled-p)
+                (funcall original-create
+                         run-application
+                         :initial-work-items initial-work-items
+                         :load-pending-p load-pending-p
+                         :pending-persistence-enabled-p
+                         pending-persistence-enabled-p)))
+             (list
+              'application-input-controller--run-work
+              (lambda (controller work)
+                (setf observed-first-work (copy-tree work)
+                      observed-work
+                      (copy-tree
+                       (application-input-controller-work-items controller))
+                      observed-steering
+                      (copy-list
+                       (application-input-controller-steering-items controller)))
+                (labels ((submit (input)
+                           (terminal-ui-set-input
+                            (application-ui application) input)
+                           (application-input-controller--process-event
+                            controller ':submit)))
+                  (submit "blocked after recovery failure")
+                  (submit "/status")
+                  (setf ingress-blocked-p
+                        (and
+                         (null
+                          (application-input-controller-work-items controller))
+                         (null
+                          (application-input-controller-steering-items controller))))
+                  (submit "/vault")
+                  (setf vault-inspect-executed-p
+                        (not
+                         (null
+                          (search "Recovery input vault could not be read"
+                                  (recording-terminal-output terminal)))))
+                  (submit "/vault-restore")
+                  (submit "/vault-discard")
+                  (setf vault-controls-admitted-p
+                        (equal
+                         (application-input-controller-work-items controller)
+                         '((:command "/vault-restore")
+                           (:command "/vault-discard")))))
+                (with-lock-held ((application-input-controller-lock controller))
+                  (setf (application-input-controller-stopping-p controller) t)
+                  (sb-thread:condition-broadcast
+                   (application-input-controller-condition-variable controller)))
+                nil))
+             (list 'localgroup-start
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil))
+             (list 'localgroup-stop
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil)))
+            (lambda ()
+              (application-run
+               application :recovery-diagnosis "diagnose corrupt recovery")))
+           (let ((output (recording-terminal-output terminal)))
+             (test-assert
+              (and (null observed-load-pending-p)
+                   (null observed-persistence-p)
+                   (typep (application-recovery-input-vault-failure application)
+                          'recovery-input-vault-error)
+                   ingress-blocked-p
+                   vault-inspect-executed-p
+                   vault-controls-admitted-p)
+              "corrupt recovery blocks ordinary terminal submissions and admits vault controls")
+             (test-assert
+              (and (equal observed-first-work
+                          '(:recovery-diagnosis "diagnose corrupt recovery"))
+                   (null observed-work)
+                   (null observed-steering))
+              "corrupt pending input remains outside the real startup scheduler")
+             (test-assert
+              (and (probe-file pending-pathname)
+                   (probe-file vault-pathname)
+                   (equalp pending-octets
+                           (recovery-input-vault-tests--octets pending-pathname))
+                   (equalp vault-octets
+                           (recovery-input-vault-tests--octets vault-pathname)))
+              "corrupt startup preserves exact pending and vault bytes")
+             (test-assert
+              (and (search "New submissions are blocked" output)
+                   (search "Nothing was submitted automatically." output)
+                   (search "/vault" output)
+                   (search "/vault-restore" output)
+                   (search "/vault-discard" output))
+              "corrupt startup warns without submitting or hiding vault controls")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-recovery-input-vault-ordinary-startup () null)
+(defun test-recovery-input-vault-ordinary-startup ()
+  "Test ordinary startup retains normal pending-input loading."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 90))
+         (application
+           (recovery-input-vault-tests--startup-application
+            configuration "recovery-vault-ordinary-startup" terminal))
+         (conversation (application-conversation application))
+         (pending-pathname
+           (configuration-pending-inputs-path
+            configuration (conversation-pathname conversation)))
+         (vault-pathname
+           (configuration-recovery-input-vault-path
+            configuration (conversation-pathname conversation)))
+         (original-create
+           (symbol-function 'application-input-controller-create))
+         (observed-load-pending-p :unset)
+         (observed-persistence-p :unset)
+         (observed-first-work :unset)
+         (observed-work :unset)
+         (observed-steering :unset))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (ensure-directories-exist pending-pathname)
+           (snapshot-write
+            pending-pathname
+            (list :pending-inputs
+                  :version 2
+                  :snapshot-identifier "ordinary-startup-pending"
+                  :conversation-id (conversation-identifier conversation)
+                  :active-work nil
+                  :steering-in-flight nil
+                  :steering '("ordinary steering")
+                  :work '((:message "ordinary follow-up"))
+                  :vault-capture-identifiers nil
+                  :steering-promotion-prefix-count 0)
+            :mode #o600)
+           (test-call-with-function-replacements
+            (list
+             (list
+              'application-input-controller-create
+              (lambda (run-application
+                       &key initial-work-items (load-pending-p t)
+                            (pending-persistence-enabled-p t))
+                (setf observed-load-pending-p load-pending-p
+                      observed-persistence-p pending-persistence-enabled-p)
+                (funcall original-create
+                         run-application
+                         :initial-work-items initial-work-items
+                         :load-pending-p load-pending-p
+                         :pending-persistence-enabled-p
+                         pending-persistence-enabled-p)))
+             (list
+              'application-input-controller--run-work
+              (lambda (controller work)
+                (setf observed-first-work (copy-tree work)
+                      observed-work
+                      (copy-tree
+                       (application-input-controller-work-items controller))
+                      observed-steering
+                      (copy-list
+                       (application-input-controller-steering-items controller)))
+                (with-lock-held ((application-input-controller-lock controller))
+                  (setf (application-input-controller-stopping-p controller) t)
+                  (sb-thread:condition-broadcast
+                   (application-input-controller-condition-variable controller)))
+                nil))
+             (list 'localgroup-start
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil))
+             (list 'localgroup-stop
+                   (lambda (run-application)
+                     (declare (ignore run-application))
+                     nil)))
+            (lambda ()
+              (application-run
+               application
+               :initial-input (user-message-input-create :text "draft"))))
+           (let ((output (recording-terminal-output terminal)))
+             (test-assert
+              (and observed-load-pending-p
+                   observed-persistence-p
+                   (equal observed-first-work
+                          '(:message "ordinary steering"))
+                   (equal observed-work
+                          '((:message "ordinary follow-up")))
+                   (null observed-steering))
+              "ordinary startup still schedules conversation-scoped pending input")
+             (test-assert
+              (and (probe-file pending-pathname)
+                   (not (probe-file vault-pathname))
+                   (not (search "Nothing was submitted automatically." output)))
+              "ordinary startup neither vaults pending input nor presents a recovery warning")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> run-recovery-input-vault-tests () boolean)
 (defun run-recovery-input-vault-tests ()
   "Run focused recovery input vault tests and return true on success."
@@ -1012,4 +1415,7 @@
   (test-recovery-input-vault-discard)
   (test-recovery-input-vault-disabled-ingress)
   (test-recovery-input-vault-disabled-recalled-ingress)
+  (test-recovery-input-vault-recovery-startup)
+  (test-recovery-input-vault-corrupt-startup)
+  (test-recovery-input-vault-ordinary-startup)
   t)

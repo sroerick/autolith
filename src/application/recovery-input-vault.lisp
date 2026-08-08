@@ -913,6 +913,51 @@ The caller must hold CONTROLLER's lock."
       (when failure
         (format stream "~%Storage warning: ~A~%" failure)))))
 
+(-> application-recovery-input-vault--context-p (application) boolean)
+(defun application-recovery-input-vault--context-p (application)
+  "Return true when APPLICATION has durable configuration and conversation state."
+  (and (slot-boundp application 'configuration)
+       (typep (application-configuration application) 'configuration)
+       (slot-boundp application 'conversation)
+       (typep (application-conversation application) 'conversation)))
+
+(-> application-recovery-input-vault-present-startup-warning
+    (application)
+    boolean)
+(defun application-recovery-input-vault-present-startup-warning (application)
+  "Warn when APPLICATION has vaulted input or blocked recovery storage."
+  (block nil
+    (unless (application-recovery-input-vault--context-p application)
+      (return nil))
+    (let ((failure (application-recovery-input-vault-failure application))
+          (captures nil))
+      (unless failure
+        (handler-case
+            (setf captures
+                  (application-recovery-input-vault-captures application))
+          (recovery-input-vault-error (condition)
+            (setf failure condition
+                  (application-recovery-input-vault-failure application)
+                  condition)
+            (let ((controller (application-input-controller application)))
+              (when (typep controller 'application-input-controller)
+                (setf
+                 (application-input-controller-pending-persistence-enabled-p
+                  controller)
+                 nil))))))
+      (unless (or failure captures)
+        (return nil))
+      (application-present
+       application
+       (if failure
+           (format nil
+                   "Recovered input storage needs attention: ~A~%New submissions are blocked until the preserved recovery state is resolved.~%Nothing was submitted automatically.~%Use /vault to inspect, /vault-restore to restore, or /vault-discard to discard."
+                   failure)
+           (format nil
+                   "Recovered queued input is vaulted in ~D capture~:P.~%Nothing was submitted automatically.~%Use /vault to inspect, /vault-restore to restore, or /vault-discard to discard."
+                   (length captures))))
+      t)))
+
 (-> application-recovery-input-vault-present (application) null)
 (defun application-recovery-input-vault-present (application)
   "Present APPLICATION's vault or its exact validation failure."

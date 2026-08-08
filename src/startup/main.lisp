@@ -307,11 +307,15 @@
     (application &key initial-command initial-input recovery-diagnosis
                       resume-offer-p)
   "Run APPLICATION with responsive input, always restoring terminal and workers."
-  (let ((ui (application-ui application))
-        (worker (application-worker application))
-        (input-controller nil)
-        (tool-runtimes-closed-p nil)
-        (worker-stopped-p nil))
+  (let* ((ui (application-ui application))
+         (worker (application-worker application))
+         (input-controller nil)
+         (tool-runtimes-closed-p nil)
+         (worker-stopped-p nil)
+         (recovery-startup-p (application-recovery-startup-p application))
+         (recovery-input-storage-ready-p
+           (or (not recovery-startup-p)
+               (application-recovery-input-vault-import application))))
     (labels ((close-runtime-resources ()
                "Close APPLICATION's external runtimes at most once."
                (ignore-errors (localgroup-stop application))
@@ -389,7 +393,12 @@
                            (application--initial-work-items
                             initial-command
                             recovery-diagnosis
-                            resume-offer-p)))
+                            resume-offer-p)
+                           :load-pending-p (not recovery-startup-p)
+                           :pending-persistence-enabled-p
+                           recovery-input-storage-ready-p))
+                    (application-recovery-input-vault-present-startup-warning
+                     application)
                     (localgroup-start application)
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
