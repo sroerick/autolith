@@ -162,6 +162,7 @@
     (test-openai-compatible-provider)
     (test-fireworks-provider)
     (test-resource-protocol)
+    (test-resource-edit-operation-schema)
     (test-lisp-source-balance)
     (test-lisp-source-edit-warnings)
     (test-workspace-file-resources)
