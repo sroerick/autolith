@@ -626,6 +626,17 @@ reasoning effort only when that effort is supported by the selected model."
    (merge-pathnames "pending-inputs/"
                     (configuration-state-root configuration))))
 
+(-> configuration-recovery-input-vault-path
+    (configuration pathname)
+    pathname)
+(defun configuration-recovery-input-vault-path
+    (configuration conversation-pathname)
+  "Return one conversation's atomic recovered-input vault pathname."
+  (merge-pathnames
+   (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
+   (merge-pathnames "recovery-input-vault/"
+                    (configuration-state-root configuration))))
+
 (-> configuration-legacy-pending-inputs-path (configuration) pathname)
 (defun configuration-legacy-pending-inputs-path (configuration)
   "Return the legacy process-global unprocessed-input pathname."

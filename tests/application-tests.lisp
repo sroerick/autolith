@@ -7017,7 +7017,8 @@
          (restored nil)
          (restored-after-append nil)
          (restored-after-shutdown nil)
-         (legacy-controller nil))
+         (legacy-controller nil)
+         (snapshot-identifier nil))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
@@ -7043,9 +7044,14 @@
                   (configuration-pending-inputs-path
                    configuration (conversation-pathname conversation)))
                (let ((active-form (and complete-p
-                                       (getf (rest form) :active-work))))
+                                       (getf (rest form) :active-work)))
+                     (current-snapshot-identifier
+                       (and complete-p
+                            (getf (rest form) :snapshot-identifier))))
+                 (setf snapshot-identifier current-snapshot-identifier)
                  (test-assert
                   (and complete-p
+                       (non-empty-string-p current-snapshot-identifier)
                        (= (getf (rest form) :version) 2)
                        (string= (getf active-form :identifier)
                                 active-identifier)
@@ -7078,6 +7084,15 @@
                         controller))
                       2))
               "taking steering durably moves each message in flight")
+             (multiple-value-bind (form complete-p)
+                 (snapshot-read
+                  (configuration-pending-inputs-path
+                   configuration (conversation-pathname conversation)))
+               (test-assert
+                (and complete-p
+                     (string= (getf (rest form) :snapshot-identifier)
+                              snapshot-identifier))
+                "one pending collection keeps a stable snapshot identifier"))
              ;; Simulate a crash after the first append but before its observer
              ;; acknowledgement updates the pending snapshot.
              (conversation-append-user-message

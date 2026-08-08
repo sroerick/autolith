@@ -126,6 +126,19 @@
     :accessor application-input-controller
     :type t
     :documentation "The active responsive input controller, when one is running.")
+   (recovery-startup-p
+    :initarg :recovery-startup-p
+    :initform nil
+    :accessor application-recovery-startup-p
+    :type boolean
+    :documentation
+    "Whether this application reconnected the launcher-selected crash conversation.")
+   (recovery-input-vault-failure
+    :initform nil
+    :accessor application-recovery-input-vault-failure
+    :type t
+    :documentation
+    "The startup failure that kept recovered input outside the vault, when present.")
    (localgroup-session
     :initform nil
     :accessor application-localgroup-session
@@ -897,7 +910,9 @@ newly acquired lease."
                                :turn-timestamps-p turn-timestamps-p
                                :installation-provenance
                                installation-provenance
-                               :update-availability update-availability)
+                               :update-availability update-availability
+                               :recovery-startup-p
+                               (not (null recovering-conversation-p)))
                               (application-overlay-failures application)
                               overlay-failures)
                         (multiple-value-bind
@@ -1098,7 +1113,9 @@ newly acquired lease."
                     :compact-view-p compact-view-p
                     :turn-timestamps-p turn-timestamps-p
                     :installation-provenance installation-provenance
-                    :update-availability update-availability))
+                    :update-availability update-availability
+                    :recovery-startup-p
+                    (not (null recovering-conversation-p))))
              (multiple-value-bind
                  (restored-rendered-sequence
                   restored-history-floor-sequence)
