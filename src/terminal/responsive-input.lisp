@@ -127,6 +127,12 @@
     :type list
     :documentation
     "Vault captures transactionally represented by the current pending snapshot.")
+   (steering-promotion-prefix-count
+    :initform 0
+    :accessor application-input-controller-steering-promotion-prefix-count
+    :type (integer 0)
+    :documentation
+    "Queued work that must remain ahead of steering submitted during active work.")
    (pending-persistence-enabled-p
     :initarg :pending-persistence-enabled-p
     :initform t
@@ -379,6 +385,7 @@ second reports whether shutdown was prepared."
               (application-input-controller-active-work-identifier controller) nil
               (application-input-controller-pending-snapshot-identifier controller) nil
               (application-input-controller-vault-capture-identifiers controller) nil
+              (application-input-controller-steering-promotion-prefix-count controller) 0
               (application-input-controller-follow-up-edit-index controller) nil
               (application-input-controller-follow-up-edit-work controller) nil)
         (sb-thread:condition-broadcast
@@ -609,6 +616,7 @@ The caller must hold CONTROLLER's lock."
                    :steering-items steering
                    :work-items work
                    :vault-capture-identifiers nil
+                   :steering-promotion-prefix-count 0
                    :legacy-p t))))
         (2
          (let* ((snapshot-identifier
@@ -637,7 +645,9 @@ The caller must hold CONTROLLER's lock."
                        (mapcar #'application-input-controller--restore-work-item
                                work-forms)))
                 (vault-capture-identifiers
-                  (or (getf (rest form) :vault-capture-identifiers) nil)))
+                  (or (getf (rest form) :vault-capture-identifiers) nil))
+                (steering-promotion-prefix-count
+                  (or (getf (rest form) :steering-promotion-prefix-count) 0)))
            (when (and (non-empty-string-p snapshot-identifier)
                       (or (null active-form)
                           (and (non-empty-string-p active-work-identifier)
@@ -653,7 +663,9 @@ The caller must hold CONTROLLER's lock."
                       (= (length vault-capture-identifiers)
                          (length
                           (remove-duplicates vault-capture-identifiers
-                                             :test #'string=))))
+                                             :test #'string=)))
+                      (typep steering-promotion-prefix-count '(integer 0))
+                      (<= steering-promotion-prefix-count (length work)))
              (list :snapshot-identifier (copy-seq snapshot-identifier)
                    :active-work active-work
                    :active-work-identifier
@@ -664,6 +676,8 @@ The caller must hold CONTROLLER's lock."
                    :work-items work
                    :vault-capture-identifiers
                    (mapcar #'copy-seq vault-capture-identifiers)
+                   :steering-promotion-prefix-count
+                   steering-promotion-prefix-count
                    :legacy-p nil))))
         (otherwise
          nil)))))
@@ -700,7 +714,18 @@ The caller must hold CONTROLLER's lock."
                       :test #'string=))
             (getf state :steering-in-flight-items)))
          (steering (getf state :steering-items))
-         (work (getf state :work-items)))
+         (work (getf state :work-items))
+         (steering-promotion-prefix-count
+           (min (getf state :steering-promotion-prefix-count)
+                (length work)))
+         (promoted-work
+           (append
+            (mapcar (lambda (entry)
+                      (list ':message (agent-steering-input-content entry)))
+                    in-flight)
+            (mapcar (lambda (input)
+                      (list ':message input))
+                    steering))))
     (list :snapshot-identifier (getf state :snapshot-identifier)
           :active-work (and active-survives-p active-work)
           :active-work-identifier
@@ -710,16 +735,13 @@ The caller must hold CONTROLLER's lock."
           :work-items
           (if active-survives-p
               work
-              (append
-               (mapcar (lambda (entry)
-                         (list ':message (agent-steering-input-content entry)))
-                       in-flight)
-               (mapcar (lambda (input)
-                         (list ':message input))
-                       steering)
-               work))
+              (append (subseq work 0 steering-promotion-prefix-count)
+                      promoted-work
+                      (nthcdr steering-promotion-prefix-count work)))
           :vault-capture-identifiers
           (getf state :vault-capture-identifiers)
+          :steering-promotion-prefix-count
+          (if active-survives-p steering-promotion-prefix-count 0)
           :legacy-p (getf state :legacy-p))))
 
 (-> application-input-controller--pending-state-form (list string) list)
@@ -750,7 +772,9 @@ The caller must hold CONTROLLER's lock."
            (getf state :work-items))
           :vault-capture-identifiers
           (mapcar #'copy-seq
-                  (getf state :vault-capture-identifiers)))))
+                  (getf state :vault-capture-identifiers))
+          :steering-promotion-prefix-count
+          (or (getf state :steering-promotion-prefix-count) 0))))
 
 (-> application-input-controller--persist-pending
     (application-input-controller &key (:error-p boolean))
@@ -798,7 +822,10 @@ The caller must hold CONTROLLER's lock."
                    nil
                    (application-input-controller-vault-capture-identifiers
                     controller)
-                   nil))
+                   nil
+                   (application-input-controller-steering-promotion-prefix-count
+                    controller)
+                   0))
                 (let ((snapshot-identifier
                         (or
                          (application-input-controller-pending-snapshot-identifier
@@ -820,6 +847,9 @@ The caller must hold CONTROLLER's lock."
                      :work-items work
                      :vault-capture-identifiers
                      (application-input-controller-vault-capture-identifiers
+                      controller)
+                     :steering-promotion-prefix-count
+                     (application-input-controller-steering-promotion-prefix-count
                       controller)
                      :legacy-p nil)
                     (conversation-identifier conversation))
@@ -887,6 +917,9 @@ The caller must hold CONTROLLER's lock."
                          (application-input-controller-vault-capture-identifiers
                           controller)
                          (getf filtered-state :vault-capture-identifiers)
+                         (application-input-controller-steering-promotion-prefix-count
+                          controller)
+                         (getf filtered-state :steering-promotion-prefix-count)
                          (application-input-controller-active-work controller) nil
                          (application-input-controller-active-work-identifier
                           controller)
@@ -1407,6 +1440,12 @@ commit their busy policy before the recalled work is removed."
          (handled-p nil)
          (changed-p nil)
          (post-action nil))
+    (when (and work
+               (application-input-controller--follow-up-editing-p controller)
+               (not
+                (application-input-controller--submission-storage-ready-p
+                 controller input)))
+      (return-from application-input-controller--handle-recalled-submission t))
     (with-lock-held ((application-input-controller-lock controller))
       (let ((index
               (application-input-controller-follow-up-edit-index controller))
@@ -2238,6 +2277,12 @@ commit their busy policy before the recalled work is removed."
            (when (application-input-controller-follow-up-edit-index controller)
              (decf
               (application-input-controller-follow-up-edit-index controller)))
+           (when (plusp
+                  (application-input-controller-steering-promotion-prefix-count
+                   controller))
+             (decf
+              (application-input-controller-steering-promotion-prefix-count
+               controller)))
            ;; The prior snapshot retains queued WORK until this atomic replacement
            ;; durably represents it as active work.
            (application-input-controller--persist-pending controller)
@@ -2273,31 +2318,43 @@ commit their busy policy before the recalled work is removed."
     (application-input-controller)
     null)
 (defun application-input-controller--finish-work (controller)
-  "Finish current work and promote unconsumed steering before queued follow-ups."
+  "Finish current work and promote unconsumed steering at its ordered position."
   (let ((clear-notice-p nil)
         (pause-notice nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
-        (let ((steering-items
-                (append
-                 (mapcar
-                  #'agent-steering-input-content
-                  (application-input-controller-steering-in-flight-items
-                   controller))
-                 (application-input-controller-steering-items controller))))
+        (let* ((work-items
+                 (application-input-controller-work-items controller))
+               (steering-promotion-prefix-count
+                 (min
+                  (application-input-controller-steering-promotion-prefix-count
+                   controller)
+                  (length work-items)))
+               (steering-items
+                 (append
+                  (mapcar
+                   #'agent-steering-input-content
+                   (application-input-controller-steering-in-flight-items
+                    controller))
+                  (application-input-controller-steering-items controller))))
           (when steering-items
             (setf (application-input-controller-work-items controller)
-                  (append (mapcar (lambda (input)
-                                    (list ':message input))
-                                  steering-items)
-                          (application-input-controller-work-items controller)))
+                  (append
+                   (subseq work-items 0 steering-promotion-prefix-count)
+                   (mapcar (lambda (input)
+                             (list ':message input))
+                           steering-items)
+                   (nthcdr steering-promotion-prefix-count work-items)))
             (when (application-input-controller-follow-up-edit-index controller)
               (incf
                (application-input-controller-follow-up-edit-index controller)
                (length steering-items))))
           (setf (application-input-controller-steering-in-flight-items controller)
                 nil
-                (application-input-controller-steering-items controller) nil)))
+                (application-input-controller-steering-items controller) nil
+                (application-input-controller-steering-promotion-prefix-count
+                 controller)
+                0)))
       (setf clear-notice-p
             (or (application-input-controller-turn-cancellation-p controller)
                 (application-input-controller-interrupt-deadline controller))
@@ -2349,6 +2406,7 @@ commit their busy policy before the recalled work is removed."
             (application-input-controller-active-work-identifier controller) nil
             (application-input-controller-pending-snapshot-identifier controller) nil
             (application-input-controller-vault-capture-identifiers controller) nil
+            (application-input-controller-steering-promotion-prefix-count controller) 0
             (application-input-controller-queued-work-paused-p controller) nil
             (application-input-controller-follow-up-edit-index controller) nil
             (application-input-controller-follow-up-edit-work controller) nil

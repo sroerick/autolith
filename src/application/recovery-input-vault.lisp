@@ -122,6 +122,8 @@
                  :work-items (getf state :work-items)
                  :vault-capture-identifiers
                  (getf state :vault-capture-identifiers)
+                 :steering-promotion-prefix-count
+                 (or (getf state :steering-promotion-prefix-count) 0)
                  :legacy-p nil)
            "conversation")))
     (list :active-work (getf (rest form) :active-work)
@@ -129,7 +131,9 @@
           :steering (getf (rest form) :steering)
           :work (getf (rest form) :work)
           :vault-capture-identifiers
-          (getf (rest form) :vault-capture-identifiers))))
+          (getf (rest form) :vault-capture-identifiers)
+          :steering-promotion-prefix-count
+          (getf (rest form) :steering-promotion-prefix-count))))
 
 (-> application-recovery-input-vault--pending-payload-equal-p (list list) boolean)
 (defun application-recovery-input-vault--pending-payload-equal-p (left right)
@@ -245,12 +249,17 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                  (setf legacy-cleanup-pathname legacy))))
            (values canonical-state canonical legacy-cleanup-pathname))))
       ((probe-file legacy)
-       (multiple-value-bind (legacy-state status)
-           (application-recovery-input-vault--read-pending-path
-            application legacy :other-conversation-p t)
-         (if (eq status ':current)
-             (values legacy-state legacy legacy)
-             (values nil nil nil))))
+       (handler-case
+           (multiple-value-bind (legacy-state status)
+               (application-recovery-input-vault--read-pending-path
+                application legacy :other-conversation-p t)
+             (if (eq status ':current)
+                 (values legacy-state legacy legacy)
+                 (values nil nil nil)))
+         (recovery-input-vault-error ()
+           ;; An unreadable process-global legacy snapshot cannot be safely
+           ;; attributed to this conversation.  Preserve and ignore it.
+           (values nil nil nil))))
       (t
        (values nil nil nil)))))
 
@@ -274,7 +283,8 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
   (when (and (application-recovery-input-vault--proper-list-p form)
              (application-recovery-input-vault--properties-p
               form
-              '(:id :captured-at :active-work :steering-in-flight :steering :work)
+              '(:id :captured-at :active-work :steering-in-flight :steering :work
+                :steering-promotion-prefix-count)
               '(:id :captured-at :active-work :steering-in-flight :steering :work)))
     (let ((identifier (getf form :id))
           (captured-at (getf form :captured-at)))
@@ -291,7 +301,9 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                            :steering-in-flight (getf form :steering-in-flight)
                            :steering (getf form :steering)
                            :work (getf form :work)
-                           :vault-capture-identifiers nil)
+                           :vault-capture-identifiers nil
+                           :steering-promotion-prefix-count
+                           (or (getf form :steering-promotion-prefix-count) 0))
                      conversation-identifier)))
               (when (and state
                          (plusp
@@ -307,6 +319,8 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                       :steering-items (getf state :steering-items)
                       :work-items (getf state :work-items)
                       :vault-capture-identifiers nil
+                      :steering-promotion-prefix-count
+                      (getf state :steering-promotion-prefix-count)
                       :legacy-p nil)))
           (error (condition)
             (application-recovery-input-vault--signal
@@ -332,6 +346,8 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                   :steering-items (getf capture :steering-items)
                   :work-items (getf capture :work-items)
                   :vault-capture-identifiers nil
+                  :steering-promotion-prefix-count
+                  (or (getf capture :steering-promotion-prefix-count) 0)
                   :legacy-p nil)
             conversation-identifier)))
     (list :id (copy-seq identifier)
@@ -339,7 +355,9 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
           :active-work (getf (rest pending-form) :active-work)
           :steering-in-flight (getf (rest pending-form) :steering-in-flight)
           :steering (getf (rest pending-form) :steering)
-          :work (getf (rest pending-form) :work))))
+          :work (getf (rest pending-form) :work)
+          :steering-promotion-prefix-count
+          (getf (rest pending-form) :steering-promotion-prefix-count))))
 
 (-> application-recovery-input-vault--capture-payload-equal-p (list list) boolean)
 (defun application-recovery-input-vault--capture-payload-equal-p (left right)
@@ -471,6 +489,8 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
         :steering-items (getf state :steering-items)
         :work-items (getf state :work-items)
         :vault-capture-identifiers nil
+        :steering-promotion-prefix-count
+        (getf state :steering-promotion-prefix-count)
         :legacy-p nil))
 
 (-> application-recovery-input-vault--replacement-captures
@@ -606,3 +626,446 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
                 :cause cause)))
         (setf (application-recovery-input-vault-failure application) condition)
         nil))))
+
+
+;;;; -- Controller Restore Transactions --
+
+(-> application-recovery-input-vault--copy-work (list) list)
+(defun application-recovery-input-vault--copy-work (work)
+  "Return a detached copy of one restorable WORK item."
+  (list (first work) (application-input--copy (second work))))
+
+(-> application-recovery-input-vault--capture-work (list) list)
+(defun application-recovery-input-vault--capture-work (capture)
+  "Return CAPTURE's input as ordered controller work."
+  (let* ((work-items (getf capture :work-items))
+         (prefix-count
+           (min (or (getf capture :steering-promotion-prefix-count) 0)
+                (length work-items))))
+    (append
+     (when (getf capture :active-work)
+       (list
+        (application-recovery-input-vault--copy-work
+         (getf capture :active-work))))
+     (mapcar #'application-recovery-input-vault--copy-work
+             (subseq work-items 0 prefix-count))
+     (mapcar
+      (lambda (entry)
+        (list ':message
+              (application-input--copy
+               (agent-steering-input-content entry))))
+      (getf capture :steering-in-flight-items))
+     (mapcar (lambda (input)
+               (list ':message (application-input--copy input)))
+             (getf capture :steering-items))
+     (mapcar #'application-recovery-input-vault--copy-work
+             (nthcdr prefix-count work-items)))))
+
+(-> application-recovery-input-vault--controller-state
+    (application-input-controller)
+    list)
+(defun application-recovery-input-vault--controller-state (controller)
+  "Return the controller state changed by a vault restore transaction.
+
+The caller must hold CONTROLLER's lock."
+  (list :work-items (application-input-controller-work-items controller)
+        :steering-items
+        (application-input-controller-steering-items controller)
+        :steering-in-flight-items
+        (application-input-controller-steering-in-flight-items controller)
+        :follow-up-edit-index
+        (application-input-controller-follow-up-edit-index controller)
+        :follow-up-edit-work
+        (application-input-controller-follow-up-edit-work controller)
+        :pending-snapshot-identifier
+        (application-input-controller-pending-snapshot-identifier controller)
+        :vault-capture-identifiers
+        (application-input-controller-vault-capture-identifiers controller)
+        :steering-promotion-prefix-count
+        (application-input-controller-steering-promotion-prefix-count controller)))
+
+(-> application-recovery-input-vault--restore-controller-state
+    (application-input-controller list)
+    null)
+(defun application-recovery-input-vault--restore-controller-state
+    (controller state)
+  "Restore CONTROLLER from transaction snapshot STATE.
+
+The caller must hold CONTROLLER's lock."
+  (setf (application-input-controller-work-items controller)
+        (getf state :work-items)
+        (application-input-controller-steering-items controller)
+        (getf state :steering-items)
+        (application-input-controller-steering-in-flight-items controller)
+        (getf state :steering-in-flight-items)
+        (application-input-controller-follow-up-edit-index controller)
+        (getf state :follow-up-edit-index)
+        (application-input-controller-follow-up-edit-work controller)
+        (getf state :follow-up-edit-work)
+        (application-input-controller-pending-snapshot-identifier controller)
+        (getf state :pending-snapshot-identifier)
+        (application-input-controller-vault-capture-identifiers controller)
+        (getf state :vault-capture-identifiers)
+        (application-input-controller-steering-promotion-prefix-count controller)
+        (getf state :steering-promotion-prefix-count))
+  nil)
+
+(-> application-recovery-input-vault--pending-path (application) pathname)
+(defun application-recovery-input-vault--pending-path (application)
+  "Return APPLICATION's exact conversation-scoped pending-input pathname."
+  (let ((configuration (application-configuration application))
+        (conversation (application-conversation application)))
+    (configuration-pending-inputs-path
+     configuration (conversation-pathname conversation))))
+
+(-> application-input-controller-vault-restore
+    (application-input-controller)
+    (integer 0))
+(defun application-input-controller-vault-restore (controller)
+  "Transactionally restore every vaulted capture before newer controller work."
+  (let* ((application
+           (application-input-controller-application controller))
+         (vault-pathname
+           (application-recovery-input-vault--path application))
+         (pending-pathname
+           (application-recovery-input-vault--pending-path application))
+         (captures
+           (application-recovery-input-vault-captures application))
+         (capture-identifiers
+           (mapcar (lambda (capture) (getf capture :id)) captures))
+         (restored-work
+           (mapcan #'application-recovery-input-vault--capture-work captures))
+         (restored-count (length restored-work)))
+    (when (zerop restored-count)
+      (return-from application-input-controller-vault-restore 0))
+    (unless
+        (application-input-controller-pending-persistence-enabled-p controller)
+      (application-recovery-input-vault--signal
+       pending-pathname ':restore
+       :message
+       "Recovered input storage is unavailable. Inspect /vault or use /vault-discard before restoring input."))
+    (with-lock-held ((application-input-controller-lock controller))
+      (let ((old-state
+              (application-recovery-input-vault--controller-state controller))
+            (vault-deleted-p nil))
+        (handler-case
+            (progn
+              (setf
+               (application-input-controller-work-items controller)
+               (append restored-work
+                       (application-input-controller-work-items controller))
+               (application-input-controller-follow-up-edit-index controller)
+               (let ((index
+                       (application-input-controller-follow-up-edit-index
+                        controller)))
+                 (and index (+ restored-count index)))
+               (application-input-controller-steering-promotion-prefix-count
+                controller)
+               (+ restored-count
+                  (application-input-controller-steering-promotion-prefix-count
+                   controller))
+               (application-input-controller-vault-capture-identifiers
+                controller)
+               (remove-duplicates
+                (append
+                 (application-input-controller-vault-capture-identifiers
+                  controller)
+                 capture-identifiers)
+                :test #'string=))
+              (application-input-controller--persist-pending
+               controller :error-p t)
+              (application-recovery-input-vault--write-captures application nil)
+              (setf vault-deleted-p t
+                    (application-input-controller-vault-capture-identifiers
+                     controller)
+                    (remove-if
+                     (lambda (identifier)
+                       (member identifier capture-identifiers :test #'string=))
+                     (application-input-controller-vault-capture-identifiers
+                      controller)))
+              (application-input-controller--persist-pending
+               controller :error-p t))
+          (error (condition)
+            (application-recovery-input-vault--restore-controller-state
+             controller old-state)
+            (let ((rollback-failures nil)
+                  (vault-restored-p (not vault-deleted-p)))
+              (when vault-deleted-p
+                (handler-case
+                    (progn
+                      (application-recovery-input-vault--write-captures
+                       application captures)
+                      (setf vault-restored-p t))
+                  (error (rollback-condition)
+                    (push rollback-condition rollback-failures))))
+              ;; Never replace the provenance-bearing pending snapshot with the
+              ;; old queue until the deleted vault is durable again.
+              (when vault-restored-p
+                (handler-case
+                    (application-input-controller--persist-pending
+                     controller :error-p t)
+                  (error (rollback-condition)
+                    (push rollback-condition rollback-failures))))
+              (when rollback-failures
+                (setf
+                 (application-input-controller-pending-persistence-enabled-p
+                  controller)
+                 nil)
+                (let ((rollback-error
+                        (make-condition
+                         'recovery-input-vault-error
+                         :message
+                         "Recovery vault restore failed and its rollback could not be published. Use /vault to inspect the preserved state or /vault-discard to discard it."
+                         :pathname pending-pathname
+                         :operation ':restore-rollback
+                         :cause (list condition rollback-failures))))
+                  (setf (application-recovery-input-vault-failure application)
+                        rollback-error)
+                  (error rollback-error)))
+              (if (typep condition 'recovery-input-vault-error)
+                  (error condition)
+                  (application-recovery-input-vault--signal
+                   pending-pathname ':restore
+                   :message
+                   "Could not publish restored recovery input. The prior controller state was restored."
+                   :cause condition)))))))
+    (setf (application-recovery-input-vault-failure application) nil)
+    (application-input-controller--publish-counts controller)
+    restored-count))
+
+
+;;;; -- Vault Inspection and Discard --
+
+(defparameter *application-recovery-input-vault-preview-width* 96
+  "Maximum display width of one recovered-input preview.")
+
+(-> application-recovery-input-vault--capture-labeled-inputs (list) list)
+(defun application-recovery-input-vault--capture-labeled-inputs (capture)
+  "Return CAPTURE's ordered inputs paired with concise labels."
+  (let* ((work-items (getf capture :work-items))
+         (prefix-count
+           (min (or (getf capture :steering-promotion-prefix-count) 0)
+                (length work-items))))
+    (labels ((labeled-work (items)
+               (mapcar (lambda (work)
+                         (cons (if (eq (first work) ':command)
+                                   "command"
+                                   "follow-up")
+                               (second work)))
+                       items)))
+      (append
+       (when (getf capture :active-work)
+         (list (cons "active" (second (getf capture :active-work)))))
+       (labeled-work (subseq work-items 0 prefix-count))
+       (mapcar (lambda (entry)
+                 (cons "steering in flight"
+                       (agent-steering-input-content entry)))
+               (getf capture :steering-in-flight-items))
+       (mapcar (lambda (input) (cons "steering" input))
+               (getf capture :steering-items))
+       (labeled-work (nthcdr prefix-count work-items))))))
+
+(-> application-recovery-input-vault--preview
+    ((or string user-message-input))
+    string)
+(defun application-recovery-input-vault--preview (input)
+  "Return one sanitized bounded preview for recovered INPUT."
+  (let* ((text
+           (sanitize-text (application-input--preview input)
+                          :single-line-p t))
+         (visible
+           (text-cell-prefix
+            text *application-recovery-input-vault-preview-width*)))
+    (if (plusp (length visible)) visible "(empty input)")))
+
+(-> application-recovery-input-vault-description (application list) string)
+(defun application-recovery-input-vault-description (application captures)
+  "Return a bounded chronological description of validated CAPTURES."
+  (with-output-to-string (stream)
+    (let ((input-count
+            (reduce #'+ captures
+                    :key (lambda (capture)
+                           (length
+                            (application-recovery-input-vault--capture-labeled-inputs
+                             capture)))
+                    :initial-value 0)))
+      (format stream
+              "Recovery input vault for ~A: ~D capture~:P, ~D input~:P.~%"
+              (conversation-identifier
+               (application-conversation application))
+              (length captures)
+              input-count))
+    (loop for capture in captures
+          for index from 1
+          for labeled-inputs =
+            (application-recovery-input-vault--capture-labeled-inputs capture)
+          do (format stream "~%~D. ~A, ~D input~:P~%"
+                     index
+                     (application--calendar-description
+                      (getf capture :captured-at))
+                     (length labeled-inputs))
+             (dolist (entry labeled-inputs)
+               (format stream "   ~A: ~A~%"
+                       (first entry)
+                       (application-recovery-input-vault--preview
+                        (rest entry)))))
+    (let ((failure (application-recovery-input-vault-failure application)))
+      (when failure
+        (format stream "~%Storage warning: ~A~%" failure)))))
+
+(-> application-recovery-input-vault-present (application) null)
+(defun application-recovery-input-vault-present (application)
+  "Present APPLICATION's vault or its exact validation failure."
+  (handler-case
+      (let ((captures
+              (application-recovery-input-vault-captures application)))
+        (application-present
+         application
+         (if captures
+             (application-recovery-input-vault-description
+              application captures)
+             (let ((failure
+                     (application-recovery-input-vault-failure application)))
+               (if failure
+                   (format nil
+                           "No readable recovery input is vaulted. Storage warning: ~A~%Use /vault-discard to discard the preserved recovery state."
+                           failure)
+                   "No recovered input is vaulted for this conversation.")))))
+    (recovery-input-vault-error (condition)
+      (setf (application-recovery-input-vault-failure application) condition)
+      (application-present
+       application
+       (format nil
+               "Recovery input vault could not be read: ~A~%Nothing was submitted automatically. Use /vault-discard to discard this conversation's vault."
+               condition))))
+  nil)
+
+(-> application-recovery-input-vault--discard-legacy (application) null)
+(defun application-recovery-input-vault--discard-legacy (application)
+  "Delete valid legacy pending input only when it belongs to APPLICATION."
+  (let* ((configuration (application-configuration application))
+         (legacy-pathname
+           (configuration-legacy-pending-inputs-path configuration)))
+    (when (probe-file legacy-pathname)
+      (handler-case
+          (multiple-value-bind (state status)
+              (application-recovery-input-vault--read-pending-path
+               application legacy-pathname :other-conversation-p t)
+            (declare (ignore state))
+            (when (eq status ':current)
+              (application-recovery-input-vault--delete
+               legacy-pathname ':discard-legacy-pending)))
+        (recovery-input-vault-error ()
+          ;; Explicit scoped discard cannot safely remove an unattributed
+          ;; process-global legacy file.  Preserve and ignore it.
+          nil))))
+  nil)
+
+(-> application-input-controller-vault-discard
+    (application-input-controller)
+    boolean)
+(defun application-input-controller-vault-discard (controller)
+  "Discard this conversation's vault and any blocked recovery pending state."
+  (let* ((application
+           (application-input-controller-application controller))
+         (vault-pathname
+           (application-recovery-input-vault--path application))
+         (pending-pathname
+           (application-recovery-input-vault--pending-path application)))
+    (application-recovery-input-vault--delete
+     vault-pathname ':discard-vault)
+    (with-lock-held ((application-input-controller-lock controller))
+      (unless
+          (application-input-controller-pending-persistence-enabled-p controller)
+        (handler-case
+            (progn
+              (application-recovery-input-vault--delete
+               pending-pathname ':discard-pending)
+              (application-recovery-input-vault--discard-legacy application)
+              (setf
+               (application-input-controller-pending-snapshot-identifier
+                controller)
+               nil
+               (application-input-controller-vault-capture-identifiers
+                controller)
+               nil
+               (application-input-controller-steering-promotion-prefix-count
+                controller)
+               0
+               (application-input-controller-pending-persistence-enabled-p
+                controller)
+               t)
+              (application-input-controller--persist-pending
+               controller :error-p t))
+          (error (condition)
+            (setf
+             (application-input-controller-pending-persistence-enabled-p
+              controller)
+             nil)
+            (if (typep condition 'recovery-input-vault-error)
+                (error condition)
+                (application-recovery-input-vault--signal
+                 pending-pathname ':discard
+                 :message
+                 "Could not discard all preserved recovery input. New submissions remain blocked."
+                 :cause condition))))))
+    (setf (application-recovery-input-vault-failure application) nil)
+    (application-input-controller--publish-counts controller)
+    t))
+
+
+;;;; -- Built-in Recovery Vault Commands --
+
+(define-application-command application--builtin-vault-command
+    (:name "/vault"
+     :argument nil
+     :description "inspect recovered queued input"
+     :tip "shows input preserved after an active-image crash."
+     :busy-behavior :inspect
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (application-recovery-input-vault-present application)
+  ':continue)
+
+(define-application-command application--builtin-vault-restore-command
+    (:name "/vault-restore"
+     :argument nil
+     :description "restore recovered queued input"
+     :tip "queues all vaulted input in its original order without automatic submission."
+     :busy-behavior :hold
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (let ((controller (application-input-controller application)))
+    (unless (typep controller 'application-input-controller)
+      (error 'configuration-error
+             :message "Recovery input restore needs the interactive application."))
+    (let ((count
+            (application-input-controller-vault-restore controller)))
+      (application-present
+       application
+       (if (plusp count)
+           (format nil "Restored ~D recovered input~:P before newer queued work."
+                   count)
+           "No recovered input was available to restore."))))
+  ':continue)
+
+(define-application-command application--builtin-vault-discard-command
+    (:name "/vault-discard"
+     :argument nil
+     :description "discard recovered queued input"
+     :tip "deletes only this conversation's recovery vault and blocked pending state."
+     :busy-behavior :hold
+     :terminal-behavior :shared)
+    (application invocation)
+  (declare (ignore invocation))
+  (let ((controller (application-input-controller application)))
+    (unless (typep controller 'application-input-controller)
+      (error 'configuration-error
+             :message "Recovery input discard needs the interactive application."))
+    (application-input-controller-vault-discard controller)
+    (application-present
+     application
+     "Discarded this conversation's recovered input."))
+  ':continue)
