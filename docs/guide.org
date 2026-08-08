@@ -312,12 +312,15 @@ messages. With an empty draft, Tab recalls the newest follow-up for editing.
 While a recalled follow-up remains in the composer, including after the active
 turn ends, Shift-Tab cycles backward through the queued follow-ups and wraps from
 the oldest to the newest. Edits stay at the selected follow-up's FIFO position.
-When Autolith is idle without a recalled follow-up, Tab submits like Enter. On styled terminals, active
-status uses a neutral full-width background and colors the current model,
-reasoning effort, and enclosing Git worktree branch with the basic palette.
-Branch discovery occurs when the activity phase changes, not during the
-four-times-per-second spinner repaint. Active status includes elapsed time;
-after 30 seconds without provider progress it also shows the no-update duration.
+When Autolith is idle without a recalled follow-up, Tab submits like Enter. On
+styled terminals, active status uses a neutral full-width background and colors
+the current model, reasoning effort, and enclosing Git worktree branch with the
+basic palette. Branch discovery occurs when the activity phase changes, not
+during the four-times-per-second animation repaint. While context compaction is
+active, a bright =COMPACTING  [....====>....]= row sits immediately above the
+modeline. Its traveling head is indeterminate and never implies a percentage.
+Active status includes elapsed time; after 30 seconds without provider progress
+it also shows the no-update duration.
 A draft that has not been submitted survives streaming updates unchanged. Slash
 commands that cannot run during an active turn are scheduled as follow-up work
 and run at the first opportunity after the current response finishes; the live
@@ -627,8 +630,10 @@ The 5.6 family models have a 272000 token context window (read from the live
 model catalog), and compaction triggers at 80 percent of the window by
 default. Set =AUTOLITH_COMPACTION_THRESHOLD= to a percentage between 1 and 95 to
 compact earlier or later, and =AUTOLITH_CONTEXT_WINDOW= to override the window
-for unlisted models. =/compact= with no argument forces a compaction immediately, and
-=/status= shows how full the context currently is.
+for unlisted models. =/compact= with no argument forces a compaction immediately,
+and =/status= shows how full the context currently is. Automatic and forced
+compaction use the same live indicator, which clears on completion, cancellation,
+or failure and never enters transcript history.
 
 =/status= reports the model, token usage, and subscription rate limit windows
 parsed from provider responses. Requests never ask for the provider's priority

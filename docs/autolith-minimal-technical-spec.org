@@ -688,6 +688,13 @@ concurrent progress cannot interleave escape sequences or force one repaint per
 event. This projection is ephemeral and never enters durable conversation
 history.
 
+While conversation compaction is active, the UI inserts one bright ASCII row
+directly above the modeline and below any child-agent strip. The row says
+=COMPACTING= and moves a right-pointing head through a bounded track without
+showing or implying percentage completion. It shares the coalesced live repaint
+cadence, disappears on completion or turn cleanup, and never enters durable
+conversation history.
+
 Task workers and monitors are application runtime resources. Clean shutdown and
 conversation replacement cancel outstanding work and join the pool. Checkpoint
 preparation closes the pool before enforcing the single-threaded saver boundary.

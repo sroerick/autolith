@@ -3477,6 +3477,94 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-compaction-presentation-lifecycle () null)
+(defun test-compaction-presentation-lifecycle ()
+  "Test compaction event presentation and every defensive cleanup boundary."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "compaction-ui"))
+         (registry (make-instance 'tool-registry))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (make-condition 'simple-error
+                             :format-control "manual compaction failed"
+                             :format-arguments nil)
+             (make-condition 'simple-error
+                             :format-control "turn failed"
+                             :format-arguments nil))))
+         (agent (agent-create :configuration configuration
+                              :provider provider
+                              :conversation conversation
+                              :tool-registry registry
+                              :worker ':unused))
+         (terminal (make-instance 'recording-terminal :columns 72))
+         (ui (terminal-ui-create :terminal terminal
+                                 :clock-function (lambda () 0)))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry
+                          :agent agent
+                          :ui ui)))
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (conversation-append-user-message conversation "history to compact")
+           (let* ((observer (application-agent-observer application))
+                  (send-status
+                    (callback-agent-observer-status-callback observer)))
+             (funcall send-status :compaction-started nil)
+             (test-assert
+              (and (terminal-ui-compacting-p ui)
+                   (string= (terminal-ui-status ui)
+                            "compacting the conversation"))
+              "the compaction event enables its indicator and activity phase")
+             (multiple-value-bind (text display cursor)
+                 (terminal-ui--live-content ui 0)
+               (declare (ignore display cursor))
+               (test-assert (search "COMPACTING  [====>" text)
+                            "the application observer projects compaction live"))
+             (funcall send-status :compaction-completed nil)
+             (test-assert (not (terminal-ui-compacting-p ui))
+                          "completion removes the compaction indicator")
+             (funcall send-status :compaction-started nil)
+             (funcall send-status :turn-completed nil)
+             (test-assert (and (not (terminal-ui-compacting-p ui))
+                               (null (terminal-ui-status ui)))
+                          "turn completion defensively clears compaction state"))
+           (let ((failure nil))
+             (handler-case
+                 (application-compact application)
+               (simple-error (condition)
+                 (setf failure condition)))
+             (test-assert failure
+                          "manual compaction preserves its provider failure")
+             (test-assert (and (not (terminal-ui-compacting-p ui))
+                               (null (terminal-ui-compaction-started-at ui))
+                               (null (terminal-ui-status ui)))
+                          "manual compaction failure clears every live indicator"))
+           (terminal-ui-set-compacting ui t)
+           (let ((failure nil))
+             (handler-case
+                 (application--run-turn application "failing turn")
+               (simple-error (condition)
+                 (setf failure condition)))
+             (test-assert failure
+                          "turn execution preserves its provider failure")
+             (test-assert (and (not (terminal-ui-compacting-p ui))
+                               (null (terminal-ui-compaction-started-at ui))
+                               (null (terminal-ui-status ui)))
+                          "turn unwind cleanup removes stale compaction state")))
+      (ignore-errors (terminal-ui-stop ui))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-streaming-presentation () null)
 (defun test-streaming-presentation ()
   "Test safe streaming, exact record reconciliation, and live tool entries."
@@ -7229,6 +7317,7 @@
   (test-bounded-transcript-replay)
   (test-hidden-reasoning-does-not-crowd-replay)
   (test-paged-transcript-history)
+  (test-compaction-presentation-lifecycle)
   (test-streaming-presentation)
   (test-provider-retry-presentation)
   (test-turn-cursor-visibility)

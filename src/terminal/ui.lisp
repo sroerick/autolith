@@ -11,7 +11,13 @@
   "The idle duration after which live activity is labelled as stale.")
 
 (defparameter *terminal-ui-status-spinner-frames-per-second* 4
-  "The number of REPL status spinner frames painted each second.")
+  "The number of live status animation frames painted each second.")
+
+(defparameter *terminal-ui-compaction-track-cells* 32
+  "The maximum width of the indeterminate compaction track.")
+
+(defparameter *terminal-ui-compaction-head-cells* 5
+  "The maximum width of the travelling compaction head.")
 
 (defparameter *terminal-ui-pending-preview-limit* 3
   "The maximum pending inputs previewed for each delivery class.")
@@ -831,6 +837,30 @@ columns: name, tally, and description."
                        (terminal-span ':status-dim
                                       (subseq text (1+ bright-index))))))))
 
+(-> terminal-ui--compaction-track-width (integer) (integer 0))
+(defun terminal-ui--compaction-track-width (row-width)
+  "Return the compaction track width available within ROW-WIDTH cells."
+  (min *terminal-ui-compaction-track-cells*
+       (max 0
+            (- row-width
+               (text-cell-width "COMPACTING  [")
+               (text-cell-width "]")))))
+
+(-> terminal-ui--compaction-phase-at
+    (terminal-ui real integer)
+    (integer 0))
+(defun terminal-ui--compaction-phase-at (ui now row-width)
+  "Return UI's travelling compaction-head position at monotonic NOW."
+  (let* ((track-width (terminal-ui--compaction-track-width row-width))
+         (head-width  (min *terminal-ui-compaction-head-cells* track-width))
+         (travel      (- track-width head-width))
+         (started-at  (or (terminal-ui-compaction-started-at ui) now)))
+    (if (plusp travel)
+        (mod (floor (* *terminal-ui-status-spinner-frames-per-second*
+                       (max 0 (- now started-at))))
+             (1+ travel))
+        0)))
+
 (-> terminal-ui--status-signature-at (terminal-ui real) list)
 (defun terminal-ui--status-signature-at (ui now)
   "Return the visible values identifying UI's status paint at NOW."
@@ -844,12 +874,16 @@ columns: name, tally, and description."
     (terminal-ui real)
     (option list))
 (defun terminal-ui--animation-signature-at (ui now)
-  "Return visible status and child-agent values identifying a live paint."
-  (let ((activities (terminal-ui-agent-activities ui)))
-    (when (or (terminal-ui-status ui) activities)
+  "Return visible status, compaction, and child-agent values for a live paint."
+  (let ((activities (terminal-ui-agent-activities ui))
+        (compacting-p (terminal-ui-compacting-p ui)))
+    (when (or (terminal-ui-status ui) compacting-p activities)
       (list
        (and (terminal-ui-status ui)
             (terminal-ui--status-signature-at ui now))
+       (and compacting-p
+            (terminal-ui--compaction-phase-at
+             ui now (max 1 (terminal-columns (terminal-ui-terminal ui)))))
        (and activities
             (list
              (and (find ':running activities
@@ -880,6 +914,52 @@ columns: name, tally, and description."
               (terminal-span ':status-plain
                              (terminal-ui--duration-text
                               (+ worked-seconds elapsed))))))))
+
+(-> terminal-ui--compaction-head-text ((integer 1)) string)
+(defun terminal-ui--compaction-head-text (width)
+  "Return the right-pointing compaction head occupying WIDTH cells."
+  (concatenate 'string
+               (make-string (1- width) :initial-element #\=)
+               ">"))
+
+(-> terminal-ui--compaction-row-at (terminal-ui real integer) list)
+(defun terminal-ui--compaction-row-at (ui now row-width)
+  "Return UI's clipped indeterminate compaction row at monotonic NOW."
+  (let* ((track-width (terminal-ui--compaction-track-width row-width))
+         (head-width  (min *terminal-ui-compaction-head-cells* track-width))
+         (head-at     (terminal-ui--compaction-phase-at ui now row-width))
+         (content
+           (if (plusp track-width)
+               (remove
+                nil
+                (list
+                 (terminal-span ':compaction-label "COMPACTING")
+                 (terminal-span ':compaction-track "  [")
+                 (and (plusp head-at)
+                      (terminal-span
+                       ':compaction-track
+                       (make-string head-at :initial-element #\.)))
+                 (terminal-span
+                  ':compaction-head
+                  (terminal-ui--compaction-head-text head-width))
+                 (let ((remaining (- track-width head-at head-width)))
+                   (and (plusp remaining)
+                        (terminal-span
+                         ':compaction-track
+                         (make-string remaining :initial-element #\.))))
+                 (terminal-span ':compaction-track "]")))
+               (list (terminal-span ':compaction-label "COMPACTING"))))
+         (clipped (terminal--clip-spans content row-width))
+         (padding
+           (and (terminal-styled-p (terminal-ui-terminal ui))
+                (- row-width (terminal--spans-width clipped)))))
+    (if (and padding (plusp padding))
+        (append clipped
+                (list
+                 (terminal-span
+                  ':compaction-track
+                  (make-string padding :initial-element #\Space))))
+        clipped)))
 
 (-> terminal-ui--status-row-at (terminal-ui real integer) list)
 (defun terminal-ui--status-row-at (ui now row-width)
@@ -982,6 +1062,7 @@ content; a narrow row drops it before any activity detail."
          (row-width (max 1 (terminal-columns terminal)))
          (status-now (or status-now
                          (and (or (terminal-ui-status ui)
+                                  (terminal-ui-compacting-p ui)
                                   (terminal-ui-agent-activities ui))
                               (funcall (terminal-ui-clock-function ui)))))
          (rows nil))
@@ -1008,13 +1089,19 @@ content; a narrow row drops it before any activity detail."
               (append rows
                       (list nil)
                       activity-rows))))
-    (when (terminal-ui-status ui)
+    (when (or (terminal-ui-compacting-p ui)
+              (terminal-ui-status ui))
       (setf rows
             (append rows
-                    (list
-                     nil
-                     (terminal-ui--status-row-at
-                      ui status-now row-width)))))
+                    (list nil)
+                    (when (terminal-ui-compacting-p ui)
+                      (list
+                       (terminal-ui--compaction-row-at
+                        ui status-now row-width)))
+                    (when (terminal-ui-status ui)
+                      (list
+                       (terminal-ui--status-row-at
+                        ui status-now row-width))))))
     (when (terminal-ui-notice ui)
       (setf rows
             (append rows
@@ -1161,6 +1248,7 @@ live unfinished line continuing that block, or removes it when NIL."
   "Present UI live content, atomically preceding it with appended scrollback."
   (let* ((status-now (or status-now
                          (and (or (terminal-ui-status ui)
+                                  (terminal-ui-compacting-p ui)
                                   (terminal-ui-agent-activities ui)
                                   (terminal-ui-notice ui))
                               (funcall (terminal-ui-clock-function ui)))))
@@ -1507,6 +1595,23 @@ seen can offer the notice again."
                  (terminal-ui--paint-live ui)))))))
     (values ui applied-p)))
 
+(-> terminal-ui-set-compacting (terminal-ui boolean) terminal-ui)
+(defun terminal-ui-set-compacting (ui compacting-p)
+  "Begin or clear UI's animated indeterminate compaction indicator."
+  (with-terminal-ui-locked (ui)
+    (unless (eq compacting-p (terminal-ui-compacting-p ui))
+      (cond
+        (compacting-p
+         (let ((now (funcall (terminal-ui-clock-function ui))))
+           (setf (terminal-ui-compacting-p ui) t
+                 (terminal-ui-compaction-started-at ui) now)
+           (terminal-ui--paint-live ui now)))
+        (t
+         (setf (terminal-ui-compacting-p ui) nil
+               (terminal-ui-compaction-started-at ui) nil)
+         (terminal-ui--paint-live ui)))))
+  ui)
+
 (-> terminal-ui-set-status
     (terminal-ui (option string)
      &key (:details terminal-styled-text)
@@ -1600,6 +1705,7 @@ frames, so this function never paints directly from a child thread."
        (lambda ()
          (let* ((status-now
                   (and (or (terminal-ui-status ui)
+                           (terminal-ui-compacting-p ui)
                            (terminal-ui-agent-activities ui)
                            (terminal-ui-notice ui))
                        (funcall (terminal-ui-clock-function ui))))

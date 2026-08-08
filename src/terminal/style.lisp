@@ -14,6 +14,7 @@
            :agent-spinner :agent-name :agent-role :agent-tool
            :status-plain :status-dim :status-accent
            :status-model :status-effort :status-branch
+           :compaction-label :compaction-track :compaction-head
            :syntax-comment :syntax-keyword :syntax-string :syntax-escape
            :syntax-number :syntax-type :syntax-function :syntax-property
            :syntax-heading :syntax-link))
@@ -73,7 +74,10 @@
            (:status-accent :bright-magenta (:bold t))
            (:status-model :bright-cyan (:bold t))
            (:status-effort :bright-red (:bold t))
-           (:status-branch :bright-green (:bold t)))
+           (:status-branch :bright-green (:bold t))
+           (:compaction-label :bright-yellow (:bold t))
+           (:compaction-track :white ())
+           (:compaction-head :bright-yellow (:bold t)))
          collect (cons name
                        (apply #'make-style
                               :foreground foreground

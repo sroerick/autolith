@@ -182,6 +182,16 @@
     :accessor terminal-ui-status
     :type (option string)
     :documentation "The optional unfinished activity shown above the prompt.")
+   (compacting-p
+    :initform nil
+    :accessor terminal-ui-compacting-p
+    :type boolean
+    :documentation "Whether an indeterminate conversation compaction is active.")
+   (compaction-started-at
+    :initform nil
+    :accessor terminal-ui-compaction-started-at
+    :type (option real)
+    :documentation "The monotonic time at which active compaction began.")
    (notice
     :initform nil
     :accessor terminal-ui-notice
@@ -224,7 +234,7 @@
     :accessor terminal-ui-status-rendered-signature
     :type list
     :documentation
-    "The status and child-agent animation values used by the newest live paint.")
+    "The status, compaction, and child-agent values used by the newest live paint.")
    (clock-function
     :initarg :clock-function
     :initform (lambda ()

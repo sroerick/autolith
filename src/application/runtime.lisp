@@ -2731,11 +2731,14 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (application-render-records application)
             (application-set-activity application activity-label))
            (:compaction-started
-            (application-set-activity application "compacting the conversation"))
+            (application-set-activity application "compacting the conversation")
+            (terminal-ui-set-compacting ui t))
            (:compaction-completed
+            (terminal-ui-set-compacting ui nil)
             (application-render-records application)
             (application-set-activity application activity-label))
            (:turn-completed
+            (terminal-ui-set-compacting ui nil)
             (terminal-ui-set-preview-rows ui nil)
             (application-set-activity application nil))))
        :steering-callback steering-function
@@ -2811,6 +2814,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
              :tools-p tools-p
              :tool-allowlist tool-allowlist
              :tool-restriction-p tool-restriction-p)))
+      (terminal-ui-set-compacting ui nil)
       (terminal-ui-set-preview-rows ui nil)
       (application-set-activity application nil)
       (terminal-ui-stream-update ui :tail nil)

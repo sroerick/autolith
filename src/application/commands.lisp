@@ -770,6 +770,7 @@
                (agent-compact-conversation
                 agent
                 (application-agent-observer application))
+            (terminal-ui-set-compacting (application-ui application) nil)
             (application-set-activity application nil))
           (application-render-records application)
           (application-present
