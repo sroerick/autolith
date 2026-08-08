@@ -31,6 +31,13 @@
     :reader callback-agent-observer-steering-callback
     :type (option function)
     :documentation "The optional function that drains user messages waiting for a tool boundary.")
+   (steering-persisted-callback
+    :initarg :steering-persisted-callback
+    :initform nil
+    :reader callback-agent-observer-steering-persisted-callback
+    :type (option function)
+    :documentation
+    "The optional function acknowledging one identified durable steering message.")
    (command-authorization-callback
     :initarg :command-authorization-callback
     :initform nil
@@ -44,6 +51,19 @@
     :type (option function)
     :documentation "The optional function authorizing one external tool call."))
   (:documentation "An agent observer implemented by ordinary terminal-facing callbacks."))
+
+(defclass agent-steering-input ()
+  ((identifier
+    :initarg :identifier
+    :reader agent-steering-input-identifier
+    :type non-empty-string
+    :documentation "The durable pending-input identifier for this steering message.")
+   (content
+    :initarg :content
+    :reader agent-steering-input-content
+    :type (or string user-message-input)
+    :documentation "The user message to append at the next tool boundary."))
+  (:documentation "One identified steering message awaiting durable conversation append."))
 
 (defclass agent ()
   ((configuration
@@ -122,6 +142,13 @@
   (:documentation
    "Return and consume user messages waiting at OBSERVER's next tool boundary."))
 
+(-> agent-observer-steering-persisted
+    (agent-observer non-empty-string)
+    null)
+(defgeneric agent-observer-steering-persisted (observer identifier)
+  (:documentation
+   "Acknowledge that steering input IDENTIFIER is durable through OBSERVER."))
+
 (-> agent-observer-authorize-command
     (agent-observer string pathname)
     keyword)
@@ -155,6 +182,12 @@
 (defmethod agent-observer-take-steering ((observer agent-observer))
   "Return no steering messages for the default silent OBSERVER."
   (declare (ignore observer))
+  nil)
+
+(defmethod agent-observer-steering-persisted
+    ((observer agent-observer) (identifier string))
+  "Ignore durable steering IDENTIFIER for the default silent OBSERVER."
+  (declare (ignore observer identifier))
   nil)
 
 (defmethod agent-observer-authorize-command
@@ -201,6 +234,15 @@
         (funcall callback)
         nil)))
 
+(defmethod agent-observer-steering-persisted
+    ((observer callback-agent-observer) (identifier string))
+  "Acknowledge durable steering IDENTIFIER through OBSERVER's callback."
+  (let ((callback
+          (callback-agent-observer-steering-persisted-callback observer)))
+    (when callback
+      (funcall callback identifier)))
+  nil)
+
 (defmethod agent-observer-authorize-command
     ((observer callback-agent-observer) (command string) (directory pathname))
   "Authorize COMMAND through OBSERVER's callback, denying when absent."
@@ -224,24 +266,37 @@
 
 ;;;; -- Construction and Turn Entry --
 
+(-> agent-steering-input-create
+    (&key (:identifier non-empty-string)
+          (:content (or string user-message-input)))
+    agent-steering-input)
+(defun agent-steering-input-create (&key identifier content)
+  "Create one identified steering message carrying CONTENT."
+  (make-instance 'agent-steering-input
+                 :identifier identifier
+                 :content content))
+
 (-> callback-agent-observer-create
     (&key
      (:text-callback (option function))
      (:reasoning-callback (option function))
      (:status-callback (option function))
      (:steering-callback (option function))
+     (:steering-persisted-callback (option function))
      (:command-authorization-callback (option function))
      (:tool-authorization-callback (option function)))
     callback-agent-observer)
 (defun callback-agent-observer-create
     (&key text-callback reasoning-callback status-callback steering-callback
-      command-authorization-callback tool-authorization-callback)
+      steering-persisted-callback command-authorization-callback
+      tool-authorization-callback)
   "Create an observer backed by optional presentation callbacks."
   (make-instance 'callback-agent-observer
                  :text-callback text-callback
                  :reasoning-callback reasoning-callback
                  :status-callback status-callback
                  :steering-callback steering-callback
+                 :steering-persisted-callback steering-persisted-callback
                  :command-authorization-callback
                  command-authorization-callback
                  :tool-authorization-callback tool-authorization-callback))
@@ -275,13 +330,18 @@
                  :worker (or worker (lisp-worker-pool-create configuration))))
 
 (-> agent-run-user-turn
-    (agent (or string user-message-input) &key (:observer agent-observer)
-           (:goal-context (option string)) (:tools-p boolean)
-           (:tool-allowlist (option list)) (:tool-restriction-p boolean))
+    (agent (or string user-message-input)
+     &key (:observer agent-observer)
+          (:goal-context (option string))
+          (:tools-p boolean)
+          (:tool-allowlist (option list))
+          (:tool-restriction-p boolean)
+          (:pending-input-identifier (option non-empty-string)))
     provider-result)
 (defgeneric agent-run-user-turn
     (agent content
-     &key observer goal-context tools-p tool-allowlist tool-restriction-p)
+     &key observer goal-context tools-p tool-allowlist tool-restriction-p
+          pending-input-identifier)
   (:documentation
    "Persist user CONTENT, run model and optional tool rounds, and return the final provider result."))
 
@@ -308,7 +368,7 @@
 (defmethod agent-run-user-turn
     ((agent agent) (content string)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          tool-allowlist (tool-restriction-p nil))
+          tool-allowlist (tool-restriction-p nil) pending-input-identifier)
   "Normalize a textual user turn before running it through AGENT."
   (agent-run-user-turn agent
                        (user-message-input-create :text content)
@@ -316,12 +376,13 @@
                        :goal-context goal-context
                        :tools-p tools-p
                        :tool-allowlist tool-allowlist
-                       :tool-restriction-p tool-restriction-p))
+                       :tool-restriction-p tool-restriction-p
+                       :pending-input-identifier pending-input-identifier))
 
 (defmethod agent-run-user-turn
     ((agent agent) (content user-message-input)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          tool-allowlist (tool-restriction-p nil))
+          tool-allowlist (tool-restriction-p nil) pending-input-identifier)
   "Run one serialized user turn through AGENT while presenting events to OBSERVER."
   (unless (or (non-empty-string-p (user-message-input-text content))
               (user-message-input-image-pathnames content))
@@ -342,13 +403,19 @@
             :tool-allowlist tool-allowlist
             :tool-restriction-p tool-restriction-p))
          (multiple-value-bind (item record)
-             (conversation-append-user-message conversation content)
+             (conversation-append-user-message
+              conversation
+              content
+              :pending-input-identifier pending-input-identifier)
            (declare (ignore item))
            (agent-observer-status
             observer
             :user-message-persisted
-            (list :sequence (getf (rest record) :seq)
-                  :time (getf (rest record) :time))))
+            (append
+             (list :sequence (getf (rest record) :seq)
+                   :time (getf (rest record) :time))
+             (when pending-input-identifier
+               (list :pending-input-identifier pending-input-identifier)))))
          (unwind-protect
               (agent--run-provider-loop
                agent observer
@@ -700,18 +767,30 @@
              :message "The agent observer returned malformed steering input."
              :conversation-id (conversation-identifier conversation)
              :request-number request-number))
-    (dolist (message messages)
-      (unless (or (and (stringp message) (non-empty-string-p message))
-                  (and (typep message 'user-message-input)
-                       (or (non-empty-string-p
-                            (user-message-input-text message))
-                           (user-message-input-image-pathnames message))))
-        (error 'agent-loop-error
-               :message "The agent observer returned an empty steering message."
-               :conversation-id (conversation-identifier conversation)
-               :request-number request-number))
-      (conversation-append-user-message conversation message)
-      (skill-record-steering-input message))
+    (dolist (entry messages)
+      (let* ((message
+               (etypecase entry
+                 (agent-steering-input (agent-steering-input-content entry))
+                 ((or string user-message-input) entry)))
+             (identifier
+               (and (typep entry 'agent-steering-input)
+                    (agent-steering-input-identifier entry))))
+        (unless (or (and (stringp message) (non-empty-string-p message))
+                    (and (typep message 'user-message-input)
+                         (or (non-empty-string-p
+                              (user-message-input-text message))
+                             (user-message-input-image-pathnames message))))
+          (error 'agent-loop-error
+                 :message "The agent observer returned an empty steering message."
+                 :conversation-id (conversation-identifier conversation)
+                 :request-number request-number))
+        (conversation-append-user-message
+         conversation
+         message
+         :pending-input-identifier identifier)
+        (when identifier
+          (agent-observer-steering-persisted observer identifier))
+        (skill-record-steering-input message)))
     (when messages
       (agent-observer-status
        observer

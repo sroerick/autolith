@@ -1324,9 +1324,11 @@ copied."
   nil)
 
 (-> conversation-append-user-message
-    (conversation (or string user-message-input))
+    (conversation (or string user-message-input)
+     &key (:pending-input-identifier (option non-empty-string)))
     (values json-object list))
-(defun conversation-append-user-message (conversation input)
+(defun conversation-append-user-message
+    (conversation input &key pending-input-identifier)
   "Persist user INPUT and return its provider item and sequenced record."
   (let* ((submission
            (etypecase input
@@ -1343,17 +1345,20 @@ copied."
     (unwind-protect
          (progn
            (setf record
-                 (conversation-append-record
-                  conversation
-                  (append
-                   (list :message
-                         :role :user
-                         :content content)
-                   (when attachments
-                     (list :images
-                           (mapcar #'image-attachment-record attachments)))
-                   (unless attachments
-                     (list :wire-json (json-encode item))))))
+                  (conversation-append-record
+                   conversation
+                   (append
+                    (list :message
+                          :role :user
+                          :content content)
+                    (when pending-input-identifier
+                      (list :pending-input-identifier
+                            (copy-seq pending-input-identifier)))
+                    (when attachments
+                      (list :images
+                            (mapcar #'image-attachment-record attachments)))
+                    (unless attachments
+                      (list :wire-json (json-encode item))))))
            (setf durable-p t
                  (conversation-turn-state conversation) nil)
            (values (conversation--append-input-item conversation item)
@@ -1828,6 +1833,22 @@ invariant errors while callback conditions propagate unchanged."
                                     condition)
                    :pathname pathname
                    :sequence nil))))))
+
+(-> conversation-pending-input-identifiers (conversation) list)
+(defun conversation-pending-input-identifiers (conversation)
+  "Return pending-input identifiers already durably recorded in CONVERSATION."
+  (let ((pathname (conversation-pathname conversation))
+        (identifiers nil))
+    (when (probe-file pathname)
+      (conversation--map-records
+       pathname
+       (lambda (record)
+         (let ((identifier
+                 (and (eq (first record) ':message)
+                      (getf (rest record) :pending-input-identifier))))
+           (when (non-empty-string-p identifier)
+             (pushnew (copy-seq identifier) identifiers :test #'string=))))))
+    (nreverse identifiers)))
 
 (-> conversation-picker-metadata-scan (pathname)
     (option conversation-picker-metadata))

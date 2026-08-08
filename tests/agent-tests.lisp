@@ -575,8 +575,13 @@
               "steering-2"
               (list (agent-test-message "changed course"))
               :turn-completion :end))))
-         (pending-input (list "change direction"))
-         (statuses nil))
+          (pending-input
+            (list
+             (agent-steering-input-create
+              :identifier "steering-persisted"
+              :content "change direction")))
+          (persisted-identifiers nil)
+          (statuses nil))
     (unwind-protect
          (let* ((agent
                   (agent-create :configuration configuration
@@ -590,6 +595,9 @@
                    (lambda ()
                      (prog1 pending-input
                        (setf pending-input nil)))
+                   :steering-persisted-callback
+                   (lambda (identifier)
+                     (push identifier persisted-identifiers))
                    :status-callback
                    (lambda (status details)
                      (declare (ignore details))
@@ -603,16 +611,27 @@
             (equal (nreverse (scripted-provider-turn-states provider))
                    '(nil nil))
             "new steering invalidates the request-local provider turn state")
-           (let ((user-messages
+           (let ((user-records
                    (loop for record in
                            (rest (conversation--read-records
                                   (conversation-pathname conversation)))
                          when (and (eq (first record) ':message)
                                    (eq (getf (rest record) :role) ':user))
-                           collect (getf (rest record) :content))))
-             (test-assert (equal user-messages
-                                 '("start here" "change direction"))
-                          "steering is durable ordinary user input"))
+                           collect record)))
+             (test-assert
+              (equal (mapcar (lambda (record)
+                               (getf (rest record) :content))
+                             user-records)
+                     '("start here" "change direction"))
+              "steering is durable ordinary user input")
+             (test-assert
+              (string= (getf (rest (second user-records))
+                             :pending-input-identifier)
+                       "steering-persisted")
+              "identified steering records its pending provenance"))
+           (test-assert
+            (equal persisted-identifiers '("steering-persisted"))
+            "the observer acknowledges each steering append immediately")
            (test-assert (member :steering-applied statuses)
                         "the observer is notified after steering becomes durable"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
