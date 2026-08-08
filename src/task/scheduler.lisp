@@ -4,12 +4,13 @@
 
 (defun task-job--set-progress-state (job state)
   "Set JOB's normalized progress STATE."
-  (let ((progress (task-job-progress job)))
+  (let ((progress (task-job-progress job))
+        (now (get-internal-real-time)))
     (with-lock-held ((task-progress-lock progress))
       (setf (task-progress-status progress) state
-            (task-progress-updated-at progress) (get-internal-real-time))
+            (task-progress-updated-at progress) now)
       (when (eq state :running)
-        (setf (task-progress-started-at progress) (get-internal-real-time)))))
+        (setf (task-progress-started-at progress) now))))
   nil)
 
 (-> task--retained-prefix (string integer) string)
@@ -82,13 +83,14 @@
                        *task-retained-progress-output-limit*))))
         (setf (task-progress-status progress) state
               (task-progress-current-tool progress) nil
+              (task-progress-current-tool-started-at progress) nil
               (task-progress-output-tail progress) (subseq output start)
               (task-progress-usage progress)
               (task--compact-native-value
                (task-progress-usage progress)
                *task-retained-usage-limit*)
-              (task-progress-updated-at progress) (get-internal-real-time)))))
-  nil)
+              (task-progress-updated-at progress) (get-internal-real-time))))
+    nil))
 
 (-> task-job--compact-item (task-job) list)
 (defun task-job--compact-item (job)

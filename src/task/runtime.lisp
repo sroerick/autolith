@@ -427,7 +427,8 @@ identifier is what an agent uses to refer to its own children."
 (defun task-progress-note-status (job status details)
   "Update JOB's normalized progress from one child observer STATUS event."
   (let ((progress (task-job-progress job))
-        (event nil))
+        (event nil)
+        (now (get-internal-real-time)))
     (with-lock-held ((task-progress-lock progress))
       (case status
         (:provider-request-started
@@ -437,18 +438,23 @@ identifier is what an agent uses to refer to its own children."
         (:provider-request-completed
          (setf (task-progress-usage progress) (getf details :usage)))
         (:tool-call-started
-         (setf (task-progress-current-tool progress) (getf details :tool)))
+         (let ((tool (getf details :tool)))
+           (setf (task-progress-current-tool progress) tool
+                 (task-progress-current-tool-started-at progress)
+                 (and tool now))))
         (:tool-call-completed
          (let ((tool (getf details :tool)))
            (when tool
              (push tool (task-progress-recent-tools progress))
              (setf (task-progress-recent-tools progress)
-                   (subseq (task-progress-recent-tools progress) 0
-                           (min 8
-                                (length
-                                 (task-progress-recent-tools progress)))))))
-         (setf (task-progress-current-tool progress) nil)))
-      (setf (task-progress-updated-at progress) (get-internal-real-time)
+                   (subseq
+                    (task-progress-recent-tools progress)
+                    0
+                    (min *task-progress-recent-tool-limit*
+                         (length (task-progress-recent-tools progress)))))))
+         (setf (task-progress-current-tool progress) nil
+               (task-progress-current-tool-started-at progress) nil)))
+      (setf (task-progress-updated-at progress) now
             event
             (list :id (job-identifier job)
                   :status (task-progress-status progress)
@@ -520,27 +526,33 @@ handed rather than storing a second copy."
   "Return JOB progress using lifecycle values captured under the job lock."
   (let ((progress (task-job-progress job)))
     (with-lock-held ((task-progress-lock progress))
-      (list :id (job-identifier job)
-            :agent (task-job-agent-name job)
-            :status (task-progress-status progress)
-            :current-tool (task-progress-current-tool progress)
-            :recent-tools
-            (reverse (copy-list (task-progress-recent-tools progress)))
-            :recent-output (task-progress-output-tail progress)
-            :request-count (task-progress-request-count progress)
-            :usage (copy-tree (task-progress-usage progress))
-            :duration-ms
-            (and (task-progress-started-at progress)
-                 (task--milliseconds-between
-                  (task-progress-started-at progress)
-                  (or ended-at (get-internal-real-time))))
-            :model
-            (or (getf result :model)
-                (and parent
-                     (configuration-model
-                      (task-configuration-for-definition
-                       (agent-configuration parent)
-                       (task-job-definition job)))))))))
+      (let ((now (or ended-at (get-internal-real-time))))
+        (list :id (job-identifier job)
+              :agent (task-job-agent-name job)
+              :status (task-progress-status progress)
+              :current-tool (task-progress-current-tool progress)
+              :current-tool-duration-ms
+              (and (task-progress-current-tool-started-at progress)
+                   (task--milliseconds-between
+                    (task-progress-current-tool-started-at progress)
+                    now))
+              :recent-tools
+              (reverse (copy-list (task-progress-recent-tools progress)))
+              :recent-output (task-progress-output-tail progress)
+              :request-count (task-progress-request-count progress)
+              :usage (copy-tree (task-progress-usage progress))
+              :duration-ms
+              (and (task-progress-started-at progress)
+                   (task--milliseconds-between
+                    (task-progress-started-at progress)
+                    now))
+              :model
+              (or (getf result :model)
+                  (and parent
+                       (configuration-model
+                        (task-configuration-for-definition
+                         (agent-configuration parent)
+                         (task-job-definition job))))))))))
 
 (-> task-progress-snapshot (task-job) list)
 (defun task-progress-snapshot (job)
@@ -638,21 +650,35 @@ values from either side of a terminal transition."
    "Return JOB's lightweight live presentation, or NIL when it has none."))
 
 (defmethod session-job-live-activity ((job task-job))
-  "Return task JOB's lightweight queued or running presentation snapshot."
+  "Return task JOB's bounded queued or running activity trace."
   (let ((state (job-state job)))
     (when (member state '(:queued :running) :test #'eq)
       (let ((progress (task-job-progress job)))
         (with-lock-held ((task-progress-lock progress))
-          (list :id (session-job-identifier job)
-                :index (job-index job)
-                :agent (task-job-agent-name job)
-                :state state
-                :current-tool (task-progress-current-tool progress)
-                :assignment
-                (bounded-string
-                 (getf (task-job-item job) :task)
-                 :limit *task-retained-assignment-limit*)
-                :detached (task-job-detached-p job)))))))
+          (let ((now (get-internal-real-time)))
+            (list :id (session-job-identifier job)
+                  :index (job-index job)
+                  :agent (task-job-agent-name job)
+                  :state state
+                  :current-tool (task-progress-current-tool progress)
+                  :current-tool-duration-ms
+                  (and (task-progress-current-tool-started-at progress)
+                       (task--milliseconds-between
+                        (task-progress-current-tool-started-at progress)
+                        now))
+                  :recent-tools
+                  (reverse (copy-list (task-progress-recent-tools progress)))
+                  :request-count (task-progress-request-count progress)
+                  :duration-ms
+                  (and (task-progress-started-at progress)
+                       (task--milliseconds-between
+                        (task-progress-started-at progress)
+                        now))
+                  :assignment
+                  (bounded-string
+                   (getf (task-job-item job) :task)
+                   :limit *task-retained-assignment-limit*)
+                  :detached (task-job-detached-p job))))))))
 
 (defmethod session-job-live-activity ((job tool-execution-job))
   "Leave tool executions to job tools rather than the child activity strip."

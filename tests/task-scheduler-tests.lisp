@@ -2237,7 +2237,7 @@ exactly that race."
 
 (-> test-task-live-activity-snapshots () null)
 (defun test-task-live-activity-snapshots ()
-  "Test stable lightweight projection of queued and running task jobs."
+  "Test stable, bounded progress projection for queued and running tasks."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (orchestrator (task-tests--orchestrator))
@@ -2263,10 +2263,23 @@ exactly that race."
              (setf (job-state running) ':running)
              (task-job--set-progress-state running ':running))
            (task-progress-note-status
+            running ':provider-request-started
+            (list :request-number 2))
+           (loop for index from 1 to 10
+                 for tool = (format nil "tool.~D" index)
+                 do (task-progress-note-status
+                     running ':tool-call-started
+                     (list :tool tool))
+                    (task-progress-note-status
+                     running ':tool-call-completed
+                     (list :tool tool)))
+           (task-progress-note-status
             running ':tool-call-started
-            (list :tool "search.content"))
-           (let ((activities
-                   (task-orchestrator-live-activities orchestrator)))
+            (list :tool "lisp.eval"))
+           (let* ((activities
+                    (task-orchestrator-live-activities orchestrator))
+                  (running-activity (second activities))
+                  (progress-snapshot (task-progress-snapshot running)))
              (test-assert
               (and (= (length activities) 2)
                    (equal
@@ -2277,12 +2290,44 @@ exactly that race."
                               (job-identifier job))
                             (list queued running)))
                    (eq (getf (first activities) :state) ':queued)
-                   (eq (getf (second activities) :state) ':running)
-                   (string= (getf (second activities) :current-tool)
-                            "search.content")
-                   (string= (getf (second activities) :agent) "activity")
-                   (getf (second activities) :detached))
-              "live activity snapshots are ordered, bounded task summaries"))
+                   (eq (getf running-activity :state) ':running)
+                   (string= (getf running-activity :current-tool)
+                            "lisp.eval")
+                   (equal (getf running-activity :recent-tools)
+                          (loop for index from 3 to 10
+                                collect (format nil "tool.~D" index)))
+                   (= (getf running-activity :request-count) 2)
+                   (typep (getf running-activity :duration-ms)
+                          '(integer 0))
+                   (typep (getf running-activity :current-tool-duration-ms)
+                          '(integer 0))
+                   (<= (getf running-activity :current-tool-duration-ms)
+                       (getf running-activity :duration-ms))
+                   (string= (getf running-activity :agent) "activity")
+                   (getf running-activity :detached)
+                   (equal (getf progress-snapshot :recent-tools)
+                          (getf running-activity :recent-tools))
+                   (= (getf progress-snapshot :request-count) 2)
+                   (typep (getf progress-snapshot :current-tool-duration-ms)
+                          '(integer 0)))
+              "live activity snapshots retain bounded chronological progress"))
+           (task-progress-note-status
+            running ':tool-call-completed
+            (list :tool "lisp.eval"))
+           (let* ((activities
+                    (task-orchestrator-live-activities orchestrator))
+                  (running-activity (second activities))
+                  (progress-snapshot (task-progress-snapshot running)))
+             (test-assert
+              (and (null (getf running-activity :current-tool))
+                   (null (getf running-activity :current-tool-duration-ms))
+                   (null (getf progress-snapshot :current-tool-duration-ms))
+                   (equal (getf running-activity :recent-tools)
+                          (append
+                           (loop for index from 4 to 10
+                                 collect (format nil "tool.~D" index))
+                           (list "lisp.eval"))))
+              "tool completion clears timing and preserves the newest eight tools"))
            (task-tests--publish-terminal
             queued
             ':completed

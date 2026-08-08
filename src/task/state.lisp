@@ -65,6 +65,9 @@
 (defparameter *task-progress-output-limit* 8000
   "The assistant-text tail retained in a live child progress snapshot.")
 
+(defparameter *task-progress-recent-tool-limit* 8
+  "The completed tool names retained in one live child activity trace.")
+
 (defparameter *task-result-preview-limit* 6000
   "The result characters shown inline before referring to an artifact.")
 
@@ -144,6 +147,11 @@
     :accessor task-progress-current-tool
     :type (option string)
     :documentation "The tool currently executing in the child.")
+    (current-tool-started-at
+     :initform nil
+     :accessor task-progress-current-tool-started-at
+     :type (option integer)
+     :documentation "The internal real time at which the current tool began.")
    (recent-tools
     :initform nil
     :accessor task-progress-recent-tools

@@ -28,6 +28,12 @@
 (defparameter *terminal-ui-agent-visible-limit* 8
   "The maximum queued and running child agents shown above the modeline.")
 
+(defparameter *terminal-ui-agent-compact-trace-limit* 3
+  "The child tool milestones retained on one compact activity row.")
+
+(defparameter *terminal-ui-agent-expanded-trace-limit* 6
+  "The child tool milestones shown on one blocking activity trace row.")
+
 (defparameter *terminal-ui-agent-spinner-frames*
   #("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
   "The shared running-child spinner cycle.")
@@ -66,17 +72,27 @@
 (defun terminal-agent-activity-p (value)
   "Return true when VALUE is one queued or running child presentation."
   (handler-case
-      (not
-       (null
-        (and (listp value)
-             (evenp (length value))
-             (non-empty-string-p (getf value :id))
-             (typep (getf value :index) '(integer 1))
-             (non-empty-string-p (getf value :agent))
-             (member (getf value :state) '(:queued :running) :test #'eq)
-             (typep (getf value :current-tool) '(option string))
-             (stringp (getf value :assignment))
-             (typep (getf value :detached) 'boolean))))
+      (let ((recent-tools (and (listp value)
+                               (getf value :recent-tools))))
+        (not
+         (null
+          (and (listp value)
+               (evenp (length value))
+               (non-empty-string-p (getf value :id))
+               (typep (getf value :index) '(integer 1))
+               (non-empty-string-p (getf value :agent))
+               (member (getf value :state) '(:queued :running) :test #'eq)
+               (typep (getf value :current-tool) '(option string))
+               (typep (getf value :current-tool-duration-ms)
+                      '(option (integer 0)))
+               (listp recent-tools)
+               (<= (length recent-tools)
+                   *task-progress-recent-tool-limit*)
+               (every #'stringp recent-tools)
+               (typep (getf value :request-count) '(integer 0))
+               (typep (getf value :duration-ms) '(option (integer 0)))
+               (stringp (getf value :assignment))
+               (typep (getf value :detached) 'boolean)))))
     (error ()
       nil)))
 
@@ -737,87 +753,270 @@ columns: name, tally, and description."
                  (max 0 now)))
        (length *terminal-ui-agent-spinner-frames*)))
 
+(-> terminal-ui--duration-text (integer) string)
+(defun terminal-ui--duration-text (seconds)
+  "Format non-negative SECONDS as a compact activity duration."
+  (let ((seconds (max 0 seconds)))
+    (multiple-value-bind (minutes remaining-seconds)
+        (floor seconds 60)
+      (multiple-value-bind (hours remaining-minutes)
+          (floor minutes 60)
+        (if (plusp hours)
+            (format nil "~D:~2,'0D:~2,'0D"
+                    hours remaining-minutes remaining-seconds)
+            (format nil "~2,'0D:~2,'0D"
+                    remaining-minutes remaining-seconds))))))
+
+(-> terminal-ui--agent-trace-tools
+    (list (integer 1))
+    (values list (integer 0)))
+(defun terminal-ui--agent-trace-tools (activity limit)
+  "Return ACTIVITY's newest LIMIT tool milestones and omitted count."
+  (let* ((current-tool (getf activity :current-tool))
+         (tools
+           (append (copy-list (getf activity :recent-tools))
+                   (when (non-empty-string-p current-tool)
+                     (list current-tool))))
+         (omitted-count (max 0 (- (length tools) limit))))
+    (values (nthcdr omitted-count tools) omitted-count)))
+
+(-> terminal-ui--agent-duration-span-at (list real) (option list))
+(defun terminal-ui--agent-duration-span-at (activity now)
+  "Return ACTIVITY's current tool or task duration span at monotonic NOW."
+  (let* ((duration-ms
+           (or (and (getf activity :current-tool)
+                    (getf activity :current-tool-duration-ms))
+               (getf activity :duration-ms)))
+         (observed-at (getf activity :observed-at)))
+    (and duration-ms
+         observed-at
+         (terminal-span
+          ':timestamp-time
+          (format nil " ~A"
+                  (terminal-ui--duration-text
+                   (floor
+                    (+ (/ duration-ms 1000.0d0)
+                       (max 0 (- now observed-at))))))))))
+
+(-> terminal-ui--agent-trace-spans-at
+    (list real (integer 1) &key (:show-omitted-p boolean))
+    list)
+(defun terminal-ui--agent-trace-spans-at
+    (activity now limit &key (show-omitted-p t))
+  "Return a bounded chronological tool trace for ACTIVITY at monotonic NOW."
+  (multiple-value-bind (tools omitted-count)
+      (terminal-ui--agent-trace-tools activity limit)
+    (let* ((current-tool (getf activity :current-tool))
+           (tool-count (length tools))
+           (duration-span
+             (terminal-ui--agent-duration-span-at activity now)))
+      (if tools
+          (append
+           (when (and show-omitted-p (plusp omitted-count))
+             (list (terminal-span ':dim "… › ")))
+           (loop for tool in tools
+                 for index from 0
+                 append
+                 (append
+                  (unless (zerop index)
+                    (list (terminal-span ':dim " › ")))
+                  (list
+                   (terminal-span
+                    (if (and current-tool (= index (1- tool-count)))
+                        ':agent-tool
+                        ':dim)
+                    tool))))
+           (when duration-span (list duration-span)))
+          (append
+           (list
+            (terminal-span
+             ':dim
+             (if (plusp (getf activity :request-count))
+                 (format nil "request ~D" (getf activity :request-count))
+                 "starting")))
+           (when duration-span (list duration-span)))))))
+
+(-> terminal-ui--agent-primary-detail-spans-at (list real) list)
+(defun terminal-ui--agent-primary-detail-spans-at (activity now)
+  "Return compact status and trace spans for ACTIVITY's primary row."
+  (let ((running-p (eq (getf activity :state) ':running))
+        (blocking-p (not (getf activity :detached))))
+    (cond
+      ((not running-p)
+       (append
+        (when blocking-p
+          (list (terminal-span ':strong "blocking")
+                (terminal-span ':dim " · ")))
+        (list (terminal-span ':dim "queued"))))
+      (blocking-p
+       (append
+        (list (terminal-span ':strong "blocking")
+              (terminal-span ':dim " · "))
+        (terminal-ui--agent-trace-spans-at
+         activity now 1 :show-omitted-p nil)))
+      (t
+       (terminal-ui--agent-trace-spans-at
+        activity now *terminal-ui-agent-compact-trace-limit*)))))
+
 (-> terminal-ui--agent-activity-row-at
     (list real integer &key (:identity-width integer) (:role-width integer))
     list)
 (defun terminal-ui--agent-activity-row-at
     (activity now row-width &key (identity-width 0) (role-width 0))
-  "Return one clipped child ACTIVITY row at monotonic NOW."
+  "Return one clipped primary child ACTIVITY row at monotonic NOW."
   (let* ((running-p (eq (getf activity :state) ':running))
-         (current-tool (getf activity :current-tool))
-         (assignment (getf activity :assignment))
-         (detail
-           (cond
-             ((non-empty-string-p current-tool)
-              (terminal-span ':agent-tool current-tool))
-             ((not running-p)
-              (terminal-span ':dim "queued"))
-             ((non-empty-string-p assignment)
-              (terminal-span ':dim assignment))
-             (t
-              nil))))
+         (detail-spans
+           (terminal-ui--agent-primary-detail-spans-at activity now)))
     (terminal--clip-spans
-     (remove
-      nil
-      (append
-       (list
-        (terminal-span ':dim "  ")
-        (if running-p
-            (terminal-span
-             ':agent-spinner
-             (format nil "~A "
-                     (aref *terminal-ui-agent-spinner-frames*
-                           (terminal-ui--agent-spinner-phase-at now))))
-            (terminal-span ':dim "○ "))
-        (terminal-span ':agent-name
-                       (layout-fit-text (getf activity :id)
-                                        identity-width))
-        (terminal-span ':dim " · ")
-        (terminal-span ':agent-role
-                         (layout-fit-text (getf activity :agent)
-                                          role-width)))
-       (when detail
-         (list (terminal-span ':dim " · ")
-               detail))))
+     (append
+      (list
+       (terminal-span ':dim "  ")
+       (if running-p
+           (terminal-span
+            ':agent-spinner
+            (format nil "~A "
+                    (aref *terminal-ui-agent-spinner-frames*
+                          (terminal-ui--agent-spinner-phase-at now))))
+           (terminal-span ':dim "○ "))
+       (terminal-span ':agent-name
+                      (layout-fit-text (getf activity :id)
+                                       identity-width))
+       (terminal-span ':dim " · ")
+       (terminal-span ':agent-role
+                      (layout-fit-text (getf activity :agent)
+                                       role-width)))
+      (when detail-spans
+        (cons (terminal-span ':dim " · ") detail-spans)))
      row-width)))
+
+(-> terminal-ui--agent-expanded-row-at (list real integer) (option list))
+(defun terminal-ui--agent-expanded-row-at (activity now row-width)
+  "Return the extra bounded trace row shown for one blocking ACTIVITY."
+  (unless (getf activity :detached)
+    (let* ((running-p (eq (getf activity :state) ':running))
+           (assignment (getf activity :assignment))
+           (trace-spans
+             (and running-p
+                  (terminal-ui--agent-trace-spans-at
+                   activity now *terminal-ui-agent-expanded-trace-limit*))))
+      (when (or trace-spans (non-empty-string-p assignment))
+        (terminal--clip-spans
+         (append
+          (list (terminal-span ':dim "      ")
+                (terminal-span ':brand "↳ "))
+          trace-spans
+          (when (and trace-spans (non-empty-string-p assignment))
+            (list (terminal-span ':dim " · ")))
+          (when (non-empty-string-p assignment)
+            (list (terminal-span ':dim assignment))))
+         row-width)))))
+
+(-> terminal-ui--agent-row-budget (terminal-ui) (integer 1))
+(defun terminal-ui--agent-row-budget (ui)
+  "Return the viewport rows available to UI's complete child activity strip."
+  (let* ((terminal (terminal-ui-terminal ui))
+         (status-p (not (null (terminal-ui-status ui))))
+         (compacting-p (terminal-ui-compacting-p ui))
+         (status-section-p (or status-p compacting-p))
+         (reserved-rows
+           (+ 4
+              (if status-section-p 1 0)
+              (if compacting-p 1 0)
+              (if status-p 1 0))))
+    (max 1
+         (- (terminal-ui--maximum-live-rows terminal)
+            reserved-rows))))
 
 (-> terminal-ui--agent-activity-rows-at
     (terminal-ui real integer)
     list)
 (defun terminal-ui--agent-activity-rows-at (ui now row-width)
-  "Return bounded child-agent rows for UI at monotonic NOW."
+  "Return viewport-bounded child-agent rows for UI at monotonic NOW."
   (let* ((activities (terminal-ui-agent-activities ui))
+         (row-budget (terminal-ui--agent-row-budget ui))
+         (header-row-count
+           (cond
+             ((= row-budget 1) 0)
+             ((< row-budget 4) 1)
+             (t 2)))
+         (body-row-budget (max 0 (- row-budget header-row-count)))
+         (limited-visible-count
+           (min *terminal-ui-agent-visible-limit*
+                (length activities)
+                body-row-budget))
+         (overflow-row-p
+           (and (> (length activities) limited-visible-count)
+                (> body-row-budget 1)))
          (visible-count
-           (min *terminal-ui-agent-visible-limit* (length activities)))
+           (if overflow-row-p
+               (min *terminal-ui-agent-visible-limit*
+                    (length activities)
+                    (1- body-row-budget))
+               limited-visible-count))
          (omitted-count (- (length activities) visible-count))
          (visible-activities (subseq activities 0 visible-count))
+         (base-row-count
+           (+ header-row-count
+              visible-count
+              (if overflow-row-p 1 0)))
+         (expanded-row-limit (max 0 (- row-budget base-row-count)))
+         (blocking-activities
+           (remove-if (lambda (activity)
+                        (getf activity :detached))
+                      visible-activities))
+         (running-blocking-activities
+           (remove-if-not (lambda (activity)
+                            (eq (getf activity :state) ':running))
+                          blocking-activities))
+         (queued-blocking-activities
+           (remove-if (lambda (activity)
+                        (eq (getf activity :state) ':running))
+                      blocking-activities))
+         (expandable-activities
+           (append running-blocking-activities queued-blocking-activities))
+         (expanded-activities
+           (subseq expandable-activities
+                   0
+                   (min expanded-row-limit
+                        (length expandable-activities))))
          (column-widths
            (layout-column-widths
-              (loop for activity in visible-activities
-                    collect
-                    (list (getf activity :id)
-                          (getf activity :agent)))
-              (max 0 (- row-width (text-cell-width "  ○ ")))
-              :gap-width 3
-              :minimum-widths '(1 1)))
-           (identity-width (or (first column-widths) 0))
-           (role-width (or (second column-widths) 0)))
+            (loop for activity in visible-activities
+                  collect
+                  (list (getf activity :id)
+                        (getf activity :agent)))
+            (max 0 (- row-width (text-cell-width "  ○ ")))
+            :gap-width 3
+            :minimum-widths '(1 1)))
+         (identity-width (or (first column-widths) 0))
+         (role-width (or (second column-widths) 0))
+         (header-row
+           (terminal--clip-spans
+            (list (terminal-span ':agent-name "agents")
+                  (terminal-span ':dim
+                                 (format nil " ~D" (length activities))))
+            row-width)))
     (when activities
       (append
-       (list
-        (terminal--clip-spans
-         (list (terminal-span ':agent-name "agents")
-               (terminal-span ':dim
-                              (format nil " ~D" (length activities))))
-         row-width)
-        nil)
+       (when (plusp header-row-count)
+         (append (list header-row)
+                 (when (= header-row-count 2)
+                   (list nil))))
        (loop for activity in visible-activities
-             collect
-             (terminal-ui--agent-activity-row-at
-              activity now row-width
-              :identity-width identity-width
-              :role-width role-width))
-       (when (plusp omitted-count)
+             append
+             (append
+              (list
+               (terminal-ui--agent-activity-row-at
+                activity now row-width
+                :identity-width identity-width
+                :role-width role-width))
+              (when (member activity expanded-activities :test #'eq)
+                (let ((expanded-row
+                        (terminal-ui--agent-expanded-row-at
+                         activity now row-width)))
+                  (when expanded-row
+                    (list expanded-row))))))
+       (when overflow-row-p
          (list
           (terminal--clip-spans
            (list (terminal-span ':dim "  ")
@@ -836,19 +1035,6 @@ columns: name, tally, and description."
     (values (max 0 (floor (- now started-at)))
             (max 0 (floor (- now progress-at))))))
 
-(-> terminal-ui--duration-text (integer) string)
-(defun terminal-ui--duration-text (seconds)
-  "Format non-negative SECONDS as a compact activity duration."
-  (let ((seconds (max 0 seconds)))
-    (multiple-value-bind (minutes remaining-seconds)
-        (floor seconds 60)
-      (multiple-value-bind (hours remaining-minutes)
-          (floor minutes 60)
-        (if (plusp hours)
-            (format nil "~D:~2,'0D:~2,'0D"
-                    hours remaining-minutes remaining-seconds)
-            (format nil "~2,'0D:~2,'0D"
-                    remaining-minutes remaining-seconds))))))
 
 (-> terminal-ui--status-spinner-phase-at
     (terminal-ui real)
@@ -1810,9 +1996,9 @@ start of the activity; the live paint adds the running elapsed seconds."
             (funcall (terminal-ui-clock-function ui)))))
   ui)
 
-(-> terminal-ui--sanitize-agent-activity (list) list)
-(defun terminal-ui--sanitize-agent-activity (activity)
-  "Return a display-safe detached copy of one child ACTIVITY."
+(-> terminal-ui--sanitize-agent-activity (list real) list)
+(defun terminal-ui--sanitize-agent-activity (activity observed-at)
+  "Return a display-safe detached copy of one child ACTIVITY at OBSERVED-AT."
   (let ((current-tool (getf activity :current-tool)))
     (list :id
           (sanitize-text (getf activity :id) :single-line-p t)
@@ -1823,6 +2009,15 @@ start of the activity; the live paint adds the running elapsed seconds."
           :current-tool
           (and current-tool
                (sanitize-text current-tool :single-line-p t))
+          :current-tool-duration-ms
+          (getf activity :current-tool-duration-ms)
+          :recent-tools
+          (mapcar (lambda (tool)
+                    (sanitize-text tool :single-line-p t))
+                  (getf activity :recent-tools))
+          :request-count (getf activity :request-count)
+          :duration-ms (getf activity :duration-ms)
+          :observed-at observed-at
           :assignment
           (sanitize-text (getf activity :assignment) :single-line-p t)
           :detached (not (null (getf activity :detached))))))
@@ -1838,11 +2033,16 @@ frames, so this function never paints directly from a child thread."
            :message "Every child-agent activity must be a valid live snapshot."
            :operation ':set-agent-activities
            :cause nil))
-  (let ((safe-activities
-          (sort (mapcar #'terminal-ui--sanitize-agent-activity activities)
-                #'<
-                :key (lambda (activity)
-                       (getf activity :index)))))
+  (let* ((observed-at (funcall (terminal-ui-clock-function ui)))
+         (safe-activities
+           (sort
+            (mapcar (lambda (activity)
+                      (terminal-ui--sanitize-agent-activity
+                       activity observed-at))
+                    activities)
+            #'<
+            :key (lambda (activity)
+                   (getf activity :index)))))
     (with-terminal-ui-locked (ui)
       (unless (equal safe-activities (terminal-ui-agent-activities ui))
         (setf (terminal-ui-agent-activities ui) safe-activities))))

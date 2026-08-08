@@ -1502,10 +1502,10 @@
 
 (-> test-terminal-agent-activities () null)
 (defun test-terminal-agent-activities ()
-  "Test bounded, ordered, colored, and independently animated child rows."
-  (let* ((clock 0)
+  "Test bounded cumulative traces and expanded blocking child rows."
+  (let* ((clock 65)
          (terminal (make-instance 'recording-terminal
-                                  :columns 72
+                                  :columns 100
                                   :styled-p t))
          (ui (terminal-ui-create
               :terminal terminal
@@ -1515,17 +1515,33 @@
             (list :id "review-agent-2"
                   :index 2
                   :agent "reviewer"
-                  :state ':queued
-                  :current-tool nil
+                  :state ':running
+                  :current-tool "lisp.eval"
+                  :current-tool-duration-ms 60000
+                  :recent-tools '("search.content" "fs.read")
+                  :request-count 1
+                  :duration-ms 65000
                   :assignment "Review the finished patch."
                   :detached nil)
             (list :id "search-1"
                   :index 1
                   :agent "explorer"
                   :state ':running
-                  :current-tool "search.content"
+                  :current-tool "lisp.eval"
+                  :current-tool-duration-ms 60000
+                  :recent-tools
+                  '("search.files" "fs.read" "resource.read" "lisp.compile")
+                  :request-count 2
+                  :duration-ms 65000
                   :assignment "Locate the scheduler."
                   :detached t))))
+    (let ((oversized-activity (copy-list (first activities))))
+      (setf (getf oversized-activity :recent-tools)
+            (loop repeat (1+ *task-progress-recent-tool-limit*)
+                  collect "tool"))
+      (test-assert
+       (not (terminal-agent-activity-p oversized-activity))
+       "the terminal rejects child traces above its retained milestone bound"))
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-status active-ui "working")
       (recording-terminal-reset terminal)
@@ -1552,32 +1568,41 @@
                  (position-if (lambda (line)
                                 (search "review-agent-2" line))
                               lines))
+               (expanded-index
+                 (position-if (lambda (line)
+                                (search "↳ " line))
+                              lines))
                (status-index
                  (position-if (lambda (line)
                                 (search "READ " line))
                               lines))
                (search-line (and search-index (nth search-index lines)))
                (review-line (and review-index (nth review-index lines)))
+               (expanded-line (and expanded-index
+                                   (nth expanded-index lines)))
                (search-role-position
                  (and search-line (search "explorer" search-line)))
                (review-role-position
                  (and review-line (search "reviewer" review-line)))
-                 (search-detail-position
-                   (and search-line (search " · search.content" search-line)))
-                 (review-detail-position
-                   (and review-line (search " · queued" review-line))))
+               (search-detail-position
+                 (and search-line (search " · … ›" search-line)))
+               (review-detail-position
+                 (and review-line (search " · blocking" review-line))))
           (test-assert
            (and header-index
                 search-index
                 review-index
+                expanded-index
                 status-index
                 (= search-index (+ header-index 2))
                 (= review-index (1+ search-index))
-                (= status-index (+ review-index 2))
+                (= expanded-index (1+ review-index))
+                (= status-index (+ expanded-index 2))
                 (string= (nth (1+ header-index) lines) "")
-                (string= (nth (1+ review-index) lines) "")
+                (string= (nth (1+ expanded-index) lines) "")
                 (uiop:string-prefix-p "  " search-line)
                 (uiop:string-prefix-p "  " review-line)
+                (uiop:string-prefix-p "      ↳ " expanded-line)
                 search-role-position
                 review-role-position
                 (= (text-cell-width
@@ -1585,14 +1610,21 @@
                    (text-cell-width
                     (subseq review-line 0 review-role-position)))
                 search-detail-position
-                  review-detail-position
-                  (= (text-cell-width
-                      (subseq search-line 0 search-detail-position))
-                     (text-cell-width
-                      (subseq review-line 0 review-detail-position)))
-                  (search "explorer · search.content" text)
-                (search "reviewer · queued" text))
-           "child rows are separated, indented, aligned, and above the modeline")
+                review-detail-position
+                (= (text-cell-width
+                    (subseq search-line 0 search-detail-position))
+                   (text-cell-width
+                    (subseq review-line 0 review-detail-position)))
+                (search
+                 "explorer · … › resource.read › lisp.compile › lisp.eval 01:00"
+                 text)
+                (search "reviewer · blocking · lisp.eval 01:00" text)
+                (search
+                 "↳ search.content › fs.read › lisp.eval 01:00 · Review the finished patch."
+                 text)
+                (not (search "search.files ›" search-line))
+                (not (search "fs.read ›" search-line)))
+           "child rows show bounded aligned traces above the modeline")
           (test-assert (not (search "async" text))
                        "detached state does not add a redundant row label"))
         (test-assert
@@ -1600,17 +1632,17 @@
                   (<= (terminal--spans-width row) 12))
                 (terminal-ui--agent-activity-rows-at
                  active-ui clock 12))
-         "aligned child columns remain bounded on narrow terminals")
+         "expanded and compact child rows remain bounded on narrow terminals")
         (test-assert
          (and (search (terminal-style-sequence ':agent-spinner) display)
               (search (terminal-style-sequence ':agent-name) display)
               (search (terminal-style-sequence ':agent-role) display)
               (search (terminal-style-sequence ':agent-tool) display))
-         "running child rows use distinct basic-palette semantic colors"))
-      (setf clock 0.24)
+         "running child traces use distinct basic-palette semantic colors"))
+      (setf clock 65.24)
       (test-assert (not (terminal-ui-refresh-status active-ui))
                    "child spinners do not repaint within one animation frame")
-      (setf clock 0.25)
+      (setf clock 65.25)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "running child spinners advance on the shared cadence")
       (terminal-ui-set-status active-ui nil)
@@ -1618,20 +1650,42 @@
           (terminal-ui--live-content active-ui clock)
         (declare (ignore display cursor))
         (let* ((lines (uiop:split-string text :separator '(#\Newline)))
-               (review-index
+               (expanded-index
                  (position-if (lambda (line)
-                                (search "review-agent-2" line))
+                                (search "↳ " line))
                               lines)))
           (test-assert
            (and (search "search-1" text)
                 (not (search "READ " text))
-                review-index
-                (string= (nth (1+ review-index) lines) "")
-                (non-empty-string-p (nth (+ review-index 2) lines)))
-           "detached children keep one blank row before the idle prompt")))
-      (setf clock 0.5)
+                expanded-index
+                (string= (nth (1+ expanded-index) lines) "")
+                (non-empty-string-p (nth (+ expanded-index 2) lines)))
+           "child traces keep one blank row before the idle prompt")))
+      (setf clock 65.5)
       (test-assert (terminal-ui-refresh-status active-ui)
-                   "detached child animation continues without a modeline")
+                   "child animation continues without a modeline")
+      (terminal-ui-set-agent-activities
+       active-ui
+       (list
+        (list :id "blocking-queued"
+              :index 1
+              :agent "reviewer"
+              :state ':queued
+              :current-tool nil
+              :current-tool-duration-ms nil
+              :recent-tools nil
+              :request-count 0
+              :duration-ms nil
+              :assignment "Wait for the implementation."
+              :detached nil)))
+      (terminal-ui-refresh-status active-ui)
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui clock)
+        (declare (ignore display cursor))
+        (test-assert
+         (and (search "reviewer · blocking · queued" text)
+              (search "↳ Wait for the implementation." text))
+         "queued blocking children retain their assignment on an expanded row"))
       (let ((many-activities
               (loop for index from 1 to 10
                     collect
@@ -1640,6 +1694,10 @@
                           :agent "worker"
                           :state ':queued
                           :current-tool nil
+                          :current-tool-duration-ms nil
+                          :recent-tools nil
+                          :request-count 0
+                          :duration-ms nil
                           :assignment "Wait for capacity."
                           :detached t))))
         (terminal-ui-set-agent-activities active-ui many-activities)
@@ -1654,7 +1712,7 @@
                    (uiop:string-prefix-p "  … 2 more agents" line))
                  (uiop:split-string text :separator '(#\Newline)))
                 (not (search "worker-9" text)))
-           "the child strip caps rows and summarizes overflow")))
+           "the child strip caps agents and summarizes overflow")))
       (terminal-ui-set-agent-activities active-ui nil)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "clearing the final child repaints the live region")
@@ -1663,6 +1721,51 @@
         (declare (ignore display cursor))
         (test-assert (not (search "agents " text))
                      "terminal child state disappears when no jobs remain"))))
+  (let* ((short-clock 65)
+         (short-terminal (make-instance 'recording-terminal
+                                        :columns 80
+                                        :rows 10))
+         (short-ui
+           (terminal-ui-create
+            :terminal short-terminal
+            :clock-function (lambda () short-clock)))
+         (blocking-activities
+           (loop for index from 1 to 8
+                 collect
+                 (list :id (format nil "worker-~D" index)
+                       :index index
+                       :agent "reviewer"
+                       :state ':running
+                       :current-tool "lisp.eval"
+                       :current-tool-duration-ms 60000
+                       :recent-tools '("fs.read")
+                       :request-count 1
+                       :duration-ms 65000
+                       :assignment "Review the implementation."
+                       :detached nil))))
+    (with-terminal-ui (active-ui short-ui)
+      (terminal-ui-set-status active-ui "working")
+      (terminal-ui-set-agent-activities active-ui blocking-activities)
+      (let* ((rows
+               (terminal-ui--agent-activity-rows-at
+                active-ui short-clock 80))
+             (text
+               (format nil "~{~A~^~%~}"
+                       (mapcar #'terminal--spans-text rows))))
+        (test-assert
+         (and (= (terminal-ui--agent-row-budget active-ui) 3)
+              (= (length rows) 3)
+              (search "agents 8" text)
+              (search "worker-1" text)
+              (search "blocking · lisp.eval 01:00" text)
+              (search "… 7 more agents" text)
+              (not (search "worker-2" text)))
+         "short terminals preserve one useful blocking row inside their budget"))
+      (terminal-ui-refresh-status active-ui)
+      (test-assert
+       (<= (terminal-ui-live-row-count active-ui)
+           (live-region-maximum-rows (terminal-ui-live-region active-ui)))
+       "blocking traces remain inside the live-region viewport budget")))
   nil)
 
 (-> test-terminal-stream-update () null)

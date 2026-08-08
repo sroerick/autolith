@@ -6336,9 +6336,11 @@
             (make-default-tool-registry)))
          (run-tool (tool-registry-find registry "task" "run"))
          (orchestrator (task-run-tool-orchestrator run-tool))
+         (clock 65)
          (ui
            (terminal-ui-create
-            :terminal (make-instance 'recording-terminal :columns 72)))
+            :terminal (make-instance 'recording-terminal :columns 72)
+            :clock-function (lambda () clock)))
          (application
            (make-instance 'application
                           :configuration configuration
@@ -6375,14 +6377,35 @@
            (task-progress-note-status
             running ':tool-call-started
             (list :tool "search.content"))
+           (let* ((progress (task-job-progress running))
+                  (now (get-internal-real-time)))
+             (with-lock-held ((task-progress-lock progress))
+               (setf (task-progress-started-at progress)
+                     (- now (* 65 internal-time-units-per-second))
+                     (task-progress-current-tool-started-at progress)
+                     (- now (* 60 internal-time-units-per-second)))))
+           (task-orchestrator-emit
+            orchestrator
+            ':task-subagent-progress
+            (list :id (job-identifier running)))
            (let ((activities (terminal-ui-agent-activities ui)))
              (test-assert
               (and (= (length activities) 2)
                    (eq (getf (first activities) :state) ':queued)
                    (eq (getf (second activities) :state) ':running)
                    (string= (getf (second activities) :current-tool)
-                            "search.content"))
+                            "search.content")
+                   (typep (getf (second activities) :current-tool-duration-ms)
+                          '(integer 60000))
+                   (typep (getf (second activities) :duration-ms)
+                          '(integer 65000)))
               "one progress event projects every queued and running child"))
+           (multiple-value-bind (text display cursor)
+               (terminal-ui--live-content ui clock)
+             (declare (ignore display cursor))
+             (test-assert
+              (search "search.content 01:00" text)
+              "runtime durations render correctly through an injected UI clock"))
            (task-tests--publish-terminal
             queued
             ':completed
