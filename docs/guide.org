@@ -559,12 +559,14 @@ only when translating values at a provider or API compatibility boundary; role
 files and internal task results remain native Lisp data.
 
 =task.run= starts one child from flat =agent=, =task=, optional =name=,
-=context=, and =async= arguments, or starts an independent =tasks= batch with
-shared nonempty =context=. Synchronous children are collected into the tool
-result. =async: true= detaches a non-blocking role and returns a job identifier;
-a role with =:blocking-p t= always remains synchronous. Every child must end
-with exactly one =yield.submit= carrying =success=, =failed=, or =aborted=. A
-normal model stop without that yield is a failed child run.
+=context=, and =blocking= arguments, or starts an independent =tasks= batch with
+shared nonempty =context=. Non-blocking roles detach as inspectable jobs by
+default and return their identifiers immediately. Set =blocking: true= on a flat
+call, batch, or batch item to wait for that work instead. The legacy inverse
+=async= boolean remains accepted but cannot be combined with =blocking=. A role
+with =:blocking-p t= always waits. Every child must end with exactly one
+=yield.submit= carrying =success=, =failed=, or =aborted=. A normal model stop
+without that yield is a failed child run.
 
 On Codex, task admission also snapshots filtered parent history for the child as
 reference context when both parent and selected child providers opt in. Text
@@ -586,13 +588,14 @@ provider session prompt-cache key. That server-side hint improves cache routing
 for common prefixes. Codex controls cache routing and retention. Other providers
 retain their ordinary child-context behavior.
 
-A synchronous =task.run= keeps the primary model at that tool call until every
-synchronous child finishes. Children in one batch may run concurrently through
-the reusable pool; separate provider tool calls are still executed in order.
-Detached children continue while the primary model proceeds, and the responsive
-composer remains usable in either case. The default pool admits up to eight
-running children, configurable with =AUTOLITH_TASK_MAX_CONCURRENCY= up to the
-implementation maximum of 32. Child jobs have no runtime deadline by default.
+A blocking =task.run= keeps the primary model at that tool call until every
+blocking child finishes. Children in one batch may run concurrently through the
+reusable pool; separate provider tool calls are still executed in order. The
+default detached children continue while the primary model proceeds, and the
+responsive composer remains usable in either case. The default pool admits up
+to eight running children, configurable with =AUTOLITH_TASK_MAX_CONCURRENCY= up
+to the implementation maximum of 32.
+Child jobs have no runtime deadline by default.
 Set a positive =AUTOLITH_TASK_MAX_RUNTIME_MS= only when an operator wants a
 finite wall-clock deadline; cancellation, shutdown, bounded progress, and result
 retention remain available in unlimited mode.

@@ -197,6 +197,7 @@
     (test-task-abort-control-condition)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
+    (test-task-default-detachment)
     (test-task-running-cancellation)
     (test-task-runtime-deadline)
     (test-task-nested-parent-cancellation)

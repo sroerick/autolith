@@ -282,7 +282,8 @@
                  :arguments
                  (json-encode
                   (json-object "agent" "task"
-                               "task" "Return the nested leaf result."))))
+                               "task" "Return the nested leaf result."
+                               "blocking" t))))
                ((or (and (eq (task-test-provider-mode provider)
                              :blocking-tool)
                          (= request-number 1))

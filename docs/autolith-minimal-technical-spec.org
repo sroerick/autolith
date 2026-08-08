@@ -658,17 +658,20 @@ exists. It also reports diagnostics needed to correct rejected role files. The
 model should inspect it before choosing a specialized role when the available
 roles or their restrictions matter.
 
-=task.run= accepts one assignment or an independent batch. Synchronous children
-hold the call until their terminal results are collected. A non-blocking role
-may instead run as a detached job and return its identity immediately. A role
-with =:blocking-p t= always remains synchronous. =job.list=, =job.get=,
+=task.run= accepts one assignment or an independent batch. Every non-blocking
+role detaches by default and returns an inspectable job identity immediately.
+The call or one batch item may set =blocking= to true to wait for that work;
+top-level batch =blocking= supplies the inherited default. The legacy inverse
+=async= boolean remains accepted for compatibility but must not appear beside
+=blocking=. A role with =:blocking-p t= always waits. =job.list=, =job.get=,
 =job.wait=, and =job.cancel= expose only jobs owned by the requesting session as
 described above. Cancellation cascades from a job to its descendants.
 
 The primary provider loop executes tool calls in order, so concurrent child
-execution is expressed by one =task.run= batch or by detached calls. A
-synchronous batch waits only for its synchronous members. Detached members
-remain independently inspectable while the primary loop continues.
+execution is expressed by one =task.run= batch or by its default detached jobs.
+A blocking batch waits only for members that explicitly or structurally block.
+Detached members remain independently inspectable while the primary loop
+continues.
 
 Admission is bounded by batch and live-job limits. A bounded FIFO feeds a
 reusable worker pool with configured concurrency and an implementation maximum.

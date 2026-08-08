@@ -11,6 +11,148 @@
      (task-test-blocking-tool-condition-variable tool)))
   nil)
 
+(-> test-task-default-detachment () null)
+(defun test-task-default-detachment ()
+  "Test default detachment, explicit blocking, and forced blocking roles."
+  (labels ((run-case (label arguments expected-detached-p &key blocking-role-p)
+             (let* ((base-configuration (test-configuration))
+                    (root (test-configuration-root base-configuration))
+                    (configuration
+                      (configuration--clone
+                       base-configuration :working-directory root))
+                    (registry (make-default-tool-registry))
+                    (blocking-tool
+                      (make-instance
+                       'task-test-blocking-tool
+                       :namespace "test"
+                       :name "block"
+                       :description "Wait until the detachment test releases this call."
+                       :parameters (tool-object-schema (json-object) nil)))
+                    (provider
+                      (make-instance 'task-test-provider :mode :blocking-tool))
+                    (conversation nil)
+                    (primary nil)
+                    (run-tool nil)
+                    (orchestrator nil)
+                    (context nil)
+                    (runner nil)
+                    (run-result nil)
+                    (run-condition nil))
+               (when blocking-role-p
+                 (task-tests--write-native-form
+                  (merge-pathnames
+                   ".autolith/agents/forced-blocking.sexp" root)
+                  (task-tests--role-form
+                   "forced-blocking"
+                   "Always wait for this child."
+                   "Enter the blocking test tool, then yield."
+                   :tools :all
+                   :blocking-p t)))
+               (tool-registry-register registry blocking-tool)
+               (task-augment-tool-registry registry)
+               (setf conversation (conversation-create configuration)
+                     primary
+                     (agent-create :configuration configuration
+                                   :provider provider
+                                   :conversation conversation
+                                   :tool-registry registry
+                                   :worker nil)
+                     run-tool (tool-registry-find registry "task" "run")
+                     orchestrator (task-run-tool-orchestrator run-tool)
+                     context
+                     (make-instance 'tool-context
+                                    :configuration configuration
+                                    :worker nil
+                                    :conversation conversation
+                                    :registry registry
+                                    :agent primary
+                                    :call-id label))
+               (unwind-protect
+                    (progn
+                      (if expected-detached-p
+                          (setf run-result
+                                (tool-execute run-tool context arguments))
+                          (setf runner
+                                (make-thread
+                                 (lambda ()
+                                   (handler-case
+                                       (setf run-result
+                                             (tool-execute
+                                              run-tool context arguments))
+                                     (serious-condition (condition)
+                                       (setf run-condition condition))))
+                                 :name
+                                 (format nil "Autolith ~A task wait test" label))))
+                      (test-assert
+                       (task-tests--wait-until
+                        (lambda ()
+                          (with-lock-held
+                              ((task-test-blocking-tool-lock blocking-tool))
+                            (task-test-blocking-tool-started-p blocking-tool)))
+                        2)
+                       (format nil "~A reaches the blocking child tool" label))
+                      (let* ((jobs (task-orchestrator-list-jobs orchestrator))
+                             (job (and (= (length jobs) 1) (first jobs))))
+                        (test-assert
+                         (and job
+                              (eq (and (task-job-detached-p job) t)
+                                  expected-detached-p)
+                              (not (job-terminal-p job))
+                              (if expected-detached-p
+                                  (and (null runner)
+                                       (typep run-result 'tool-result)
+                                       (tool-result-success-p run-result))
+                                  (and runner (thread-alive-p runner)
+                                       (null run-result)
+                                       (null run-condition))))
+                         (format nil "~A obeys its effective waiting policy" label))
+                        (task-tests--release-blocking-tool blocking-tool)
+                        (when runner
+                          (join-thread runner)
+                          (setf runner nil))
+                        (multiple-value-bind (snapshot terminal-p)
+                            (task-job-await job 2)
+                          (test-assert
+                           (and terminal-p
+                                (eq (getf snapshot :state) :completed)
+                                (eq (getf (getf snapshot :result) :status)
+                                    :success)
+                                (null run-condition)
+                                (typep run-result 'tool-result)
+                                (tool-result-success-p run-result))
+                           (format nil "~A completes after release" label)))))
+                 (task-tests--release-blocking-tool blocking-tool)
+                 (when runner
+                   (join-thread runner))
+                 (dolist (job (task-orchestrator-list-jobs orchestrator))
+                   (unless (job-terminal-p job)
+                     (task-job-cancel job :test-cleanup)
+                     (task-job-await job 2)))
+                 (ignore-errors (tool-registry-close-runtime-state registry))
+                 (uiop:delete-directory-tree root :validate t
+                                                  :if-does-not-exist :ignore)))))
+    (run-case
+     "default-detached"
+     (json-object "name" "default-detached"
+                  "agent" "task"
+                  "task" "Enter the blocking ordinary tool.")
+     t)
+    (run-case
+     "explicit-blocking"
+     (json-object "name" "explicit-blocking"
+                  "agent" "task"
+                  "task" "Enter the blocking ordinary tool."
+                  "blocking" t)
+     nil)
+    (run-case
+     "forced-blocking-role"
+     (json-object "name" "forced-blocking-role"
+                  "agent" "forced-blocking"
+                  "task" "Enter the blocking ordinary tool.")
+     nil
+     :blocking-role-p t))
+  nil)
+
 (-> test-task-running-cancellation () null)
 (defun test-task-running-cancellation ()
   "Test prompt cancellation while a child executes an ordinary tool call."
@@ -160,7 +302,8 @@
                                            "name" "stalled-child"
                                            "agent" "task"
                                            "task"
-                                           "Enter the blocking ordinary tool.")))
+                                           "Enter the blocking ordinary tool."
+                                           "blocking" t)))
                                  (serious-condition (condition)
                                    (setf run-condition condition))))
                              :name "Autolith task deadline test"))
@@ -1880,6 +2023,7 @@ exactly that race."
                      provider
                      (json-object
                       "context" "Exercise fair native aggregation."
+                      "blocking" t
                       "tasks" tasks)))
                   (content (getf observation :content))
                   (form (getf observation :native-content))
@@ -1966,6 +2110,7 @@ exactly that race."
                    (task-tests--run-scheduler-case
                     provider
                     (json-object "context" "Independent scheduler checks."
+                                 "blocking" t
                                  "tasks" tasks))))
              (test-assert (getf observation :success-p)
                           "a concurrent task batch succeeds")
@@ -2007,7 +2152,8 @@ exactly that race."
                     (task-tests--run-scheduler-case
                      provider
                      (json-object "agent" "task"
-                                  "task" "Use the inherited design context.")
+                                  "task" "Use the inherited design context."
+                                  "blocking" t)
                      :parent-reference-p t))
                   (inputs (first (getf observation :provider-request-inputs))))
              (test-assert (getf observation :success-p)
@@ -2059,7 +2205,8 @@ exactly that race."
                         (task-tests--run-scheduler-case
                          provider
                          (json-object "agent" "task"
-                                      "task" "Do not inherit parent history.")
+                                      "task" "Do not inherit parent history."
+                                      "blocking" t)
                          :parent-reference-p t))
                       (inputs
                         (first (getf observation :provider-request-inputs))))
@@ -2078,7 +2225,8 @@ exactly that race."
                     (task-tests--run-scheduler-case
                      provider
                      (json-object "agent" "task"
-                                  "task" "Use a tiny child context budget.")
+                                  "task" "Use a tiny child context budget."
+                                  "blocking" t)
                      :parent-reference-p t))
                   (inputs (first (getf observation :provider-request-inputs))))
              (test-assert (getf observation :success-p)
@@ -2093,7 +2241,8 @@ exactly that race."
                    (task-tests--run-scheduler-case
                     provider
                     (json-object "agent" "task"
-                                 "task" "Delegate once, then return."))))
+                                 "task" "Delegate once, then return."
+                                 "blocking" t))))
              (test-assert (getf observation :success-p)
                           "a nested synchronous task succeeds at concurrency one")
              (test-assert (= (getf observation :job-count) 2)
@@ -2119,7 +2268,8 @@ exactly that race."
                      (json-object
                       "agent" "task"
                       "task"
-                      "Spawn one detached task, wait for it, then return.")))
+                      "Spawn one detached task, wait for it, then return."
+                      "blocking" t)))
                   (artifacts (getf observation :artifact-forms)))
              (test-assert
               (and (getf observation :success-p)

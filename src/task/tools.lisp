@@ -40,6 +40,29 @@
             :message (format nil "Task field ~S must be a boolean." field)
             :tool-name "task.run"))))
 
+(-> task--blocking-policy (json-object (option boolean) string) boolean)
+(defun task--blocking-policy (object inherited-p location)
+  "Return OBJECT's explicit blocking policy or inherited INHERITED-P.
+
+The primary blocking field and legacy inverse async field are mutually exclusive."
+  (multiple-value-bind (blocking blocking-present-p)
+      (gethash "blocking" object)
+    (multiple-value-bind (async async-present-p)
+        (gethash "async" object)
+      (when (and blocking-present-p async-present-p)
+        (error 'task-error
+               :message
+               (format nil "Task.run cannot combine blocking and async in ~A."
+                       location)
+               :tool-name "task.run"))
+      (cond
+        (blocking-present-p
+         (task--json-boolean blocking "blocking"))
+        (async-present-p
+         (not (task--json-boolean async "async")))
+        (t
+         (and inherited-p t))))))
+
 (-> task--validate-json-fields (json-object list string) null)
 (defun task--validate-json-fields (object allowed-fields location)
   "Reject fields outside ALLOWED-FIELDS in task JSON OBJECT at LOCATION."
@@ -52,23 +75,20 @@
                     :tool-name "task.run"))
   nil)
 
-(defun task--normalize-item (object shared-context top-async)
+(defun task--normalize-item (object shared-context top-blocking-p)
   "Validate and normalize one flat task OBJECT."
   (unless (json-object-p object)
     (error 'task-error :message "Every tasks item must be a JSON object."
            :tool-name "task.run"))
   (task--validate-json-fields
-   object '("name" "agent" "task" "context" "async") "a task item")
+   object '("name" "agent" "task" "context" "blocking" "async")
+   "a task item")
   (let ((task (task--repair-prose (json-get object "task")))
         (name (json-get object "name"))
         (agent (or (json-get object "agent") "task"))
         (context (task--repair-prose (json-get object "context")))
-        (async
-         (multiple-value-bind (value present-p)
-             (gethash "async" object)
-           (if present-p
-               (task--json-boolean value "async")
-               top-async))))
+        (blocking-p
+          (task--blocking-policy object top-blocking-p "a task item")))
     (unless (non-empty-string-p task)
       (error 'task-error :message
              "Every child requires a non-empty task assignment." :tool-name
@@ -92,25 +112,25 @@
       (error 'task-error :message
              "A supplied task context must be a string."
              :tool-name "task.run"))
-    (list :name name :agent (string-downcase agent) :task task :context
-          (task--combine-context shared-context context) :async async)))
+    (list :name name
+          :agent (string-downcase agent)
+          :task task
+          :context (task--combine-context shared-context context)
+          :blocking blocking-p
+          :async (not blocking-p))))
 
 (defun task-normalize-arguments (arguments)
   "Validate TASK.RUN ARGUMENTS and return ordinary normalized item plists."
   (task--validate-json-fields
-   arguments '("name" "agent" "task" "context" "async" "tasks")
+   arguments '("name" "agent" "task" "context" "blocking" "async" "tasks")
    "the top-level call")
   (let* ((tasks nil)
          (tasks-present-p nil)
          (flat-task nil)
          (flat-task-present-p nil)
          (shared-context (task--repair-prose (json-get arguments "context")))
-         (top-async
-          (multiple-value-bind (value present-p)
-              (gethash "async" arguments)
-            (if present-p
-                (task--json-boolean value "async")
-                nil)))
+         (top-blocking-p
+           (task--blocking-policy arguments nil "the top-level call"))
          (items nil))
     (multiple-value-setq (tasks tasks-present-p)
       (gethash "tasks" arguments))
@@ -148,8 +168,8 @@
                       :tool-name "task.run"))
              (loop for item across tasks
                    collect (task--normalize-item item shared-context
-                                                 top-async)))
-            (t (list (task--normalize-item arguments nil top-async)))))
+                                                 top-blocking-p)))
+            (t (list (task--normalize-item arguments nil top-blocking-p)))))
     (when (> (length items) *task-maximum-batch-size*)
       (error 'task-error
              :message
@@ -217,7 +237,7 @@
                           :tool-name "task.run"))))
            (task-agent-definition-validate-tools-available definition registry)
            (list :item item :definition definition :detached
-                 (and (getf item :async)
+                 (and (not (getf item :blocking))
                       (not (task-agent-definition-blocking-p definition)))))))
      items)))
 
@@ -855,42 +875,48 @@
 (defun task-run-parameters-schema ()
   "Return the permissive flat-or-batch schema advertised by task.run."
   (let* ((item-properties
-          (json-object "name"
-                       (tool-string-property "Optional stable child name.")
-                       "agent"
-                       (tool-string-property
-                        "Agent type, including scout, designer, reviewer, librarian, task, or sonic.")
-                       "task"
-                       (tool-string-property
-                        "Self-contained child assignment.")
-                       "context"
-                       (tool-string-property
-                        "Optional item-specific background.")
-                       "async"
-                       (tool-boolean-property
-                        "Detach this non-blocking child as a background job.")))
+           (json-object "name"
+                        (tool-string-property "Optional stable child name.")
+                        "agent"
+                        (tool-string-property
+                         "Agent type, including scout, designer, reviewer, librarian, task, or sonic.")
+                        "task"
+                        (tool-string-property
+                         "Self-contained child assignment.")
+                        "context"
+                        (tool-string-property
+                         "Optional item-specific background.")
+                        "blocking"
+                        (tool-boolean-property
+                         "Wait for this child instead of detaching it; defaults to false.")
+                        "async"
+                        (tool-boolean-property
+                         "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")))
          (item-schema (tool-object-schema item-properties '("task")))
          (properties
-          (json-object "name"
-                       (tool-string-property
-                        "Optional stable child name for a flat call.")
-                       "agent"
-                       (tool-string-property
-                        "Agent type for a flat call; defaults to task.")
-                       "task"
-                       (tool-string-property
-                        "Self-contained assignment for a flat call.")
-                       "context"
-                       (tool-string-property
-                        "Shared non-empty background required for batch calls.")
-                       "async"
-                       (tool-boolean-property
-                        "Detach non-blocking children as background jobs.")
-                       "tasks"
-                       (json-object "type" "array" "description"
-                                    "Child assignments executed with shared context."
-                                    "items" item-schema "minItems" 1
-                                    "maxItems" *task-maximum-batch-size*))))
+           (json-object "name"
+                        (tool-string-property
+                         "Optional stable child name for a flat call.")
+                        "agent"
+                        (tool-string-property
+                         "Agent type for a flat call; defaults to task.")
+                        "task"
+                        (tool-string-property
+                         "Self-contained assignment for a flat call.")
+                        "context"
+                        (tool-string-property
+                         "Shared non-empty background required for batch calls.")
+                        "blocking"
+                        (tool-boolean-property
+                         "Wait for non-forced children instead of detaching them; defaults to false.")
+                        "async"
+                        (tool-boolean-property
+                         "Compatibility inverse: true detaches and false blocks; cannot combine with blocking.")
+                        "tasks"
+                        (json-object "type" "array" "description"
+                                     "Child assignments executed with shared context."
+                                     "items" item-schema "minItems" 1
+                                     "maxItems" *task-maximum-batch-size*))))
     (tool-object-schema properties nil)))
 
 (-> task-agents-parameters-schema () hash-table)
@@ -931,7 +957,7 @@
                             (make-instance 'task-run-tool :orchestrator
                                            orchestrator :namespace "task" :name
                                            "run" :description
-                                           "Spawn a real in-process child agent or a concurrency-limited batch. Children have explicit identities, restricted tools, recursion policy, progress, artifacts, and a required yield protocol."
+                                           "Spawn a real in-process child agent or a concurrency-limited batch. Non-blocking roles detach by default; set blocking to wait. Children have explicit identities, restricted tools, recursion policy, progress, artifacts, and a required yield protocol."
                                            :parameters
                                            (task-run-parameters-schema)))
     (tool-registry-register registry

@@ -199,17 +199,24 @@
                 "a class-specific child-safe method opts an extension in")))
            (let ((item (first (task-normalize-arguments
                                (json-object "task" "Inspect the parser."
-                                            "agent" "SCOUT"
-                                            "async" t)))))
+                                            "agent" "SCOUT")))))
              (test-assert (string= (getf item :agent) "scout")
                           "task normalization canonicalizes agent names")
-             (test-assert (getf item :async)
-                          "task normalization preserves detached execution"))
+             (test-assert (and (getf item :async)
+                               (null (getf item :blocking)))
+                          "task normalization detaches children by default"))
            (let ((item (first (task-normalize-arguments
                                (json-object "task" "Stay synchronous."
+                                            "blocking" t)))))
+             (test-assert (and (getf item :blocking)
+                               (null (getf item :async)))
+                          "task blocking is an explicit opt-in"))
+           (let ((item (first (task-normalize-arguments
+                               (json-object "task" "Use legacy blocking."
                                             "async" false)))))
-             (test-assert (null (getf item :async))
-                          "JSON false remains false for task async policy"))
+             (test-assert (and (getf item :blocking)
+                               (null (getf item :async)))
+                          "legacy JSON false remains a blocking override"))
            (let* ((registry
                     (task-augment-tool-registry
                      (make-default-tool-registry)))
@@ -267,6 +274,16 @@
                   nil)
               (task-error () t))
             "task normalization rejects non-boolean async values")
+           (test-assert
+            (handler-case
+                (progn
+                  (task-normalize-arguments
+                   (json-object "task" "Reject conflicting policy."
+                                "blocking" t
+                                "async" t))
+                  nil)
+              (task-error () t))
+            "task normalization rejects combined blocking and async fields")
            (test-assert
             (handler-case
                 (progn
