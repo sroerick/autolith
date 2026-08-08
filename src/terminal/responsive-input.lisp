@@ -1186,6 +1186,9 @@ commit their busy policy before the recalled work is removed."
                      (application-input-controller--active-turn-interrupt-action
                       controller))))
           (cond
+            ((eq event ':stream-end)
+             (application-input-controller--request-exit
+              controller ':end-of-input))
             ((eq active-interrupt-action ':force)
              (application-input-controller--force-interrupt-exit controller))
             ((eq active-interrupt-action ':hint)
@@ -1296,7 +1299,7 @@ commit their busy policy before the recalled work is removed."
                            controller))
                          (:escape
                           nil)
-                         (:end-of-input
+                         ((:end-of-input :stream-end)
                           (return)))
                        (with-lock-held
                            ((application-input-controller-lock controller))

@@ -529,9 +529,10 @@ HEADER-P renders field labels rather than status values."
                         (let ((event (terminal-read-event terminal)))
                           (cond
                             ((and (eq mode ':read-only)
-                                  (member event '(:interrupt :end-of-input)))
+                                  (member event
+                                          '(:interrupt :end-of-input :stream-end)))
                              (return))
-                            ((eq event ':end-of-input)
+                            ((member event '(:end-of-input :stream-end))
                              (return))
                             ((not (eq mode ':read-only))
                              (localgroup-write-packet

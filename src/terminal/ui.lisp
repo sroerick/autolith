@@ -1534,6 +1534,8 @@ when no resize needs to be applied."
                  (unless (terminal-ui-refresh-size ui resize-callback)
                    (terminal-ui--repaint-live ui)))
                (let ((event (terminal-read-event (terminal-ui-terminal ui))))
+                 (when (eq event ':stream-end)
+                   (return nil))
                  (with-terminal-ui-locked (ui)
                    (terminal-ui-refresh-size ui resize-callback)
                    (let ((custom

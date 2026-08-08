@@ -196,17 +196,13 @@
   terminal)
 
 (defmethod terminal-read-event ((terminal stream-terminal))
-  "Read one key, escape sequence, paste, or fallback line from TERMINAL."
+  "Read one key, escape sequence, paste, fallback line, or physical stream end."
   (if (terminal-interactive-p terminal)
-      (let ((event
-               (terminal-read-editing-event terminal)))
-        (if (eq event :stream-end)
-            :end-of-input
-            event))
+      (terminal-read-editing-event terminal)
       (let ((line (read-line (stream-terminal-input-stream terminal) nil nil)))
         (if line
             (list :line line)
-            :end-of-input))))
+            :stream-end))))
 
 ;; Generic functions require broad FTYPEs so downstream terminal adapters can
 ;; add methods without SBCL replacing a class-restricted proclamation.

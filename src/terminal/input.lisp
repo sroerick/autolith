@@ -83,9 +83,9 @@
           when (terminal--csi-final-character-p character)
             do (return))))
 
-(-> terminal--kitty-key-event (string) (values boolean t))
-(defun terminal--kitty-key-event (body)
-  "Return a semantic event for one supported Kitty CSI-u BODY."
+(-> terminal--enhanced-key-event (string) (values boolean t))
+(defun terminal--enhanced-key-event (body)
+  "Return a semantic event for one directly supported enhanced CSI BODY."
   (cond
     ((member body '("10u" "13u") :test #'string=)
      (values t ':submit))
@@ -103,6 +103,8 @@
      (values t ':escape))
     ((string= body "127u")
      (values t ':backspace))
+    ((member body '("100;5u" "27;5;100~") :test #'string=)
+     (values t ':end-of-input))
     (t
      (values nil nil))))
 
@@ -125,11 +127,11 @@
       ((char= next #\[)
        (let* ((body (terminal--read-csi-body stream))
               (prefix (format nil "~C[~A" *terminal-escape-character* body)))
-         (multiple-value-bind (recognized-p event)
-             (terminal--kitty-key-event body)
-           (if recognized-p
-               event
-               (terminal--read-prefixed-event prefix stream)))))
+          (multiple-value-bind (recognized-p event)
+              (terminal--enhanced-key-event body)
+            (if recognized-p
+                event
+                (terminal--read-prefixed-event prefix stream)))))
       (t
        (terminal--read-prefixed-event
         (format nil "~C~C" *terminal-escape-character* next)
@@ -140,7 +142,7 @@
     t)
 (defun terminal--decode-editing-event
     (stream &key (escape-delay *terminal-escape-delay-seconds*))
-  "Decode one Clinedi event while accepting bare Kitty CSI-u control reports."
+  "Decode one Clinedi event while accepting selected enhanced control reports."
   (let ((character (read-char stream nil nil)))
     (cond
       ((null character)

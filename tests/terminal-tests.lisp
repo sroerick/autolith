@@ -622,6 +622,9 @@
                         (format nil "~C[127;5u" escape)
                         (format nil "~C[1;5D" escape)
                         (format nil "~C[1;5C" escape)
+                        (string (code-char 4))
+                        (format nil "~C[100;5u" escape)
+                        (format nil "~C[27;5;100~~" escape)
                         (format nil "~C[99;5u" escape)
                         (format nil "~C[27;5;99~~" escape)))
          (terminal
@@ -672,10 +675,27 @@
                  "Ctrl-Left requests backward word movement")
     (test-assert (eq (terminal-read-event terminal) :word-right)
                  "Ctrl-Right requests forward word movement")
+    (test-assert (eq (terminal-read-event terminal) :end-of-input)
+                 "literal Ctrl-D requests end of input")
+    (test-assert (eq (terminal-read-event terminal) :end-of-input)
+                 "Kitty keyboard protocol Ctrl-D requests end of input")
+    (test-assert (eq (terminal-read-event terminal) :end-of-input)
+                 "xterm modifyOtherKeys Ctrl-D requests end of input")
     (test-assert (eq (terminal-read-event terminal) :interrupt)
                  "Kitty keyboard protocol Ctrl-C requests interruption")
     (test-assert (eq (terminal-read-event terminal) :interrupt)
-                 "xterm modifyOtherKeys Ctrl-C requests interruption"))
+                 "xterm modifyOtherKeys Ctrl-C requests interruption")
+    (test-assert (eq (terminal-read-event terminal) :stream-end)
+                 "physical interactive stream EOF remains distinct from Ctrl-D"))
+  (let ((terminal
+          (make-instance 'stream-terminal
+                         :input-stream (make-string-input-stream "")
+                         :output-stream (make-string-output-stream)
+                         :input-file-descriptor 0
+                         :interactive-p nil
+                         :columns 40)))
+    (test-assert (eq (terminal-read-event terminal) :stream-end)
+                 "physical fallback stream EOF remains distinct from Ctrl-D"))
   (let* ((payload (format nil "first line~%second line"))
          (terminal
            (make-instance
