@@ -148,25 +148,28 @@ It is not the normal execution environment.
 Every interactive active process publishes one authenticated loopback control
 endpoint beneath =${XDG_STATE_HOME:-~/.local/state}/autolith/localgroup/=. The
 registry directory has mode 0700 and each capability record has mode 0600. A
-record contains a random process-session identifier, loopback port, process ID,
-creation time, and random 256-bit capability token. The bounded
-length-prefixed S-expression protocol reads with =*read-eval*= disabled and
-never exposes the token in status output.
+record contains a timestamp-bearing idsmall process-session identifier, loopback
+port, process ID, creation time, and random 256-bit capability token. Legacy
+12-character hexadecimal identifiers remain accepted for discovery and handoff.
+The bounded length-prefixed S-expression protocol reads with =*read-eval*=
+disabled and never exposes the token in status output.
 
 =autolith localgroup status= lists live sessions and prunes a record only after
 its recorded endpoint is unreachable and the record still has the exact stale
-contents. =tell= submits ordinary responsive input, =pause= requests active-turn
-cancellation and holds queued primary work, =kill= requests graceful shutdown,
-and =detach= releases the controlling terminal. =attach= supports ordinary
-control, =--read-only= observation, and =--take-over= control transfer. Read-only
-observers receive bounded replay and live terminal output but cannot inject
-input or resize events.
+contents. Interactive output uses width-aware box drawing and semantic colors;
+redirected output is plain and =--sexp= remains machine-readable. =tell= submits
+ordinary responsive input, =pause= requests active-turn cancellation and holds
+queued primary work, =kill= requests graceful shutdown, and =detach= releases
+the controlling terminal. =attach= supports ordinary control, =--read-only=
+observation, and =--take-over= control transfer. Read-only observers receive
+bounded replay and live terminal output but cannot inject input or resize events.
 
 Strict idle means that the application is waiting for input with no active,
 queued, steering, recalled, cancelling, failed, or stopping primary work, no
 pause, and no live child job. A pending detach or foreground take-over is also
 not idle. Status reports the workspace, conversation, model, effort, permission
-mode, queue and child counts, terminal ownership, and this strict idle state.
+mode, queue and child counts, terminal ownership, start time, and this strict
+idle state.
 
 A foreground detach or take-over never forks the multithreaded active image and
 never modifies the stable launcher. It waits for queued primary work and live
@@ -215,6 +218,18 @@ provide a fallback for providers without a usable listing endpoint. A failed
 refresh retains the last successful effective list. Discovery requests load bearer
 credentials from the provider's private API-key store only for request scope;
 request credentials are never retained in the image or conversation state.
+
+Provider wire behavior is organized as a CLOS protocol. Shared
+=responses-api-provider= and =chat-completions-provider= classes identify the
+wire family independently of account and model identity. Generic operations
+encode tools and replay items, select reasoning and provider-specific request
+fields, normalize completed output items, and expose the protocol identity.
+Concrete providers specialize only their authentication, transport, effort, and
+small request differences. Codex retains its narrow Responses Lite overrides.
+Streaming SSE input is bounded by line and joined-event limits; malformed wire
+discriminators and incomplete tool calls become typed provider failures rather
+than implementation type errors. Model discovery transport failures are likewise
+normalized without exposing credentials.
 
 Autolith owns:
 

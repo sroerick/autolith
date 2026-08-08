@@ -222,11 +222,14 @@ Each interactive Autolith process publishes a private authenticated endpoint on
 autolith localgroup status
 #+END_SRC
 
-The table shows each session ID, state, conversation, queued and child activity,
-and workspace. Use =--sexp= for complete readable status records. =idle= is
-strict: the process is waiting for input, has no active, queued, steering,
-recalled, cancelling, failed, or stopping primary work, is not paused or
-handing off, and has no live subagent.
+The interactive table shows each timestamp-bearing idsmall session ID, start
+time, state, conversation, queued and child activity, and workspace. Legacy
+12-character hexadecimal IDs remain valid when addressing an older session.
+Interactive terminals use width-aware box drawing and semantic colors;
+redirected output stays plain. Use =--sexp= for complete readable status
+records. =idle= is strict: the process is waiting for input, has no active,
+queued, steering, recalled, cancelling, failed, or stopping primary work, is
+not paused or handing off, and has no live subagent.
 
 Control a session with:
 
@@ -606,6 +609,9 @@ failures, file-write and file-edit results, and arbitrary execution results from
 context remains readable in either mode. The choice shares the private global
 preferences file with =/trace=. This changes terminal presentation only; every
 call and result remains in durable conversation history and provider context.
+Structured tool arguments and results render as readable nested fields instead
+of raw JSON. Resource edits list each operation and its target range.
+
 With no argument, =/compact= still forces context compaction.
 
 Context compaction keeps long conversations going. When the newest provider
@@ -716,6 +722,13 @@ authenticate the registration.
 
 For providers without a working model-list endpoint, omit =:models-endpoint=
 and declare a static =:models= list as before.
+
+Built-in Responses and Chat Completions integrations share a CLOS wire
+protocol. Provider implementations specialize authentication, transport,
+effort handling, and small request differences while reusing tool encoding,
+conversation replay, request construction, and output normalization. Streaming
+input is bounded, and malformed or incomplete provider events become typed
+provider failures instead of implementation errors.
 
 Interactive commands use the same live extension model:
 
