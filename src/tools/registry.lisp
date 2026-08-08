@@ -559,6 +559,25 @@
              :tool-name "unknown"))
     value))
 
+(-> tool-boolean-argument
+    (json-object string &key (:default boolean) (:tool-name (option string)))
+    boolean)
+(defun tool-boolean-argument (arguments name &key default tool-name)
+  "Return optional JSON Boolean NAME from ARGUMENTS, defaulting to DEFAULT."
+  (multiple-value-bind (value present-p)
+      (gethash name arguments)
+    (cond
+      ((not present-p)
+       (and default t))
+      ((eq value t)
+       t)
+      ((eq value false)
+       nil)
+      (t
+       (error 'tool-error
+              :message (format nil "Tool argument ~S must be a boolean." name)
+              :tool-name (or tool-name name))))))
+
 
 ;;;; -- Resource Tool Dispatch --
 
@@ -817,6 +836,41 @@
   "Return the tool named NAMESPACE.NAME from REGISTRY, or NIL."
   (gethash (format nil "~A.~A" namespace name)
            (tool-registry-index registry)))
+
+(-> tool-context-execution-runtime (tool-context) t)
+(defun tool-context-execution-runtime (context)
+  "Return CONTEXT's shared inspectable execution runtime, or NIL when absent."
+  (let* ((registry (tool-context-registry context))
+         (job-tool
+           (and (typep registry 'tool-registry)
+                (tool-registry-find registry "job" "list"))))
+    (and job-tool (tool-runtime-identity job-tool))))
+
+(-> tool-execution-invoke
+    (t t
+     &key (:tool-name non-empty-string)
+       (:summary string)
+       (:operation-function function)
+       (:async-p boolean)
+       (:parent-call-id (option string)))
+    tool-result)
+(defgeneric tool-execution-invoke
+    (runtime parent
+     &key tool-name summary operation-function async-p parent-call-id)
+  (:documentation
+   "Run one shell or Lisp operation synchronously or through inspectable RUNTIME."))
+
+(defmethod tool-execution-invoke
+    ((runtime null) parent
+     &key tool-name summary operation-function async-p parent-call-id)
+  "Run directly when no session execution runtime is available."
+  (declare (ignore runtime parent summary parent-call-id))
+  (when async-p
+    (error 'tool-error
+           :message
+           "Asynchronous execution requires the active session job runtime."
+           :tool-name tool-name))
+  (funcall operation-function))
 
 (-> tool-registry-provider-schemas
     (tool-registry &key (:canonical-names (option list)))

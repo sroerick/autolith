@@ -207,6 +207,7 @@
     (test-task-terminal-wakeup-ordering)
     (test-task-job-visibility)
     (test-session-tool-execution-jobs)
+    (test-shell-execution-jobs)
     (test-tool-execution-retention)
     (test-task-job-list-pagination)
     (test-task-refresh-after-delayed-close)

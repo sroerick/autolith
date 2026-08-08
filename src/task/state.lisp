@@ -41,6 +41,9 @@
 (defparameter *tool-execution-result-limit* 8000
   "The result characters retained for one terminal tool execution.")
 
+(defparameter *tool-execution-blocking-grace-seconds* 10
+  "Seconds a default execution may block before handing off its existing job.")
+
 (defparameter *task-shutdown-timeout-seconds* 10
   "The maximum time allowed for task worker shutdown.")
 

@@ -1459,6 +1459,221 @@ exactly that race."
   nil)
 
 
+(-> test-shell-execution-jobs () null)
+(defun test-shell-execution-jobs ()
+  "Test authorized shell jobs, automatic handoff, inspection, and cancellation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (shell-tool (tool-registry-find registry "shell" "run"))
+         (run-tool (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (primary
+           (task-tests--primary-agent
+            configuration "shell-execution-primary" registry))
+         (authorization-count 0)
+         (context
+           (make-instance
+            'tool-context
+            :configuration configuration
+            :worker nil
+            :conversation (agent-conversation primary)
+            :registry registry
+            :agent primary
+            :call-id "shell-execution-test"
+            :command-authorization-function
+            (lambda (command directory)
+              (declare (ignore command directory))
+              (incf authorization-count)
+              ':full-access)))
+         (denied-context
+           (make-instance
+            'tool-context
+            :configuration configuration
+            :worker nil
+            :conversation (agent-conversation primary)
+            :registry registry
+            :agent primary
+            :call-id "shell-execution-denied-test"
+            :command-authorization-function
+            (lambda (command directory)
+              (declare (ignore command directory))
+              ':deny)))
+         (slow-path (merge-pathnames "shell-execution-once.txt" root))
+         (started-path (merge-pathnames "shell-execution-started.txt" root))
+         (finished-path (merge-pathnames "shell-execution-finished.txt" root)))
+    (labels ((run-shell (execution-context &rest arguments)
+               "Execute shell.run with decoded test ARGUMENTS."
+               (tool-execute
+                shell-tool execution-context
+                (apply #'json-object arguments)))
+
+             (execution-count ()
+               "Return the retained asynchronous execution count."
+               (length
+                (job-pool-list-jobs
+                 (task-orchestrator-execution-pool orchestrator))))
+
+             (handoff-job (result)
+               "Return RESULT's visible handed-off execution job."
+               (let* ((details (tool-result-details result))
+                      (record (and (listp details)
+                                   (getf (rest details) :job)))
+                      (identifier (and record (getf record :id))))
+                 (and identifier
+                      (task-orchestrator-find-visible-job
+                       orchestrator identifier primary "shell.run")))))
+      (unwind-protect
+           (progn
+             (let* ((properties
+                      (json-get (tool-parameters shell-tool) "properties"))
+                    (async-schema (and properties
+                                       (gethash "async" properties))))
+               (test-assert
+                (and (json-object-p async-schema)
+                     (string= (json-get async-schema "type") "boolean"))
+                "shell.run advertises its optional async Boolean"))
+             (let ((before (execution-count))
+                   (result
+                     (run-shell denied-context
+                                "command"
+                                (format nil "printf denied > ~A"
+                                        (uiop:escape-shell-token
+                                         (namestring slow-path)))
+                                "async" t)))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (= (execution-count) before)
+                     (not (probe-file slow-path)))
+                "shell authorization denial occurs before execution-job admission"))
+             (let* ((*tool-execution-blocking-grace-seconds* 2)
+                    (before (execution-count))
+                    (result
+                      (run-shell context
+                                 "command" "printf fast-shell")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (not (typep result 'task-tool-result))
+                     (search "exit 0" (tool-result-content result))
+                     (search "fast-shell" (tool-result-content result))
+                     (= (execution-count) (1+ before))
+                     (= authorization-count 1))
+                "a fast default shell job returns its ordinary result"))
+             (let* ((*tool-execution-blocking-grace-seconds* 0.01)
+                    (before (execution-count))
+                    (result
+                      (run-shell
+                       context
+                       "command"
+                       (format nil "sleep 1; printf once >> ~A"
+                               (uiop:escape-shell-token
+                                (namestring slow-path)))))
+                    (details (tool-result-details result))
+                    (job (handoff-job result))
+                    (identifier (and job (session-job-identifier job))))
+               (test-assert
+                (and (typep result 'task-tool-result)
+                     (tool-result-success-p result)
+                     (eq (getf (rest details) :handoff-reason)
+                         :grace-expired)
+                     job
+                     (session-job-detached-p job)
+                     (= (execution-count) (1+ before)))
+                "a slow default shell call hands off its existing execution job")
+               (let* ((wait-result
+                        (tool-execute
+                         (tool-registry-find registry "job" "wait")
+                         context
+                         (json-object "id" identifier
+                                      "timeout-seconds" 2)))
+                      (wait-details (rest (tool-result-details wait-result)))
+                      (record (getf wait-details :job)))
+                 (test-assert
+                  (and (tool-result-success-p wait-result)
+                       (getf wait-details :terminal-p)
+                       (string= (getf record :id) identifier)
+                       (eq (getf record :state) :completed)
+                       (string= (uiop:read-file-string slow-path) "once")
+                       (= (execution-count) (1+ before)))
+                  "job.wait observes the same shell job after exactly one execution")))
+             (let* ((result
+                      (run-shell
+                       context
+                       "command"
+                       (format nil
+                               "printf started > ~A; sleep 1; printf finished > ~A"
+                               (uiop:escape-shell-token
+                                (namestring started-path))
+                               (uiop:escape-shell-token
+                                (namestring finished-path)))
+                       "async" t))
+                    (details (tool-result-details result))
+                    (job (handoff-job result))
+                    (identifier (and job (session-job-identifier job))))
+               (test-assert
+                (and (typep result 'task-tool-result)
+                     (eq (getf (rest details) :handoff-reason) :requested)
+                     job
+                     (task-tests--wait-until
+                      (lambda () (probe-file started-path)) 2))
+                "explicit async returns an inspectable shell job while it runs")
+               (let* ((get-result
+                        (tool-execute
+                         (tool-registry-find registry "job" "get")
+                         context
+                         (json-object "id" identifier)))
+                      (record (getf (tool-result-details get-result) :job)))
+                 (test-assert
+                  (and (tool-result-success-p get-result)
+                       (string= (getf record :id) identifier)
+                       (eq (getf record :state) :running))
+                  "job.get inspects the running shell execution"))
+               (let* ((cancel-result
+                        (tool-execute
+                         (tool-registry-find registry "job" "cancel")
+                         context
+                         (json-object "id" identifier)))
+                      (cancel-details
+                        (rest (tool-result-details cancel-result))))
+                 (test-assert
+                  (and (tool-result-success-p cancel-result)
+                       (getf cancel-details :accepted-p))
+                  "job.cancel accepts cancellation of a running shell execution"))
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 2)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :aborted)
+                       (eq (getf (getf snapshot :result) :status) :aborted))
+                  "shell cancellation publishes an aborted terminal job"))
+               (sleep 1.2)
+               (test-assert
+                (not (probe-file finished-path))
+                "shell cancellation prevents the external command from continuing"))
+             (let* ((result
+                      (let ((*shell-maximum-output-characters* 5))
+                        (run-shell context
+                                   "command" "printf 123456789"
+                                   "async" t)))
+                    (job (handoff-job result)))
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 2)
+                 (let ((content (getf (getf snapshot :result) :content)))
+                   (test-assert
+                    (and terminal-p
+                         (search "12345" content)
+                         (not (search "6789" content))
+                         (search
+                          "combined output truncated after 5 characters"
+                          content))
+                    "an asynchronous shell job retains its admission-time output bound")))))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist :ignore))))
+  nil)
+
+
 (-> test-tool-execution-retention () null)
 (defun test-tool-execution-retention ()
   "Test bounded execution retention and complete two-pool detachment."

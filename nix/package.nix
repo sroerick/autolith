@@ -186,8 +186,8 @@ let
   clExecSandboxSource = pkgs.fetchFromGitHub {
     owner = "luciusmagn";
     repo = "cl-exec-sandbox";
-    rev = "cb7951ea203329d7d1d226bfc1e8224bd5c7d9bd";
-    hash = "sha256-JJVHoUyxntkVfiU3V4quq+w6MOhTl8hYn5m1JCyvprs=";
+    rev = "0a5c7a202ff926b798c94f120ae1821fc19c1db3";
+    hash = "sha256-gqqFDZXUXQW7LUmiFt9yzmN9bKieUvE8YgfA+Qi9o4c=";
   };
 
   clExecSandbox = pkgs.sbcl.buildASDFSystem {

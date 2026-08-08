@@ -567,15 +567,56 @@ is retained whenever the configured maximum can contain the fixed metadata."
                          1)
                      path))))))))))
 
+(-> workspace-tool-run-shell-command
+    (string pathname t (integer 1) (integer 0))
+    tool-result)
+(defun workspace-tool-run-shell-command
+    (command directory policy timeout output-limit)
+  "Run one already authorized shell COMMAND with fully resolved execution policy."
+  (let* ((result
+           (handler-bind
+               ((sb-int:stream-decoding-error
+                  (lambda (condition)
+                    (let ((restart (find-restart 'use-value condition)))
+                      (when restart
+                        (invoke-restart restart (code-char #xFFFD)))))))
+             (run-sandboxed
+              "/bin/sh"
+              (list "-c" command)
+              :policy policy
+              :working-directory directory
+              :timeout timeout
+              :merge-output-p t
+              :output-limit output-limit
+              :error-output-limit output-limit)))
+         (output (sandbox-result-output result))
+         (presented-output
+           (if (sandbox-result-output-truncated-p result)
+               (format nil
+                       "~A~%[combined output truncated after ~D characters]"
+                       output output-limit)
+               output)))
+    (if (sandbox-result-timed-out-p result)
+        (tool-failure
+         (format nil "The command was stopped after ~D seconds.~%~A"
+                 timeout presented-output))
+        (tool-success
+         (format nil "exit ~D~%~A"
+                 (sandbox-result-exit-code result)
+                 presented-output)))))
+
 (defmethod tool-execute ((tool shell-run-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Authorize and run one external command under the selected policy."
+  "Authorize one command, then run it once directly or as an inspectable job."
   (let* ((command (tool-argument arguments "command" :required t))
          (directory (workspace-tool-path
                      context
                      (tool-argument arguments "directory")))
-         (timeout (workspace-tool-shell-timeout arguments)))
+         (timeout (workspace-tool-shell-timeout arguments))
+         (async-p
+           (tool-boolean-argument
+            arguments "async" :tool-name "shell.run")))
     (unless (non-empty-string-p command)
       (error 'tool-error
              :message "shell.run requires a non-empty command."
@@ -590,37 +631,19 @@ is retained whenever the configured maximum can contain the fixed metadata."
                      (:sandboxed
                       (workspace-write-sandbox-policy
                        :workspace-roots
-                       (list (configuration-working-directory configuration))))
+                       (list
+                        (configuration-working-directory configuration))))
                      (:full-access
                       (external-sandbox-policy))))
-                 (result
-                   (handler-bind
-                       ((sb-int:stream-decoding-error
-                          (lambda (condition)
-                            (let ((restart (find-restart 'use-value condition)))
-                              (when restart
-                                (invoke-restart restart (code-char #xFFFD)))))))
-                     (run-sandboxed
-                      "/bin/sh"
-                      (list "-c" command)
-                      :policy policy
-                      :working-directory directory
-                      :timeout timeout
-                      :merge-output-p t
-                      :output-limit *shell-maximum-output-characters*
-                      :error-output-limit *shell-maximum-output-characters*)))
-                 (output (sandbox-result-output result))
-                 (presented-output
-                   (if (sandbox-result-output-truncated-p result)
-                       (format nil
-                               "~A~%[combined output truncated after ~D characters]"
-                               output *shell-maximum-output-characters*)
-                       output)))
-            (if (sandbox-result-timed-out-p result)
-                (tool-failure
-                 (format nil "The command was stopped after ~D seconds.~%~A"
-                         timeout presented-output))
-                (tool-success
-                 (format nil "exit ~D~%~A"
-                         (sandbox-result-exit-code result)
-                         presented-output))))))))
+                 (output-limit *shell-maximum-output-characters*))
+            (tool-execution-invoke
+             (tool-context-execution-runtime context)
+             (tool-context-agent context)
+             :tool-name "shell.run"
+             :summary (format nil "~A in ~A" command directory)
+             :operation-function
+             (lambda ()
+               (workspace-tool-run-shell-command
+                command directory policy timeout output-limit))
+             :async-p async-p
+             :parent-call-id (tool-context-call-id context)))))))

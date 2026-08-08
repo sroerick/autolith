@@ -292,14 +292,16 @@
    (list
     'shell-run-tool
     "shell" "run"
-    "Run one external command line in the workspace and return its exit code and combined output."
+    "Run one external command line in the workspace, optionally as an inspectable job, and return its exit code and combined output."
     (tool-object-schema
      (json-object
       "command" (tool-string-property "The shell command line to execute.")
       "directory" (tool-string-property
                    "The working directory; defaults to the workspace.")
       "timeout-seconds" (tool-integer-property
-                         "Seconds before the command is stopped; defaults to 60 with no maximum."))
+                         "Seconds before the command is stopped; defaults to 60 with no maximum.")
+      "async" (tool-boolean-property
+               "Run as an inspectable background job; defaults to false."))
      '("command"))))
   registry)
 

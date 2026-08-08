@@ -549,6 +549,50 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                     "The mandatory job snapshot exceeds its native result bound."
                     :tool-name "job.get")))
 
+(-> task--tool-execution-handoff-result
+    (tool-execution-job agent keyword)
+    task-tool-result)
+(defun task--tool-execution-handoff-result (job viewer reason)
+  "Detach JOB and return its inspectable identity with handoff REASON."
+  (setf (session-job-detached-p job) t)
+  (let ((snapshot (session-job-snapshot job)))
+    (multiple-value-bind (form content)
+        (task--job-native-form
+         job snapshot viewer
+         :wrapper
+         (lambda (record)
+           (list :tool-execution
+                 :handed-off-p t
+                 :handoff-reason reason
+                 :job record)))
+      (task-tool-result content form))))
+
+(defmethod tool-execution-invoke
+    ((runtime task-orchestrator) parent
+     &key tool-name summary operation-function async-p parent-call-id)
+  "Run one operation exactly once, returning quickly or handing off its same job."
+  (unless (typep parent 'agent)
+    (error 'tool-error
+           :message "Inspectable execution requires an executing agent context."
+           :tool-name tool-name))
+  (let ((job
+          (task-orchestrator-start-execution-job
+           runtime parent
+           :tool-name tool-name
+           :summary summary
+           :operation-function operation-function
+           :detached-p async-p
+           :parent-call-id parent-call-id)))
+    (if async-p
+        (task--tool-execution-handoff-result job parent ':requested)
+        (multiple-value-bind (snapshot terminal-p)
+            (session-job-await job *tool-execution-blocking-grace-seconds*)
+          (declare (ignore snapshot))
+          (if terminal-p
+              (tool-execution-job-result->tool-result job)
+              (task--tool-execution-handoff-result
+               job parent ':grace-expired))))))
+
 (-> task--agent-policy-presentation (t) t)
 (defun task--agent-policy-presentation (value)
   "Return bounded policy VALUE for task.agents discovery."
