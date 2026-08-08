@@ -1666,6 +1666,7 @@
                 (tool-entered-observed-p nil)
                 (cancellation-finished-observed-p nil)
                 (next-turn-observed-p nil)
+                (producer-condition nil)
                 (producer nil))
            (tool-registry-register registry tool)
            (queued-recording-terminal-enqueue
@@ -1674,33 +1675,40 @@
            (setf producer
                  (make-thread
                   (lambda ()
-                    (setf tool-entered-observed-p
-                          (application-test-gated-tool-wait-until-entered tool 2))
-                    (when tool-entered-observed-p
-                      (queued-recording-terminal-enqueue terminal ':escape)
-                      (setf cancellation-finished-observed-p
-                            (task-tests--wait-until
-                             (lambda ()
-                               (let ((controller
-                                       (application-input-controller application)))
-                                 (and controller
-                                      (not
-                                       (application-input-controller-turn-active-p
-                                        controller))
-                                      (not
-                                       (application-input-controller--turn-cancellation-active-p
-                                        controller)))))
-                             2)))
-                    (unless cancellation-finished-observed-p
-                      (application-test-gated-tool-release tool))
-                    (when cancellation-finished-observed-p
-                      (queued-recording-terminal-enqueue
-                       terminal '(:insert "continue after cancellation"))
-                      (queued-recording-terminal-enqueue terminal ':submit)
-                      (setf next-turn-observed-p
-                            (application-test-counting-provider-wait-for-requests
-                             provider 2 2)))
-                    (queued-recording-terminal-enqueue terminal ':interrupt))
+                    (unwind-protect
+                         (handler-case
+                             (progn
+                               (setf tool-entered-observed-p
+                                     (application-test-gated-tool-wait-until-entered
+                                      tool 2))
+                               (when tool-entered-observed-p
+                                 (queued-recording-terminal-enqueue terminal ':escape)
+                                 (setf cancellation-finished-observed-p
+                                       (task-tests--wait-until
+                                        (lambda ()
+                                          (let ((controller
+                                                  (application-input-controller
+                                                   application)))
+                                            (and controller
+                                                 (not
+                                                  (application-input-controller-turn-active-p
+                                                   controller))
+                                                 (not
+                                                  (application-input-controller--turn-cancellation-active-p
+                                                   controller)))))
+                                        2)))
+                               (unless cancellation-finished-observed-p
+                                 (application-test-gated-tool-release tool))
+                               (when cancellation-finished-observed-p
+                                 (queued-recording-terminal-enqueue
+                                  terminal '(:insert "continue after cancellation"))
+                                 (queued-recording-terminal-enqueue terminal ':submit)
+                                 (setf next-turn-observed-p
+                                       (application-test-counting-provider-wait-for-requests
+                                        provider 2 2))))
+                           (error (condition)
+                             (setf producer-condition condition)))
+                      (queued-recording-terminal-enqueue terminal ':interrupt)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
                 (let ((*application-forced-exit-function*
@@ -1711,6 +1719,8 @@
              (when producer
                (join-thread producer)
                (setf producer nil)))
+           (when producer-condition
+             (error producer-condition))
            (test-assert tool-entered-observed-p
                         "the tool reaches its cancellable execution point")
            (test-assert cancellation-finished-observed-p
