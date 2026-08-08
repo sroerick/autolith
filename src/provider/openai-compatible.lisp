@@ -2,7 +2,7 @@
 
 ;;;; -- OpenAI-Compatible Chat Completions Provider --
 
-(defclass openai-compatible-provider (subscription-provider)
+(defclass openai-compatible-provider (chat-completions-provider)
   ((display-name
     :initarg :display-name
     :reader openai-compatible-provider-display-name

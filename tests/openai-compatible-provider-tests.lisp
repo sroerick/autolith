@@ -707,10 +707,12 @@
                             "none"))
               "model selection uses the registered reasoning efforts")
              (test-assert
-              (and (typep provider 'openai-compatible-provider)
-                   (eq (provider-family provider) ':test-openai)
-                   (string= (configuration-provider-endpoint provider-configuration)
-                            "https://provider.invalid/v1/chat/completions"))
+               (and (typep provider 'openai-compatible-provider)
+                    (typep provider 'chat-completions-provider)
+                    (eq (provider-wire-protocol provider) ':chat-completions)
+                    (eq (provider-family provider) ':test-openai)
+                    (string= (configuration-provider-endpoint provider-configuration)
+                             "https://provider.invalid/v1/chat/completions"))
               "registered models create the configured OpenAI-compatible provider")
              (let ((application
                      (make-instance 'application

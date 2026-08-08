@@ -75,6 +75,7 @@
                              (:file "agent/interpreter-discipline")
                              (:file "self/review")
                              (:file "provider/client")
+                             (:file "provider/wire-protocol")
                              (:file "provider/grok/client")
                              (:file "provider/openai-compatible")
                              (:file "provider/fireworks/client")

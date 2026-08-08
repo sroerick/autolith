@@ -10,7 +10,7 @@
 ;;; them again on completed items. Conversations therefore persist in the
 ;;; same namespaced shape regardless of the serving provider.
 
-(defclass grok-subscription-provider (subscription-provider)
+(defclass grok-subscription-provider (responses-api-provider)
   ()
   (:documentation "A direct Grok subscription client for the xAI Responses proxy."))
 
@@ -83,10 +83,11 @@ remain expressible."
   (coerce
    (loop for entry across tool-namespaces
          if (and (json-object-p entry)
-                 (string= (or (json-get entry "type") "") "namespace")
+                 (json-string= (json-get entry "type") "namespace")
                  (vectorp (json-get entry "tools")))
            append (loop for tool across (json-get entry "tools")
-                        collect (grok-wire-tool (json-get entry "name") tool))
+                        when (json-object-p tool)
+                          collect (grok-wire-tool (json-get entry "name") tool))
          else
            collect entry)
    'vector))
@@ -105,101 +106,26 @@ remain expressible."
         copy)
       item))
 
-(defmethod provider-normalize-output-item
-    ((provider grok-subscription-provider) (item hash-table))
-  "Strip server identifiers and split flat wire names into namespaced calls."
-  (call-next-method)
-  (when (function-call-item-p item)
-    (let* ((name (json-get item "name"))
-           (dot (and (stringp name) (position #\. name))))
-      (when (and dot (plusp dot) (< (1+ dot) (length name)))
-        (setf (gethash "namespace" item) (subseq name 0 dot)
-              (gethash "name" item) (subseq name (1+ dot))))))
-  item)
 
+;;;; -- Grok Protocol Specializations --
 
-;;;; -- Grok Request Encoding --
+(defmethod provider-responses-wire-effort
+    ((provider grok-subscription-provider) (configuration configuration))
+  "Return CONFIGURATION's Grok reasoning effort."
+  (declare (ignore provider))
+  (configuration-grok-wire-effort configuration))
 
-(defmethod provider-request-object
-    ((provider grok-subscription-provider)
-     (conversation conversation)
-     (tool-namespaces vector)
-     &key goal-context compaction-p)
-  "Build the complete stateless Grok Responses request for CONVERSATION.
+(defmethod provider-responses-hosted-tool
+    ((provider grok-subscription-provider) (configuration configuration))
+  "Return Grok's hosted tool declaration when one is enabled."
+  (declare (ignore provider))
+  (provider-web-search-tool configuration))
 
-GOAL-CONTEXT and resolved context contributions ride as transient developer
-messages exactly as they do for the Codex provider. COMPACTION-P builds a
-tool-free summarization request whose trailing developer message asks for a
-context checkpoint handoff. The second value is the context delivery that
-the transport consumes only after a completed response."
-  (let* ((configuration (provider-configuration provider))
-         (web-search-tool
-           (and (not compaction-p)
-                (provider-web-search-tool configuration)))
-         (effective-namespaces
-           (cond
-             (compaction-p
-              #())
-             (web-search-tool
-              (concatenate 'vector
-                           tool-namespaces
-                           (vector web-search-tool)))
-             (t
-              tool-namespaces)))
-         (prefix (append
-                  (list (responses-lite-developer-message
-                         (let ((*system-prompt-hosted-web-search-p*
-                                 (not (null web-search-tool))))
-                           (system-prompt configuration))))
-                  (when (and goal-context
-                             (not compaction-p))
-                    (list (responses-lite-developer-message goal-context)))))
-         (delivery
-           (unless compaction-p
-             (context-resolve-request
-              configuration
-              conversation
-              effective-namespaces
-              :goal-context goal-context)))
-         (context-message
-           (and delivery
-                (context-delivery-rendered delivery)
-                (responses-lite-developer-message
-                 (context-delivery-rendered delivery))))
-         (input (coerce (append prefix
-                                (mapcar #'grok-wire-input-item
-                                        (conversation-input-items-for-family
-                                         conversation
-                                         (provider-family provider)
-                                         :include-ephemeral-p
-                                         (not compaction-p)))
-                                (when context-message
-                                  (list context-message))
-                                (when compaction-p
-                                  (list (responses-lite-developer-message
-                                         *compaction-instructions*))))
-                        'vector)))
-    (values
-     ;; The proxy rejects a tool choice without tools, so a tool-free
-     ;; compaction request must omit the choice rather than send "auto".
-     (let ((tools (grok-wire-tools effective-namespaces)))
-       (apply #'json-object
-              (append
-               (list "model" (configuration-model configuration)
-                     "input" input
-                     "tools" tools)
-               (when (plusp (length tools))
-                 (list "tool_choice" "auto"))
-               (list "parallel_tool_calls" false
-                     "reasoning"
-                     (json-object
-                      "effort"
-                      (configuration-grok-wire-effort configuration))
-                     "store" false
-                     "stream" t
-                     "include"
-                     (json-array "reasoning.encrypted_content")))))
-     delivery)))
+(defmethod provider-responses-request-fields
+    ((provider grok-subscription-provider) (conversation conversation))
+  "Include encrypted reasoning content in Grok Responses requests."
+  (declare (ignore provider conversation))
+  (list "include" (json-array "reasoning.encrypted_content")))
 
 
 ;;;; -- Grok Transport --

@@ -46,6 +46,10 @@
 (defun grok-provider-test--item-normalization ()
   "Test wire name splitting and flattening around one provider round trip."
   (let ((provider (grok-provider-create (grok-provider-test--configuration))))
+    (test-assert
+     (and (typep provider 'responses-api-provider)
+          (eq (provider-wire-protocol provider) ':responses-api))
+     "Grok declares the shared Responses API wire protocol")
     (let ((call (json-object
                  "type" "function_call"
                  "id" "server-item-1"

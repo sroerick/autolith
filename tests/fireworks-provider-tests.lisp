@@ -133,6 +133,10 @@
                  "Fireworks wire tool names join the namespace with a dot"))
   (let ((provider (fireworks-provider-create
                    (fireworks-provider-test--configuration))))
+    (test-assert
+     (and (typep provider 'responses-api-provider)
+          (eq (provider-wire-protocol provider) ':responses-api))
+     "Fireworks declares the shared Responses API wire protocol")
     (let ((call (json-object
                  "type" "function_call"
                  "id" "fc_test"

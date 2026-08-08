@@ -14,7 +14,7 @@
 ;;; items. Conversations therefore persist in the same namespaced shape
 ;;; regardless of the serving provider.
 
-(defclass fireworks-api-key-provider (subscription-provider)
+(defclass fireworks-api-key-provider (responses-api-provider)
   ()
   (:documentation
    "A static API key client for the Fireworks Responses API."))
@@ -51,92 +51,24 @@
   "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
   (make-instance 'fireworks-api-key-provider
                  :configuration configuration
+                 :registration (model-provider-registration provider)
                  :credential-manager (provider-credential-manager provider)
                  :session-id (provider-session-id provider)))
 
 
-;;;; -- Fireworks Request Encoding --
+;;;; -- Fireworks Protocol Specializations --
 
-(defmethod provider-request-object
-    ((provider fireworks-api-key-provider)
-     (conversation conversation)
-     (tool-namespaces vector)
-     &key goal-context compaction-p)
-  "Build the complete stateless Fireworks Responses request for CONVERSATION.
+(defmethod provider-responses-wire-effort
+    ((provider fireworks-api-key-provider) (configuration configuration))
+  "Return CONFIGURATION's Fireworks reasoning effort."
+  (declare (ignore provider))
+  (configuration-fireworks-wire-effort configuration))
 
-GOAL-CONTEXT and resolved context contributions ride as transient developer
-messages exactly as they do for the subscription providers. COMPACTION-P
-builds a tool-free summarization request whose trailing developer message
-asks for a context checkpoint handoff. The second value is the context
-delivery that the transport consumes only after a completed response."
-  (let* ((configuration (provider-configuration provider))
-         (effective-namespaces
-           (if compaction-p #() tool-namespaces))
-         (prefix (append
-                  (list (responses-lite-developer-message
-                         (let ((*system-prompt-hosted-web-search-p* nil))
-                           (system-prompt configuration))))
-                  (when (and goal-context
-                             (not compaction-p))
-                    (list (responses-lite-developer-message goal-context)))))
-         (delivery
-           (unless compaction-p
-             (context-resolve-request
-              configuration
-              conversation
-              effective-namespaces
-              :goal-context goal-context)))
-         (context-message
-           (and delivery
-                (context-delivery-rendered delivery)
-                (responses-lite-developer-message
-                 (context-delivery-rendered delivery))))
-         (input (coerce (append prefix
-                                (mapcar #'grok-wire-input-item
-                                        (conversation-input-items-for-family
-                                         conversation
-                                         (provider-family provider)
-                                         :include-ephemeral-p
-                                         (not compaction-p)))
-                                (when context-message
-                                  (list context-message))
-                                (when compaction-p
-                                  (list (responses-lite-developer-message
-                                         *compaction-instructions*))))
-                        'vector)))
-    (values
-     ;; The service rejects a tool choice without tools, so a tool-free
-     ;; compaction request must omit the choice rather than send "auto".
-     (let ((tools (grok-wire-tools effective-namespaces)))
-       (apply #'json-object
-              (append
-               (list "model" (configuration-model configuration)
-                     "input" input
-                     "tools" tools)
-               (when (plusp (length tools))
-                 (list "tool_choice" "auto"))
-               (list "parallel_tool_calls" false
-                     "reasoning"
-                     (json-object
-                      "effort"
-                      (configuration-fireworks-wire-effort configuration))
-                     "store" false
-                     "stream" t
-                     "prompt_cache_key"
-                     (conversation-prompt-cache-key conversation)))))
-     delivery)))
-
-(defmethod provider-normalize-output-item
-    ((provider fireworks-api-key-provider) (item hash-table))
-  "Strip server identifiers and split flat wire names into namespaced calls."
-  (call-next-method)
-  (when (function-call-item-p item)
-    (let* ((name (json-get item "name"))
-           (dot (and (stringp name) (position #\. name))))
-      (when (and dot (plusp dot) (< (1+ dot) (length name)))
-        (setf (gethash "namespace" item) (subseq name 0 dot)
-              (gethash "name" item) (subseq name (1+ dot))))))
-  item)
+(defmethod provider-responses-request-fields
+    ((provider fireworks-api-key-provider) (conversation conversation))
+  "Add CONVERSATION's stable Fireworks prompt cache key."
+  (declare (ignore provider))
+  (list "prompt_cache_key" (conversation-prompt-cache-key conversation)))
 
 
 ;;;; -- Fireworks Transport --
