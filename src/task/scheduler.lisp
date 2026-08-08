@@ -219,24 +219,31 @@ that a body returned. An artifact that cannot be written downgrades the state to
           (task-job-tool-authorization-function job) nil)
     (values final-result final-report final-state)))
 
-(-> task-job--cancelled-ancestor-reason (task-job) (option keyword))
-(defun task-job--cancelled-ancestor-reason (job)
+(-> session-job--cancelled-ancestor-reason
+    (session-job)
+    (option keyword))
+(defun session-job--cancelled-ancestor-reason (job)
   "Return the reason an ancestor of JOB was cancelled, or NIL when none was.
 
-A child admitted just as its parent was cancelled misses the cascade, which only
-walks the subtree that existed when it ran. Checking ancestry closes that window
-before the child does any work. An ancestor already evicted from retention counts
-as live: a parent that finished normally is no reason to stop a detached child."
-  (let ((pool (job-pool job)))
+A job admitted just as its parent was cancelled can miss that cancellation's
+cross-pool walk. Checking retained ancestry before any work closes that window.
+An evicted ancestor counts as live because a normally completed parent is no
+reason to stop a detached descendant."
+  (let ((jobs
+          (task-orchestrator-list-jobs
+           (session-job-orchestrator job))))
     (dolist (identifier (job-owner-identifiers job))
-      (let ((ancestor (handler-case
-                          (job-pool-find-job pool identifier)
-                        (job-not-found ()
-                          nil))))
+      (let ((ancestor
+              (find identifier jobs :key #'job-identifier :test #'string=)))
         (when ancestor
           (let ((reason (job-cancellation-reason ancestor)))
             (when reason
               (return reason))))))))
+
+(-> task-job--cancelled-ancestor-reason (task-job) (option keyword))
+(defun task-job--cancelled-ancestor-reason (job)
+  "Return the cancellation reason inherited by task JOB, or NIL."
+  (session-job--cancelled-ancestor-reason job))
 
 (-> task-job--run (task-job) list)
 (defun task-job--run (job)
@@ -270,6 +277,145 @@ start under a cancelled ancestor, and hands over to the child."
         (append (job-owner-identifiers job)
                 (list (job-identifier job))))
       nil))
+
+
+;;;; -- Asynchronous Tool Execution --
+
+(-> tool-execution-job--run (tool-execution-job) tool-result)
+(defun tool-execution-job--run (job)
+  "Call JOB's operation exactly once after checking task ancestry."
+  (job-check-cancellation job)
+  (let ((reason (session-job--cancelled-ancestor-reason job)))
+    (when reason
+      (error 'job-aborted
+             :message
+             (format nil "Execution ~A was ~(~A~) with its parent."
+                     (session-job-identifier job) reason)
+             :identifier (job-identifier job)
+             :reason reason)))
+  (let ((operation (tool-execution-job-operation-function job)))
+    (unless operation
+      (error 'tool-error
+             :message "The asynchronous tool operation is no longer available."
+             :tool-name (tool-execution-job-tool-name job)))
+    (funcall operation)))
+
+(-> tool-execution-job--terminal-record
+    (tool-execution-job keyword t (option string))
+    (values list (option string) keyword))
+(defun tool-execution-job--terminal-record (job state result report)
+  "Return JOB's bounded terminal tool record and release its operation closure."
+  (setf (tool-execution-job-operation-function job) nil)
+  (let* ((tool-result-p (typep result 'tool-result))
+         (successful-p (and tool-result-p (tool-result-success-p result)))
+         (final-state
+           (cond
+             ((eq state :aborted) :aborted)
+             ((and (eq state :completed) successful-p) :completed)
+             (t :failed)))
+         (status (case final-state
+                   (:completed :success)
+                   (:aborted :aborted)
+                   (otherwise :failed)))
+         (content
+           (bounded-string
+            (cond
+              (tool-result-p (tool-result-content result))
+              (report report)
+              ((eq final-state :aborted) "The tool execution was aborted.")
+              (t "The tool execution produced no valid result."))
+            :limit *tool-execution-result-limit*))
+         (final-report
+           (or report
+               (and (eq final-state :failed)
+                    (not tool-result-p)
+                    content)))
+         (duration
+           (and (job-started-at job)
+                (task--milliseconds-between
+                 (job-started-at job)
+                 (get-internal-real-time)))))
+    (values (list :status status
+                  :content content
+                  :duration-ms duration)
+            (and final-report
+                 (bounded-string final-report
+                                 :limit *tool-execution-result-limit*))
+            final-state)))
+
+(-> tool-execution-job-result->tool-result
+    (tool-execution-job)
+    tool-result)
+(defun tool-execution-job-result->tool-result (job)
+  "Rebuild the ordinary tool outcome retained by terminal execution JOB."
+  (let* ((record (job-result job))
+         (content
+           (or (and (listp record) (getf record :content))
+               (job-condition-report job)
+               "The tool execution has no retained result.")))
+    (if (and (listp record) (eq (getf record :status) :success))
+        (tool-success content)
+        (tool-failure content))))
+
+(-> task-orchestrator-start-execution-job
+    (task-orchestrator agent
+     &key (:tool-name non-empty-string)
+       (:summary string)
+       (:operation-function function)
+       (:detached-p boolean)
+       (:parent-call-id (option string)))
+    tool-execution-job)
+(defun task-orchestrator-start-execution-job
+    (orchestrator parent-agent
+     &key tool-name summary operation-function detached-p parent-call-id)
+  "Admit one shell or Lisp operation for exactly-once supervised execution."
+  (check-type tool-name non-empty-string)
+  (check-type summary string)
+  (check-type operation-function function)
+  (when (typep parent-agent 'task-child-agent)
+    (let ((parent-job (task-child-agent-job parent-agent)))
+      (when (or (job-cancellation-requested-p parent-job)
+                (job-terminal-p parent-job))
+        (task-orchestrator--refuse-cancelled-parent parent-job))))
+  (let* ((session-order
+           (first (task-orchestrator-reserve-session-orders orchestrator 1)))
+         (identifier (format nil "exec:~D" session-order))
+         (entry
+           (list :function #'tool-execution-job--run
+                 :terminal-result-function
+                 #'tool-execution-job--terminal-record
+                 :name tool-name
+                 :owner-identifiers
+                 (task-parent-owner-identifiers parent-agent)
+                 :root-identifier
+                 (task-parent-root-conversation-identifier parent-agent)
+                 :initargs
+                 (list :orchestrator orchestrator
+                       :execution-identifier (make-identifier)
+                       :session-order session-order
+                       :public-identifier identifier
+                       :parent-call-id parent-call-id
+                       :detached-p detached-p
+                       :tool-name tool-name
+                       :summary
+                       (bounded-string summary
+                                       :limit *tool-execution-summary-limit*)
+                       :operation-function operation-function))))
+    (handler-case
+        (first
+         (job-pool-submit-batch
+          (task-orchestrator-execution-pool orchestrator)
+          (list entry)))
+      (job-pool-error (condition)
+        (error 'task-error
+               :message
+               (typecase condition
+                 (job-pool-capacity-exceeded
+                  (format nil
+                          "The tool execution runtime admits at most ~D live jobs."
+                          *tool-execution-maximum-live-jobs*))
+                 (t "The session job runtime is shutting down."))
+               :tool-name tool-name)))))
 
 (defun task-orchestrator--refuse-admission (orchestrator condition)
   "Re-signal pool refusal CONDITION as the typed task error task.run reports."
@@ -343,13 +489,15 @@ guarantee."
       (when (or (job-cancellation-requested-p parent-job)
                 (job-terminal-p parent-job))
         (task-orchestrator--refuse-cancelled-parent parent-job))))
-  (let ((count (length entries))
-        (root-conversation-identifier
-          (task-parent-root-conversation-identifier parent-agent))
-        (owner-identifiers (task-parent-owner-identifiers parent-agent))
-        (reference-enabled-entries (make-hash-table :test #'eq))
-        (reference-byte-limit nil)
-        (inherited-reference-items nil))
+  (let* ((count (length entries))
+         (session-orders
+           (task-orchestrator-reserve-session-orders orchestrator count))
+         (root-conversation-identifier
+           (task-parent-root-conversation-identifier parent-agent))
+         (owner-identifiers (task-parent-owner-identifiers parent-agent))
+         (reference-enabled-entries (make-hash-table :test #'eq))
+         (reference-byte-limit nil)
+         (inherited-reference-items nil))
     (dolist (entry entries)
       (let* ((definition (getf entry :definition))
              (child-configuration
@@ -371,39 +519,41 @@ guarantee."
              (agent-conversation parent-agent) reference-byte-limit)))
     (let ((pool-entries
             (mapcar
-             (lambda (entry)
-               (let* ((item (getf entry :item))
-                      (inherited-p
-                        (not (null (gethash entry reference-enabled-entries))))
-                      (nested-synchronous-p
-                        (and (typep parent-agent 'task-child-agent)
-                             (not (getf entry :detached)))))
-                 (list :function #'task-job--run
-                       :terminal-result-function #'task-job--terminal-record
-                       :name (task-orchestrator--child-name
-                              orchestrator (getf item :name))
-                       ;; A child a child agent waits for runs on the waiting
-                       ;; worker rather than occupying a second one, so a deep
-                       ;; synchronous chain cannot starve the pool.
-                       :inline-only-p nested-synchronous-p
-                       :owner-identifiers owner-identifiers
-                       :root-identifier root-conversation-identifier
-                       :initargs
-                       (list :orchestrator orchestrator
-                             :execution-identifier (make-identifier)
-                             :definition (getf entry :definition)
-                             :item item
-                             :parent-agent parent-agent
-                             :inherited-reference-p inherited-p
-                             :inherited-reference-items
-                             (and inherited-p inherited-reference-items)
-                             :parent-call-id parent-call-id
-                             :detached-p (getf entry :detached)
-                             :command-authorization-function
-                             command-authorization-function
-                             :tool-authorization-function
-                             tool-authorization-function))))
-             entries)))
+             (lambda (entry session-order)
+                (let* ((item (getf entry :item))
+                       (inherited-p
+                         (not (null (gethash entry reference-enabled-entries))))
+                       (nested-synchronous-p
+                         (and (typep parent-agent 'task-child-agent)
+                              (not (getf entry :detached)))))
+                  (list :function #'task-job--run
+                        :terminal-result-function #'task-job--terminal-record
+                        :name (task-orchestrator--child-name
+                               orchestrator (getf item :name))
+                        ;; A child a child agent waits for runs on the waiting
+                        ;; worker rather than occupying a second one, so a deep
+                        ;; synchronous chain cannot starve the pool.
+                        :inline-only-p nested-synchronous-p
+                        :owner-identifiers owner-identifiers
+                        :root-identifier root-conversation-identifier
+                        :initargs
+                        (list :orchestrator orchestrator
+                              :execution-identifier (make-identifier)
+                              :session-order session-order
+                              :definition (getf entry :definition)
+                              :item item
+                              :parent-agent parent-agent
+                              :inherited-reference-p inherited-p
+                              :inherited-reference-items
+                              (and inherited-p inherited-reference-items)
+                              :parent-call-id parent-call-id
+                              :detached-p (getf entry :detached)
+                              :command-authorization-function
+                              command-authorization-function
+                              :tool-authorization-function
+                              tool-authorization-function))))
+              entries
+              session-orders)))
       (let ((jobs
               (with-lock-held ((task-orchestrator-lock orchestrator))
                 (let ((reserved-count

@@ -23,6 +23,24 @@
 (defparameter *task-terminal-retention-limit* 64
   "The maximum terminal task summaries retained in one session.")
 
+(defparameter *tool-execution-default-maximum-concurrency* 4
+  "The default number of asynchronous tool executions that may run concurrently.")
+
+(defparameter *tool-execution-maximum-concurrency* 16
+  "The largest supported asynchronous tool-execution worker pool.")
+
+(defparameter *tool-execution-maximum-live-jobs* 64
+  "The maximum combined queued and running asynchronous tool executions.")
+
+(defparameter *tool-execution-terminal-retention-limit* 64
+  "The maximum terminal tool-execution summaries retained in one session.")
+
+(defparameter *tool-execution-summary-limit* 500
+  "The operation-summary characters retained for one tool execution.")
+
+(defparameter *tool-execution-result-limit* 8000
+  "The result characters retained for one terminal tool execution.")
+
 (defparameter *task-shutdown-timeout-seconds* 10
   "The maximum time allowed for task worker shutdown.")
 
@@ -153,10 +171,15 @@
     :reader task-orchestrator-pool
     :type job-pool
     :documentation "The supervised worker pool running this session's children.")
+   (execution-pool
+    :initarg :execution-pool
+    :reader task-orchestrator-execution-pool
+    :type job-pool
+    :documentation "The supervised worker pool running asynchronous tool calls.")
    (lock
     :initform (make-lock "Autolith task orchestrator")
     :accessor task-orchestrator-lock
-    :documentation "The lock protecting naming, hurry-up, and listener state.")
+    :documentation "The lock protecting naming, ordering, hurry-up, and listeners.")
    (hurry-up-p
     :initarg :hurry-up-p
     :initform nil
@@ -178,30 +201,63 @@
     :accessor task-orchestrator-next-name-index
     :type (integer 0)
     :documentation "The source of readable names for children given none.")
+   (next-session-order
+    :initform 0
+    :accessor task-orchestrator-next-session-order
+    :type (integer 0)
+    :documentation "The source of ordering shared by child and tool jobs.")
    (listeners
     :initform nil
     :accessor task-orchestrator-listeners
     :type list
-    :documentation "Callbacks receiving portable task lifecycle and progress events."))
+    :documentation "Callbacks receiving portable task and execution events."))
   (:documentation
-   "Session-scoped child identity, concurrency, event, and job state.
+   "Session-scoped child and asynchronous tool execution state.
 
-The queue, workers, deadline monitor, shutdown protocol, and job tables belong to
-the CL-JOBPOND pool this wraps. What stays here is what no job pool could know:
-child naming, hurry-up admission, nesting depth, and task event listeners."))
+The two CL-JOBPOND pools own queueing, workers, deadlines, shutdown, and job
+tables. The orchestrator owns cross-pool ordering, child naming, hurry-up policy,
+nesting depth, and lifecycle listeners."))
 
-(defclass task-job (job)
+(defclass session-job (job)
   ((orchestrator
     :initarg :orchestrator
-    :reader task-job-orchestrator
+    :reader session-job-orchestrator
     :type task-orchestrator
     :documentation "The session orchestrator owning this job.")
    (execution-identifier
     :initarg :execution-identifier
-    :reader task-job-execution-identifier
+    :reader session-job-execution-identifier
     :type non-empty-string
-    :documentation "The process-independent identity used for private artifacts.")
-   (definition :initarg :definition :accessor task-job-definition :type
+    :documentation "The process-independent execution identity.")
+   (session-order
+    :initarg :session-order
+    :initform nil
+    :reader session-job-explicit-order
+    :type (option (integer 1))
+    :documentation "The optional cross-pool admission order.")
+   (public-identifier
+    :initarg :public-identifier
+    :initform nil
+    :reader session-job-public-identifier
+    :type (option non-empty-string)
+    :documentation "The optional identifier exposed instead of the pool identifier.")
+   (parent-call-id
+    :initarg :parent-call-id
+    :initform nil
+    :reader session-job-parent-call-id
+    :type (option string)
+    :documentation "The provider tool call that created this job.")
+   (detached-p
+    :initarg :detached-p
+    :initform t
+    :accessor session-job-detached-p
+    :type boolean
+    :documentation "True when the caller is no longer waiting for this job."))
+  (:documentation
+   "Common session ownership, identity, ordering, and waiting state for a job."))
+
+(defclass task-job (session-job)
+  ((definition :initarg :definition :accessor task-job-definition :type
                (option task-agent-definition) :documentation
                "The full child role while this job remains live.")
    (definition-summary
@@ -228,12 +284,6 @@ child naming, hurry-up admission, nesting depth, and task event listeners."))
     :accessor task-job-inherited-reference-items
     :type list
     :documentation "The filtered parent reference messages captured at admission.")
-   (parent-call-id
-    :initarg :parent-call-id
-    :initform nil
-    :reader task-job-parent-call-id
-    :type (option string)
-    :documentation "The task.run function call that created this child.")
    (command-authorization-function
     :initarg :command-authorization-function
     :initform nil
@@ -247,9 +297,6 @@ child naming, hurry-up admission, nesting depth, and task event listeners."))
     :type (option function)
     :documentation
     "The parent capability used to authorize child external tool calls.")
-   (detached-p :initarg :detached-p :reader task-job-detached-p :type
-               boolean :documentation
-               "True when the parent did not wait for this child.")
    (progress :initform (make-instance 'task-progress) :reader
              task-job-progress :type task-progress :documentation
              "The normalized progress visible to job inspection."))
@@ -257,9 +304,46 @@ child naming, hurry-up admission, nesting depth, and task event listeners."))
    "One synchronous or detached child-agent execution.
 
 The lifecycle lock, state, publication claim, worker thread, run token, result,
-deadline, and timings are inherited from CL-JOBPOND:JOB. This adds the child agent:
-its role, assignment, parent, and borrowed capabilities, all released at terminal
-state by TASK-JOB--TERMINAL-RECORD."))
+deadline, and timings are inherited from CL-JOBPOND:JOB. Child role, assignment,
+parent, and borrowed capabilities are released at terminal state."))
+
+(defclass tool-execution-job (session-job)
+  ((tool-name
+    :initarg :tool-name
+    :reader tool-execution-job-tool-name
+    :type non-empty-string
+    :documentation "The canonical shell or Lisp tool name being executed.")
+   (summary
+    :initarg :summary
+    :accessor tool-execution-job-summary
+    :type string
+    :documentation "The bounded operation summary retained for inspection.")
+   (operation-function
+    :initarg :operation-function
+    :accessor tool-execution-job-operation-function
+    :type (option function)
+    :documentation "The live operation called once and cleared at terminal state."))
+  (:documentation "One inspectable asynchronous shell or Lisp tool execution."))
+
+(-> task-job-orchestrator (task-job) task-orchestrator)
+(defun task-job-orchestrator (job)
+  "Return the session orchestrator owning task JOB."
+  (session-job-orchestrator job))
+
+(-> task-job-execution-identifier (task-job) non-empty-string)
+(defun task-job-execution-identifier (job)
+  "Return task JOB's process-independent execution identity."
+  (session-job-execution-identifier job))
+
+(-> task-job-parent-call-id (task-job) (option string))
+(defun task-job-parent-call-id (job)
+  "Return the task.run call that created task JOB."
+  (session-job-parent-call-id job))
+
+(-> task-job-detached-p (task-job) boolean)
+(defun task-job-detached-p (job)
+  "Return true when the parent is not waiting for task JOB."
+  (session-job-detached-p job))
 
 (defclass task-child-agent (agent)
   ((definition :initarg :definition :reader task-child-agent-definition
@@ -335,7 +419,7 @@ state by TASK-JOB--TERMINAL-RECORD."))
   (:documentation "Discover effective child roles and rejected role files."))
 
 (defclass task-job-tool (task-orchestrator-tool) nil
-  (:documentation "Inspect, wait for, or cancel detached task jobs."))
+  (:documentation "Inspect, wait for, or cancel child and tool execution jobs."))
 
 (-> task-run-tool-orchestrator (task-run-tool) task-orchestrator)
 (defun task-run-tool-orchestrator (tool)

@@ -538,13 +538,15 @@
        root-conversation-identifier
        (detached-p t))
   "Register one inert queued job with pool accounting for focused tests."
-  (let ((root
-          (or root-conversation-identifier
-              (task-parent-root-conversation-identifier parent)))
-        (owners
-          (if owner-identifiers-supplied-p
-              owner-identifiers
-              (task-parent-owner-identifiers parent))))
+  (let* ((root
+           (or root-conversation-identifier
+               (task-parent-root-conversation-identifier parent)))
+         (owners
+           (if owner-identifiers-supplied-p
+               owner-identifiers
+               (task-parent-owner-identifiers parent)))
+         (session-order
+           (first (task-orchestrator-reserve-session-orders orchestrator 1))))
     (task-tests--attach-job
      orchestrator
      (lambda (identifier index)
@@ -562,6 +564,7 @@
         :maximum-runtime-milliseconds 0
         :orchestrator orchestrator
         :execution-identifier (make-identifier)
+        :session-order session-order
         :definition definition
         :item (list :name name
                     :agent (task-agent-definition-name definition)

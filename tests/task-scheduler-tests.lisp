@@ -1275,7 +1275,7 @@ exactly that race."
                       :identifier foreign-id)))
                (test-assert
                 (and (string= invisible-report missing-report)
-                     (search "No visible task job" invisible-report))
+                     (search "No visible job" invisible-report))
                 (format nil
                         "job.~A does not disclose whether an invisible identifier exists"
                         operation))))
@@ -1283,6 +1283,244 @@ exactly that race."
             (and (eq (job-state foreign) :queued)
                  (null (job-cancellation-reason foreign)))
             "invisible get, wait, and cancel attempts cannot mutate the job"))
+      (uiop:delete-directory-tree root :validate t
+                                       :if-does-not-exist :ignore)))
+  nil)
+
+
+(-> test-session-tool-execution-jobs () null)
+(defun test-session-tool-execution-jobs ()
+  "Test shared ordering, visibility, inspection, waiting, and cancellation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (definition
+           (task-agent-definition-create
+            :name "execution-owner"
+            :description "Own one asynchronous tool execution."
+            :instructions "Remain available while the tool is inspected."
+            :source :test))
+         (primary-a
+           (task-tests--primary-agent
+            configuration "execution-primary-a" registry))
+         (primary-b
+           (task-tests--primary-agent
+            configuration "execution-primary-b" registry))
+         (context
+           (make-instance 'tool-context
+                          :configuration configuration
+                          :worker nil
+                          :conversation (agent-conversation primary-a)
+                          :registry registry
+                          :agent primary-a
+                          :call-id "execution-job-test"))
+         (barrier
+           (make-instance
+            'task-test-blocking-tool
+            :namespace "test"
+            :name "execution-block"
+            :description "Hold one execution job for inspection."
+            :parameters (tool-object-schema (json-object) nil)))
+         (root-job nil)
+         (execution-job nil)
+         (operation-count 0))
+    (labels ((execute-job-tool (name arguments)
+               (tool-execute
+                (tool-registry-find registry "job" name)
+                context
+                arguments)))
+      (unwind-protect
+           (progn
+             (setf root-job
+                   (task-tests--register-job
+                    orchestrator primary-a definition :name "execution-root"))
+             (let ((child
+                     (task-tests--child-viewer
+                      configuration root-job :registry registry)))
+               (setf execution-job
+                     (task-orchestrator-start-execution-job
+                      orchestrator child
+                      :tool-name "lisp.eval"
+                      :summary "Wait inside one inspectable execution job."
+                      :operation-function
+                      (lambda ()
+                        (incf operation-count)
+                        (tool-execute barrier context (json-object)))
+                      :detached-p t
+                      :parent-call-id "execution-job-test"))
+               (test-assert
+                (task-tests--wait-until
+                 (lambda ()
+                   (with-lock-held ((task-test-blocking-tool-lock barrier))
+                     (task-test-blocking-tool-started-p barrier)))
+                 2)
+                "the asynchronous operation starts on the execution pool")
+               (let ((root-id (session-job-identifier root-job))
+                     (execution-id (session-job-identifier execution-job)))
+                 (test-assert
+                  (and (string= execution-id
+                                (format nil "exec:~D"
+                                        (session-job-order execution-job)))
+                       (not (string= root-id execution-id))
+                       (equal
+                        (mapcar #'session-job-identifier
+                                (task-orchestrator-list-jobs orchestrator))
+                        (list root-id execution-id)))
+                  "child and execution jobs have distinct globally ordered identities")
+                 (test-assert
+                  (equal
+                   (mapcar #'session-job-identifier
+                           (task-orchestrator-list-visible-jobs
+                            orchestrator primary-a))
+                   (list root-id execution-id))
+                  "the owning primary sees task and execution jobs")
+                 (test-assert
+                  (equal
+                   (mapcar #'session-job-identifier
+                           (task-orchestrator-list-visible-jobs
+                            orchestrator child))
+                   (list execution-id))
+                  "a child sees its execution job but not its own task job")
+                 (test-assert
+                  (null
+                   (task-orchestrator-list-visible-jobs
+                    orchestrator primary-b))
+                  "another primary cannot inspect the execution job")
+                 (let* ((list-result
+                          (execute-job-tool
+                           "list" (json-object "offset" 0 "limit" 32)))
+                        (records
+                          (getf (rest (tool-result-details list-result)) :jobs)))
+                   (test-assert
+                    (and (tool-result-success-p list-result)
+                         (equal (mapcar (lambda (record) (getf record :id))
+                                        records)
+                                (list root-id execution-id))
+                         (equal (mapcar (lambda (record) (getf record :type))
+                                        records)
+                                '(:task :tool))
+                         (string= (getf (second records) :tool) "lisp.eval"))
+                    "job.list presents child and tool execution jobs"))
+                 (let* ((get-result
+                          (execute-job-tool
+                           "get" (json-object "id" execution-id)))
+                        (record (getf (tool-result-details get-result) :job)))
+                   (test-assert
+                    (and (tool-result-success-p get-result)
+                         (eq (getf record :type) :tool)
+                         (eq (getf record :state) :running)
+                         (string= (getf record :tool) "lisp.eval"))
+                    "job.get renders a live execution job without task artifacts"))
+                 (let* ((wait-result
+                          (execute-job-tool
+                           "wait"
+                           (json-object "id" execution-id
+                                        "timeout-seconds" 0)))
+                        (details (rest (tool-result-details wait-result))))
+                   (test-assert
+                    (and (tool-result-success-p wait-result)
+                         (not (getf details :terminal-p))
+                         (eq (getf (getf details :job) :state) :running))
+                    "job.wait returns a nonterminal execution snapshot on timeout"))
+                 (let* ((cancel-result
+                          (execute-job-tool
+                           "cancel" (json-object "id" root-id)))
+                        (details (rest (tool-result-details cancel-result))))
+                   (test-assert
+                    (and (tool-result-success-p cancel-result)
+                         (getf details :accepted-p)
+                         (member execution-id
+                                 (getf details :cancelled-descendants)
+                                 :test #'string=))
+                    "cancelling a task job also cancels owned execution jobs"))
+                 (multiple-value-bind (snapshot terminal-p)
+                     (session-job-await execution-job 2)
+                   (test-assert
+                    (and terminal-p
+                         (= operation-count 1)
+                         (eq (getf snapshot :state) :aborted)
+                         (eq (getf (getf snapshot :result) :status) :aborted)
+                         (null
+                          (tool-execution-job-operation-function execution-job)))
+                    "the execution runs once, aborts, and releases its closure")))))
+        (task-tests--release-blocking-tool barrier)
+        (when (and execution-job (not (job-terminal-p execution-job)))
+          (session-job-cancel execution-job :test-cleanup)
+          (session-job-await execution-job 2))
+        (when (and root-job (not (job-terminal-p root-job)))
+          (task-job-cancel root-job :test-cleanup)
+          (task-job-await root-job 2))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist :ignore))))
+  nil)
+
+
+(-> test-tool-execution-retention () null)
+(defun test-tool-execution-retention ()
+  "Test bounded execution retention and complete two-pool detachment."
+  (let* ((*tool-execution-terminal-retention-limit* 2)
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (primary
+           (task-tests--primary-agent
+            configuration "execution-retention-primary" registry))
+         (identifiers nil)
+         (closed-p nil))
+    (unwind-protect
+         (progn
+           (dotimes (index 3)
+             (let ((job
+                     (task-orchestrator-start-execution-job
+                      orchestrator primary
+                      :tool-name "lisp.eval"
+                      :summary (format nil "retained execution ~D" index)
+                      :operation-function
+                      (lambda ()
+                        (tool-success (format nil "result ~D" index)))
+                      :detached-p t)))
+               (push (session-job-identifier job) identifiers)
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 2)
+                 (test-assert
+                  (and terminal-p
+                       (eq (getf snapshot :state) :completed)
+                       (null (tool-execution-job-operation-function job)))
+                  "each retained execution completes and releases its closure"))))
+           (setf identifiers (nreverse identifiers))
+           (let ((retained
+                   (job-pool-list-jobs
+                    (task-orchestrator-execution-pool orchestrator))))
+             (test-assert
+              (and (= (length retained) 2)
+                   (equal (mapcar #'session-job-identifier retained)
+                          (rest identifiers))
+                   (null
+                    (task-orchestrator--find-job
+                     orchestrator (first identifiers)))
+                   (zerop (task-orchestrator-session-live-count orchestrator)))
+              "the execution pool retains exactly its newest terminal records"))
+           (setf closed-p (task-orchestrator-close orchestrator))
+           (test-assert closed-p "both session job pools close completely")
+           (task-orchestrator-detach orchestrator)
+           (test-assert
+            (and
+             (null
+              (job-pool-list-jobs (task-orchestrator-pool orchestrator)))
+             (null
+              (job-pool-list-jobs
+               (task-orchestrator-execution-pool orchestrator))))
+            "detachment removes both closed job graphs"))
+      (unless closed-p
+        (ignore-errors (task-orchestrator-close orchestrator)))
+      (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
   nil)

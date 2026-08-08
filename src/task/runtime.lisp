@@ -55,6 +55,22 @@ submission and cl-jobpond workers."
                :minimum 0)))))
   nil)
 
+(-> task-orchestrator--apply-execution-limits-locked (task-orchestrator) null)
+(defun task-orchestrator--apply-execution-limits-locked (orchestrator)
+  "Apply asynchronous tool execution bounds while ORCHESTRATOR is locked."
+  (let ((pool (task-orchestrator-execution-pool orchestrator)))
+    (with-lock-held ((cl-jobpond::job-pool--lock pool))
+      (setf (job-pool-maximum-concurrency pool)
+            (task--environment-integer
+             "AUTOLITH_EXECUTION_MAX_CONCURRENCY"
+             *tool-execution-default-maximum-concurrency*
+             :minimum 1
+             :maximum *tool-execution-maximum-concurrency*)
+            (job-pool-maximum-batch-size pool) 1
+            (job-pool-maximum-live-jobs pool)
+            *tool-execution-maximum-live-jobs*)))
+  nil)
+
 (-> task-orchestrator-set-hurry-up (task-orchestrator boolean) task-orchestrator)
 (defun task-orchestrator-set-hurry-up (orchestrator enabled-p)
   "Apply ENABLED-P and its hard admission limits to ORCHESTRATOR.
@@ -106,6 +122,22 @@ call for, so changing a limit never costs a session threads it may never use."
   "Return the children ORCHESTRATOR is currently running on workers."
   (job-pool-active-count (task-orchestrator-pool orchestrator)))
 
+(-> task-orchestrator-execution-live-count (task-orchestrator) (integer 0))
+(defun task-orchestrator-execution-live-count (orchestrator)
+  "Return ORCHESTRATOR's queued, running, and finalizing tool executions."
+  (job-pool-live-count (task-orchestrator-execution-pool orchestrator)))
+
+(-> task-orchestrator-execution-active-count (task-orchestrator) (integer 0))
+(defun task-orchestrator-execution-active-count (orchestrator)
+  "Return the tool executions currently running on workers."
+  (job-pool-active-count (task-orchestrator-execution-pool orchestrator)))
+
+(-> task-orchestrator-session-live-count (task-orchestrator) (integer 0))
+(defun task-orchestrator-session-live-count (orchestrator)
+  "Return all live child and tool jobs in ORCHESTRATOR."
+  (+ (task-orchestrator-live-count orchestrator)
+     (task-orchestrator-execution-live-count orchestrator)))
+
 (-> task-orchestrator-lifecycle-state (task-orchestrator) keyword)
 (defun task-orchestrator-lifecycle-state (orchestrator)
   "Return ORCHESTRATOR's :OPEN, :CLOSING, or :CLOSED lifecycle state."
@@ -121,8 +153,8 @@ call for, so changing a limit never costs a session threads it may never use."
 
 (-> task-orchestrator-create () task-orchestrator)
 (defun task-orchestrator-create ()
-  "Create an orchestrator and its worker pool from the task environment."
-  (let* ((pool
+  "Create an orchestrator and its lazy worker pools from the environment."
+  (let* ((task-pool
            (make-job-pool
             :name "Autolith task"
             :job-class 'task-job
@@ -139,42 +171,58 @@ call for, so changing a limit never costs a session threads it may never use."
              *task-default-maximum-runtime-milliseconds*
              :minimum 0)
             :terminal-retention-limit *task-terminal-retention-limit*
-            ;; Most sessions never spawn a child agent, and a session that has
-            ;; not spawned one must stay single threaded so it can still save its
-            ;; own image. Admission starts the workers when they are first needed.
+            :start-threads-p nil))
+         (execution-pool
+           (make-job-pool
+            :name "Autolith execution"
+            :job-class 'tool-execution-job
+            :maximum-concurrency
+            (task--environment-integer
+             "AUTOLITH_EXECUTION_MAX_CONCURRENCY"
+             *tool-execution-default-maximum-concurrency*
+             :minimum 1
+             :maximum *tool-execution-maximum-concurrency*)
+            :maximum-batch-size 1
+            :maximum-live-jobs *tool-execution-maximum-live-jobs*
+            :maximum-runtime-milliseconds 0
+            :terminal-retention-limit
+            *tool-execution-terminal-retention-limit*
+            ;; Sessions without child or asynchronous tool work stay single
+            ;; threaded so they can save their own image.
             :start-threads-p nil))
          (orchestrator
            (make-instance 'task-orchestrator
-                          :pool pool
+                          :pool task-pool
+                          :execution-pool execution-pool
                           :maximum-depth
                           (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
                                                      *task-default-maximum-depth*
                                                      :minimum 1))))
-    (job-pool-add-listener pool #'task--pool-event-listener)
+    (job-pool-add-listener task-pool #'task--pool-event-listener)
+    (job-pool-add-listener execution-pool #'task--pool-event-listener)
     orchestrator))
 
 (-> task-orchestrator-refresh (task-orchestrator) task-orchestrator)
 (defun task-orchestrator-refresh (orchestrator)
-  "Apply current limits to ORCHESTRATOR and ensure its reusable workers."
-  (let ((pool (task-orchestrator-pool orchestrator)))
+  "Apply current limits and refresh both reusable worker pools."
+  (let ((task-pool (task-orchestrator-pool orchestrator))
+        (execution-pool (task-orchestrator-execution-pool orchestrator)))
     (with-lock-held ((task-orchestrator-lock orchestrator))
       (task-orchestrator--apply-limits-locked
        orchestrator
        :refresh-runtime-p t)
+      (task-orchestrator--apply-execution-limits-locked orchestrator)
       (setf (task-orchestrator-maximum-depth orchestrator)
             (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
                                        *task-default-maximum-depth* :minimum 1)))
-    ;; A detached pool dropped its listeners along with its job table, so this
-    ;; registration has to be repeated rather than assumed to have survived.
-    (job-pool-add-listener pool #'task--pool-event-listener)
-    ;; The pool reaps threads that died before deciding whether it is still
-    ;; closing, so a close that timed out and then finished reopens here.
-    (handler-case
-        (job-pool-refresh pool)
-      (job-pool-closed ()
-        (error 'task-error
-               :message "The task runtime is still shutting down."
-               :tool-name "task.run"))))
+    (dolist (pool (list task-pool execution-pool))
+      (job-pool-add-listener pool #'task--pool-event-listener)
+      (handler-case
+          (job-pool-refresh pool)
+        (job-pool-closed ()
+          (error 'task-error
+                 :message "The session job runtime is still shutting down."
+                 :tool-name "job.list")))))
   orchestrator)
 
 
@@ -249,49 +297,87 @@ identifier is what an agent uses to refer to its own children."
                       (mod (floor (1- index) (length adjectives))
                            (length nouns)))))))
 
+(-> task-orchestrator-reserve-session-orders
+    (task-orchestrator (integer 1))
+    list)
+(defun task-orchestrator-reserve-session-orders (orchestrator count)
+  "Reserve COUNT consecutive cross-pool job orders."
+  (with-lock-held ((task-orchestrator-lock orchestrator))
+    (loop repeat count
+          collect (incf (task-orchestrator-next-session-order orchestrator)))))
+
+(-> session-job-identifier (session-job) non-empty-string)
+(defun session-job-identifier (job)
+  "Return JOB's stable model-visible identifier."
+  (or (session-job-public-identifier job)
+      (job-identifier job)))
+
+(-> session-job-order (session-job) (integer 1))
+(defun session-job-order (job)
+  "Return JOB's cross-pool order, falling back to its pool index."
+  (or (session-job-explicit-order job)
+      (job-index job)))
+
+(-> session-job-root-conversation-identifier
+    (session-job)
+    non-empty-string)
+(defun session-job-root-conversation-identifier (job)
+  "Return the primary conversation identifier owning JOB's session tree."
+  (job-root-identifier job))
+
 
 ;;;; -- Pool Events Seen As Task Events --
 
 (defun task--pool-event-listener (channel payload)
-  "Re-emit one pool CHANNEL event in Autolith's own task vocabulary.
-
-The pool reports only that a job started or became terminal; Autolith's observers
-want the child role, the parent tool call, and the conversation file. Only the job
-can answer that, so the event carries it. A job of another class is ignored."
+  "Re-emit one pool lifecycle event in Autolith's session vocabulary."
   (let ((job (getf payload :job)))
-    (when (and (typep job 'task-job) (eq channel :job-lifecycle))
+    (when (and (typep job 'session-job) (eq channel :job-lifecycle))
       (let ((status (getf payload :status)))
-        (task-orchestrator-emit
-         (task-job-orchestrator job)
-         :task-subagent-lifecycle
-         (task-job--lifecycle-event job
-                                    status
-                                    (if (eq status :started)
-                                        nil
-                                        (job-result job)))))))
-  nil)
+        (etypecase job
+          (task-job
+           (task-orchestrator-emit
+            (session-job-orchestrator job)
+            :task-subagent-lifecycle
+            (task-job--lifecycle-event
+             job status
+             (if (eq status :started) nil (job-result job)))))
+          (tool-execution-job
+           (task-orchestrator-emit
+            (session-job-orchestrator job)
+            :tool-execution-lifecycle
+            (list :id (session-job-identifier job)
+                  :tool (tool-execution-job-tool-name job)
+                  :status status
+                  :parent-tool-call-id (session-job-parent-call-id job)))))))
+  nil))
 
 
 ;;;; -- Shutdown --
 
 (-> task-orchestrator-close (task-orchestrator) boolean)
 (defun task-orchestrator-close (orchestrator)
-  "Cancel all children, stop the pool's threads, and report complete shutdown."
+  "Cancel all jobs, stop both pools, and report complete shutdown."
   (let ((cl-jobpond:*shutdown-timeout-seconds* *task-shutdown-timeout-seconds*))
-    (job-pool-close (task-orchestrator-pool orchestrator))))
+    (let ((execution-closed-p
+            (job-pool-close (task-orchestrator-execution-pool orchestrator)))
+          (task-closed-p
+            (job-pool-close (task-orchestrator-pool orchestrator))))
+      (and execution-closed-p task-closed-p))))
 
 (-> task-orchestrator-detach (task-orchestrator) null)
 (defun task-orchestrator-detach (orchestrator)
-  "Remove closed runtime state before an image save or registry replacement."
-  (handler-case
-      (job-pool-detach (task-orchestrator-pool orchestrator))
-    (job-pool-detach-refused (condition)
-      (error 'task-error
-             :message
-             (if (eq (job-pool-detach-refused-reason condition) :not-closed)
-                 "Task runtime must close before it can detach."
-                 "Task runtime cannot detach while its threads are alive.")
-             :tool-name "task.run")))
+  "Remove both closed pool graphs before an image save or registry replacement."
+  (dolist (pool (list (task-orchestrator-execution-pool orchestrator)
+                      (task-orchestrator-pool orchestrator)))
+    (handler-case
+        (job-pool-detach pool)
+      (job-pool-detach-refused (condition)
+        (error 'task-error
+               :message
+               (if (eq (job-pool-detach-refused-reason condition) :not-closed)
+                   "Session job runtimes must close before they can detach."
+                   "Session job runtimes cannot detach while their threads are alive.")
+               :tool-name "job.list"))))
   (with-lock-held ((task-orchestrator-lock orchestrator))
     (setf (task-orchestrator-listeners orchestrator) nil))
   nil)
@@ -408,10 +494,8 @@ handed rather than storing a second copy."
 
 (-> task-job-root-conversation-identifier (task-job) non-empty-string)
 (defun task-job-root-conversation-identifier (job)
-  "Return the primary conversation identifier owning JOB's task tree.
-
-A task tree is a pool job tree, named by the conversation that started it."
-  (job-root-identifier job))
+  "Return the primary conversation identifier owning JOB's task tree."
+  (session-job-root-conversation-identifier job))
 
 (-> task-job-agent-name (task-job) non-empty-string)
 (defun task-job-agent-name (job)
@@ -475,7 +559,7 @@ The lifecycle fields are read once through the pool snapshot so they cannot mix
 values from either side of a terminal transition."
   (let* ((snapshot (job-snapshot job))
          (result (copy-tree (getf snapshot :result))))
-    (list :job-id (job-identifier job)
+    (list :job-id (session-job-identifier job)
           :execution-id (task-job-execution-identifier job)
           :type :task
           :state (getf snapshot :state)
@@ -493,27 +577,73 @@ values from either side of a terminal transition."
           :cancellation-reason (getf snapshot :cancellation-reason)
           :condition-report (getf snapshot :condition-report))))
 
-(defun task-orchestrator-find-job (orchestrator identifier)
-  "Return IDENTIFIER's job or signal a typed task error."
-  (handler-case
-      (job-pool-find-job (task-orchestrator-pool orchestrator) identifier)
-    (job-not-found ()
-      (error 'task-error :message
-             (format nil "No task job named ~A exists." identifier)
-             :tool-name "job.get" :task-id identifier))))
+(-> session-job-snapshot (session-job) list)
+(defgeneric session-job-snapshot (job)
+  (:documentation
+   "Return a coherent portable lifecycle snapshot for session JOB."))
 
+(defmethod session-job-snapshot ((job task-job))
+  "Return task JOB's child-agent snapshot."
+  (task-job-snapshot job))
+
+(defmethod session-job-snapshot ((job tool-execution-job))
+  "Return JOB's asynchronous tool execution snapshot."
+  (let* ((snapshot (job-snapshot job))
+         (progress (getf snapshot :progress)))
+    (list :job-id (session-job-identifier job)
+          :execution-id (session-job-execution-identifier job)
+          :type :tool
+          :state (getf snapshot :state)
+          :detached (session-job-detached-p job)
+          :tool (tool-execution-job-tool-name job)
+          :summary (tool-execution-job-summary job)
+          :progress
+          (list :duration-ms (getf progress :duration-milliseconds))
+          :result (copy-tree (getf snapshot :result))
+          :cancellation-reason (getf snapshot :cancellation-reason)
+          :condition-report (getf snapshot :condition-report))))
+
+(-> task-orchestrator-list-jobs (task-orchestrator) list)
 (defun task-orchestrator-list-jobs (orchestrator)
-  "Return all jobs sorted by child index."
-  (job-pool-list-jobs (task-orchestrator-pool orchestrator)))
+  "Return every retained child and tool job in shared admission order."
+  (stable-sort
+   (append (job-pool-list-jobs (task-orchestrator-pool orchestrator))
+           (job-pool-list-jobs
+            (task-orchestrator-execution-pool orchestrator)))
+   #'<
+   :key #'session-job-order))
 
-(-> task-job-live-activity (task-job) (option list))
-(defun task-job-live-activity (job)
-  "Return JOB's lightweight queued or running presentation snapshot."
+(-> task-orchestrator--find-job
+    (task-orchestrator string)
+    (option session-job))
+(defun task-orchestrator--find-job (orchestrator identifier)
+  "Return IDENTIFIER's retained session job, or NIL when it is absent."
+  (find identifier
+        (task-orchestrator-list-jobs orchestrator)
+        :key #'session-job-identifier
+        :test #'string=))
+
+(-> task-orchestrator-find-job (task-orchestrator string) session-job)
+(defun task-orchestrator-find-job (orchestrator identifier)
+  "Return IDENTIFIER's retained session job or signal a typed task error."
+  (or (task-orchestrator--find-job orchestrator identifier)
+      (error 'task-error
+             :message (format nil "No job named ~A exists." identifier)
+             :tool-name "job.get"
+             :task-id identifier)))
+
+(-> session-job-live-activity (session-job) (option list))
+(defgeneric session-job-live-activity (job)
+  (:documentation
+   "Return JOB's lightweight live presentation, or NIL when it has none."))
+
+(defmethod session-job-live-activity ((job task-job))
+  "Return task JOB's lightweight queued or running presentation snapshot."
   (let ((state (job-state job)))
     (when (member state '(:queued :running) :test #'eq)
       (let ((progress (task-job-progress job)))
         (with-lock-held ((task-progress-lock progress))
-          (list :id (job-identifier job)
+          (list :id (session-job-identifier job)
                 :index (job-index job)
                 :agent (task-job-agent-name job)
                 :state state
@@ -524,16 +654,26 @@ values from either side of a terminal transition."
                  :limit *task-retained-assignment-limit*)
                 :detached (task-job-detached-p job)))))))
 
+(defmethod session-job-live-activity ((job tool-execution-job))
+  "Leave tool executions to job tools rather than the child activity strip."
+  (declare (ignore job))
+  nil)
+
+(-> task-job-live-activity (task-job) (option list))
+(defun task-job-live-activity (job)
+  "Return task JOB's lightweight live presentation snapshot."
+  (session-job-live-activity job))
+
 (-> task-orchestrator-live-activities (task-orchestrator) list)
 (defun task-orchestrator-live-activities (orchestrator)
-  "Return stable lightweight snapshots for every queued or running child."
+  "Return stable lightweight snapshots for every presented live job."
   (loop for job in (task-orchestrator-list-jobs orchestrator)
-        for activity = (task-job-live-activity job)
+        for activity = (session-job-live-activity job)
         when activity
           collect activity))
 
-(-> task-job-visible-to-agent-p (task-job agent) boolean)
-(defun task-job-visible-to-agent-p (job viewer)
+(-> session-job-visible-to-agent-p (session-job agent) boolean)
+(defun session-job-visible-to-agent-p (job viewer)
   "Return true when VIEWER owns JOB through conversation or task ancestry."
   (not
    (null
@@ -542,55 +682,110 @@ values from either side of a terminal transition."
                 (job-owner-identifiers job)
                 :test #'string=)
         (string=
-         (task-job-root-conversation-identifier job)
+         (session-job-root-conversation-identifier job)
          (conversation-identifier (agent-conversation viewer)))))))
+
+(-> task-job-visible-to-agent-p (task-job agent) boolean)
+(defun task-job-visible-to-agent-p (job viewer)
+  "Return true when VIEWER owns task JOB through conversation or ancestry."
+  (session-job-visible-to-agent-p job viewer))
 
 (-> task-orchestrator-list-visible-jobs
     (task-orchestrator agent)
     list)
 (defun task-orchestrator-list-visible-jobs (orchestrator viewer)
-  "Return jobs VIEWER may inspect, ordered by child index."
+  "Return session jobs VIEWER may inspect, in shared admission order."
   (remove-if-not
-   (lambda (job) (task-job-visible-to-agent-p job viewer))
+   (lambda (job) (session-job-visible-to-agent-p job viewer))
    (task-orchestrator-list-jobs orchestrator)))
 
 (-> task-orchestrator-find-visible-job
     (task-orchestrator string agent string)
-    task-job)
+    session-job)
 (defun task-orchestrator-find-visible-job
     (orchestrator identifier viewer tool-name)
   "Return VIEWER's visible IDENTIFIER or signal a non-disclosing task error."
-  (let ((job (handler-case
-                 (job-pool-find-job (task-orchestrator-pool orchestrator)
-                                    identifier)
-               (job-not-found ()
-                 nil))))
-    (if (and job (task-job-visible-to-agent-p job viewer))
+  (let ((job (task-orchestrator--find-job orchestrator identifier)))
+    (if (and job (session-job-visible-to-agent-p job viewer))
         job
         (error 'task-error
-               :message (format nil "No visible task job named ~A exists."
+               :message (format nil "No visible job named ~A exists."
                                 identifier)
                :tool-name tool-name
                :task-id identifier))))
 
-(-> task-job-cancel (task-job keyword) (values boolean list))
-(defun task-job-cancel (job reason)
-  "Cancel JOB and every retained live descendant, returning accepted identities.
+(-> session-job-cancel
+    (session-job keyword)
+    (values boolean list))
+(defgeneric session-job-cancel (job reason)
+  (:documentation
+   "Cancel session JOB and return whether it was accepted plus descendant IDs."))
 
-One pass over the subtree is enough. JOB is cancelled before its descendants are
-walked, and admission refuses a child whose parent already carries a cancellation
-reason, so a job cancelled here cannot add to the subtree behind the walk."
+(defmethod session-job-cancel ((job session-job) reason)
+  "Cancel JOB and every retained descendant in its own pool."
   (multiple-value-bind (accepted-p cascaded)
       (job-cancel job :reason reason :cascade-p t)
     (values accepted-p
-            (sort (mapcar #'job-identifier cascaded) #'string<))))
+            (sort (mapcar #'session-job-identifier cascaded) #'string<))))
+
+(-> task-job--subtree-identifiers (task-job) list)
+(defun task-job--subtree-identifiers (job)
+  "Return base identifiers for retained task jobs in JOB's subtree."
+  (let ((identifier (job-identifier job)))
+    (loop for candidate in
+            (job-pool-list-jobs
+             (task-orchestrator-pool (task-job-orchestrator job)))
+          when (or (eq candidate job)
+                   (member identifier
+                           (job-owner-identifiers candidate)
+                           :test #'string=))
+            collect (job-identifier candidate))))
+
+(defmethod session-job-cancel ((job task-job) reason)
+  "Cancel task JOB and accepted tool executions owned by its task subtree."
+  (multiple-value-bind (accepted-p cancelled-descendants)
+      (call-next-method)
+    (when accepted-p
+      (let ((task-identifiers (task-job--subtree-identifiers job)))
+        (dolist (candidate
+                 (job-pool-list-jobs
+                  (task-orchestrator-execution-pool
+                   (task-job-orchestrator job))))
+          (when (some (lambda (identifier)
+                        (member identifier
+                                (job-owner-identifiers candidate)
+                                :test #'string=))
+                      task-identifiers)
+            (multiple-value-bind (cancelled-p cascaded)
+                (job-cancel candidate :reason reason :cascade-p t)
+              (when cancelled-p
+                (push (session-job-identifier candidate)
+                      cancelled-descendants))
+              (dolist (descendant cascaded)
+                (push (session-job-identifier descendant)
+                      cancelled-descendants)))))))
+    (values accepted-p
+            (sort (remove-duplicates cancelled-descendants :test #'string=)
+                  #'string<))))
+
+(-> task-job-cancel (task-job keyword) (values boolean list))
+(defun task-job-cancel (job reason)
+  "Cancel task JOB and every retained child or tool descendant."
+  (session-job-cancel job reason))
+
+(-> session-job-await
+    (session-job (option (real 0)))
+    (values list boolean))
+(defun session-job-await (job timeout-seconds)
+  "Wait up to TIMEOUT-SECONDS and return JOB's snapshot plus terminal flag."
+  (multiple-value-bind (pool-snapshot terminal-p)
+      (job-await job :timeout-seconds timeout-seconds)
+    (declare (ignore pool-snapshot))
+    (values (session-job-snapshot job) terminal-p)))
 
 (-> task-job-await
     (task-job (option (real 0)))
     (values list boolean))
 (defun task-job-await (job timeout-seconds)
-  "Wait up to TIMEOUT-SECONDS and return a snapshot plus terminal flag."
-  (multiple-value-bind (pool-snapshot terminal-p)
-      (job-await job :timeout-seconds timeout-seconds)
-    (declare (ignore pool-snapshot))
-    (values (task-job-snapshot job) terminal-p)))
+  "Wait up to TIMEOUT-SECONDS and return task JOB's snapshot plus terminal flag."
+  (session-job-await job timeout-seconds))

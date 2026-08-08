@@ -413,6 +413,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (append
      (list :id (getf snapshot :job-id)
            :execution-id (getf snapshot :execution-id)
+           :type :task
            :agent (getf snapshot :agent)
            :state state
            :detached (and (getf snapshot :detached) t)
@@ -433,6 +434,60 @@ The primary blocking field and legacy inverse async field are mutually exclusive
               :request-count (getf progress :request-count)
               :duration-ms (getf progress :duration-ms)
               :model (getf progress :model)))))))
+
+(-> session-job-native-record
+    (session-job list agent
+     &key (:preview-limit integer) (:include-progress-p boolean))
+    list)
+(defgeneric session-job-native-record
+    (job snapshot viewer &key preview-limit include-progress-p)
+  (:documentation "Return one bounded native inspection record for session JOB."))
+
+(defmethod session-job-native-record
+    ((job task-job) snapshot viewer
+     &key (preview-limit 0) include-progress-p)
+  "Return task JOB's artifact-aware native inspection record."
+  (let* ((root
+           (task--artifact-group-root
+            (agent-configuration viewer)
+            (task-job-root-conversation-identifier job)))
+         (artifact-path
+           (namestring
+            (merge-pathnames
+             (format nil "~A/result.sexp"
+                     (task-job-execution-identifier job))
+             root))))
+    (task--job-native-record
+     snapshot
+     :artifact-path artifact-path
+     :preview-limit preview-limit
+     :include-progress-p include-progress-p)))
+
+(defmethod session-job-native-record
+    ((job tool-execution-job) snapshot viewer
+     &key (preview-limit 0) include-progress-p)
+  "Return tool execution JOB's bounded native inspection record."
+  (declare (ignore viewer preview-limit))
+  (let ((progress (getf snapshot :progress))
+        (result (getf snapshot :result)))
+    (append
+     (list :id (getf snapshot :job-id)
+           :execution-id (getf snapshot :execution-id)
+           :type :tool
+           :tool (tool-execution-job-tool-name job)
+           :summary (getf snapshot :summary)
+           :state (getf snapshot :state)
+           :detached (and (getf snapshot :detached) t)
+           :result
+           (and result
+                (list :status (getf result :status)
+                      :content (getf result :content)
+                      :duration-ms (getf result :duration-ms)))
+           :cancellation-reason (getf snapshot :cancellation-reason)
+           :condition-report (getf snapshot :condition-report))
+     (when include-progress-p
+       (list :progress
+             (list :duration-ms (getf progress :duration-ms)))))))
 
 (-> task--task-run-native-form
     (list list &key (:duration-milliseconds integer)
@@ -470,40 +525,29 @@ The primary blocking field and legacy inverse async field are mutually exclusive
         do (setf preview-limit (floor preview-limit 2))))
 
 (-> task--job-native-form
-    (task-job list agent &key (:preview-limit integer)
-                              (:wrapper (option function)))
+    (session-job list agent &key (:preview-limit integer)
+                                  (:wrapper (option function)))
     (values list string))
 (defun task--job-native-form
     (job snapshot viewer &key (preview-limit 6000) wrapper)
-  "Fit one JOB snapshot into a bounded native tool result."
-  (let* ((root
-           (task--artifact-group-root
-            (agent-configuration viewer)
-            (task-job-root-conversation-identifier job)))
-         (artifact-path
-           (namestring
-            (merge-pathnames
-             (format nil "~A/result.sexp"
-                     (task-job-execution-identifier job))
-             root))))
-    (loop for limit = preview-limit then (floor limit 2)
-          for record =
-            (task--job-native-record
-             snapshot
-             :artifact-path artifact-path
-             :preview-limit limit
-             :include-progress-p t)
-          for form = (if wrapper
-                         (funcall wrapper record)
-                         (list :job record))
-          for content = (task--write-readable-sexp form :pretty-p t)
-          when (<= (length content) *task-tool-content-limit*)
-            return (values form content)
-          when (zerop limit)
-            do (error 'task-error
-                      :message
-                      "The mandatory job snapshot exceeds its native result bound."
-                      :tool-name "job.get"))))
+  "Fit one session JOB snapshot into a bounded native tool result."
+  (loop for limit = preview-limit then (floor limit 2)
+        for record =
+          (session-job-native-record
+           job snapshot viewer
+           :preview-limit limit
+           :include-progress-p t)
+        for form = (if wrapper
+                       (funcall wrapper record)
+                       (list :job record))
+        for content = (task--write-readable-sexp form :pretty-p t)
+        when (<= (length content) *task-tool-content-limit*)
+          return (values form content)
+        when (zerop limit)
+          do (error 'task-error
+                    :message
+                    "The mandatory job snapshot exceeds its native result bound."
+                    :tool-name "job.get")))
 
 (-> task--agent-policy-presentation (t) t)
 (defun task--agent-policy-presentation (value)
@@ -606,11 +650,17 @@ The primary blocking field and legacy inverse async field are mutually exclusive
          (selected nil))
     (dolist (snapshot candidates)
       (let* ((summary
-               (list :id (getf snapshot :job-id)
-                     :agent (getf snapshot :agent)
-                     :state (getf snapshot :state)
-                     :detached (and (getf snapshot :detached) t)
-                     :status (getf (getf snapshot :result) :status)))
+               (append
+                (list :id (getf snapshot :job-id)
+                      :type (getf snapshot :type))
+                (when (getf snapshot :agent)
+                  (list :agent (getf snapshot :agent)))
+                (when (getf snapshot :tool)
+                  (list :tool (getf snapshot :tool)
+                        :summary (getf snapshot :summary)))
+                (list :state (getf snapshot :state)
+                      :detached (and (getf snapshot :detached) t)
+                      :status (getf (getf snapshot :result) :status))))
              (trial (nconc (copy-list selected) (list summary)))
              (next (+ offset (length trial)))
              (form
@@ -799,7 +849,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                   :tool-name "job.list"))
          (let* ((jobs
                   (task-orchestrator-list-visible-jobs orchestrator viewer))
-                (snapshots (mapcar #'task-job-snapshot jobs)))
+                (snapshots (mapcar #'session-job-snapshot jobs)))
            (multiple-value-bind (form content)
                (task--job-list-page snapshots offset limit)
              (task-tool-result content form)))))
@@ -822,8 +872,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
          (cond
            ((string= operation "cancel")
             (multiple-value-bind (accepted-p cancelled-descendants)
-                (task-job-cancel job :user)
-              (let ((snapshot (task-job-snapshot job)))
+                (session-job-cancel job :user)
+              (let ((snapshot (session-job-snapshot job)))
                 (multiple-value-bind (form content)
                     (task--job-native-form
                      job snapshot viewer
@@ -848,10 +898,11 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                                *task-job-wait-maximum-seconds*)
                        :tool-name "job.wait"))
               (when (and (plusp timeout)
-                         (typep viewer 'task-child-agent))
+                         (typep viewer 'task-child-agent)
+                         (typep job 'task-job))
                 (job-run-inline job))
               (multiple-value-bind (snapshot terminal-p)
-                  (task-job-await job timeout)
+                  (session-job-await job timeout)
                 (multiple-value-bind (form content)
                     (task--job-native-form
                      job snapshot viewer
@@ -863,7 +914,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                              :job record)))
                   (task-tool-result content form)))))
            (t
-            (let ((snapshot (task-job-snapshot job)))
+            (let ((snapshot (session-job-snapshot job)))
               (multiple-value-bind (form content)
                   (task--job-native-form job snapshot viewer)
                 (task-tool-result content form)))))))
@@ -939,9 +990,9 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (return-from task-augment-tool-registry registry))
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
-          (tool-object-schema
-           (json-object "id" (tool-string-property "The task job identifier."))
-           '("id")))
+           (tool-object-schema
+            (json-object "id" (tool-string-property "The session job identifier."))
+            '("id")))
          (job-list-schema
            (tool-object-schema
             (json-object
@@ -973,24 +1024,24 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "list" :description
-                                           "List synchronous and detached task jobs in this session."
+                                           "List child and tool execution jobs in this session."
                                            :parameters job-list-schema))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "get" :description
-                                           "Inspect one task job's lifecycle, progress, and result."
+                                           "Inspect one session job's lifecycle, progress, and result."
                                            :parameters identifier-schema))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "wait" :description
-                                           "Wait briefly for one task job and return its current or terminal result."
+                                           "Wait briefly for one session job and return its current or terminal result."
                                            :parameters
                                            (tool-object-schema
                                             (json-object "id"
                                                          (tool-string-property
-                                                          "The task job identifier.")
+                                                          "The session job identifier.")
                                                          "timeout-seconds"
                                                          (tool-integer-property
                                                           "Maximum wait in seconds; defaults to 60."))
@@ -999,6 +1050,6 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "cancel" :description
-                                           "Request interruption of one queued or running task job."
+                                           "Request interruption of one queued or running session job."
                                            :parameters identifier-schema))
     registry))

@@ -206,6 +206,8 @@
     (test-task-publication-coherence)
     (test-task-terminal-wakeup-ordering)
     (test-task-job-visibility)
+    (test-session-tool-execution-jobs)
+    (test-tool-execution-retention)
     (test-task-job-list-pagination)
     (test-task-refresh-after-delayed-close)
     (test-task-terminal-cancellation-and-publication)
