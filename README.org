@@ -6,7 +6,7 @@
 ┌[RAM 35%] ~/c/frob [master]
 └ 00:50 lho-thinkpad mag took λ ./bin/autolith
 
-  :::.      :::        AUTOLITH v0.27.0
+  :::.      :::        AUTOLITH v0.28.0
   ;;`;;     ;;;        ────────────────────────────────────────
  ,[[ '[[,   [[[        model         gpt-5.6-sol (effort ultra)
 c$$$cc$$$c  $$'        workspace     /root/common-lisp/frob/
@@ -22,8 +22,8 @@ Sandboxing is no substitute for human oversight
 Autolith, or AL, is a small terminal agent that runs inside a Common Lisp
 image. It owns its model loop, tools, conversations, authentication, live
 mutation, checkpoints, and recovery. It talks directly to the ChatGPT Codex
-and Grok subscription services and does not launch or bundle the Codex CLI
-or Grok Build.
+and Grok subscription services, plus the Anthropic and Fireworks APIs, and does
+not launch or bundle the Codex CLI or Grok Build.
 
 Autolith supports Linux x86-64 and native macOS arm64 source checkouts and Nix
 packages on SBCL. Binary releases remain Linux x86-64. Autolith is dogfoodable,
