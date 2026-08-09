@@ -1997,11 +1997,17 @@ invariant errors while callback conditions propagate unchanged."
              :pathname pathname
              :sequence nil))))
 
-(-> conversation--tool-content-block-from-record
-    (conversation list (option integer))
-    t)
+(-> conversation--record-error (conversation list string) null)
+(defun conversation--record-error (conversation properties message)
+  "Signal persisted record invariant failure MESSAGE for CONVERSATION."
+  (error 'conversation-invariant-error
+         :message message
+         :pathname (conversation-pathname conversation)
+         :sequence (getf properties :seq)))
+
+(-> conversation--tool-content-block-from-record (conversation list list) t)
 (defun conversation--tool-content-block-from-record
-    (conversation descriptor sequence)
+    (conversation descriptor properties)
   "Restore one durable tool content DESCRIPTOR for CONVERSATION."
   (cond
     ((and (listp descriptor)
@@ -2015,10 +2021,8 @@ invariant errors while callback conditions propagate unchanged."
       (getf descriptor :image)
       (conversation-image-artifact-root conversation)))
     (t
-     (error 'conversation-invariant-error
-            :message "A persisted tool content block is invalid."
-            :pathname (conversation-pathname conversation)
-            :sequence sequence))))
+     (conversation--record-error
+      conversation properties "A persisted tool content block is invalid."))))
 
 (-> conversation--property-present-p (list keyword) boolean)
 (defun conversation--property-present-p (properties indicator)
@@ -2026,15 +2030,181 @@ invariant errors while callback conditions propagate unchanged."
   (loop for tail on properties by #'cddr
         thereis (eq (first tail) indicator)))
 
+(-> conversation--record-images (conversation list) list)
+(defun conversation--record-images (conversation descriptors)
+  "Restore image DESCRIPTORS for CONVERSATION."
+  (mapcar
+   (lambda (descriptor)
+     (image-attachment-from-record
+      descriptor (conversation-image-artifact-root conversation)))
+   descriptors))
+
+(-> conversation--project-record (keyword conversation list) t)
+(defgeneric conversation--project-record (kind conversation properties)
+  (:documentation "Project KIND-specific record PROPERTIES into CONVERSATION.")
+  (:method ((kind t) conversation properties)
+    nil))
+
+(defmethod conversation--project-record
+    ((kind (eql :message)) conversation properties)
+  (let ((images (getf properties :images)))
+    (when images
+      (let* ((content (getf properties :content))
+             (attachments (conversation--record-images conversation images)))
+        (unless (stringp content)
+          (conversation--record-error
+           conversation properties
+           "A persisted image message has invalid text content."))
+        (conversation--append-input-item
+         conversation (user-message-item content attachments))))))
+
+(defmethod conversation--project-record
+    ((kind (eql :tool-result)) conversation properties)
+  (cond
+    ((conversation--property-present-p properties :content-blocks)
+     (let ((call-id (getf properties :call-id))
+           (descriptors (getf properties :content-blocks)))
+       (unless (consp descriptors)
+         (conversation--record-error
+          conversation properties
+          "A persisted multimodal tool result has no content blocks."))
+       (unless (non-empty-string-p call-id)
+         (conversation--record-error
+          conversation properties
+          "A persisted multimodal tool result has no call identifier."))
+       (conversation--append-input-item
+        conversation
+        (function-call-output-item
+         call-id
+         (conversation--tool-content-output
+          (mapcar
+           (lambda (descriptor)
+             (conversation--tool-content-block-from-record
+              conversation descriptor properties))
+           descriptors))))))
+    ((conversation--property-present-p properties :images)
+     (let ((call-id (getf properties :call-id))
+           (descriptors (getf properties :images)))
+       (unless (consp descriptors)
+         (conversation--record-error
+          conversation properties "A persisted image tool result has no images."))
+       (unless (non-empty-string-p call-id)
+         (conversation--record-error
+          conversation properties
+          "A persisted image tool result has no call identifier."))
+       (conversation--append-input-item
+        conversation
+        (function-call-output-item
+         call-id
+         (conversation--tool-content-output
+          (append
+           (when (non-empty-string-p (or (getf properties :output) ""))
+             (list (getf properties :output)))
+           (conversation--record-images conversation descriptors)))))))))
+
+(defmethod conversation--project-record
+    ((kind (eql :inherited-reference)) conversation properties)
+  (let ((wire-json (getf properties :wire-json)))
+    (unless (and (non-empty-string-p
+                  (getf properties :source-conversation-id))
+                 (stringp wire-json))
+      (conversation--record-error
+       conversation properties
+       "A persisted inherited reference has invalid metadata."))
+    (let ((items
+            (handler-case
+                (json-decode wire-json)
+              (error ()
+                (conversation--record-error
+                 conversation properties
+                 "A persisted inherited reference contains invalid JSON.")))))
+      (unless (and (vectorp items)
+                   (plusp (length items))
+                   (conversation--inherited-reference-boundary-p
+                    (aref items (1- (length items)))))
+        (conversation--record-error
+         conversation properties
+         "A persisted inherited reference has an invalid boundary."))
+      (let ((messages
+              (loop for index below (1- (length items))
+                    for message =
+                      (conversation--inherited-reference-message
+                       (aref items index))
+                    when message collect message)))
+        (unless (= (length messages) (1- (length items)))
+          (conversation--record-error
+           conversation properties
+           "A persisted inherited reference contains a nonportable item."))
+        (dolist (item messages)
+          (conversation--append-input-item conversation item))
+        (conversation--append-input-item
+         conversation
+         (conversation--inherited-reference-boundary-item))))))
+
+(defmethod conversation--project-record
+    ((kind (eql :summary)) conversation properties)
+  (let ((content (getf properties :content)))
+    (when (stringp content)
+      (setf (conversation-input-items conversation)
+            (list (conversation-summary-item content))
+            (conversation-last-total-tokens conversation) 0))))
+
+(defmethod conversation--project-record
+    ((kind (eql :native-compaction)) conversation properties)
+  (let ((family (getf properties :family))
+        (wire-json (getf properties :wire-json))
+        (summary (getf properties :summary)))
+    (unless (and (keywordp family)
+                 (stringp wire-json)
+                 (non-empty-string-p summary))
+      (conversation--record-error
+       conversation properties
+       "A persisted native compaction checkpoint is invalid."))
+    (let ((item
+            (handler-case
+                (json-decode wire-json)
+              (error ()
+                (conversation--record-error
+                 conversation properties
+                 "A persisted native compaction checkpoint is not JSON.")))))
+      (native-compaction-item-canonicalize item)
+      (unless (native-compaction-item-p item)
+        (conversation--record-error
+         conversation properties
+         "A persisted native compaction item is unsupported."))
+      (setf (conversation-input-items conversation)
+            (list item (conversation-summary-item summary))
+            (conversation-turn-state conversation) nil
+            (conversation-last-total-tokens conversation) 0
+            (gethash item (conversation-input-item-families conversation))
+            family))))
+
+(defmethod conversation--project-record
+    ((kind (eql :provider)) conversation properties)
+  (let ((total (conversation--usage-total
+                (getf (getf properties :metadata) :usage))))
+    (when total
+      (setf (conversation-last-total-tokens conversation) total))))
+
+(defmethod conversation--project-record
+    ((kind (eql :configuration)) conversation properties)
+  (let ((model (getf properties :model))
+        (reasoning-effort (getf properties :reasoning-effort)))
+    (unless (conversation--model-selection-p model reasoning-effort)
+      (conversation--record-error
+       conversation properties
+       "A persisted conversation model selection is invalid."))
+    (setf (conversation-model conversation) model
+          (conversation-reasoning-effort conversation) reasoning-effort)))
+
 (-> conversation--apply-record (conversation list) null)
 (defun conversation--apply-record (conversation record)
   "Project one persisted RECORD into CONVERSATION's in-memory state."
   (unless (and (listp record) (keywordp (first record)))
-    (error 'conversation-invariant-error
-           :message "A persisted conversation record is not a keyword list."
-           :pathname (conversation-pathname conversation)
-           :sequence nil))
-  (let* ((properties (rest record))
+    (conversation--record-error
+     conversation nil "A persisted conversation record is not a keyword list."))
+  (let* ((kind (first record))
+         (properties (rest record))
          (sequence (getf properties :seq))
          (wire-json (getf properties :wire-json))
          (content-blocks-p
@@ -2044,213 +2214,36 @@ invariant errors while callback conditions propagate unchanged."
          (wire-json-p
            (conversation--property-present-p properties :wire-json))
          (picker-search-message (conversation--record-preview record)))
-    (when (eq (first record) :tool-result)
+    (when (eq kind :tool-result)
       (when (> (count t (list content-blocks-p images-p wire-json-p)) 1)
-        (error 'conversation-invariant-error
-               :message
-               "A persisted tool result contains multiple wire projections."
-               :pathname (conversation-pathname conversation)
-               :sequence sequence))
+        (conversation--record-error
+         conversation properties
+         "A persisted tool result contains multiple wire projections."))
       (when (and (or content-blocks-p images-p)
                  (not (eq (getf properties :status) :ok)))
-        (error 'conversation-invariant-error
-               :message
-               "A failed persisted tool result cannot contain image output."
-               :pathname (conversation-pathname conversation)
-               :sequence sequence)))
+        (conversation--record-error
+         conversation properties
+         "A failed persisted tool result cannot contain image output.")))
     (conversation--note-activity conversation record)
     (when picker-search-message
       (conversation--note-picker-search-message
        conversation picker-search-message))
-    (when (eq (first record) :goal)
+    (when (eq kind :goal)
       (setf (conversation-latest-goal-record conversation) record))
     (when (integerp sequence)
       (setf (conversation-next-sequence conversation)
             (max (conversation-next-sequence conversation) (1+ sequence))))
-    (when (and (eq (first record) :message)
-               (getf (rest record) :images))
-      (let* ((content (getf (rest record) :content))
-             (attachments
-               (mapcar
-                (lambda (descriptor)
-                  (image-attachment-from-record
-                   descriptor
-                   (conversation-image-artifact-root conversation)))
-                (getf (rest record) :images))))
-        (unless (stringp content)
-          (error 'conversation-invariant-error
-                 :message "A persisted image message has invalid text content."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (conversation--append-input-item
-         conversation
-         (user-message-item content attachments))))
-    (when (and (eq (first record) :tool-result)
-               content-blocks-p)
-      (let ((call-id (getf (rest record) :call-id))
-            (descriptors (getf (rest record) :content-blocks)))
-        (unless (consp descriptors)
-          (error 'conversation-invariant-error
-                 :message
-                 "A persisted multimodal tool result has no content blocks."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (unless (non-empty-string-p call-id)
-          (error 'conversation-invariant-error
-                 :message
-                 "A persisted multimodal tool result has no call identifier."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (let ((blocks
-                (mapcar
-                 (lambda (descriptor)
-                   (conversation--tool-content-block-from-record
-                    conversation descriptor sequence))
-                 descriptors)))
-          (conversation--append-input-item
-           conversation
-           (function-call-output-item
-            call-id
-            (conversation--tool-content-output blocks))))))
-    (when (and (eq (first record) :tool-result)
-               images-p)
-      (let ((call-id (getf (rest record) :call-id))
-            (descriptors (getf (rest record) :images)))
-        (unless (consp descriptors)
-          (error 'conversation-invariant-error
-                 :message "A persisted image tool result has no images."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (unless (non-empty-string-p call-id)
-          (error 'conversation-invariant-error
-                 :message "A persisted image tool result has no call identifier."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (let ((attachments
-                (mapcar
-                 (lambda (descriptor)
-                   (image-attachment-from-record
-                    descriptor
-                    (conversation-image-artifact-root conversation)))
-                 descriptors)))
-          (conversation--append-input-item
-           conversation
-           (function-call-output-item
-            call-id
-            (conversation--tool-content-output
-             (append
-              (when (non-empty-string-p
-                     (or (getf (rest record) :output) ""))
-                (list (getf (rest record) :output)))
-              attachments)))))))
-    (when (eq (first record) :inherited-reference)
-      (unless (and (non-empty-string-p
-                    (getf properties :source-conversation-id))
-                   (stringp wire-json))
-        (error 'conversation-invariant-error
-               :message "A persisted inherited reference has invalid metadata."
-               :pathname (conversation-pathname conversation)
-               :sequence sequence))
-      (let ((items
-              (handler-case
-                  (json-decode wire-json)
-                (error ()
-                  (error 'conversation-invariant-error
-                         :message
-                         "A persisted inherited reference contains invalid JSON."
-                         :pathname (conversation-pathname conversation)
-                         :sequence sequence)))))
-        (unless (and (vectorp items)
-                     (plusp (length items))
-                     (conversation--inherited-reference-boundary-p
-                      (aref items (1- (length items)))))
-          (error 'conversation-invariant-error
-                 :message "A persisted inherited reference has an invalid boundary."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (let ((messages
-                (loop for index below (1- (length items))
-                      for message =
-                        (conversation--inherited-reference-message
-                         (aref items index))
-                      when message collect message)))
-          (unless (= (length messages) (1- (length items)))
-            (error 'conversation-invariant-error
-                   :message
-                   "A persisted inherited reference contains a nonportable item."
-                   :pathname (conversation-pathname conversation)
-                   :sequence sequence))
-          (dolist (item messages)
-            (conversation--append-input-item conversation item))
-          (conversation--append-input-item
-           conversation
-           (conversation--inherited-reference-boundary-item)))))
-    (when (and (member (first record)
-                       '(:message :provider-item :tool-result))
+    (conversation--project-record kind conversation properties)
+    (when (and (member kind '(:message :provider-item :tool-result))
                (stringp wire-json)
                (not images-p)
                (not content-blocks-p))
       (let ((item (json-decode wire-json)))
         (unless (json-object-p item)
-          (error 'conversation-invariant-error
-                 :message "A persisted provider item is not a JSON object."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (conversation--append-input-item conversation item)))
-    (when (eq (first record) :summary)
-      (let ((content (getf (rest record) :content)))
-        (when (stringp content)
-          (setf (conversation-input-items conversation)
-                (list (conversation-summary-item content))
-                (conversation-last-total-tokens conversation) 0))))
-    (when (eq (first record) :native-compaction)
-      (let ((family (getf (rest record) :family))
-            (wire-json (getf (rest record) :wire-json))
-            (summary (getf (rest record) :summary)))
-        (unless (and (keywordp family)
-                     (stringp wire-json)
-                     (non-empty-string-p summary))
-          (error 'conversation-invariant-error
-                 :message "A persisted native compaction checkpoint is invalid."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (let ((item
-                (handler-case
-                    (json-decode wire-json)
-                  (error ()
-                    (error 'conversation-invariant-error
-                           :message
-                           "A persisted native compaction checkpoint is not JSON."
-                           :pathname (conversation-pathname conversation)
-                           :sequence sequence)))))
-          (native-compaction-item-canonicalize item)
-          (unless (native-compaction-item-p item)
-            (error 'conversation-invariant-error
-                   :message
-                   "A persisted native compaction item is unsupported."
-                   :pathname (conversation-pathname conversation)
-                   :sequence sequence))
-          (setf (conversation-input-items conversation)
-                (list item (conversation-summary-item summary))
-                (conversation-turn-state conversation) nil
-                (conversation-last-total-tokens conversation) 0
-                (gethash item (conversation-input-item-families conversation))
-                family))))
-    (when (eq (first record) :provider)
-      (let ((total (conversation--usage-total
-                    (getf (getf (rest record) :metadata) :usage))))
-        (when total
-          (setf (conversation-last-total-tokens conversation) total))))
-    (when (eq (first record) :configuration)
-      (let ((model (getf (rest record) :model))
-            (reasoning-effort (getf (rest record) :reasoning-effort)))
-        (unless (conversation--model-selection-p model reasoning-effort)
-          (error 'conversation-invariant-error
-                 :message "A persisted conversation model selection is invalid."
-                 :pathname (conversation-pathname conversation)
-                 :sequence sequence))
-        (setf (conversation-model conversation) model
-              (conversation-reasoning-effort conversation) reasoning-effort))))
+          (conversation--record-error
+           conversation properties
+           "A persisted provider item is not a JSON object."))
+        (conversation--append-input-item conversation item))))
   nil)
 
 (-> conversation-peek-header (pathname) (option list))

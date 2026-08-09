@@ -1396,12 +1396,17 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
          (root (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration :identifier "test-turn"))
+                (projection
+                  (conversation-create configuration :identifier "future-record"))
                 (assistant-item
                   (json-object
                    "type" "message"
                    "role" "assistant"
                    "content" (json-array
                               (json-object "type" "output_text" "text" "hello")))))
+           (conversation--apply-record projection '(:future-record :seq 7))
+           (test-assert (= (conversation-next-sequence projection) 8)
+                        "unknown record kinds retain common projection")
            (test-assert (not (conversation-persisted-p conversation))
                         "a new conversation begins only in memory")
            (test-assert (not (probe-file (conversation-pathname conversation)))
