@@ -2562,7 +2562,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
      &key (:steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
-          (:user-message-input (option user-message-input))
+          (:user-message-input (option (or string user-message-input)))
           (:continuation-p boolean))
     agent-observer)
 (defun application-agent-observer
@@ -2693,7 +2693,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                       :header "❯ you"
                       :timestamp timestamp
                       :body
-                      (user-message-input-preview user-message-input))))
+                      (user-message-input-text user-message-input))))
                 (setf (application-rendered-sequence application) sequence)))
             (application-publish-recovery-session application))
            (:provider-progress
@@ -2823,12 +2823,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           user-message-persisted-function pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil))
   "Persist and run one model turn for CONTENT while retaining editable input."
-  (let* ((submission
-           (etypecase content
-             (string (user-message-input-create :text content))
-             (user-message-input content)))
-         (conversation (application-conversation application))
-         (ui (application-ui application)))
+  (let ((conversation (application-conversation application))
+        (ui (application-ui application)))
     (unwind-protect
          (progn
            (application-set-activity application (application-thinking-label))
@@ -2836,14 +2832,14 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             application
             (agent-run-user-turn
               (application-agent application)
-              submission
+              content
               :observer (application-agent-observer
                          application
                          :steering-function steering-function
                          :steering-persisted-function steering-persisted-function
                          :user-message-persisted-function
                          user-message-persisted-function
-                         :user-message-input submission
+                         :user-message-input content
                          :continuation-p continuation-p)
               :goal-context (application-goal-context application)
               :tools-p tools-p

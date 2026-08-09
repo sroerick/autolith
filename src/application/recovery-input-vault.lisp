@@ -633,7 +633,7 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
 (-> application-recovery-input-vault--copy-work (list) list)
 (defun application-recovery-input-vault--copy-work (work)
   "Return a detached copy of one restorable WORK item."
-  (list (first work) (application-input--copy (second work))))
+  (list (first work) (user-message-input-copy (second work))))
 
 (-> application-recovery-input-vault--capture-work (list) list)
 (defun application-recovery-input-vault--capture-work (capture)
@@ -652,11 +652,11 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
      (mapcar
       (lambda (entry)
         (list ':message
-              (application-input--copy
+              (user-message-input-copy
                (agent-steering-input-content entry))))
       (getf capture :steering-in-flight-items))
      (mapcar (lambda (input)
-               (list ':message (application-input--copy input)))
+              (list ':message (user-message-input-copy input)))
              (getf capture :steering-items))
      (mapcar #'application-recovery-input-vault--copy-work
              (nthcdr prefix-count work-items)))))
@@ -871,7 +871,7 @@ The caller must hold CONTROLLER's lock."
 (defun application-recovery-input-vault--preview (input)
   "Return one sanitized bounded preview for recovered INPUT."
   (let* ((text
-           (sanitize-text (application-input--preview input)
+           (sanitize-text (user-message-input-text input)
                           :single-line-p t))
          (visible
            (text-cell-prefix

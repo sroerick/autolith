@@ -23,6 +23,11 @@
          (source (merge-pathnames "source image.png" root)))
     (unwind-protect
          (progn
+           (test-assert
+            (and (string= (user-message-input-text "plain input") "plain input")
+                 (null (user-message-input-image-pathnames "plain input"))
+                 (not (eq (user-message-input-copy "plain input") "plain input")))
+            "legacy strings satisfy the user input protocol")
            (test-conversation--write-tiny-png source)
            (test-assert
             (equal (image-input-recognize-pasted-path
@@ -35,6 +40,7 @@
                     (user-message-input-create
                      :text "Describe [Image #1]."
                      :image-pathnames (list (truename source))))
+                  (input-copy (user-message-input-copy input))
                   (item (conversation-append-user-message conversation input))
                   (content (json-get item "content"))
                   (records
@@ -46,6 +52,20 @@
                     (merge-pathnames
                      (getf descriptor :artifact)
                      (conversation-image-artifact-root conversation))))
+             (test-assert
+              (and (not (eq input-copy input))
+                   (not (eq (user-message-input-text input-copy) (user-message-input-text input)))
+                   (not (eq (user-message-input-image-pathnames input-copy)
+                            (user-message-input-image-pathnames input)))
+                   (string= (user-message-input-text input-copy)
+                            (user-message-input-text input))
+                   (equal (user-message-input-image-pathnames input-copy)
+                          (user-message-input-image-pathnames input)))
+              "rich user input copies preserve text and image attachments")
+             (test-assert
+              (handler-case (progn (conversation-append-user-message conversation "") nil)
+                (configuration-error () t))
+              "empty legacy user input remains invalid")
              (test-assert (= (length content) 4)
                           "one image contributes tags, image data, and user text")
              (test-assert

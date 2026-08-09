@@ -392,39 +392,15 @@ second reports whether shutdown was prepared."
          (application-input-controller-condition-variable controller)))
       (values active-p prepared-p))))
 
-(-> application-input--text ((or string user-message-input)) string)
-(defun application-input--text (input)
-  "Return the editable text carried by INPUT."
-  (etypecase input
-    (string input)
-    (user-message-input (user-message-input-text input))))
-
-(-> application-input--copy
-    ((or string user-message-input))
-    (or string user-message-input))
-(defun application-input--copy (input)
-  "Return a detached copy of INPUT."
-  (etypecase input
-    (string (copy-seq input))
-    (user-message-input (user-message-input-copy input))))
-
-(-> application-input--preview ((or string user-message-input)) string)
-(defun application-input--preview (input)
-  "Return INPUT's text for pending-work presentation."
-  (etypecase input
-    (string input)
-    (user-message-input (user-message-input-preview input))))
-
 (-> application--message-input
     ((or string user-message-input))
     (option (or string user-message-input)))
 (defun application--message-input (input)
   "Return INPUT's model message, or NIL when it is empty or a slash command."
-  (let ((text (application-input--text input)))
+  (let ((text (user-message-input-text input)))
     (cond
       ((and (not (non-empty-string-p text))
-            (not (and (typep input 'user-message-input)
-                      (user-message-input-image-pathnames input))))
+            (null (user-message-input-image-pathnames input)))
        nil)
       ((uiop:string-prefix-p "//" text)
        (etypecase input
@@ -436,7 +412,7 @@ second reports whether shutdown was prepared."
       ((uiop:string-prefix-p "/" text)
        nil)
       (t
-       (application-input--copy input)))))
+       (user-message-input-copy input)))))
 
 (-> application-input-controller--follow-up-work-p (t) boolean)
 (defun application-input-controller--follow-up-work-p (work)
@@ -452,7 +428,7 @@ second reports whether shutdown was prepared."
 (defun application-input-controller--input-work (input)
   "Return queued work for INPUT, or NIL when INPUT has no effective content."
   (let ((message (application--message-input input))
-        (text (application-input--text input)))
+        (text (user-message-input-text input)))
     (cond
       (message
        (list ':message message))
@@ -955,12 +931,12 @@ snapshot after shutdown cleared the process-local queues."
   (with-lock-held ((application-input-controller-lock controller))
     (terminal-ui-set-pending-inputs
      (application-ui (application-input-controller-application controller))
-     (mapcar #'application-input--preview
+     (mapcar #'user-message-input-text
              (application-input-controller-steering-items controller))
      (loop for work in (application-input-controller-work-items controller)
            for input = (second work)
            when (typep input '(or string user-message-input))
-             collect (application-input--preview input)))
+             collect (user-message-input-text input)))
     (unless (application-input-controller-stopping-p controller)
       (application-input-controller--persist-pending controller)))
   nil)
@@ -1100,7 +1076,7 @@ snapshot after shutdown cleared the process-local queues."
               (application-input-controller-queued-work-paused-p controller) nil
               (application-input-controller-work-items controller)
               (nconc (application-input-controller-work-items controller)
-                     (list (list kind (application-input--copy input))))
+                     (list (list kind (user-message-input-copy input))))
               queued-p t)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
@@ -1164,9 +1140,9 @@ snapshot after shutdown cleared the process-local queues."
         (if (application-input-controller-active-p controller)
             (setf (application-input-controller-steering-items controller)
                   (nconc (application-input-controller-steering-items controller)
-                         (list (application-input--copy input))))
+                         (list (user-message-input-copy input))))
             (progn
-              (push (list ':message (application-input--copy input))
+              (push (list ':message (user-message-input-copy input))
                     (application-input-controller-work-items controller))
               (when (application-input-controller-follow-up-edit-index controller)
                 (incf
@@ -1423,7 +1399,7 @@ Blank input keeps the recalled work selected. Active messages commit to the
 current turn's steering queue before its completion can race. Active commands
 commit their busy policy before the recalled work is removed."
   (let* ((message (application--message-input input))
-         (text (application-input--text input))
+         (text (user-message-input-text input))
          (work (application-input-controller--input-work input))
          (invocation
            (and (null message)
@@ -1460,7 +1436,7 @@ commit their busy policy before the recalled work is removed."
                    (setf (application-input-controller-steering-items controller)
                          (nconc
                           (application-input-controller-steering-items controller)
-                          (list (application-input--copy message)))))
+                          (list (user-message-input-copy message)))))
                   ((eq busy-action ':hold)
                    (setf (application-input-controller-work-items controller)
                          (nconc
@@ -1498,7 +1474,7 @@ commit their busy policy before the recalled work is removed."
     boolean)
 (defun application-input-controller--vault-command-p (input)
   "Return true when INPUT is one of the recovery-vault control commands."
-  (let ((text (application-input--text input)))
+  (let ((text (user-message-input-text input)))
     (not
      (null
       (member text
@@ -1531,7 +1507,7 @@ commit their busy policy before the recalled work is removed."
   (application-localgroup-resume
    (application-input-controller-application controller))
   (let ((message (application--message-input input))
-        (text (application-input--text input)))
+        (text (user-message-input-text input)))
     (cond
       (message
        (if steer-p
@@ -1608,7 +1584,7 @@ commit their busy policy before the recalled work is removed."
                           in (application-input-controller-work-items controller)
                         for input = (second queued-work)
                         when (typep input '(or string user-message-input))
-                          collect (application-input--preview input)))))))
+                          collect (user-message-input-text input)))))))
     (when work
       (terminal-ui-recall-follow-up
        (application-ui (application-input-controller-application controller))
@@ -1674,7 +1650,7 @@ commit their busy policy before the recalled work is removed."
                               when (typep queued-input
                                           '(or string user-message-input))
                                 collect
-                                (application-input--preview queued-input)))
+                                (user-message-input-text queued-input)))
                   (setf (application-input-controller-follow-up-edit-work controller)
                         current-work))
               (sb-thread:condition-broadcast
@@ -2628,11 +2604,7 @@ provider reset deadline, or a five-minute fallback when no reset is known."
           (let ((input
                   (case (first item)
                     (:message
-                     (let ((message (second item)))
-                       (etypecase message
-                         (string message)
-                         (user-message-input
-                          (user-message-input-text message)))))
+                     (user-message-input-text (second item)))
                     (:command (second item))
                     (t nil))))
             (when (non-empty-string-p input)

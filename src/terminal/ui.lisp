@@ -288,18 +288,13 @@ emergency terminal input responsive while another thread owns presentation."
     null)
 (defun terminal-ui--set-draft-input (ui input)
   "Replace UI's editor and attachment state with INPUT."
-  (etypecase input
-    (string
-     (setf (terminal-ui-image-attachments ui) nil)
-     (line-editor-set-text (terminal-ui-editor ui) (sanitize-text input)))
-    (user-message-input
-     (setf (terminal-ui-image-attachments ui)
-           (loop for pathname in (user-message-input-image-pathnames input)
-                 for number from 1
-                 collect (cons (terminal-ui--image-label number) pathname)))
-     (line-editor-set-text
-      (terminal-ui-editor ui)
-      (sanitize-text (user-message-input-text input)))))
+  (setf (terminal-ui-image-attachments ui)
+        (loop for pathname in (user-message-input-image-pathnames input)
+              for number from 1
+              collect (cons (terminal-ui--image-label number) pathname)))
+  (line-editor-set-text
+   (terminal-ui-editor ui)
+   (sanitize-text (user-message-input-text input)))
   nil)
 
 (-> terminal-ui-live-row-count (terminal-ui) (integer 0))

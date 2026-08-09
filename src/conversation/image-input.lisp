@@ -2,6 +2,12 @@
 
 ;;;; -- User Input --
 
+(defgeneric user-message-input-text (input)
+  (:documentation "Return the editable text carried by user INPUT."))
+
+(defgeneric user-message-input-image-pathnames (input)
+  (:documentation "Return the absolute local image pathnames attached to user INPUT."))
+
 (defclass user-message-input ()
   ((text
     :initarg :text
@@ -15,6 +21,15 @@
     :type list
     :documentation "Absolute local image pathnames attached to this submission."))
   (:documentation "One user submission containing text and local image attachments."))
+
+(-> user-message-input-text ((or string user-message-input)) string)
+(-> user-message-input-image-pathnames ((or string user-message-input)) list)
+
+(defmethod user-message-input-text ((input string))
+  input)
+
+(defmethod user-message-input-image-pathnames ((input string))
+  (declare (ignore input)))
 
 (-> user-message-input-create
     (&key (:text string) (:image-pathnames list))
@@ -34,18 +49,19 @@
                  :text text
                  :image-pathnames (copy-list image-pathnames)))
 
-(-> user-message-input-copy (user-message-input) user-message-input)
-(defun user-message-input-copy (input)
-  "Return an independent copy of user submission INPUT."
+(-> user-message-input-copy ((or string user-message-input))
+    (or string user-message-input))
+(defgeneric user-message-input-copy (input)
+  (:documentation "Return a detached copy of user INPUT."))
+
+(defmethod user-message-input-copy ((input string))
+  (copy-seq input))
+
+(defmethod user-message-input-copy ((input user-message-input))
   (make-instance 'user-message-input
                  :text (copy-seq (user-message-input-text input))
                  :image-pathnames
                  (copy-list (user-message-input-image-pathnames input))))
-
-(-> user-message-input-preview (user-message-input) string)
-(defun user-message-input-preview (input)
-  "Return INPUT's text for transcript and pending-input presentation."
-  (user-message-input-text input))
 
 
 ;;;; -- Prepared Attachments --

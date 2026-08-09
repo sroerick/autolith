@@ -1330,15 +1330,15 @@ copied."
 (defun conversation-append-user-message
     (conversation input &key pending-input-identifier)
   "Persist user INPUT and return its provider item and sequenced record."
-  (let* ((submission
-           (etypecase input
-             (string (user-message-input-create :text input))
-             (user-message-input input)))
-         (content (user-message-input-text submission))
+  (when (and (stringp input)
+             (not (non-empty-string-p input)))
+    (error 'configuration-error
+           :message "A user submission requires text or an image."))
+  (let* ((content (user-message-input-text input))
          (attachments
            (conversation--prepare-images
             conversation
-            (user-message-input-image-pathnames submission)))
+            (user-message-input-image-pathnames input)))
          (item (user-message-item content attachments))
          (record nil)
          (durable-p nil))
