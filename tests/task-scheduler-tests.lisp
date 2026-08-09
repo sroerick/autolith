@@ -450,15 +450,6 @@
                                          :if-does-not-exist :ignore))))
   nil)
 
-(-> task-tests--lock-held-by-another-p (t) boolean)
-(defun task-tests--lock-held-by-another-p (lock)
-  "Return true when LOCK cannot be acquired immediately by this thread."
-  (if (bordeaux-threads:acquire-lock lock nil)
-      (progn
-        (bordeaux-threads:release-lock lock)
-        nil)
-      t))
-
 (-> test-task-admission-cancellation-barrier () null)
 (defun test-task-admission-cancellation-barrier ()
   "Test that a child admitted after a cascade scanned is still stopped.
@@ -496,100 +487,99 @@ exactly that race."
                             :context nil
                             :async t)
                       :detached t)))
+                  (pause-lock (make-lock "Autolith admission race pause"))
+                  (pause-condition (make-condition-variable))
+                  (admission-paused-p nil)
+                  (release-admission-p nil)
                   (admitted nil)
-                  (admission-condition nil)
-                  (cancel-started-p nil)
+                  (admission-failure nil)
                   (cancel-accepted-p nil)
                   (cancelled-descendants nil)
                   (admission-thread nil)
-                  (cancel-thread nil)
-                  (orchestrator-lock-held-p nil))
+                  (original-owner-identifiers
+                    (symbol-function 'task-parent-owner-identifiers)))
              (unwind-protect
-                  (progn
-                    (bordeaux-threads:acquire-lock
-                     (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
-                    (setf orchestrator-lock-held-p t
-                          admission-thread
-                          (make-thread
-                           (lambda ()
-                             (handler-case
-                                 (setf admitted
-                                       (first
-                                        (multiple-value-list
-                                         (task-orchestrator-start-jobs
-                                          orchestrator viewer entries))))
-                               (condition (condition)
-                                 (setf admission-condition condition))))
-                           :name "Autolith admission race"))
-                    (test-assert
-                     (task-tests--wait-until
-                      (lambda ()
-                        (task-tests--lock-held-by-another-p
-                         (task-orchestrator-lock orchestrator)))
-                      2)
-                     "admission reaches the serialized pool boundary")
-                    (test-assert
-                     (not (task-tests--wait-until (lambda () admitted) 1))
-                     "nested admission cannot commit while admission is locked")
-                    (setf cancel-thread
-                          (make-thread
-                           (lambda ()
-                             (setf cancel-started-p t)
-                             (multiple-value-setq
-                                 (cancel-accepted-p cancelled-descendants)
-                               (task-job-cancel parent :user)))
-                           :name "Autolith cancellation race"))
-                    (test-assert
-                     (task-tests--wait-until
-                      (lambda () cancel-started-p)
-                      2)
-                     "competing cancellation reaches the parent barrier")
-                    (bordeaux-threads:release-lock
-                     (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator)))
-                    (setf orchestrator-lock-held-p nil)
-                    (join-thread admission-thread)
-                    (setf admission-thread nil)
-                    (join-thread cancel-thread)
-                    (setf cancel-thread nil)
-                    (let* ((child (first admitted))
-                           (child-id
-                             (and child
-                                  (job-identifier child))))
-                      (declare (ignore child-id))
-                      (test-assert
-                       (and (null admission-condition)
-                            (= (length admitted) 1)
-                            cancel-accepted-p
-                            (null cancelled-descendants)
-                            (eq (job-state parent) :aborted)
-                            (member
-                             (job-identifier parent)
-                             (job-owner-identifiers child)
-                             :test #'string=))
-                       "a child can be admitted after the cascade has scanned")
-                      (test-assert
-                       (task-tests--wait-until
-                        (lambda () (job-terminal-p child))
-                        5)
-                       "a child admitted after the cascade still terminalizes")
-                      (test-assert
-                       (and (eq (job-state child) :aborted)
-                            (search "with its parent"
-                                    (or (getf (job-result child) :error) "")))
-                       "its cancelled ancestor stops it before it does any work")
-                      (test-assert
-                       (task-tests--wait-until
-                        (lambda ()
-                          (zerop (task-orchestrator-live-count orchestrator)))
-                        5)
-                       "the raced admission leaks no live capacity")))
-               (when orchestrator-lock-held-p
-                 (bordeaux-threads:release-lock
-                  (cl-jobpond::job-pool--lock (task-orchestrator-pool orchestrator))))
+                  (test-call-with-function-replacements
+                   (list
+                    (list
+                     'task-parent-owner-identifiers
+                     (lambda (candidate)
+                       (let ((identifiers
+                               (funcall original-owner-identifiers candidate)))
+                         (when (eq candidate viewer)
+                           (with-lock-held (pause-lock)
+                             (setf admission-paused-p t)
+                             (task--condition-broadcast pause-condition)
+                             (loop until release-admission-p
+                                   do (condition-wait
+                                       pause-condition pause-lock))))
+                         identifiers))))
+                   (lambda ()
+                     (setf admission-thread
+                           (make-thread
+                            (lambda ()
+                              (handler-case
+                                  (setf admitted
+                                        (first
+                                         (multiple-value-list
+                                          (task-orchestrator-start-jobs
+                                           orchestrator viewer entries))))
+                                (condition (condition)
+                                  (setf admission-failure condition))))
+                            :name "Autolith admission race"))
+                     (with-lock-held (pause-lock)
+                       (loop until admission-paused-p
+                             unless
+                             (condition-wait
+                              pause-condition pause-lock :timeout 2)
+                               do (error
+                                   "Timed out waiting for admission pause.")))
+                     (test-assert
+                      (null admitted)
+                      "nested admission pauses after its parent check")
+                     (multiple-value-setq
+                         (cancel-accepted-p cancelled-descendants)
+                       (task-job-cancel parent :user))
+                     (test-assert
+                      (and cancel-accepted-p
+                           (null cancelled-descendants)
+                           (eq (job-state parent) :aborted))
+                      "cancellation completes its subtree scan before admission")
+                     (with-lock-held (pause-lock)
+                       (setf release-admission-p t)
+                       (task--condition-broadcast pause-condition))
+                     (join-thread admission-thread)
+                     (setf admission-thread nil)
+                     (let ((child (first admitted)))
+                       (test-assert
+                        (and (null admission-failure)
+                             (= (length admitted) 1)
+                             (member
+                              (job-identifier parent)
+                              (job-owner-identifiers child)
+                              :test #'string=))
+                        "a child can be admitted after the cascade has scanned")
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda () (job-terminal-p child))
+                         5)
+                        "a child admitted after the cascade still terminalizes")
+                       (test-assert
+                        (and (eq (job-state child) :aborted)
+                             (search "with its parent"
+                                     (or (getf (job-result child) :error) "")))
+                        "its cancelled ancestor stops it before it does any work")
+                       (test-assert
+                        (task-tests--wait-until
+                         (lambda ()
+                           (zerop (task-orchestrator-live-count orchestrator)))
+                         5)
+                        "the raced admission leaks no live capacity"))))
+               (with-lock-held (pause-lock)
+                 (setf release-admission-p t)
+                 (task--condition-broadcast pause-condition))
                (when admission-thread
-                 (join-thread admission-thread))
-               (when cancel-thread
-                 (join-thread cancel-thread))))
+                 (join-thread admission-thread))))
            (let* ((orchestrator (task-tests--orchestrator))
                   (parent
                     (task-tests--register-job
