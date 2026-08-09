@@ -323,6 +323,51 @@
          (format nil "~A has terminal ownership ~S" input expected)))))
   nil)
 
+(-> test-application-authentication-provider-type () null)
+(defun test-application-authentication-provider-type ()
+  "Test that /auth accepts an optional provider name without a type failure."
+  (let* ((ui (terminal-ui-create
+              :terminal (make-instance 'recording-terminal :columns 80)))
+         (application (make-instance 'application :ui ui))
+         (provider (make-instance 'model-provider))
+         (selected-provider-name nil)
+         (stopped-p nil)
+         (started-p nil))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application--authentication-provider
+       (lambda (candidate provider-name)
+         (declare (ignore candidate))
+         (setf selected-provider-name provider-name)
+         provider))
+      (list
+       'terminal-ui-stop
+       (lambda (candidate)
+         (declare (ignore candidate))
+         (setf stopped-p t)
+         nil))
+      (list
+       'terminal-ui-start
+       (lambda (candidate)
+         (declare (ignore candidate))
+         (setf started-p t)
+         nil)))
+     (lambda ()
+       (test-assert
+        (handler-case
+            (progn
+              (application-authenticate application "grok")
+              nil)
+          (authentication-error ()
+            t))
+        "/auth reaches provider authentication without an unknown type failure")
+       (test-assert
+        (and stopped-p started-p
+             (string= selected-provider-name "grok"))
+        "/auth forwards the named provider and restores terminal ownership"))))
+  nil)
+
 (-> run-application-command-tests () boolean)
 (defun run-application-command-tests ()
   "Run application command protocol tests and return true."
@@ -330,4 +375,5 @@
   (test-application-command-registry)
   (test-application-command-policies)
   (test-built-in-application-command-policies)
+  (test-application-authentication-provider-type)
   t)

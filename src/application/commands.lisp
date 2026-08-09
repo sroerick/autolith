@@ -1246,7 +1246,7 @@ to TERMINAL-UI-SELECT."
        :reasoning-summaries-p (application-reasoning-traces-p application))
       (application-provider application)))
 
-(-> application-authenticate (application &optional provider-name) null)
+(-> application-authenticate (application &optional (option string)) null)
 (defun application-authenticate (application &optional provider-name)
   "Authenticate APPLICATION's active or named provider."
   (let* ((ui (application-ui application))
