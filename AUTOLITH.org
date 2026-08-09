@@ -347,6 +347,32 @@ a user-local init.lisp change, or a private image commit.
   inspection, bounded retention, cancellation cleanup, and worker restart
   guarantees with less project-specific scheduling code.
 
+** Lisp-family edit delimiter warnings
+
+- Problem: successful text edits could leave Common Lisp, Scheme, or Clojure
+  source with unmatched or type-mismatched structural delimiters, while the model
+  received only a success result and could continue from invalid source.
+- Behavior: successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
+  =lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations classify the
+  resulting file by extension and run a language-aware lexical delimiter scan.
+  Strings, supported comments, escaped symbols, character literals, script
+  headers, and reader-specific escapes avoid structural false positives. The scan
+  counts every issue while retaining bounded exact-location details, appends an
+  advisory warning to the successful model-visible result, and never rolls back
+  the edit. Unexpected scanner failures preserve success with a manual-review
+  warning.
+- Scope and location: tracked project work in
+  =src/tools/lisp-source-balance.lisp=, the workspace, resource, and scratchpad
+  editing tools, tool descriptions, ASDF wiring, regressions, guide, and
+  specification.
+- Verification: extension coverage, lexical exclusions, typed mismatch locations,
+  bounded issue retention, successful warning propagation through all five edit
+  seams, balanced repair, and unknown-file silence pass in focused regressions;
+  the complete repository check passes.
+- Removal condition: a replacement editing protocol provides equivalent
+  language-aware post-edit structural validation, bounded exact diagnostics,
+  non-fatal model feedback, and the same workspace and scratchpad coverage.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

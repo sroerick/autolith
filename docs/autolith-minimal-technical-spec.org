@@ -363,6 +363,19 @@ cross-process compare-and-swap rename, so an unrelated external writer can still
 race after that final check. Existing =fs.write= and =fs.edit= remain available
 for complete replacement and compatibility.
 
+Successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
+=lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations classify
+recognized source by pathname type and scan the complete resulting Common Lisp,
+Scheme, or Clojure text before returning. The advisory lexer tracks typed
+structural delimiters while ignoring strings, semicolon comments, nested block
+comments where supported, first-line =#!= directives, vertical-bar escaped
+symbols, Common Lisp single-escape syntax, Scheme inline hex escapes, and
+language character literals. Scheme =#;= and Clojure =#_= discard markers do
+not suppress structural checking because the reader must still parse the datum
+they prefix. The warning scan counts every issue while retaining only bounded
+exact-location details in the successful model-visible tool result; it never
+rolls back an edit or changes its success status.
+
 The =agenda:= resolver exposes only =agenda:current=, bound to the caller's
 canonical current workspace, and denies task child-agent contexts. It never
 resolves other workspace identifiers or the underlying agenda state file.

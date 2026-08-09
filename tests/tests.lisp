@@ -162,6 +162,8 @@
     (test-openai-compatible-provider)
     (test-fireworks-provider)
     (test-resource-protocol)
+    (test-lisp-source-balance)
+    (test-lisp-source-edit-warnings)
     (test-workspace-file-resources)
     (test-agenda-resources)
     (test-memory-resources)

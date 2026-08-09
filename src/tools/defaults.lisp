@@ -211,7 +211,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. memory:relevant is read-only. Stale or expired revisions require a reread."
+           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. memory:relevant is read-only. Stale or expired revisions require a reread. Successful workspace-file edits may append a non-fatal unmatched or mismatched delimiter warning for recognized Common Lisp, Scheme, and Clojure files."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -260,7 +260,7 @@
           (list
            'fs-write-tool
            "fs" "write"
-           "Create or replace one workspace file with the supplied content."
+           "Create or replace one workspace file with the supplied content. Successful writes to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
@@ -271,7 +271,7 @@
           (list
            'fs-edit-tool
            "fs" "edit"
-           "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read."
+           "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read. Successful edits to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
@@ -645,7 +645,7 @@
           (list
            'lisp-scratchpad-write-tool
            "lisp" "scratchpad-write"
-           "Create or replace one file in the current conversation's disposable scratchpad folder."
+           "Create or replace one file in the current conversation's disposable scratchpad folder. Successful writes to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
@@ -656,7 +656,7 @@
           (list
            'lisp-scratchpad-edit-tool
            "lisp" "scratchpad-edit"
-           "Replace exact text inside one current-conversation scratchpad file."
+           "Replace exact text inside one current-conversation scratchpad file. Successful edits to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
            (tool-object-schema
             (json-object
              "path" (tool-string-property

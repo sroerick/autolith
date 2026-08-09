@@ -966,18 +966,25 @@
             (multiple-value-bind (body visible-ranges last-line truncated-p)
                 (workspace-file--window-ranges observation start-line line-count)
               (declare (ignore last-line))
-              (let ((state
-                      (workspace-file--observation-state-for-snapshot
-                       (tool-context-conversation context)
-                       observation visible-ranges)))
+              (let* ((state
+                       (workspace-file--observation-state-for-snapshot
+                        (tool-context-conversation context)
+                        observation visible-ranges))
+                     (result-content
+                       (format nil "Applied ~{~A~^; ~}.~%~A"
+                               (mapcar
+                                (lambda (operation) (getf operation :summary))
+                                normalized)
+                               (workspace-file--read-result
+                                state body
+                                (length
+                                 (workspace-file-observation-lines observation))
+                                truncated-p))))
                 (tool-success
-                 (format nil "Applied ~{~A~^; ~}.~%~A"
-                         (mapcar (lambda (operation) (getf operation :summary))
-                                 normalized)
-                         (workspace-file--read-result
-                          state body
-                          (length (workspace-file-observation-lines observation))
-                          truncated-p)))))))
+                 (lisp-source-edit-result-content
+                  result-content
+                  (workspace-file-resource-pathname resource)
+                  (resource-observation-content observation)))))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."

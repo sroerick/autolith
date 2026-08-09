@@ -949,6 +949,22 @@ uniform-indentation mismatch, and =shell.run= executes one external command with
 combined bounded output. It defaults to a 60-second timeout but accepts any
 positive requested duration without a product maximum. Invalid encoded output
 bytes are shown as replacement characters rather than failing the result.
+
+After successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
+=lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations, Autolith checks
+the complete resulting text when its extension identifies Common Lisp
+(=.asd=, =.cl=, =.lisp=, =.lsp=, =.ros=), Scheme (=.sch=, =.scheme=,
+=.scm=, =.sld=, =.sls=, =.ss=), or Clojure (=.bb=, =.clj=, =.cljc=,
+=.cljs=, =.edn=). It matches parentheses for Common Lisp, parentheses and
+brackets for Scheme, and parentheses, brackets, and braces for Clojure while
+ignoring strings, line and nested block comments where supported, first-line
+=#!= directives, vertical-bar escaped symbols, Common Lisp single-escape syntax,
+Scheme inline hex escapes, and character literals. Scheme =#;= and Clojure =#_=
+discard markers remain structurally checked because the reader still parses
+their data. Any unmatched or mismatched delimiter produces a warning with exact
+line and column details in the successful tool result sent to the model. The
+scan counts all issues but retains only a bounded number of details. The warning
+is advisory and never rolls back the edit.
 =async: true= returns the authorized command as an inspectable job immediately;
 an ordinary call uses the shared ten-second grace before handing off the same
 execution.

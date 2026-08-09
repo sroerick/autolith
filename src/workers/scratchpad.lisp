@@ -203,7 +203,16 @@
              :tool-name "lisp.scratchpad-write"))
     (if (uiop:directory-exists-p path)
         (tool-failure (format nil "~A is a directory." path))
-        (let ((existed-p (and (probe-file path) t)))
+        (let* ((existed-p (and (probe-file path) t))
+               (result-content
+                 (lisp-source-edit-result-content
+                  (format nil
+                          "~:[Created~;Replaced~] scratchpad file ~A with ~:D character~:P."
+                          existed-p
+                          path
+                          (length content))
+                  path
+                  content)))
           (ensure-directories-exist path)
           (with-open-file (stream path
                                   :direction :output
@@ -211,11 +220,7 @@
                                   :if-does-not-exist :create
                                   :external-format :utf-8)
             (write-string content stream))
-          (tool-success
-           (format nil "~:[Created~;Replaced~] scratchpad file ~A with ~:D character~:P."
-                   existed-p
-                   path
-                   (length content)))))))
+          (tool-success result-content)))))
 
 (defmethod tool-execute ((tool lisp-scratchpad-edit-tool)
                          (context tool-context)
@@ -251,21 +256,26 @@
                      occurrences
                      path)))
            (t
-            (with-open-file (stream path
-                                    :direction :output
-                                    :if-exists :supersede
-                                    :external-format :utf-8)
-              (write-string
-               (workspace--replace-occurrences
-                old-text
-                new-text
-                text
-                :all (and replace-all t))
-               stream))
-            (tool-success
-             (format nil "Replaced ~D occurrence~:P in scratchpad file ~A."
-                     (if replace-all occurrences 1)
-                     path)))))))))
+            (let* ((replacement
+                     (workspace--replace-occurrences
+                      old-text
+                      new-text
+                      text
+                      :all (and replace-all t)))
+                   (result-content
+                     (lisp-source-edit-result-content
+                      (format nil
+                              "Replaced ~D occurrence~:P in scratchpad file ~A."
+                              (if replace-all occurrences 1)
+                              path)
+                      path
+                      replacement)))
+              (with-open-file (stream path
+                                      :direction :output
+                                      :if-exists :supersede
+                                      :external-format :utf-8)
+                (write-string replacement stream))
+              (tool-success result-content)))))))))
 
 (defmethod tool-execute ((tool lisp-scratchpad-run-tool)
                          (context tool-context)
