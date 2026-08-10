@@ -2648,6 +2648,27 @@
               :columns 100
               :compact-view-p nil))
            (source (format nil "(defun highlighted-source ()~%  42)")))
+       (let ((rows
+               (change-viewer-render
+                :removed-content "(defun old-view () 1)"
+                :added-content "(defun new-view () 2)"
+                :removed-start-line 41
+                :added-start-line 41
+                :source-path "missing/library-seam.lisp"
+                :syntax-highlight-p nil)))
+          (test-assert
+           (and (find (terminal-span ':failure "- 41 │ ")
+                      (first rows) :test #'equal)
+                (find (terminal-span ':success "+ 41 │ ")
+                      (second rows) :test #'equal)
+                (find (terminal-span ':code "(defun old-view () 1)")
+                      (first rows) :test #'equal)
+                (find (terminal-span ':code "(defun new-view () 2)")
+                      (second rows) :test #'equal)
+                (not (loop for row in rows
+                           thereis (find (terminal-span ':syntax-keyword "defun")
+                                         row :test #'equal))))
+           "the shared viewer has one keyword API and never reads source metadata"))
       (dolist (specification
                '(("lisp" "eval" "form")
                  ("lisp" "compile" "form")

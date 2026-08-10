@@ -5,6 +5,9 @@
 (defparameter *application-tool-call-lines* 8
   "The maximum tool input lines shown in the terminal transcript.")
 
+(defparameter *change-viewer-line-limit* 8
+  "The default maximum removed or added lines shown by the shared viewer.")
+
 
 ;;; Text and syntax preparation
 
@@ -18,10 +21,34 @@
                                :single-line-p t))
               (uiop:split-string trimmed :separator '(#\Newline))))))
 
-(-> application--file-content-lines (string) list)
-(defun application--file-content-lines (text)
-  "Return sanitized logical file TEXT lines, preserving trailing blank rows."
-  (loop for line across (workspace-file--split-lines text)
+(-> change-viewer--split-lines (string) vector)
+(defun change-viewer--split-lines (content)
+  "Return CONTENT's logical lines without their LF or CRLF delimiters."
+  (if (zerop (length content))
+      #()
+      (let ((lines nil)
+            (start 0)
+            (length (length content)))
+        (loop
+          for newline = (position #\Newline content :start start)
+          for end = (or newline length)
+          for logical-end = (if (and (> end start)
+                                     (char= (char content (1- end)) #\Return))
+                                (1- end)
+                                end)
+          do (push (subseq content start logical-end) lines)
+          if newline
+            do (setf start (1+ newline))
+          else
+            do (return)
+          when (= start length)
+            do (return))
+        (coerce (nreverse lines) 'vector))))
+
+(-> change-viewer--content-lines (string) list)
+(defun change-viewer--content-lines (text)
+  "Return sanitized logical TEXT lines while preserving trailing blank rows."
+  (loop for line across (change-viewer--split-lines text)
         collect (sanitize-text line :single-line-p t)))
 
 (-> application--syntax-lines
@@ -36,7 +63,7 @@ LANGUAGE handles pathless source such as eval forms. PATH selects a language
 from a file destination. FILE-CONTENT-P preserves meaningful trailing blank
 file rows. Sanitization occurs before ColorLisp sees the text."
   (let ((lines (if file-content-p
-                   (application--file-content-lines text)
+                   (change-viewer--content-lines text)
                    (application--display-lines text))))
     (when lines
       (let* ((source (format nil "~{~A~^~%~}" lines))
@@ -194,40 +221,50 @@ file rows. Sanitization occurs before ColorLisp sees the text."
            :line-number line-number
            :content-spans (list (terminal-span ':dim message)))))))))
 
-(-> application--change-view-rows
-    ((option string) (option string)
-     &key (:old-start-line (option integer))
-          (:new-start-line (option integer))
-          (:path (option string)) (:language (option language))
-          (:limit integer))
+(-> change-viewer-render
+    (&key (:removed-content (option string))
+          (:added-content (option string))
+          (:removed-start-line (option integer))
+          (:added-start-line (option integer))
+          (:source-path (option string))
+          (:syntax-language (option language))
+          (:syntax-highlight-p boolean)
+          (:line-limit (integer 1)))
     list)
-(defun application--change-view-rows
-    (old-text new-text &key old-start-line new-start-line path language
-                            (limit *application-tool-call-lines*))
-  "Return one bounded line-numbered view of the change from OLD-TEXT to NEW-TEXT.
+(defun change-viewer-render
+    (&key removed-content added-content
+          removed-start-line added-start-line
+          source-path syntax-language
+          (syntax-highlight-p
+            (not (null (or source-path syntax-language))))
+          (line-limit *change-viewer-line-limit*))
+  "Render one bounded line-numbered change with optional syntax highlighting.
 
-A NIL side is an absent document, so creations and removals use this same
-viewer. PATH or LANGUAGE enables syntax highlighting when applicable. Exact
-line coordinates remain optional rather than being fabricated."
-  (let* ((old-source (or old-text ""))
-         (new-source (or new-text ""))
+REMOVED-CONTENT and ADDED-CONTENT are complete before-and-after documents for
+one change. A NIL side denotes an absent document, so creation and removal use
+the same renderer. SOURCE-PATH is language-classification metadata only and is
+never read. SYNTAX-LANGUAGE overrides path inference, while
+SYNTAX-HIGHLIGHT-P can explicitly disable highlighting. Exact line coordinates
+remain optional rather than being fabricated."
+  (let* ((old-source (or removed-content ""))
+         (new-source (or added-content ""))
          (old-lines
-           (coerce (application--file-content-lines old-source) 'vector))
+           (coerce (change-viewer--content-lines old-source) 'vector))
          (new-lines
-           (coerce (application--file-content-lines new-source) 'vector))
+           (coerce (change-viewer--content-lines new-source) 'vector))
          (old-highlighted
-           (and (or path language)
+           (and syntax-highlight-p
                 (application--syntax-lines
                  old-source
-                 :language language
-                 :path path
+                 :language syntax-language
+                 :path source-path
                  :file-content-p t)))
          (new-highlighted
-           (and (or path language)
+           (and syntax-highlight-p
                 (application--syntax-lines
                  new-source
-                 :language language
-                 :path path
+                 :language syntax-language
+                 :path source-path
                  :file-content-p t)))
          (prefix-length
            (application--change-common-prefix-length old-lines new-lines))
@@ -239,8 +276,8 @@ line coordinates remain optional rather than being fabricated."
            (application--change-line-number-width
             old-lines
             new-lines
-            :old-start-line old-start-line
-            :new-start-line new-start-line)))
+            :old-start-line removed-start-line
+            :new-start-line added-start-line)))
     (if (and (= prefix-length (length old-lines))
              (= prefix-length (length new-lines)))
         (list (list (terminal-span ':dim "no textual change")))
@@ -257,10 +294,10 @@ line coordinates remain optional rather than being fabricated."
                ':context
                (aref old-lines (1- prefix-length))
                :width width
-               :line-number (or (and new-start-line
-                                     (+ new-start-line prefix-length -1))
-                                (and old-start-line
-                                     (+ old-start-line prefix-length -1)))
+               :line-number (or (and added-start-line
+                                     (+ added-start-line prefix-length -1))
+                                (and removed-start-line
+                                     (+ removed-start-line prefix-length -1)))
                :content-spans
                (or (and new-highlighted
                         (aref new-highlighted (1- prefix-length)))
@@ -269,27 +306,27 @@ line coordinates remain optional rather than being fabricated."
            (application--change-block-rows
             removed
             ':removed
-            :start-line (and old-start-line
-                             (+ old-start-line prefix-length))
+            :start-line (and removed-start-line
+                             (+ removed-start-line prefix-length))
             :width width
             :highlighted-lines
             (and old-highlighted
                  (subseq old-highlighted
                          prefix-length
                          (- (length old-lines) suffix-length)))
-            :limit limit)
+            :limit line-limit)
            (application--change-block-rows
             added
             ':added
-            :start-line (and new-start-line
-                             (+ new-start-line prefix-length))
+            :start-line (and added-start-line
+                             (+ added-start-line prefix-length))
             :width width
             :highlighted-lines
             (and new-highlighted
                  (subseq new-highlighted
                          prefix-length
                          (- (length new-lines) suffix-length)))
-            :limit limit)
+            :limit line-limit)
            (when (plusp suffix-length)
              (list
               (application--change-line-row
@@ -297,11 +334,11 @@ line coordinates remain optional rather than being fabricated."
                (aref old-lines (- (length old-lines) suffix-length))
                :width width
                :line-number
-               (or (and new-start-line
-                        (+ new-start-line
+               (or (and added-start-line
+                        (+ added-start-line
                            (- (length new-lines) suffix-length)))
-                   (and old-start-line
-                        (+ old-start-line
+                   (and removed-start-line
+                        (+ removed-start-line
                            (- (length old-lines) suffix-length))))
                :content-spans
                (or (and new-highlighted

@@ -1416,12 +1416,12 @@ model."
                  application uri revision :start-line start :end-line end))
               (new-text (if (string= name "replace-lines") content "")))
          (if old-text
-             (application--change-view-rows
-              old-text
-              new-text
-              :old-start-line start
-              :new-start-line new-start-line
-              :path path)
+             (change-viewer-render
+              :removed-content old-text
+              :added-content new-text
+              :removed-start-line start
+              :added-start-line new-start-line
+              :source-path path)
              (let* ((width (length (princ-to-string end)))
                     (message
                       (format nil "observed line~P ~D~:[~;-~D~] unavailable"
@@ -1435,20 +1435,18 @@ model."
                   :line-number start
                   :content-spans (list (terminal-span ':dim message))))
                 (when (string= name "replace-lines")
-                  (application--change-view-rows
-                   nil
-                   new-text
-                   :new-start-line new-start-line
-                   :path path)))))))
+                  (change-viewer-render
+                   :added-content new-text
+                   :added-start-line new-start-line
+                   :source-path path)))))))
       ((and (stringp name)
             (member name '("insert-before" "insert-after" "replace-empty")
                     :test #'string=)
             (stringp content))
-       (application--change-view-rows
-        nil
-        content
-        :new-start-line new-start-line
-        :path path))
+       (change-viewer-render
+        :added-content content
+        :added-start-line new-start-line
+        :source-path path))
       (t
        nil))))
 
@@ -1615,14 +1613,13 @@ model."
       (list (list (terminal-span ':code path)))
       (if (stringp content)
           (append
-            (list (application--tool-section-row
-                   (format nil "content · ~:D character~:P" (length content))))
-             (or (application--change-view-rows
-                  nil
-                  content
-                  :new-start-line 1
-                  :path path)
-                (list (list (terminal-span ':dim "(empty content)")))))
+           (list (application--tool-section-row
+                  (format nil "content · ~:D character~:P" (length content))))
+           (or (change-viewer-render
+                :added-content content
+                :added-start-line 1
+                :source-path path)
+               (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
 
@@ -1678,7 +1675,10 @@ model."
                 :new-text new-text
                 :replace-all replace-all)))
     (if (null hunks)
-          (application--change-view-rows old-text new-text :path path)
+        (change-viewer-render
+         :removed-content old-text
+         :added-content new-text
+         :source-path path)
         (let* ((visible-count (min *application-tool-diff-hunks*
                                    (length hunks)))
                (omitted (- (length hunks) visible-count)))
@@ -1688,12 +1688,12 @@ model."
                  for first-p = t then nil
                  append (append
                          (unless first-p (list nil))
-                          (application--change-view-rows
-                          old-text
-                          new-text
-                          :old-start-line old-start-line
-                          :new-start-line new-start-line
-                          :path path)))
+                         (change-viewer-render
+                          :removed-content old-text
+                          :added-content new-text
+                          :removed-start-line old-start-line
+                          :added-start-line new-start-line
+                          :source-path path)))
            (when (plusp omitted)
              (list nil
                    (list (terminal-span
@@ -1745,14 +1745,13 @@ model."
       (list (list (terminal-span ':code path)))
       (if (stringp content)
           (append
-            (list (application--tool-section-row
-                   (format nil "content · ~:D character~:P" (length content))))
-             (or (application--change-view-rows
-                  nil
-                  content
-                  :new-start-line 1
-                  :path path)
-                (list (list (terminal-span ':dim "(empty content)")))))
+           (list (application--tool-section-row
+                  (format nil "content · ~:D character~:P" (length content))))
+           (or (change-viewer-render
+                :added-content content
+                :added-start-line 1
+                :source-path path)
+               (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
 (defmethod application-tool-call-entry
@@ -1778,7 +1777,10 @@ model."
          application
          (list (list :label "scope" :value "all occurrences"))))
       (list nil)
-       (application--change-view-rows old-text new-text :path path)))))
+      (change-viewer-render
+       :removed-content old-text
+       :added-content new-text
+       :source-path path)))))
 
 (-> application--shell-command-rows (string) list)
 (defun application--shell-command-rows (command)

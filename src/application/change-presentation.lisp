@@ -155,11 +155,11 @@
   (multiple-value-bind (old-text new-text old-start-line new-start-line available-p)
       (application--agenda-operation-change-documents operation record)
     (and available-p
-         (application--change-view-rows
-          old-text
-          new-text
-          :old-start-line old-start-line
-          :new-start-line new-start-line))))
+         (change-viewer-render
+          :removed-content old-text
+          :added-content new-text
+          :removed-start-line old-start-line
+          :added-start-line new-start-line))))
 
 (-> application--agenda-call-entry
     (application json-object non-empty-string)
@@ -324,11 +324,11 @@
            (application--memory-forget-change-documents application arguments)))
       (let ((change-rows
               (and available-p
-                   (application--change-view-rows
-                    old-text
-                    new-text
-                    :old-start-line old-start-line
-                    :new-start-line new-start-line))))
+                   (change-viewer-render
+                    :removed-content old-text
+                    :added-content new-text
+                    :removed-start-line old-start-line
+                    :added-start-line new-start-line))))
         (application--tool-entry
          application
          :style ':tool
@@ -462,11 +462,11 @@
   (multiple-value-bind (old-text new-text old-start-line new-start-line available-p)
       (application--memory-resource-operation-change-documents operation observation)
     (and available-p
-         (application--change-view-rows
-          old-text
-          new-text
-          :old-start-line old-start-line
-          :new-start-line new-start-line))))
+         (change-viewer-render
+          :removed-content old-text
+          :added-content new-text
+          :removed-start-line old-start-line
+          :added-start-line new-start-line))))
 
 ;;; Resource edit dispatch
 
