@@ -1330,15 +1330,8 @@ to TERMINAL-UI-SELECT."
 
 (-> application-permissions-command (application (option string)) null)
 (defun application-permissions-command (application argument)
-  "Show or change APPLICATION's session command permissions."
-  (let ((choice
-          (or (and argument (string-downcase argument))
-              (application--pick-identifier
-               application
-               :title "command permissions"
-               :items (application--permission-mode-items application)
-               :usage "Usage: /permissions [ask|sandbox|full|list|clear]"
-               :empty-notice "No command permission modes exist."))))
+  "Apply ARGUMENT to APPLICATION's session command permissions."
+  (let ((choice (and argument (string-downcase argument))))
     (cond
       ((null choice)
        nil)
@@ -1490,9 +1483,10 @@ to TERMINAL-UI-SELECT."
      :description "show this reference"
      :tip "shows every registered command and tool operation."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present application (application-operation-help application))
   ':continue)
 
@@ -1502,9 +1496,10 @@ to TERMINAL-UI-SELECT."
      :description "start a new conversation"
      :tip "starts fresh without deleting the current conversation."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-install-conversation
    application
    (conversation-create (application-configuration application)))
@@ -1518,18 +1513,25 @@ to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-resume-command
     (:name "/resume"
-     :argument nil
+     :argument "[ID]"
      :description "pick a saved conversation to resume"
      :tip "returns to a saved conversation from this workspace or another one."
      :busy-behavior :hold
-     :terminal-behavior :exclusive-without-arguments)
-    (application invocation)
-  (let* ((startup-offer-p
-          (application-project-adaptation-offer-p application))
+     :terminal-behavior :exclusive-without-arguments
+     :call-lambda-list (&optional (identifier nil identifier-supplied-p))
+     :slash-argument-mode :first)
+    (application &optional (identifier nil identifier-supplied-p))
+  (let* ((picker-p
+           (and *application-command-interactive-p*
+                (not identifier-supplied-p)))
+         (startup-offer-p
+           (application-project-adaptation-offer-p application))
          (identifier
-           (or (application-command-invocation-argument invocation)
-               (application--pick-conversation application))))
-    (setf (application-project-adaptation-offer-p application) nil)
+           (if identifier-supplied-p
+               identifier
+               (and picker-p (application--pick-conversation application)))))
+    (when (or identifier picker-p)
+      (setf (application-project-adaptation-offer-p application) nil))
     (when identifier
       (application-resume-conversation application identifier)
       (application-render-records application)
@@ -1543,9 +1545,10 @@ to TERMINAL-UI-SELECT."
      :description "list saved conversations"
      :tip "lists saved conversations from newest to oldest."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present application
                        (application-list-conversations application))
   ':continue)
@@ -1556,9 +1559,10 @@ to TERMINAL-UI-SELECT."
      :description "load earlier transcript history"
      :tip "loads the previous 500 transcript entries on demand."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-render-history application)
   ':continue)
 
@@ -1568,41 +1572,50 @@ to TERMINAL-UI-SELECT."
      :description "change the active workspace"
      :tip "moves the active workspace without restarting Autolith."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
+     :terminal-behavior :shared
+     :call-lambda-list (pathname)
+     :slash-argument-mode :remainder)
+    (application pathname)
   (application-working-directory-command
    application
-   (application-command-invocation-remainder invocation))
+   (etypecase pathname
+     (string pathname)
+     (pathname (namestring pathname))))
   ':continue)
 
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
-     :argument "PROVIDER"
+     :argument "[PROVIDER]"
      :description "authenticate the active or named provider"
      :tip "starts direct provider authentication when credentials need attention."
      :busy-behavior :hold
-     :terminal-behavior :exclusive)
-    (application invocation)
-  (application-authenticate
-   application
-   (let ((remainder (application-command-invocation-remainder invocation)))
-     (and (non-empty-string-p remainder) remainder)))
+     :terminal-behavior :exclusive
+     :call-lambda-list (&optional provider-name)
+     :slash-argument-mode :remainder)
+    (application &optional provider-name)
+  (application-authenticate application provider-name)
   ':continue)
 
 (define-application-command application--builtin-model-command
     (:name "/model"
-     :argument "MODEL"
+     :argument "[MODEL]"
      :description "pick a registered provider model and reasoning effort"
      :tip "changes both the model and its reasoning effort."
      :busy-behavior :hold
-     :terminal-behavior :exclusive)
-    (application invocation)
+     :terminal-behavior :exclusive
+     :call-lambda-list (&optional (model nil model-supplied-p))
+     :slash-argument-mode :first)
+    (application &optional (model nil model-supplied-p))
   (let ((model
-          (or (application-command-invocation-argument invocation)
-              (application--pick-model application))))
+          (if model-supplied-p
+              model
+              (and *application-command-interactive-p*
+                   (application--pick-model application)))))
     (when model
       (application-set-model application model)
-      (let ((effort (application--pick-reasoning-effort application)))
+      (let ((effort
+              (and *application-command-interactive-p*
+                   (application--pick-reasoning-effort application))))
         (when effort
           (application-set-reasoning-effort application effort))
         (application-present
@@ -1620,23 +1633,28 @@ to TERMINAL-UI-SELECT."
      :description "list registered providers and models"
      :tip "shows every effective provider registration and its models."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-models-command application)
   ':continue)
 
 (define-application-command application--builtin-effort-command
     (:name "/effort"
-     :argument nil
+     :argument "[LEVEL]"
      :description "pick the reasoning effort"
      :tip "changes reasoning effort without switching models."
      :busy-behavior :hold
-     :terminal-behavior :exclusive-without-arguments)
-    (application invocation)
+     :terminal-behavior :exclusive-without-arguments
+     :call-lambda-list (&optional (effort nil effort-supplied-p))
+     :slash-argument-mode :first)
+    (application &optional (effort nil effort-supplied-p))
   (let ((effort
-          (or (application-command-invocation-argument invocation)
-              (application--pick-reasoning-effort application))))
+          (if effort-supplied-p
+              effort
+              (and *application-command-interactive-p*
+                   (application--pick-reasoning-effort application)))))
     (when effort
       (application-set-reasoning-effort application effort)
       (application-present
@@ -1652,11 +1670,11 @@ to TERMINAL-UI-SELECT."
      :description "show visible reasoning summaries"
      :tip "toggles visible reasoning summaries with on or off."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-trace-command
-   application
-   (application-command-invocation-argument invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (mode)
+     :slash-argument-mode :first)
+    (application mode)
+  (application-trace-command application mode)
   ':continue)
 
 (define-application-command application--builtin-turn-timestamps-command
@@ -1665,11 +1683,11 @@ to TERMINAL-UI-SELECT."
      :description "show local timestamps beside user and assistant turns"
      :tip "toggles dim local timestamps beside user and assistant turns."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-turn-timestamps-command
-   application
-   (application-command-invocation-argument invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (mode)
+     :slash-argument-mode :first)
+    (application mode)
+  (application-turn-timestamps-command application mode)
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
@@ -1678,11 +1696,11 @@ to TERMINAL-UI-SELECT."
      :description "use Simple Technical English for replies"
      :tip "toggles short, direct Simple Technical English replies."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-simple-technical-english-command
-   application
-   (application-command-invocation-argument invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (mode)
+     :slash-argument-mode :first)
+    (application mode)
+  (application-simple-technical-english-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
@@ -1691,24 +1709,34 @@ to TERMINAL-UI-SELECT."
      :description "prioritize speed and cap child-agent spawning"
      :tip "acts directly and admits at most two child agents until disabled."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-hurry-up-command
-   application
-   (application-command-invocation-argument invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (mode)
+     :slash-argument-mode :first)
+    (application mode)
+  (application-hurry-up-command application mode)
   ':continue)
 
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
-     :argument nil
+     :argument "[ask|sandbox|full|list|clear]"
      :description "choose command access for this session"
      :tip "chooses how shell commands are authorized for this session."
      :busy-behavior :hold
-     :terminal-behavior :exclusive-without-arguments)
-    (application invocation)
-  (application-permissions-command
-   application
-   (application-command-invocation-argument invocation))
+     :terminal-behavior :exclusive-without-arguments
+     :call-lambda-list (&optional (choice nil choice-supplied-p))
+     :slash-argument-mode :first)
+    (application &optional (choice nil choice-supplied-p))
+  (let ((choice
+          (if choice-supplied-p
+              choice
+              (and *application-command-interactive-p*
+                   (application--pick-identifier
+                    application
+                    :title "command permissions"
+                    :items (application--permission-mode-items application)
+                    :usage "Usage: /permissions [ask|sandbox|full|list|clear]"
+                    :empty-notice "No command permission modes exist.")))))
+    (application-permissions-command application choice))
   ':continue)
 
 (define-application-command application--builtin-later-command
@@ -1717,24 +1745,24 @@ to TERMINAL-UI-SELECT."
      :description "run input after rate limits reset"
      :tip "queues a prompt for the next known rate-limit reset."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-later-command
-   application
-   (application-command-invocation-remainder invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (input)
+     :slash-argument-mode :remainder)
+    (application input)
+  (application-later-command application input)
   ':continue)
 
 (define-application-command application--builtin-goal-command
     (:name "/goal"
-     :argument "OBJECTIVE"
+     :argument "[OBJECTIVE]"
      :description "set or view the session goal"
      :tip "sets the objective Autolith should pursue across continuations."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (application-goal-command
-   application
-   (application-command-invocation-remainder invocation))
+     :terminal-behavior :shared
+     :call-lambda-list (&optional (remainder ""))
+     :slash-argument-mode :remainder)
+    (application &optional (remainder ""))
+  (application-goal-command application remainder)
   ':continue)
 
 (define-application-command application--builtin-agenda-command
@@ -1743,9 +1771,10 @@ to TERMINAL-UI-SELECT."
      :description "show workspace agenda entries"
      :tip "shows durable commitments and notes for the current workspace."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present application (application-agenda-entry application))
   ':continue)
 
@@ -1755,9 +1784,10 @@ to TERMINAL-UI-SELECT."
      :description "show workspace papercut reports"
      :tip "shows problems Autolith recorded when something was not working."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present application (application-papercuts-entry application))
   ':continue)
 
@@ -1767,16 +1797,17 @@ to TERMINAL-UI-SELECT."
      :description "show one complete papercut report"
      :tip "opens the full report named by /papercuts."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (let ((identifier (application-command-invocation-argument invocation)))
-    (if identifier
-        (application-present
-         application
-         (application-papercut-entry application identifier))
-        (application-present
-         application
-         "Usage: /papercut ID. Run /papercuts to list reports.")))
+     :terminal-behavior :shared
+     :call-lambda-list (identifier)
+     :slash-argument-mode :first)
+    (application identifier)
+  (if identifier
+      (application-present
+       application
+       (application-papercut-entry application identifier))
+      (application-present
+       application
+       "Usage: /papercut ID. Run /papercuts to list reports."))
   ':continue)
 
 (define-application-command application--builtin-papercut-close-command
@@ -1785,16 +1816,17 @@ to TERMINAL-UI-SELECT."
      :description "close one resolved papercut report"
      :tip "removes a fixed or obsolete report from /papercuts."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (let ((identifier (application-command-invocation-argument invocation)))
-    (if identifier
-        (application-present
-         application
-         (application-papercut-close-entry application identifier))
-        (application-present
-         application
-         "Usage: /papercut-close ID. Run /papercuts to list reports.")))
+     :terminal-behavior :shared
+     :call-lambda-list (identifier)
+     :slash-argument-mode :first)
+    (application identifier)
+  (if identifier
+      (application-present
+       application
+       (application-papercut-close-entry application identifier))
+      (application-present
+       application
+       "Usage: /papercut-close ID. Run /papercuts to list reports."))
   ':continue)
 
 (define-application-command application--builtin-skills-command
@@ -1803,9 +1835,10 @@ to TERMINAL-UI-SELECT."
      :description "show available skills"
      :tip "shows request-local skills and any discovery problems."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present
    application
    (skill-status (application-configuration application)))
@@ -1813,14 +1846,15 @@ to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
-     :argument "refresh|reload"
+     :argument "[refresh|reload]"
      :description "show or refresh configured MCP servers"
      :tip "shows MCP connections; refresh rediscovers, reload rereads configuration."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (let* ((argument (application-command-invocation-argument invocation))
-         (mode (and argument (string-downcase argument))))
+     :terminal-behavior :shared
+     :call-lambda-list (&optional mode)
+     :slash-argument-mode :remainder)
+    (application &optional mode)
+  (let ((mode (and mode (string-downcase mode))))
     (cond
       ((null mode)
        nil)
@@ -1848,9 +1882,10 @@ to TERMINAL-UI-SELECT."
      :description "save a retained live generation"
      :tip "saves the current live state as a retained generation."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-checkpoint application)
   ':continue)
 
@@ -1860,9 +1895,10 @@ to TERMINAL-UI-SELECT."
      :description "list retained generations"
      :tip "shows live generations available for recovery."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present
    application
    (generation-render-list (application-configuration application)))
@@ -1870,23 +1906,27 @@ to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-rollback-command
     (:name "/rollback"
-     :argument nil
+     :argument "[ID]"
      :description "pick a generation for recovery"
      :tip "selects a retained generation for the next recovery start."
      :busy-behavior :hold
-     :terminal-behavior :exclusive-without-arguments)
-    (application invocation)
-  (let* ((configuration (application-configuration application))
-         (identifier
-           (or (application-command-invocation-argument invocation)
-               (application--pick-identifier
-                application
-                :title "select a generation for recovery"
-                :items (application--generation-items application)
-                :usage "Usage: /rollback ID"
-                :empty-notice "No retained generations exist."))))
+     :terminal-behavior :exclusive-without-arguments
+     :call-lambda-list (&optional (identifier nil identifier-supplied-p))
+     :slash-argument-mode :first)
+    (application &optional (identifier nil identifier-supplied-p))
+  (let ((identifier
+          (if identifier-supplied-p
+              identifier
+              (and *application-command-interactive-p*
+                   (application--pick-identifier
+                    application
+                    :title "select a generation for recovery"
+                    :items (application--generation-items application)
+                    :usage "Usage: /rollback ID"
+                    :empty-notice "No retained generations exist.")))))
     (when identifier
-      (generation-request-rollback configuration identifier)))
+      (generation-request-rollback
+       (application-configuration application) identifier)))
   ':continue)
 
 (define-application-command application--builtin-status-command
@@ -1896,9 +1936,10 @@ to TERMINAL-UI-SELECT."
      :description "show usage and rate limits"
      :tip "shows the model, context usage, and subscription rate limits."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present application (application-status-entry application))
   ':continue)
 
@@ -1908,9 +1949,10 @@ to TERMINAL-UI-SELECT."
      :description "inspect request-local context"
      :tip "reveals the ephemeral context prepared for provider requests."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-present
    application
    (context-status (application-conversation application)))
@@ -1918,16 +1960,17 @@ to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-compact-command
     (:name "/compact"
-     :argument "on|off"
+     :argument "[on|off]"
      :description "condense tool details, or summarize context with no argument"
      :tip "toggles compact tool presentation; with no argument it compacts context."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (let ((argument (application-command-invocation-argument invocation)))
-    (if argument
-        (application-compact-view-command application argument)
-        (application-compact application)))
+     :terminal-behavior :shared
+     :call-lambda-list (&optional mode)
+     :slash-argument-mode :first)
+    (application &optional mode)
+  (if mode
+      (application-compact-view-command application mode)
+      (application-compact application))
   ':continue)
 
 (define-application-command application--builtin-detach-command
@@ -1936,9 +1979,10 @@ to TERMINAL-UI-SELECT."
      :description "detach Autolith from the current terminal"
      :tip "keeps the session running and returns the foreground shell."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (let ((session (application-localgroup-session application)))
     (unless session
       (error 'localgroup-error
@@ -1954,9 +1998,11 @@ to TERMINAL-UI-SELECT."
      :description "leave Autolith"
      :tip "exits cleanly; Ctrl-C also prints the exact resume command."
      :busy-behavior :cancel
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore application invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
+  (declare (ignore application))
   ':quit)
 
 

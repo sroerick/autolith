@@ -420,10 +420,10 @@
          ("/conversations" :execute)
          ("/cwd" :execute)
          ("/cwd /tmp" :hold)
-          ("/model" :hold)
-          ("/model gpt-5.6-sol" :hold)
-          ("/effort" :hold)
-          ("/effort high" :hold)
+         ("/model" :hold)
+         ("/model gpt-5.6-sol" :hold)
+         ("/effort" :hold)
+         ("/effort high" :hold)
          ("/trace" :execute)
          ("/trace on" :hold)
          ("/timestamps" :execute)
@@ -435,6 +435,9 @@
          ("/status" :execute)
          ("/usage" :execute)
          ("/context" :execute)
+         ("/vault" :execute)
+         ("/vault-restore" :hold)
+         ("/vault-discard" :hold)
          ("/new" :hold)
          ("/compact" :hold)
          ("/detach" :hold)
@@ -461,7 +464,10 @@
          ("/rollback" t)
          ("/rollback generation" nil)
          ("/auth" t)
-         ("/compact" nil)))
+         ("/compact" nil)
+         ("/vault" nil)
+         ("/vault-restore" nil)
+         ("/vault-discard" nil)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
              (command (application-command-invocation-command invocation)))
@@ -471,6 +477,99 @@
                (application-command-terminal-owner-p command invocation)))
              expected)
          (format nil "~A has terminal ownership ~S" input expected)))))
+  nil)
+
+(-> test-built-in-application-command-calls () null)
+(defun test-built-in-application-command-calls ()
+  "Test built-ins expose ordinary lambda lists without implicit picker calls."
+  (test-assert
+   (every #'application-command-semantic-handler-p
+          (application-command-list))
+   "every built-in command uses ordinary Common Lisp call semantics")
+  (dolist
+      (case
+       '(("/help" () :none)
+         ("/resume" (&optional (identifier nil identifier-supplied-p)) :first)
+         ("/cwd" (pathname) :remainder)
+         ("/auth" (&optional provider-name) :remainder)
+         ("/model" (&optional (model nil model-supplied-p)) :first)
+         ("/trace" (mode) :first)
+         ("/permissions" (&optional (choice nil choice-supplied-p)) :first)
+         ("/later" (input) :remainder)
+         ("/goal" (&optional (remainder "")) :remainder)
+         ("/mcp" (&optional mode) :remainder)
+         ("/vault" () :none)
+         ("/vault-restore" () :none)
+         ("/vault-discard" () :none)
+         ("/quit" () :none)))
+    (destructuring-bind (name lambda-list slash-mode) case
+      (let ((command (application-command-find name)))
+        (test-assert
+         (and command
+              (equal (application-command-call-lambda-list command) lambda-list)
+              (eq (application-command-slash-argument-mode command) slash-mode))
+         (format nil "~A retains its ordinary call and slash semantics" name)))))
+  (dolist
+      (case
+       '(("/auth grok typo" ("grok typo"))
+         ("/mcp refresh typo" ("refresh typo"))))
+    (destructuring-bind (input expected) case
+      (test-assert
+       (equal (application-command-invocation-arguments
+               (application-command-invocation-parse input))
+              expected)
+       (format nil "~A preserves trailing slash input for validation" input))))
+  (let ((application (make-instance 'application)))
+    (dolist
+        (function
+         '(application--builtin-help-command
+           application--builtin-vault-command
+           application--builtin-vault-restore-command
+           application--builtin-vault-discard-command))
+      (test-assert
+       (handler-case
+           (progn
+             (funcall function application :extra)
+             nil)
+         (program-error ()
+           t))
+       (format nil "argument-free command ~S rejects extra Lisp arguments"
+               function)))
+    (test-assert
+     (handler-case
+         (progn
+           (application--builtin-working-directory-command application)
+           nil)
+       (program-error ()
+         t))
+     "required built-in arguments use ordinary Common Lisp arity errors")
+    (setf (application-project-adaptation-offer-p application) t)
+    (let ((*application-command-interactive-p* t))
+      (dolist
+          (function
+           '(application--builtin-resume-command
+             application--builtin-model-command
+             application--builtin-effort-command
+             application--builtin-permissions-command
+             application--builtin-rollback-command))
+        (test-assert
+         (eq (funcall function application nil) ':continue)
+         (format nil "explicit NIL never prompts through ~S" function))))
+    (let ((*application-command-interactive-p* nil))
+      (dolist
+          (function
+           '(application--builtin-resume-command
+             application--builtin-model-command
+             application--builtin-effort-command
+             application--builtin-permissions-command
+             application--builtin-rollback-command))
+        (test-assert
+         (eq (funcall function application) ':continue)
+         (format nil "noninteractive omission remains nonmodal through ~S"
+                 function))))
+    (test-assert
+     (application-project-adaptation-offer-p application)
+     "nonmodal resume calls do not consume the interactive startup offer"))
   nil)
 
 (-> test-application-authentication-provider-type () null)
@@ -526,5 +625,6 @@
   (test-application-command-registry)
   (test-application-command-policies)
   (test-built-in-application-command-policies)
+  (test-built-in-application-command-calls)
   (test-application-authentication-provider-type)
   t)

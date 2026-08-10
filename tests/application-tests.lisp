@@ -6572,16 +6572,18 @@
 
 (-> test-working-directory-command () null)
 (defun test-working-directory-command ()
-  "Test /cwd completion, full-path parsing, presentation, and no-argument status."
+  "Test /cwd completion, full-path parsing, and required-argument semantics."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (workspace (merge-pathnames "command workspace/" root))
+         (lisp-workspace (merge-pathnames "lisp command workspace/" root))
          (previous-process-directory (uiop:getcwd))
          (previous-defaults *default-pathname-defaults*)
          (terminal (make-instance 'recording-terminal :columns 80))
          (ui (terminal-ui-create :terminal terminal))
          (registry (make-default-tool-registry)))
     (ensure-directories-exist workspace)
+    (ensure-directories-exist lisp-workspace)
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "cwd-command"))
@@ -6631,12 +6633,32 @@
                             (namestring (truename workspace)))
                     (recording-terminal-output terminal))
             "/cwd presents the selected workspace")
-           (application-command application "/cwd")
+           (test-assert
+            (handler-case
+                (progn
+                  (application-command application "/cwd")
+                  nil)
+              (program-error ()
+                t))
+            "/cwd omission signals its ordinary required-argument error")
+           (application--builtin-working-directory-command application "")
            (test-assert
             (search (format nil "Working directory: ~A"
                             (namestring (truename workspace)))
                     (recording-terminal-output terminal))
-            "/cwd without a path presents the current workspace"))
+            "an explicit empty path preserves the status operation")
+           (let ((evaluation
+                   (application-lisp-evaluate
+                    (format nil "(cwd #P~S)" (namestring lisp-workspace))
+                    :application application)))
+             (test-assert
+              (eq (application-lisp-evaluation-status evaluation) ':ok)
+              "a canonical CWD call accepts a pathname object")
+             (test-assert
+              (equal (configuration-working-directory
+                      (application-configuration application))
+                     (truename lisp-workspace))
+              "a canonical CWD pathname switches workspaces")))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:chdir previous-process-directory)

@@ -1067,9 +1067,10 @@ The caller must hold CONTROLLER's lock."
      :description "inspect recovered queued input"
      :tip "shows input preserved after an active-image crash."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (application-recovery-input-vault-present application)
   ':continue)
 
@@ -1079,9 +1080,10 @@ The caller must hold CONTROLLER's lock."
      :description "restore recovered queued input"
      :tip "queues all vaulted input in its original order without automatic submission."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)
       (error 'configuration-error
@@ -1102,9 +1104,10 @@ The caller must hold CONTROLLER's lock."
      :description "discard recovered queued input"
      :tip "deletes only this conversation's recovery vault and blocked pending state."
      :busy-behavior :hold
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)
       (error 'configuration-error
