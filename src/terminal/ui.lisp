@@ -356,6 +356,38 @@ emergency terminal input responsive while another thread owns presentation."
   (terminal--write-safe-text terminal (terminal--render-spans terminal spans))
   nil)
 
+(-> terminal-ui--lisp-draft-p (string) boolean)
+(defun terminal-ui--lisp-draft-p (text)
+  "Return true when TEXT begins with explicit Common Lisp input."
+  (and (plusp (length text))
+       (char= #\( (char text 0))))
+
+(-> terminal-ui--prompt-spans (string boolean) (values string list))
+(defun terminal-ui--prompt-spans (prompt lisp-draft-p)
+  "Return PROMPT's visible text and styled spans for the current input mode."
+  (if lisp-draft-p
+      (let ((marker
+              (position-if-not
+               (lambda (character)
+                 (find character '(#\Space #\Tab #\Newline #\Return #\Page)))
+               prompt
+               :from-end t)))
+        (if marker
+            (let ((text (copy-seq prompt)))
+              (setf (char text marker) #\*)
+              (values
+               text
+               (append
+                (when (plusp marker)
+                  (list (terminal-span ':brand (subseq text 0 marker))))
+                (list (terminal-span ':lisp-prompt "*"))
+                (when (< (1+ marker) (length text))
+                  (list (terminal-span ':brand (subseq text (1+ marker))))))))
+            (values "* "
+                    (list (terminal-span ':lisp-prompt "*")
+                          (terminal-span ':brand " ")))))
+      (values prompt (list (terminal-span ':brand prompt)))))
+
 (-> terminal-ui--prompt-content
     (terminal-ui)
     (values (or list terminal-rendered-row) integer))
@@ -364,47 +396,58 @@ emergency terminal input responsive while another thread owns presentation."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (terminal-columns terminal))
          (editor (terminal-ui-editor ui))
+         (raw-content (line-editor-text editor))
+         (lisp-draft-p (terminal-ui--lisp-draft-p raw-content))
          (safe-prompt (sanitize-text (terminal-ui-prompt ui)
                                      :single-line-p t)))
-    (if (and (zerop (length (line-editor-text editor)))
-             (non-empty-string-p (terminal-ui-placeholder ui)))
-        (let ((spans
-                (terminal--clip-spans
-                 (list (terminal-span :brand safe-prompt)
-                       (terminal-span :hint (terminal-ui-placeholder ui)))
-                 columns)))
-          (values spans
-                  (min (length safe-prompt)
-                       (length (terminal--spans-text spans)))))
-        (let* ((raw-content (line-editor-text editor))
-               (content (sanitize-text raw-content))
-               (content-cursor
-                 (length
-                  (sanitize-text
-                   (subseq raw-content 0 (line-editor-cursor editor)))))
-               (content-style
-                 (if (uiop:string-prefix-p "/" content)
-                     ':user
-                     ':plain))
-               (prompt-display
-                 (terminal--render-spans
-                  terminal (list (terminal-span ':brand safe-prompt))))
-               (content-display
-                 (terminal--render-spans
-                  terminal (list (terminal-span content-style content)))))
-          (multiple-value-bind
-                (wrapped-content wrapped-display wrapped-cursor)
-              (wrap-styled-editor-text
-               content
-               content-display
-               :cursor content-cursor
-               :columns columns
-               :prompt-width (text-cell-width safe-prompt))
-            (values
-             (terminal--make-rendered-row
-              (concatenate 'string safe-prompt wrapped-content)
-              (concatenate 'string prompt-display wrapped-display))
-             (+ (length safe-prompt) wrapped-cursor)))))))
+    (multiple-value-bind (prompt-text prompt-spans)
+        (terminal-ui--prompt-spans safe-prompt lisp-draft-p)
+      (if (and (zerop (length raw-content))
+               (non-empty-string-p (terminal-ui-placeholder ui)))
+          (let ((spans
+                  (terminal--clip-spans
+                   (append prompt-spans
+                           (list
+                            (terminal-span :hint
+                                           (terminal-ui-placeholder ui))))
+                   columns)))
+            (values spans
+                    (min (length prompt-text)
+                         (length (terminal--spans-text spans)))))
+          (let* ((content (sanitize-text raw-content))
+                 (content-cursor
+                   (length
+                    (sanitize-text
+                     (subseq raw-content 0 (line-editor-cursor editor)))))
+                 (content-spans
+                   (or
+                    (and lisp-draft-p
+                         (syntax--highlight-spans
+                          content
+                          :language (language-find ':common-lisp :errorp nil)))
+                    (list
+                     (terminal-span
+                      (if (uiop:string-prefix-p "/" content)
+                          ':user
+                          ':plain)
+                      content))))
+                 (prompt-display
+                   (terminal--render-spans terminal prompt-spans))
+                 (content-display
+                   (terminal--render-spans terminal content-spans)))
+            (multiple-value-bind
+                  (wrapped-content wrapped-display wrapped-cursor)
+                (wrap-styled-editor-text
+                 content
+                 content-display
+                 :cursor content-cursor
+                 :columns columns
+                 :prompt-width (text-cell-width prompt-text))
+              (values
+               (terminal--make-rendered-row
+                (concatenate 'string prompt-text wrapped-content)
+                (concatenate 'string prompt-display wrapped-display))
+               (+ (length prompt-text) wrapped-cursor))))))))
 
 ;;;; -- Command Completion Suggestions --
 

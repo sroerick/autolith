@@ -530,6 +530,59 @@
                      "Ctrl-D exits when the editor is empty"))))
   nil)
 
+(-> test-terminal-lisp-draft () null)
+(defun test-terminal-lisp-draft ()
+  "Test Lisp prompt projection, live ColorLisp spans, and exact mode switching."
+  (multiple-value-bind (prompt spans)
+      (terminal-ui--prompt-spans "❯ " t)
+    (test-assert (string= prompt "* ")
+                 "a Lisp draft replaces the normal prompt marker")
+    (test-assert (find (terminal-span ':lisp-prompt "*") spans :test #'equal)
+                 "the Lisp prompt marker uses its red semantic style"))
+  (let* ((source "(defun terminal-lisp-draft-example () 42)")
+         (spans
+           (syntax--highlight-spans
+            source
+            :language (language-find ':common-lisp))))
+    (test-assert
+     (and (find (terminal-span ':syntax-keyword "defun") spans :test #'equal)
+          (find (terminal-span ':syntax-function "terminal-lisp-draft-example")
+                spans
+                :test #'equal)
+          (find (terminal-span ':syntax-number "42") spans :test #'equal))
+     "ColorLisp highlights a live Common Lisp draft semantically"))
+  (let* ((terminal (make-instance 'recording-terminal
+                                  :columns 120
+                                  :styled-p t))
+         (editor (line-editor-create))
+         (ui (terminal-ui-create :terminal terminal
+                                 :editor editor
+                                 :prompt "❯ ")))
+    (line-editor-set-text
+     editor
+     (format nil "(let ((value 40))~%  (+ value 2))"))
+    (multiple-value-bind (text display cursor)
+        (terminal-ui--live-content ui)
+      (test-assert (uiop:string-prefix-p "* (let" text)
+                   "input beginning with an opening parenthesis enters Lisp mode")
+      (test-assert (= cursor (1- (length text)))
+                   "the Lisp draft cursor precedes the live region newline")
+      (test-assert (string= text (clinedi:ansi-strip display))
+                   "live Lisp highlighting preserves exact visible source text"))
+    (line-editor-set-text editor " (list 1 2)")
+    (multiple-value-bind (text display cursor)
+        (terminal-ui--live-content ui)
+      (declare (ignore display cursor))
+      (test-assert (uiop:string-prefix-p "❯  (list" text)
+                   "leading whitespace keeps ordinary prose input mode"))
+    (line-editor-set-text editor "ordinary prose")
+    (multiple-value-bind (text display cursor)
+        (terminal-ui--live-content ui)
+      (declare (ignore display cursor))
+      (test-assert (uiop:string-prefix-p "❯ ordinary prose" text)
+                   "removing the opening parenthesis restores the normal prompt")))
+  nil)
+
 (-> test-terminal-image-attachments () null)
 (defun test-terminal-image-attachments ()
   "Test pasted image labels, submission payloads, pruning, and history recall."
@@ -2558,6 +2611,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-finalized-scrollback)
   (test-terminal-resize-frame)
   (test-terminal-line-editor)
+  (test-terminal-lisp-draft)
   (test-terminal-image-attachments)
   (test-terminal-input-decoding)
   (test-terminal-live-region-layout)

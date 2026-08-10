@@ -10,7 +10,7 @@
            :recovery-gradient-1 :recovery-gradient-2 :recovery-gradient-3
            :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6
            :user :tool :success :failure :notice :dim :hint :selected
-           :strong :emphasis :code :plan-active :timestamp-time
+           :strong :emphasis :code :lisp-prompt :plan-active :timestamp-time
            :agent-spinner :agent-name :agent-role :agent-tool
            :status-plain :status-dim :status-accent
            :status-model :status-effort :status-branch
@@ -38,6 +38,7 @@
            (:strong (:bold t))
            (:emphasis (:italic t))
            (:code (:foreground :cyan))
+           (:lisp-prompt (:foreground :red :bold t))
            (:plan-active (:foreground :cyan :bold t))
            (:timestamp-time (:foreground :cyan))
            (:agent-spinner (:foreground :bright-green :bold t))

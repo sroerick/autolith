@@ -45,11 +45,11 @@
       (finish-row))
     (coerce (nreverse rows) 'vector)))
 
-(-> syntax--highlight-lines
+(-> syntax--highlight-segments
     (string &key (:language (option language)) (:pathname t))
-    (option vector))
-(defun syntax--highlight-lines (source &key language pathname)
-  "Return SOURCE as syntax-highlighted rows, or NIL without a language.
+    (option list))
+(defun syntax--highlight-segments (source &key language pathname)
+  "Return ColorLisp segments for SOURCE, or NIL without a language.
 
 LANGUAGE is an already resolved ColorLisp language. When only PATHNAME is
 given, detect its language from the pathname and SOURCE. ColorLisp failures
@@ -58,11 +58,36 @@ degrade to unstyled output at the caller."
       (let ((resolved (or language
                           (and pathname
                                (language-detect pathname :source source)))))
-        (and resolved
-             (syntax--segments->lines
-              (highlight-segments source :language resolved))))
+        (and resolved (highlight-segments source :language resolved)))
     (colorlisp-error ()
       nil)))
+
+(-> syntax--highlight-spans
+    (string &key (:language (option language)) (:pathname t))
+    (option list))
+(defun syntax--highlight-spans (source &key language pathname)
+  "Return SOURCE as one sequence of syntax-highlighted terminal spans."
+  (let ((segments
+          (syntax--highlight-segments source
+                                      :language language
+                                      :pathname pathname)))
+    (and segments
+         (mapcar (lambda (segment)
+                   (terminal-span
+                    (syntax--category-style (segment-category segment))
+                    (segment-text segment)))
+                 segments))))
+
+(-> syntax--highlight-lines
+    (string &key (:language (option language)) (:pathname t))
+    (option vector))
+(defun syntax--highlight-lines (source &key language pathname)
+  "Return SOURCE as syntax-highlighted rows, or NIL without a language."
+  (let ((segments
+          (syntax--highlight-segments source
+                                      :language language
+                                      :pathname pathname)))
+    (and segments (syntax--segments->lines segments))))
 
 (-> syntax--spans-subseq (list integer integer) list)
 (defun syntax--spans-subseq (spans start end)
