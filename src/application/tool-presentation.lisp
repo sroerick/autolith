@@ -1244,6 +1244,8 @@ structural discriminator as a readable heading instead."
               (t
                "invalid operation")))))
 
+
+
 (-> application--workspace-resource-path (string) (option string))
 (defun application--workspace-resource-path (uri)
   "Return the decoded source path from a workspace resource URI, or NIL."
@@ -1501,9 +1503,12 @@ model."
                        ':dim
                        (format nil "… +~D more operation~:P" omitted))))))))))
 
-(-> application--resource-operation-rows (application t) list)
-(defun application--resource-operation-rows (application operations)
-  "Return readable verbs, fields, and content previews for resource OPERATIONS."
+(-> application--resource-operation-rows
+    (application t &key (:change-rows-function (option function)))
+    list)
+(defun application--resource-operation-rows
+    (application operations &key change-rows-function)
+  "Return readable operation headings and optional shared change views."
   (cond
     ((not (and (vectorp operations) (not (stringp operations))))
      (list (application--tool-section-row "operations unavailable")))
@@ -1521,13 +1526,17 @@ model."
               (append
                (unless first-p (list nil))
                (if (json-object-p operation)
-                   (append
-                    (list (application--tool-section-row
-                           (application--resource-operation-heading
-                            operation
-                            (1+ index))))
-                    (application--structured-object-rows
-                     application operation :excluded-keys '("op")))
+                   (let ((change-rows
+                           (and change-rows-function
+                                (funcall change-rows-function operation))))
+                     (append
+                      (list (application--tool-section-row
+                             (application--resource-operation-heading
+                              operation
+                              (1+ index))))
+                      (or change-rows
+                          (application--structured-object-rows
+                           application operation :excluded-keys '("op")))))
                    (application--structured-value-rows
                     application
                     (format nil "operation ~D" (1+ index))
@@ -1560,34 +1569,6 @@ model."
        (when (integerp count)
          (list (list :label "line count" :value (princ-to-string count)))))))))
 
-(defmethod application-tool-call-entry
-    ((tool resource-edit-tool) (application application) (call hash-table))
-  "Present resource.edit operations with source-aware workspace line changes."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (uri (let ((value (and arguments (json-get arguments "uri"))))
-                (if (stringp value) value "")))
-         (revision
-           (let ((value (and arguments (json-get arguments "base-revision"))))
-             (if (stringp value) value "")))
-         (operations (and arguments (json-get arguments "operations")))
-         (path (application--workspace-resource-path uri)))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ resource.edit"
-     :rows
-     (append
-      (application--tool-field-rows
-       application
-       (list (list :label "uri" :value uri :style ':code)
-             (list :label "revision" :value revision :style ':code)))
-      (list nil)
-      (if path
-           (application--workspace-resource-operation-rows
-            application operations
-            :uri uri :revision revision :path path)
-          (application--resource-operation-rows application operations))))))
 
 (defmethod application-tool-call-entry
     ((tool fs-read-tool) (application application) (call hash-table))

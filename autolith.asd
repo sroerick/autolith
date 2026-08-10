@@ -132,6 +132,7 @@
                              (:file "application/runtime")
                              (:file "application/change-viewer")
                              (:file "application/tool-presentation")
+                             (:file "application/change-presentation")
                              (:file "application/recovery")
                              (:file "application/commands")
                              (:file "application/operation")

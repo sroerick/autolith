@@ -3004,6 +3004,157 @@
                                     :if-does-not-exist :ignore))))
   nil)
 
+(-> test-agenda-change-tool-presentation () null)
+(defun test-agenda-change-tool-presentation ()
+  "Test native and revision-gated agenda mutations use the shared change viewer."
+  (labels ((call-entry (application namespace name arguments)
+             "Render one function call into APPLICATION's transcript."
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" namespace
+               "name" name
+               "arguments" (json-encode arguments)))))
+    (let* ((configuration (test-configuration))
+           (root (test-configuration-root configuration))
+           (conversation
+             (conversation-create configuration :identifier "agenda-change-view"))
+           (application
+             (application-tests--ui-application
+              :columns 100
+              :compact-view-p nil))
+           (revision "Ragenda-change")
+           (item nil)
+           (record nil))
+      (unwind-protect
+           (progn
+             (with-recursive-lock-held (*agenda-lock*)
+               (let ((state (agenda-load configuration)))
+                 (setf item
+                       (agenda-add :configuration configuration
+                                   :state state
+                                   :text "old agenda text"
+                                   :status ':todo
+                                   :memory-identifiers nil)
+                       record (agenda-current configuration state))))
+             (setf (application-configuration application) configuration
+                   (application-conversation application) conversation)
+             (let ((entry
+                     (call-entry
+                      application
+                      "agenda"
+                      "add"
+                      (json-object "text" "new agenda item"
+                                   "status" "doing"))))
+               (test-assert
+                (and (find (terminal-span ':success "+ 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 2 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 3 │ ")
+                           entry :test #'equal)
+                     (search "status: doing" (markdown-tests--row-text entry))
+                     (search "text: new agenda item"
+                             (markdown-tests--row-text entry)))
+                "agenda.add uses numbered green added rows"))
+             (let ((entry
+                     (call-entry
+                      application
+                      "agenda"
+                      "update"
+                      (json-object "id" (agenda-item-identifier item)
+                                   "text" "updated agenda text"
+                                   "status" "doing"))))
+               (test-assert
+                (and (find (terminal-span ':failure "- 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':failure "- 2 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 2 │ ")
+                           entry :test #'equal)
+                     (search "text: old agenda text"
+                             (markdown-tests--row-text entry))
+                     (search "text: updated agenda text"
+                             (markdown-tests--row-text entry)))
+                "agenda.update uses numbered red and green item rows"))
+             (let ((entry
+                     (call-entry
+                      application
+                      "agenda"
+                      "remove"
+                      (json-object "id" (agenda-item-identifier item)))))
+               (test-assert
+                (and (find (terminal-span ':failure "- 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':failure "- 2 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':failure "- 3 │ ")
+                           entry :test #'equal)
+                     (not (find (terminal-span ':success "+ 1 │ ")
+                                entry :test #'equal)))
+                "agenda.remove uses numbered red removed rows"))
+             (let* ((directory (workspace-agenda-directory record))
+                    (observation
+                      (make-instance
+                       'agenda-observation
+                       :uri "agenda:current"
+                       :revision "agenda-change-digest"
+                       :content (agenda-tool--render-record record)
+                       :directory directory
+                       :snapshot (agenda-resource--snapshot directory record)))
+                    (observation-state
+                      (make-instance
+                       'agenda-observation-state
+                       :alias revision
+                       :observation observation)))
+               (with-recursive-lock-held
+                   ((conversation-resource-observation-lock conversation))
+                 (setf (gethash revision
+                                (conversation-resource-observations conversation))
+                       observation-state
+                       (conversation-resource-observation-order conversation)
+                       (list revision)))
+               (with-recursive-lock-held (*agenda-lock*)
+                 (agenda-update configuration
+                                (agenda-load configuration)
+                                (agenda-item-identifier item)
+                                :text "unobserved live agenda text"))
+               (let* ((entry
+                        (call-entry
+                         application
+                         "resource"
+                         "edit"
+                         (json-object
+                          "uri" "agenda:current"
+                          "base-revision" revision
+                          "operations"
+                          (json-array
+                           (json-object
+                            "op" "agenda-update"
+                            "id" (agenda-item-identifier item)
+                            "text" "resource agenda text")))))
+                      (text (markdown-tests--row-text entry)))
+                 (test-assert
+                  (and (find (terminal-span ':dim "  1 │ ")
+                             entry :test #'equal)
+                       (find (terminal-span ':failure "- 2 │ ")
+                             entry :test #'equal)
+                       (find (terminal-span ':success "+ 2 │ ")
+                             entry :test #'equal)
+                       (find (terminal-span ':dim "  3 │ ")
+                             entry :test #'equal)
+                       (search "text: old agenda text" text)
+                       (search "text: resource agenda text" text)
+                       (not (search "unobserved live agenda text" text)))
+                  "agenda resource edits use their exact observed preimage"))))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
 (-> test-structured-tool-presentation () null)
 (defun test-structured-tool-presentation ()
   "Test resource operations and dynamic tool data never render as raw JSON."
@@ -7868,6 +8019,7 @@
   (test-cancellation-completion-clears-interrupt-state)
   (test-transcript-entries)
   (test-line-change-tool-presentation)
+  (test-agenda-change-tool-presentation)
   (test-structured-tool-presentation)
   (test-plan-update-call-presentation)
   (test-task-run-call-presentation)
