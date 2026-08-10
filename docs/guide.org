@@ -702,7 +702,9 @@ of raw JSON. Resource edits list each operation and its target range.
 Source-bearing evaluation, compilation, definition, shell, write, and edit
 calls preserve semantic syntax colors. Executable source has a green left
 ruler; inserted lines use a green =+= ruler and removed lines use a red =-=
-ruler, so the distinction remains legible when color is disabled.
+ruler, so the distinction remains legible when color is disabled. When exact
+file coordinates are known, removed rows show original line numbers and added
+rows show resulting line numbers.
 
 With no argument, =/compact= still forces context compaction.
 

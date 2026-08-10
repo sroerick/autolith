@@ -2593,7 +2593,7 @@
 
 (-> test-line-change-tool-presentation () null)
 (defun test-line-change-tool-presentation ()
-  "Test syntax-highlighted semantic rulers for source-bearing tool calls."
+  "Test numbered, syntax-highlighted semantic rulers for source-bearing tools."
   (labels ((call-entry (application namespace name &key arguments)
              "Render one function call into APPLICATION's transcript."
              (response-item-entry
@@ -2617,21 +2617,25 @@
                  "op" "replace-lines"
                  "start-line" 4
                  "end-line" 5
-                 "content" (format nil "(defun new-source ()~%  2)"))))))
+                  "content" (format nil "(defun new-source () 2)~%~%"))))))
            (assert-unavailable-workspace-entry (entry assertion)
              "Assert ENTRY never invents an unavailable workspace preimage."
              (let ((text (markdown-tests--row-text entry)))
-               (test-assert
-                (and (find (terminal-span :failure "- 4 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span :success "+ │ ")
-                           entry :test #'equal)
-                     (find (terminal-span :syntax-function "new-source")
-                           entry :test #'equal)
-                     (not (find (terminal-span :syntax-function "old-source")
-                                entry :test #'equal))
-                     (search "observed lines 4-5 unavailable" text))
-                assertion))))
+                (test-assert
+                 (and (find (terminal-span :failure "- 4 │ ")
+                            entry :test #'equal)
+                      (= 2 (count (terminal-span :success "+ │ ")
+                                  entry :test #'equal))
+                      (not (find (terminal-span :success "+ 4 │ ")
+                                 entry :test #'equal))
+                      (not (find (terminal-span :success "+ 5 │ ")
+                                 entry :test #'equal))
+                      (find (terminal-span :syntax-function "new-source")
+                            entry :test #'equal)
+                      (not (find (terminal-span :syntax-function "old-source")
+                                 entry :test #'equal))
+                      (search "observed lines 4-5 unavailable" text))
+                 assertion))))
     (let* ((application
              (application-tests--ui-application
               :columns 100
@@ -2680,13 +2684,14 @@
                     :arguments (json-object "path" path "content" source)))
                  (text (markdown-tests--row-text entry)))
             (test-assert
-             (and (find (terminal-span :success "+ │ ") entry :test #'equal)
+             (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
+                  (find (terminal-span :success "+ 2 │ ") entry :test #'equal)
                   (find (terminal-span :syntax-keyword "defun")
                         entry :test #'equal)
                   (find (terminal-span :syntax-function "highlighted-source")
                         entry :test #'equal)
                   (not (search "content unavailable" text)))
-             (format nil "~A.~A shows available syntax-highlighted added content"
+             (format nil "~A.~A numbers available syntax-highlighted added content"
                      namespace name)))))
       (let* ((entry
                (call-entry
@@ -2696,10 +2701,45 @@
                              "content" "plain source")))
              (text (markdown-tests--row-text entry)))
         (test-assert
-         (and (find (terminal-span :success "+ │ ") entry :test #'equal)
+         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
               (find (terminal-span :code "plain source") entry :test #'equal)
-              (search "+ │ plain source" text))
-         "writes preserve the green added ruler without a known syntax"))
+              (search "+ 1 │ plain source" text))
+         "writes number the green added ruler without a known syntax"))
+      (let* ((entry
+               (call-entry
+                application "fs" "write"
+                :arguments
+                (json-object "path" "src/trailing.unknown"
+                             "content" (format nil "first~%~%"))))
+             (text (markdown-tests--row-text entry)))
+        (test-assert
+         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
+              (find (terminal-span :success "+ 2 │ ") entry :test #'equal)
+              (search "+ 2 │" text)
+              (not (search "(empty content)" text)))
+         "writes preserve and number trailing blank logical lines"))
+      (let* ((entry
+               (call-entry
+                application "fs" "write"
+                :arguments
+                (json-object "path" "src/blank.unknown"
+                             "content" (string #\Newline))))
+             (text (markdown-tests--row-text entry)))
+        (test-assert
+         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
+              (not (search "(empty content)" text)))
+         "writes render a newline-only file as one numbered blank line"))
+      (let ((entry
+              (call-entry
+               application "fs" "edit"
+               :arguments
+               (json-object "path" "missing.unknown"
+                            "old-text" "old plain"
+                            "new-text" "new plain"))))
+        (test-assert
+         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
+              (find (terminal-span :success "+ │ ") entry :test #'equal))
+         "fs.edit keeps both gutters unnumbered when file coordinates are unknown"))
       (let* ((entry
                (call-entry
                 application "lisp" "scratchpad-edit"
@@ -2756,15 +2796,17 @@
            (uri "workspace:src/highlighted.lisp")
            (revision "Rline-change")
            (partial-revision "Rline-change-partial")
+           (empty-uri "workspace:src/empty.lisp")
+           (empty-revision "Rline-change-empty")
            (lines
              (vector "header" "context" "before"
-                     "(defun old-source ()" "  1)" "after"))
+                     "(defun old-source ()" "  1)" "after" ""))
            (observation
              (make-instance
               'workspace-file-observation
               :uri uri
               :revision "snapshot-digest"
-              :content (format nil "~{~A~^~%~}" (coerce lines 'list))
+              :content (format nil "~{~A~%~}" (coerce lines 'list))
               :lines lines
               :line-ending (string #\Newline)
               :final-newline-p t))
@@ -2773,40 +2815,173 @@
               'workspace-file-observation-state
               :alias revision
               :observation observation
-              :visible-ranges '((1 6))))
+              :visible-ranges '((1 7))))
            (partial-state
              (make-instance
               'workspace-file-observation-state
               :alias partial-revision
               :observation observation
-              :visible-ranges '((1 4)))))
+              :visible-ranges '((1 4))))
+           (empty-observation
+             (make-instance
+              'workspace-file-observation
+              :uri empty-uri
+              :revision "empty-snapshot-digest"
+              :content ""
+              :lines #()
+              :line-ending (string #\Newline)
+              :final-newline-p nil))
+           (empty-state
+             (make-instance
+              'workspace-file-observation-state
+              :alias empty-revision
+              :observation empty-observation
+              :visible-ranges nil)))
       (unwind-protect
            (progn
              (setf (application-configuration application) configuration
                    (application-conversation application) conversation)
-             (with-recursive-lock-held
-                 ((conversation-resource-observation-lock conversation))
-               (let ((states
-                       (conversation-resource-observations conversation)))
-                 (setf (gethash revision states) state
-                       (gethash partial-revision states) partial-state
-                       (conversation-resource-observation-order conversation)
-                       (list revision partial-revision))))
+              (with-recursive-lock-held
+                  ((conversation-resource-observation-lock conversation))
+                (let ((states
+                        (conversation-resource-observations conversation)))
+                  (setf (gethash revision states) state
+                        (gethash partial-revision states) partial-state
+                        (gethash empty-revision states) empty-state
+                        (conversation-resource-observation-order conversation)
+                        (list revision partial-revision empty-revision))))
              (let* ((entry
                       (workspace-replacement-entry application uri revision))
                     (text (markdown-tests--row-text entry)))
-               (test-assert
-                (and (find (terminal-span :failure "- 4 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span :success "+ │ ")
-                           entry :test #'equal)
-                     (find (terminal-span :syntax-function "old-source")
-                           entry :test #'equal)
-                     (find (terminal-span :syntax-function "new-source")
-                           entry :test #'equal)
-                     (search "- 4 │" text)
-                     (search "+ │" text))
-                "workspace resource edits use the observed red preimage and green replacement"))
+                (test-assert
+                 (and (find (terminal-span :failure "- 4 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 4 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 5 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :syntax-function "old-source")
+                            entry :test #'equal)
+                      (find (terminal-span :syntax-function "new-source")
+                            entry :test #'equal)
+                      (search "- 4 │" text)
+                      (search "+ 4 │" text))
+                 "workspace resource edits number both the preimage and replacement"))
+              (let* ((entry
+                       (call-entry
+                        application "resource" "edit"
+                        :arguments
+                        (json-object
+                         "uri" uri
+                         "base-revision" revision
+                         "operations"
+                         (json-array
+                          (json-object
+                           "op" "delete-lines"
+                           "start-line" 7
+                           "end-line" 7)))))
+                     (text (markdown-tests--row-text entry)))
+                (test-assert
+                 (and (find (terminal-span :failure "- 7 │ ")
+                            entry :test #'equal)
+                      (not (search "no textual change" text)))
+                 "workspace edits preserve a visible trailing blank preimage row"))
+              (let ((entry
+                      (call-entry
+                       application "resource" "edit"
+                       :arguments
+                       (json-object
+                        "uri" uri
+                        "base-revision" revision
+                        "operations"
+                        (json-array
+                         (json-object
+                          "op" "insert-after"
+                          "line" 5
+                          "content" "(defun later-source () 3)")
+                         (json-object
+                          "op" "insert-before"
+                          "line" 2
+                          "content" (format nil
+                                            "(defun earlier-source ()~%  1)")))))))
+                (test-assert
+                 (and (find (terminal-span :success "+ 2 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 3 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 8 │ ")
+                            entry :test #'equal))
+                 "workspace insertions use exact resulting lines after earlier edits"))
+              (let ((entry
+                      (call-entry
+                       application "resource" "edit"
+                       :arguments
+                       (json-object
+                        "uri" uri
+                        "base-revision" revision
+                        "operations"
+                        (json-array
+                         (json-object
+                          "op" "replace-lines"
+                          "start-line" 5
+                          "end-line" 5
+                          "content" "(defun shifted-source () 4)")
+                         (json-object
+                          "op" "delete-lines"
+                          "start-line" 2
+                          "end-line" 3))))))
+                (test-assert
+                 (and (find (terminal-span :failure "- 5 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 3 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :syntax-function "shifted-source")
+                            entry :test #'equal))
+                 "earlier deletions shift later replacement line numbers"))
+              (let ((entry
+                      (call-entry
+                       application "resource" "edit"
+                       :arguments
+                       (json-object
+                        "uri" uri
+                        "base-revision" revision
+                        "operations"
+                        (json-array
+                         (json-object
+                          "op" "replace-lines"
+                          "start-line" 3
+                          "end-line" 4
+                          "content" "overlap replacement")
+                         (json-object
+                          "op" "insert-before"
+                          "line" 4
+                          "content" "overlap insertion"))))))
+                (test-assert
+                 (and (find (terminal-span :success "+ │ ")
+                            entry :test #'equal)
+                      (not (find (terminal-span :success "+ 3 │ ")
+                                 entry :test #'equal))
+                      (not (find (terminal-span :success "+ 4 │ ")
+                                 entry :test #'equal)))
+                 "invalid overlapping workspace edits never invent added coordinates"))
+              (let* ((entry
+                       (call-entry
+                        application "resource" "edit"
+                        :arguments
+                        (json-object
+                         "uri" empty-uri
+                         "base-revision" empty-revision
+                         "operations"
+                         (json-array
+                          (json-object
+                           "op" "replace-empty"
+                           "content" (string #\Newline))))))
+                     (text (markdown-tests--row-text entry)))
+                (test-assert
+                 (and (find (terminal-span :success "+ 1 │ ")
+                            entry :test #'equal)
+                      (not (search "(empty content)" text)))
+                 "empty workspace files show their first numbered blank line"))
              (assert-unavailable-workspace-entry
               (workspace-replacement-entry application uri "Rmissing")
               "workspace resource edits never invent a missing preimage")

@@ -32,6 +32,12 @@
                                :single-line-p t))
               (uiop:split-string trimmed :separator '(#\Newline))))))
 
+(-> application--file-content-lines (string) list)
+(defun application--file-content-lines (text)
+  "Return sanitized logical file TEXT lines, preserving trailing blank rows."
+  (loop for line across (workspace-file--split-lines text)
+        collect (sanitize-text line :single-line-p t)))
+
 (-> application--preview-rows
     (string terminal-style integer &key (:gutter (option string)))
     list)
@@ -1301,16 +1307,113 @@ model."
                           state start-line end-line)
                          (<= end-line (length lines)))
               (return nil))
-            (format nil "~{~A~^~%~}"
+            (let ((selected-lines
                     (loop for line from start-line to end-line
-                          collect (aref lines (1- line))))))))))
+                          collect (aref lines (1- line)))))
+              (format nil "~{~A~^~%~}~:[~;~%~]"
+                      selected-lines
+                      (and selected-lines
+                           (zerop
+                            (length (first (last selected-lines)))))))))))))
+
+(-> application--workspace-resource-operation-set-valid-p
+    (application vector &key (:uri string) (:revision string))
+    boolean)
+(defun application--workspace-resource-operation-set-valid-p
+    (application operations &key uri revision)
+  "Return whether OPERATIONS are valid against the exact observed workspace file."
+  (block nil
+    (unless (and (slot-boundp application 'conversation)
+                 (non-empty-string-p uri)
+                 (non-empty-string-p revision)
+                 (plusp (length operations)))
+      (return nil))
+    (let ((conversation (application-conversation application)))
+      (unless (typep conversation 'conversation)
+        (return nil))
+      (with-recursive-lock-held
+          ((conversation-resource-observation-lock conversation))
+        (let ((state
+                (resource-observation-state-find
+                 (conversation-resource-observations conversation)
+                 revision
+                 'workspace-file-observation-state)))
+          (unless state
+            (return nil))
+          (let ((observation
+                  (resource-observation-state-observation state)))
+            (unless (string= uri (resource-observation-uri observation))
+              (return nil))
+            (handler-case
+                (progn
+                  (workspace-file--normalize-operations
+                   (coerce operations 'list)
+                   state)
+                  t)
+              (error ()
+                nil))))))))
+
+(-> application--workspace-resource-added-start-lines
+    (application vector &key (:uri string) (:revision string))
+    vector)
+(defun application--workspace-resource-added-start-lines
+    (application operations &key uri revision)
+  "Return exact resulting first-line coordinates for valid added content."
+  (let ((starts (make-array (length operations) :initial-element nil))
+        (coordinates nil))
+    (block nil
+      (unless (application--workspace-resource-operation-set-valid-p
+               application operations :uri uri :revision revision)
+        (return starts))
+      (loop for operation across operations
+            for index from 0
+            do
+               (let* ((name (json-get operation "op"))
+                      (start (json-get operation "start-line"))
+                      (end (json-get operation "end-line"))
+                      (line (json-get operation "line"))
+                      (content (json-get operation "content"))
+                      (added-count
+                        (and (stringp content)
+                             (length (workspace-file--split-lines content)))))
+                 (cond
+                   ((string= name "replace-lines")
+                    (push (list index
+                                start
+                                start
+                                (- added-count (1+ (- end start))))
+                          coordinates))
+                   ((string= name "delete-lines")
+                    (push (list index
+                                start
+                                nil
+                                (- (1+ (- end start))))
+                          coordinates))
+                   ((member name '("insert-before" "insert-after") :test #'string=)
+                    (push (list index
+                                line
+                                (+ line
+                                   (if (string= name "insert-after") 1 0))
+                                added-count)
+                          coordinates))
+                   ((string= name "replace-empty")
+                    (push (list index 0 1 added-count) coordinates)))))
+      (loop with delta = 0
+            for coordinate in (stable-sort coordinates #'< :key #'second)
+            for index = (first coordinate)
+            for new-base = (third coordinate)
+            do (when new-base
+                 (setf (aref starts index) (+ new-base delta)))
+               (incf delta (fourth coordinate)))
+      starts)))
 
 (-> application--workspace-resource-operation-change-rows
     (application json-object
-                 &key (:uri string) (:revision string) (:path string))
+                 &key (:uri string) (:revision string) (:path string)
+                      (:new-start-line (option integer)))
     (option list))
 (defun application--workspace-resource-operation-change-rows
-    (application operation &key uri revision path)
+    (application operation &key uri revision path new-start-line)
   "Return source-change rows for one workspace resource edit OPERATION."
   (let ((name (json-get operation "op"))
         (start (json-get operation "start-line"))
@@ -1333,6 +1436,7 @@ model."
               old-text
               new-text
               :old-start-line start
+              :new-start-line new-start-line
               :path path)
              (let* ((width (length (princ-to-string end)))
                     (message
@@ -1348,12 +1452,21 @@ model."
                   :content-spans (list (terminal-span ':dim message))))
                 (when (string= name "replace-lines")
                   (application--source-change-rows
-                   new-text ':added :path path)))))))
+                   new-text
+                   ':added
+                   :path path
+                   :start-line new-start-line
+                   :file-content-p t)))))))
       ((and (stringp name)
             (member name '("insert-before" "insert-after" "replace-empty")
                     :test #'string=)
             (stringp content))
-       (application--source-change-rows content ':added :path path))
+       (application--source-change-rows
+        content
+        ':added
+        :path path
+        :start-line new-start-line
+        :file-content-p t))
       (t
        nil))))
 
@@ -1369,7 +1482,10 @@ model."
     ((zerop (length operations))
      (list (application--tool-section-row "no operations")))
     (t
-     (let* ((visible-count (min *application-tool-structure-items*
+     (let* ((new-start-lines
+              (application--workspace-resource-added-start-lines
+               application operations :uri uri :revision revision))
+            (visible-count (min *application-tool-structure-items*
                                 (length operations)))
             (omitted (- (length operations) visible-count)))
        (append
@@ -1380,10 +1496,13 @@ model."
               (append
                (unless first-p (list nil))
                (if (json-object-p operation)
-                    (let ((change-rows
-                            (application--workspace-resource-operation-change-rows
-                             application operation
-                             :uri uri :revision revision :path path)))
+                   (let ((change-rows
+                           (application--workspace-resource-operation-change-rows
+                            application operation
+                            :uri uri
+                            :revision revision
+                            :path path
+                            :new-start-line (aref new-start-lines index))))
                      (append
                       (list (application--tool-section-row
                              (application--resource-operation-heading
@@ -1535,10 +1654,15 @@ model."
       (list (list (terminal-span ':code path)))
       (if (stringp content)
           (append
-           (list (application--tool-section-row
-                  (format nil "content · ~:D character~:P" (length content))))
-           (or (application--source-change-rows content ':added :path path)
-               (list (list (terminal-span ':dim "(empty content)")))))
+            (list (application--tool-section-row
+                   (format nil "content · ~:D character~:P" (length content))))
+            (or (application--source-change-rows
+                 content
+                 ':added
+                 :path path
+                 :start-line 1
+                 :file-content-p t)
+                (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
 (-> application--edit-common-prefix-length (vector vector) integer)
@@ -1584,14 +1708,19 @@ model."
 
 
 (-> application--syntax-lines
-    (string &key (:language (option language)) (:path (option string)))
+    (string &key (:language (option language)) (:path (option string))
+                 (:file-content-p boolean))
     (option vector))
-(defun application--syntax-lines (text &key language path)
+(defun application--syntax-lines
+    (text &key language path (file-content-p nil))
   "Return syntax-highlighted display lines for TEXT, or NIL.
 
 LANGUAGE handles pathless source such as eval forms. PATH selects a language
-from a file destination. Sanitization occurs before ColorLisp sees the text."
-  (let ((lines (application--display-lines text)))
+from a file destination. FILE-CONTENT-P preserves meaningful trailing blank
+file rows. Sanitization occurs before ColorLisp sees the text."
+  (let ((lines (if file-content-p
+                   (application--file-content-lines text)
+                   (application--display-lines text))))
     (when lines
       (let* ((source (format nil "~{~A~^~%~}" lines))
              (highlighted
@@ -1641,20 +1770,29 @@ from a file destination. Sanitization occurs before ColorLisp sees the text."
 (-> application--source-change-rows
     (string keyword
             &key (:path (option string)) (:language (option language))
-                 (:start-line (option integer)) (:limit integer))
+                 (:start-line (option integer)) (:limit integer)
+                 (:file-content-p boolean))
     list)
 (defun application--source-change-rows
     (text kind &key path language start-line
-                    (limit *application-tool-call-lines*))
+                    (limit *application-tool-call-lines*)
+                    (file-content-p nil))
   "Return bounded syntax-highlighted TEXT rows under one semantic change ruler.
 
 KIND is :SOURCE for executable input, :ADDED for inserted text, or :REMOVED for
-deleted text. Source rows use a green ruler without claiming file coordinates."
-  (let ((lines (application--display-lines text)))
+deleted text. Source rows use a green ruler without claiming file coordinates.
+FILE-CONTENT-P preserves meaningful trailing blank file rows."
+  (let ((lines (if file-content-p
+                   (application--file-content-lines text)
+                   (application--display-lines text))))
     (when lines
       (let* ((line-vector (coerce lines 'vector))
              (highlighted
-               (application--syntax-lines text :language language :path path))
+               (application--syntax-lines
+                text
+                :language language
+                :path path
+                :file-content-p file-content-p))
              (visible-count (min limit (length line-vector)))
              (omitted (- (length line-vector) visible-count))
              (width
@@ -1733,14 +1871,18 @@ deleted text. Source rows use a green ruler without claiming file coordinates."
 (defun application--edit-diff-rows
     (old-text new-text &key old-start-line new-start-line path)
   "Return a bounded line-numbered diff between OLD-TEXT and NEW-TEXT."
-  (let* ((old-lines (coerce (or (application--display-lines old-text) nil)
-                            'vector))
-         (new-lines (coerce (or (application--display-lines new-text) nil)
-                            'vector))
+  (let* ((old-lines
+           (coerce (application--file-content-lines old-text) 'vector))
+         (new-lines
+           (coerce (application--file-content-lines new-text) 'vector))
          (old-highlighted
-           (and path (application--syntax-lines old-text :path path)))
+           (and path
+                (application--syntax-lines
+                 old-text :path path :file-content-p t)))
          (new-highlighted
-           (and path (application--syntax-lines new-text :path path)))
+           (and path
+                (application--syntax-lines
+                 new-text :path path :file-content-p t)))
          (prefix-length
            (application--edit-common-prefix-length old-lines new-lines))
          (suffix-length
@@ -1939,10 +2081,15 @@ deleted text. Source rows use a green ruler without claiming file coordinates."
       (list (list (terminal-span ':code path)))
       (if (stringp content)
           (append
-           (list (application--tool-section-row
-                  (format nil "content · ~:D character~:P" (length content))))
-           (or (application--source-change-rows content ':added :path path)
-               (list (list (terminal-span ':dim "(empty content)")))))
+            (list (application--tool-section-row
+                   (format nil "content · ~:D character~:P" (length content))))
+            (or (application--source-change-rows
+                 content
+                 ':added
+                 :path path
+                 :start-line 1
+                 :file-content-p t)
+                (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
 (defmethod application-tool-call-entry
