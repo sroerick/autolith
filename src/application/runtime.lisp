@@ -2538,6 +2538,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
    :details (and status (application--status-details application))
    :worked-seconds (and status (application--worked-seconds application))))
 
+(-> application-set-local-activity
+    (application (option string))
+    terminal-ui)
+(defun application-set-local-activity (application activity)
+  "Set APPLICATION's explicit local Lisp ACTIVITY without replacing agent status."
+  (terminal-ui-set-local-activity (application-ui application) activity))
+
 (-> application-thinking-label () string)
 (defun application-thinking-label ()
   "Return one interesting activity word for the next provider step."

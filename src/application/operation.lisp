@@ -691,19 +691,20 @@ serialized application boundary."
              :tool-name canonical-name))
     (let* ((ui (and (slot-boundp application 'ui)
                     (application-ui application)))
-           (previous-status (and ui (terminal-ui-status ui)))
+           (previous-activity (and ui (terminal-ui-local-activity ui)))
            (result
              (unwind-protect
                   (progn
                     (when ui
-                      (application-set-activity
+                      (application-set-local-activity
                        application (format nil "running ~A" canonical-name)))
                     (tool-execute
                      tool
                      (application-operation--tool-context application)
                      decoded-arguments))
                (when ui
-                 (application-set-activity application previous-status)))))
+                 (application-set-local-activity
+                  application previous-activity)))))
       (unless (tool-result-success-p result)
         (error 'tool-error
                :message (tool-result-content result)

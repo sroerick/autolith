@@ -5,6 +5,9 @@
 (defvar *lisp-machine-test-value* nil
   "Active-image value used to verify direct local evaluation side effects.")
 
+(defvar *lisp-machine-test-activity* nil
+  "Local activity captured from inside one explicit active-image evaluation.")
+
 (-> lisp-machine-tests--application () (values application pathname))
 (defun lisp-machine-tests--application ()
   "Return a temporary application with a recording terminal and its data root."
@@ -99,6 +102,39 @@
                   (application-lisp-evaluation-restart-names evaluation)
                   :test #'string=))
      "declining restart selection aborts only the local evaluation"))
+  nil)
+
+
+(-> test-application-lisp-activity () null)
+(defun test-application-lisp-activity ()
+  "Test local evaluation remains visible without replacing provider activity."
+  (multiple-value-bind (application root)
+      (lisp-machine-tests--application)
+    (let ((ui (application-ui application)))
+      (unwind-protect
+           (progn
+             (terminal-ui-start ui)
+             (terminal-ui-set-status ui "provider active")
+             (setf *lisp-machine-test-activity* nil)
+             (test-assert
+              (eq (application-run-lisp-input
+                   application
+                   "(setf *lisp-machine-test-activity* (terminal-ui-local-activity (application-ui *application-operation-application*)))")
+                  ':continue)
+              "explicit local Lisp completes beside provider activity")
+             (test-assert
+              (and (string= *lisp-machine-test-activity*
+                            "evaluating local Lisp")
+                   (string= (terminal-ui-status ui) "provider active")
+                   (null (terminal-ui-local-activity ui)))
+              "local activity is visible during evaluation and clears without clobbering status"))
+        (ignore-errors (terminal-ui-stop ui))
+        (ignore-errors
+          (tool-registry-close-runtime-state
+           (application-tool-registry application)))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
   nil)
 
 
@@ -282,5 +318,6 @@
 (defun run-lisp-machine-tests ()
   "Run direct local Lisp evaluation and responsive routing tests."
   (test-application-lisp-evaluation)
+  (test-application-lisp-activity)
   (test-application-lisp-input-routing)
   nil)

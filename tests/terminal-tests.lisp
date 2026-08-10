@@ -1164,11 +1164,13 @@
           (terminal-ui--live-content active-ui)
         (declare (ignore display cursor))
         (let ((preview-position (search "◇ reasoning summary" text))
+              (activity-position (search "untangling" text))
               (status-position (search "READ  ∙ " text)))
           (test-assert (and preview-position
+                            activity-position
                             status-position
-                            (< preview-position status-position))
-                       "preview rows appear above the independent status row"))
+                            (< status-position activity-position preview-position))
+                       "preview rows appear below status and provider activity"))
         (test-assert (every (lambda (line)
                              (<= (text-cell-width line) 20))
                            (uiop:split-string text :separator '(#\Newline)))
@@ -1191,6 +1193,66 @@
         (test-assert (not (search "reasoning summary" text))
                      "a cleared preview disappears without entering scrollback"))))
   nil)
+
+
+(-> test-terminal-live-section-order () null)
+(defun test-terminal-live-section-order ()
+  "Test semantic live sections remain below the animated status row in order."
+  (let* ((clock 100)
+         (terminal (make-instance 'recording-terminal
+                                  :columns 100
+                                  :rows 40))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () clock))))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-status active-ui "running fs.list")
+      (terminal-ui-set-compacting active-ui t)
+      (terminal-ui-set-local-activity active-ui "evaluating local Lisp")
+      (terminal-ui-set-agent-activities
+       active-ui
+       (list
+        (list :id "agent-one"
+              :index 1
+              :agent "reviewer"
+              :state ':running
+              :current-tool "fs.read"
+              :current-tool-duration-ms 1000
+              :recent-tools nil
+              :request-count 1
+              :duration-ms 2000
+              :assignment "Check live ordering."
+              :detached t)))
+      (terminal-ui-set-preview-rows
+       active-ui
+       (list (list (terminal-span ':hint "◇ reasoning activity"))))
+      (terminal-ui-stream-update active-ui :tail "stream tail")
+      (terminal-ui-set-notice active-ui "notice row" :duration-seconds 60)
+      (terminal-ui-set-pending-inputs
+       active-ui '("steer next") '("follow later"))
+      (terminal-ui-set-input active-ui "draft")
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui clock)
+        (declare (ignore display cursor))
+        (let ((positions
+                (mapcar (lambda (label)
+                          (search label text))
+                        '("COMPACTING"
+                          "READ  ∙ "
+                          "* evaluating local Lisp"
+                          "agent-one"
+                          "running fs.list"
+                          "◇ reasoning activity"
+                          "stream tail"
+                          "notice row"
+                          "steering 1"
+                          "follow-up 1"
+                          "> draft"))))
+          (test-assert
+           (and (every #'identity positions)
+                (every #'< positions (rest positions)))
+           "status, local, agent, stream, notice, pending, and prompt rows stay ordered"))))
+  nil))
 
 (-> test-terminal-live-word-wrapping () null)
 (defun test-terminal-live-word-wrapping ()
@@ -1345,8 +1407,11 @@
         (declare (ignore display cursor))
         (test-assert (search "READ  ∙ 00:00" text)
                      "live activity starts with its spinner and elapsed clock")
-        (test-assert (not (search "working" text))
-                     "the modeline omits the internal activity label"))
+        (let ((lines (uiop:split-string text :separator '(#\Newline))))
+          (test-assert
+           (and (not (search "working" (second lines)))
+                (search "working" (third lines)))
+           "provider activity stays below rather than inside the modeline")))
       (setf clock 0.24)
       (test-assert (not (terminal-ui-refresh-status active-ui))
                    "time within one spinner frame does not repaint activity")
@@ -1382,8 +1447,11 @@
         (test-assert
          (search "00:59 · no update 00:30" text)
          "stale activity states how long no progress has arrived")
-        (test-assert (not (search "working" text))
-                     "stale modelines also omit the internal activity label"))
+        (let ((lines (uiop:split-string text :separator '(#\Newline))))
+          (test-assert
+           (and (not (search "working" (second lines)))
+                (search "working" (third lines)))
+           "stale timing keeps provider activity below the modeline")))
       (terminal-ui-note-status-progress active-ui)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "new progress immediately clears the stale status state")
@@ -1647,12 +1715,13 @@
                 review-index
                 expanded-index
                 status-index
+                (< status-index header-index)
                 (= search-index (+ header-index 2))
                 (= review-index (1+ search-index))
                 (= expanded-index (1+ review-index))
-                (= status-index (+ expanded-index 2))
                 (string= (nth (1+ header-index) lines) "")
-                (string= (nth (1+ expanded-index) lines) "")
+                (search "working" (nth (1+ expanded-index) lines))
+                (string= (nth (+ expanded-index 2) lines) "")
                 (uiop:string-prefix-p "  " search-line)
                 (uiop:string-prefix-p "  " review-line)
                 (uiop:string-prefix-p "      ↳ " expanded-line)
@@ -1677,7 +1746,7 @@
                  text)
                 (not (search "search.files ›" search-line))
                 (not (search "fs.read ›" search-line)))
-           "child rows show bounded aligned traces above the modeline")
+           "child rows show bounded aligned traces below the modeline")
           (test-assert (not (search "async" text))
                        "detached state does not add a redundant row label"))
         (test-assert
@@ -1709,14 +1778,14 @@
                               lines)))
           (test-assert
            (and (search "search-1" text)
-                (not (search "READ " text))
+                (search "∙ 00:00" text)
                 expanded-index
                 (string= (nth (1+ expanded-index) lines) "")
                 (non-empty-string-p (nth (+ expanded-index 2) lines)))
-           "child traces keep one blank row before the idle prompt")))
+           "child traces retain the status animation above the idle prompt")))
       (setf clock 65.5)
       (test-assert (terminal-ui-refresh-status active-ui)
-                   "child animation continues without a modeline")
+                   "child and status animation continue without provider activity")
       (terminal-ui-set-agent-activities
        active-ui
        (list
@@ -2658,7 +2727,8 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-narrow-live-region)
   (test-terminal-bounded-editor-repaint)
   (test-terminal-preview-rows)
-    (test-terminal-live-word-wrapping)
+  (test-terminal-live-section-order)
+  (test-terminal-live-word-wrapping)
   (test-terminal-transient-notice)
   (test-terminal-notice-lock-contention)
   (test-terminal-timed-status)

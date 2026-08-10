@@ -959,20 +959,33 @@ columns: name, tally, and description."
             (list (terminal-span ':dim assignment))))
          row-width)))))
 
+(-> terminal-ui--status-row-visible-p (terminal-ui) boolean)
+(defun terminal-ui--status-row-visible-p (ui)
+  "Return whether UI needs its animated status row above live activity."
+  (not
+   (null
+    (or (terminal-ui-status ui)
+        (terminal-ui-local-activity ui)
+        (terminal-ui-compacting-p ui)
+        (terminal-ui-agent-activities ui)
+        (terminal-ui-preview-rows ui)
+        (terminal-ui-stream-tail ui)))))
+
 (-> terminal-ui--agent-row-budget (terminal-ui) (integer 1))
 (defun terminal-ui--agent-row-budget (ui)
   "Return the viewport rows available to UI's complete child activity strip."
-  (let* ((terminal (terminal-ui-terminal ui))
-         (status-p (not (null (terminal-ui-status ui))))
-         (compacting-p (terminal-ui-compacting-p ui))
-         (status-section-p (or status-p compacting-p))
+  (let* ((status-p         (not (null (terminal-ui-status ui))))
+         (local-activity-p (not (null (terminal-ui-local-activity ui))))
+         (compacting-p     (terminal-ui-compacting-p ui))
+         (status-row-p     (terminal-ui--status-row-visible-p ui))
          (reserved-rows
-           (+ 4
-              (if status-section-p 1 0)
+           (+ 3
+              (if status-row-p 2 0)
               (if compacting-p 1 0)
+              (if local-activity-p 1 0)
               (if status-p 1 0))))
     (max 1
-         (- (terminal-ui--maximum-live-rows terminal)
+         (- (terminal-ui--maximum-live-rows (terminal-ui-terminal ui))
             reserved-rows))))
 
 (-> terminal-ui--agent-activity-rows-at
@@ -1073,13 +1086,38 @@ columns: name, tally, and description."
                                         omitted-count)))
            row-width)))))))
 
+(-> terminal-ui--status-timing-at
+    (terminal-ui real)
+    (values real real))
+(defun terminal-ui--status-timing-at (ui now)
+  "Return UI's active status start and newest progress times at NOW."
+  (cond
+    ((terminal-ui-status ui)
+     (let ((started-at (or (terminal-ui-status-started-at ui) now)))
+       (values started-at
+               (or (terminal-ui-status-progress-at ui) started-at))))
+    ((terminal-ui-local-activity ui)
+     (let ((started-at (or (terminal-ui-local-activity-started-at ui) now)))
+       (values started-at started-at)))
+    ((terminal-ui-compacting-p ui)
+     (let ((started-at (or (terminal-ui-compaction-started-at ui) now)))
+       (values started-at started-at)))
+    ((terminal-ui-agent-activities ui)
+     (let ((started-at
+             (or (loop for activity in (terminal-ui-agent-activities ui)
+                       minimize (getf activity :observed-at))
+                 now)))
+       (values started-at started-at)))
+    (t
+     (values now now))))
+
 (-> terminal-ui--status-times-at
     (terminal-ui real)
     (values integer integer))
 (defun terminal-ui--status-times-at (ui now)
   "Return elapsed and idle whole seconds for UI's activity at monotonic NOW."
-  (let* ((started-at (or (terminal-ui-status-started-at ui) now))
-         (progress-at (or (terminal-ui-status-progress-at ui) started-at)))
+  (multiple-value-bind (started-at progress-at)
+      (terminal-ui--status-timing-at ui now)
     (values (max 0 (floor (- now started-at)))
             (max 0 (floor (- now progress-at))))))
 
@@ -1089,7 +1127,7 @@ columns: name, tally, and description."
     (integer 0 3))
 (defun terminal-ui--status-spinner-phase-at (ui now)
   "Return UI's quarter-second REPL status spinner phase at NOW."
-  (let ((started-at (or (terminal-ui-status-started-at ui) now)))
+  (let ((started-at (terminal-ui--status-timing-at ui now)))
     (mod (floor (* *terminal-ui-status-spinner-frames-per-second*
                    (max 0 (- now started-at))))
          4)))
@@ -1154,10 +1192,11 @@ columns: name, tally, and description."
   "Return visible status, compaction, and child-agent values for a live paint."
   (let ((activities (terminal-ui-agent-activities ui))
         (compacting-p (terminal-ui-compacting-p ui)))
-    (when (or (terminal-ui-status ui) compacting-p activities)
+    (when (terminal-ui--status-row-visible-p ui)
       (list
-       (and (terminal-ui-status ui)
-            (terminal-ui--status-signature-at ui now))
+       (list (terminal-ui-status ui)
+             (terminal-ui-local-activity ui)
+             (terminal-ui--status-signature-at ui now))
        (and compacting-p
             (terminal-ui--compaction-phase-at
              ui now (max 1 (terminal-columns (terminal-ui-terminal ui)))))
@@ -1271,6 +1310,22 @@ content; a narrow row drops it before any activity detail."
       (t
        clipped))))
 
+(-> terminal-ui--local-activity-row (terminal-ui integer) list)
+(defun terminal-ui--local-activity-row (ui row-width)
+  "Return UI's explicit local Lisp activity row clipped to ROW-WIDTH."
+  (terminal--clip-spans
+   (list (terminal-span ':lisp-prompt "* ")
+         (terminal-span ':plain (terminal-ui-local-activity ui)))
+   row-width))
+
+(-> terminal-ui--provider-activity-row (terminal-ui integer) list)
+(defun terminal-ui--provider-activity-row (ui row-width)
+  "Return UI's provider or tool activity row clipped to ROW-WIDTH."
+  (terminal--clip-spans
+   (list (terminal-span ':brand "∙ ")
+         (terminal-span ':dim (terminal-ui-status ui)))
+   row-width))
+
 (-> terminal-ui--word-wrap-spans (terminal list integer) list)
 (defun terminal-ui--word-wrap-spans (terminal spans row-width)
   "Return single-line SPANS as styled rows wrapped at word boundaries."
@@ -1337,12 +1392,38 @@ content; a narrow row drops it before any activity detail."
   "Return UI's complete plain and styled live content plus its cursor index."
   (let* ((terminal (terminal-ui-terminal ui))
          (row-width (max 1 (terminal-columns terminal)))
+         (status-row-p (terminal-ui--status-row-visible-p ui))
          (status-now (or status-now
-                         (and (or (terminal-ui-status ui)
-                                  (terminal-ui-compacting-p ui)
-                                  (terminal-ui-agent-activities ui))
+                         (and (or status-row-p
+                                  (terminal-ui-notice ui))
                               (funcall (terminal-ui-clock-function ui)))))
          (rows nil))
+    (when status-row-p
+      (setf rows
+            (append rows
+                    (list nil)
+                    (when (terminal-ui-compacting-p ui)
+                      (list
+                       (terminal-ui--compaction-row-at
+                        ui status-now row-width)))
+                    (list
+                     (terminal-ui--status-row-at
+                      ui status-now row-width)))))
+    (when (terminal-ui-local-activity ui)
+      (setf rows
+            (append rows
+                    (list (terminal-ui--local-activity-row ui row-width)))))
+    (let ((activity-rows
+            (and (terminal-ui-agent-activities ui)
+                 (terminal-ui--agent-activity-rows-at
+                  ui status-now row-width))))
+      (when activity-rows
+        (setf rows
+              (append rows activity-rows))))
+    (when (terminal-ui-status ui)
+      (setf rows
+            (append rows
+                    (list (terminal-ui--provider-activity-row ui row-width)))))
     (dolist (row (terminal-ui-preview-rows ui))
       (setf rows
             (append rows
@@ -1357,28 +1438,6 @@ content; a narrow row drops it before any activity detail."
                            (list (terminal-span ':plain tail))
                            tail)
                        row-width)))))
-    (let ((activity-rows
-            (and (terminal-ui-agent-activities ui)
-                 (terminal-ui--agent-activity-rows-at
-                  ui status-now row-width))))
-      (when activity-rows
-        (setf rows
-              (append rows
-                      (list nil)
-                      activity-rows))))
-    (when (or (terminal-ui-compacting-p ui)
-              (terminal-ui-status ui))
-      (setf rows
-            (append rows
-                    (list nil)
-                    (when (terminal-ui-compacting-p ui)
-                      (list
-                       (terminal-ui--compaction-row-at
-                        ui status-now row-width)))
-                    (when (terminal-ui-status ui)
-                      (list
-                       (terminal-ui--status-row-at
-                        ui status-now row-width))))))
     (when (terminal-ui-notice ui)
       (setf rows
             (append rows
@@ -1524,9 +1583,7 @@ live unfinished line continuing that block, or removes it when NIL."
     (ui &key status-now (appended-text "") (appended-display ""))
   "Present UI live content, atomically preceding it with appended scrollback."
   (let* ((status-now (or status-now
-                         (and (or (terminal-ui-status ui)
-                                  (terminal-ui-compacting-p ui)
-                                  (terminal-ui-agent-activities ui)
+                         (and (or (terminal-ui--status-row-visible-p ui)
                                   (terminal-ui-notice ui))
                               (funcall (terminal-ui-clock-function ui)))))
          (terminal (terminal-ui-terminal ui)))
@@ -2004,7 +2061,7 @@ seen can offer the notice again."
           (:worked-seconds (option (integer 0))))
     terminal-ui)
 (defun terminal-ui-set-status (ui status &key details worked-seconds)
-  "Begin or clear UI's timed one-row STATUS activity phase with DETAILS.
+  "Begin or clear UI's timed STATUS activity and animated modeline.
 
 WORKED-SECONDS carries the conversation's accumulated working time at the
 start of the activity; the live paint adds the running elapsed seconds."
@@ -2032,6 +2089,27 @@ start of the activity; the live paint adds the running elapsed seconds."
                (terminal-ui-status-progress-at ui) nil
                (terminal-ui-status-worked-seconds ui) nil
                (terminal-ui-status-rendered-signature ui) nil)
+         (terminal-ui--paint-live ui)))))
+  ui)
+
+(-> terminal-ui-set-local-activity
+    (terminal-ui (option string))
+    terminal-ui)
+(defun terminal-ui-set-local-activity (ui activity)
+  "Show or clear explicit local Lisp ACTIVITY below UI's animated status row."
+  (with-terminal-ui-locked (ui)
+    (let ((safe-activity
+            (and activity (sanitize-text activity :single-line-p t))))
+      (cond
+        ((and safe-activity
+              (not (equal safe-activity (terminal-ui-local-activity ui))))
+         (let ((now (funcall (terminal-ui-clock-function ui))))
+           (setf (terminal-ui-local-activity ui) safe-activity
+                 (terminal-ui-local-activity-started-at ui) now)
+           (terminal-ui--paint-live ui now)))
+        ((and (null safe-activity) (terminal-ui-local-activity ui))
+         (setf (terminal-ui-local-activity ui) nil
+               (terminal-ui-local-activity-started-at ui) nil)
          (terminal-ui--paint-live ui)))))
   ui)
 
@@ -2103,12 +2181,10 @@ frames, so this function never paints directly from a child thread."
       (terminal-ui--call-with-lock-if-available
        ui
        (lambda ()
-         (let* ((status-now
-                  (and (or (terminal-ui-status ui)
-                           (terminal-ui-compacting-p ui)
-                           (terminal-ui-agent-activities ui)
-                           (terminal-ui-notice ui))
-                       (funcall (terminal-ui-clock-function ui))))
+          (let* ((status-now
+                   (and (or (terminal-ui--status-row-visible-p ui)
+                            (terminal-ui-notice ui))
+                        (funcall (terminal-ui-clock-function ui))))
                 (notice-expired-p
                   (terminal-ui--expire-notice-at ui status-now))
                 (signature nil))

@@ -223,6 +223,16 @@
     :type (option (integer 0))
     :documentation
     "The conversation's accumulated working seconds when the activity began.")
+    (local-activity
+     :initform nil
+     :accessor terminal-ui-local-activity
+     :type (option string)
+     :documentation "Explicit local Lisp work shown below the animated status row.")
+    (local-activity-started-at
+     :initform nil
+     :accessor terminal-ui-local-activity-started-at
+     :type (option real)
+     :documentation "The monotonic time at which explicit local Lisp work began.")
    (agent-activities
     :initform nil
     :accessor terminal-ui-agent-activities

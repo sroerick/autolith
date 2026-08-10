@@ -305,7 +305,7 @@ journaling or provider conversation projection."
 (defun application-run-lisp-input (application source)
   "Evaluate explicit local Lisp SOURCE and present it outside provider context."
   (application-present application (application-lisp--source-entry source))
-  (application-set-activity application "evaluating local Lisp")
+  (application-set-local-activity application "evaluating local Lisp")
   (let ((evaluation
           (unwind-protect
                (let ((*application-local-user-evaluation-p* t))
@@ -316,7 +316,7 @@ journaling or provider conversation projection."
                   (lambda (condition restarts)
                     (application-lisp--select-restart
                      application condition restarts))))
-            (application-set-activity application nil))))
+            (application-set-local-activity application nil))))
     (application-present application
                          (application-lisp--result-entry evaluation))
     (case (application-lisp-evaluation-status evaluation)
