@@ -1512,7 +1512,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 
 (-> application--call-with-command-debugger
     (application function &key (:expected-error-function function))
-    keyword)
+    (values keyword (option string)))
 (defun application--call-with-command-debugger
     (application function
      &key (expected-error-function #'application-handle-expected-error))
@@ -1532,10 +1532,10 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                :debug-condition-p
                (lambda (condition)
                  (not (typep condition 'autolith-error))))
-            (declare (ignore condition restart-names selected-restart-name))
+            (declare (ignore restart-names selected-restart-name))
             (if (eq debugger-status ':aborted)
-                ':aborted
-                (first values)))
+                (values ':aborted condition)
+                (values (first values) condition)))
         ((or application-operation-loop-action
              application-turn-cancelled
              application-input-failed
@@ -1549,7 +1549,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
           (application-raise-fatal application condition signal-backtrace))
         (autolith-error (condition)
           (funcall expected-error-function application condition)
-          ':failed)
+          (values ':failed (princ-to-string condition)))
         (serious-condition (condition)
           (application-raise-fatal application condition signal-backtrace))))))
 
@@ -1577,19 +1577,23 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
      (let ((application
              (application-input-controller-application controller))
            (*application-command-interactive-p* t))
-       (application-command--call-with-presentation
-        invocation
-        (lambda ()
-          (application--call-with-command-debugger
-           application
-           (lambda ()
-             (application-command-execute command application invocation))
-           :expected-error-function
-           (lambda (observed-application condition)
-             (application-present
-              observed-application
-              (application--expected-error-entry
-               observed-application condition))))))))))
+        (application-command--call-with-presentation
+         invocation
+         (lambda ()
+           (multiple-value-bind (result condition)
+               (application--call-with-command-debugger
+                application
+                (lambda ()
+                  (application-command-execute command application invocation))
+                :expected-error-function
+                (lambda (observed-application observed-condition)
+                  (application-present
+                   observed-application
+                   (application--expected-error-entry
+                    observed-application observed-condition))))
+             (application-user-operation-record-command-outcome
+              application invocation :action result :condition condition)
+             result)))))))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input))
@@ -2775,11 +2779,13 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
     (application-command--call-with-presentation
      invocation
      (lambda ()
-       (let ((result
-               (application--call-with-command-debugger
-                application
-                (lambda ()
-                  (application-handle-input application input)))))
+       (multiple-value-bind (result condition)
+           (application--call-with-command-debugger
+            application
+            (lambda ()
+              (application-handle-input application input)))
+         (application-user-operation-record-command-outcome
+          application invocation :action result :condition condition)
          (application-operation-present-command-hint application invocation)
          result)))))
 

@@ -210,6 +210,74 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
             (conversation-user-operation-records conversation))))
 
 
+;;;; -- Interactive Command Capture --
+
+(-> application-user-operation--conversation (t) (option conversation))
+(defun application-user-operation--conversation (application)
+  "Return APPLICATION's current conversation when it can retain local activity."
+  (when (and (typep application 'application)
+             (slot-boundp application 'conversation))
+    (let ((conversation (application-conversation application)))
+      (and (typep conversation 'conversation) conversation))))
+
+(-> application-user-operation--command-result (keyword) string)
+(defun application-user-operation--command-result (action)
+  "Return one compact textual result for successful command ACTION."
+  (format nil "loop action: ~(~A~)" action))
+
+(-> application-user-operation-record-command-outcome
+    (t application-command-invocation
+       &key (:action (option keyword)) (:condition (option string)))
+    null)
+(defun application-user-operation-record-command-outcome
+    (application invocation &key action condition)
+  "Persist a final failed or aborted registered interactive command."
+  (when (and (member action '(:aborted :failed) :test #'eq)
+             (application-command-invocation-command invocation)
+             (not *application-user-operation-recording-suppressed-p*))
+    (let ((conversation
+            (application-user-operation--conversation application)))
+      (when conversation
+        (conversation-append-user-operation
+         conversation
+         :kind ':command
+         :source (application-command-invocation-input invocation)
+         :status (if (eq action ':aborted) ':aborted ':error)
+         :result
+         (if (non-empty-string-p condition)
+             (format nil "~A: ~A"
+                     (if (eq action ':aborted) "aborted" "error")
+                     (sanitize-text condition :single-line-p t))
+             (if (eq action ':aborted)
+                 "aborted by local restart debugger"
+                 "command failed; details were presented locally"))))))
+  nil)
+
+(defmethod application-command-execute :around
+    ((command application-command)
+     application
+     (invocation application-command-invocation))
+  "Persist one successful registered interactive command without nested calls."
+  (declare (ignore command))
+  (if (and *application-command-interactive-p*
+           (not *application-user-operation-recording-suppressed-p*)
+           (application-user-operation--conversation application))
+      (let ((action
+              (let ((*application-user-operation-recording-suppressed-p* t))
+                (call-next-method))))
+        (let ((conversation
+                (application-user-operation--conversation application)))
+          (when conversation
+            (conversation-append-user-operation
+             conversation
+             :kind ':command
+             :source (application-command-invocation-input invocation)
+             :status ':ok
+             :result (application-user-operation--command-result action))))
+        action)
+      (call-next-method)))
+
+
 ;;;; -- Request-Local Model Context --
 
 (-> user-operation-context--record-line (list) string)

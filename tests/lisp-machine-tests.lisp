@@ -712,7 +712,7 @@
                        (equal provider-items-before
                               (conversation-input-items
                                (application-conversation application))))
-                  "local work shows exact source and values without model context")))
+                  "local work shows exact source and values outside ordinary provider history")))
              (let ((quit-controller
                      (lisp-machine-tests--controller application)))
                (test-call-with-function-replacements

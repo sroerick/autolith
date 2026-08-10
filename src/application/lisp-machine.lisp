@@ -419,26 +419,51 @@ journaling or provider conversation projection."
      (application-lisp--select-restart application condition restarts))
    :debug-condition-p debug-condition-p))
 
+(-> application-lisp--user-operation-result
+    (application-lisp-evaluation list)
+    string)
+(defun application-lisp--user-operation-result (evaluation result-entry)
+  "Return RESULT-ENTRY as durable text with EVALUATION's loop action."
+  (let ((rendered (terminal--spans-text result-entry))
+        (action (application-lisp-evaluation-loop-action evaluation)))
+    (if action
+        (format nil "~A~%loop action: ~(~A~)" rendered action)
+        rendered)))
+
 (-> application-run-lisp-input (application string) keyword)
 (defun application-run-lisp-input (application source)
-  "Evaluate explicit local Lisp SOURCE and present it outside provider context."
+  "Evaluate local Lisp SOURCE and retain bounded context for later requests.
+
+Present completed evaluation results before durable retention so a persistence
+failure cannot conceal local side effects. The persistence failure still
+propagates to the caller."
   (application-present application (application-lisp--source-entry source))
   (application-set-local-activity application "evaluating local Lisp")
-  (let ((evaluation
-          (unwind-protect
-               (let ((*application-local-user-evaluation-p* t)
-                     (*application-command-interactive-p* t))
-                 (application-lisp-evaluate
-                  source
-                  :application application
-                  :restart-selector
-                  (lambda (condition restarts)
-                    (application-lisp--select-restart
-                     application condition restarts))))
-            (application-set-local-activity application nil))))
-    (application-present application
-                         (application-lisp--result-entry evaluation))
-    (case (application-lisp-evaluation-status evaluation)
+  (let* ((evaluation
+           (unwind-protect
+                (let ((*application-local-user-evaluation-p* t)
+                      (*application-command-interactive-p* t)
+                      (*application-user-operation-recording-suppressed-p* t))
+                  (application-lisp-evaluate
+                   source
+                   :application application
+                   :restart-selector
+                   (lambda (condition restarts)
+                     (application-lisp--select-restart
+                      application condition restarts))))
+             (application-set-local-activity application nil)))
+         (result-entry (application-lisp--result-entry evaluation))
+         (status       (application-lisp-evaluation-status evaluation))
+         (result
+           (application-lisp--user-operation-result evaluation result-entry)))
+    (application-present application result-entry)
+    (conversation-append-user-operation
+     (application-conversation application)
+     :kind ':lisp
+     :source source
+     :status status
+     :result result)
+    (case status
       (:ok
        (or (application-lisp-evaluation-loop-action evaluation) ':continue))
       (:aborted ':aborted)
