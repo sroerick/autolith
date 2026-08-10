@@ -249,17 +249,13 @@ Rebuild only the installed pristine recovery image with:
 ./script/build-recovery
 ```
 
-For a fast parenthesis check before loading edited Lisp, build and run the
-copied Hiisi checker with:
+For a fast delimiter check before loading edited Lisp, use the built-in
+`lisp.paren-check` operation on each relevant source tree:
 
-```sh
-rustc tools/paren-check.rs -o tools/paren-check
-LD_LIBRARY_PATH="$HOME/.guix-profile/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ./tools/paren-check src
-LD_LIBRARY_PATH="$HOME/.guix-profile/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ./tools/paren-check recovery
-LD_LIBRARY_PATH="$HOME/.guix-profile/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-  ./tools/paren-check tests
+```lisp
+(lisp.paren-check :path "src")
+(lisp.paren-check :path "recovery")
+(lisp.paren-check :path "tests")
 ```
 
 ## Commit Policy

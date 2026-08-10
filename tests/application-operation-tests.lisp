@@ -97,6 +97,8 @@
                         "interactive commands appear as canonical Lisp operations")
            (test-assert (member "fs.list" names :test #'string=)
                         "model tools appear in the same user operation registry")
+           (test-assert (member "lisp.paren-check" names :test #'string=)
+                        "the built-in source checker is a canonical Lisp operation")
            (test-assert (member "test-operation.echo" names :test #'string=)
                         "per-session tools appear in the local operation registry")
            (test-assert (member "eval-now" names :test #'string=)
@@ -127,6 +129,11 @@
                              (lambda (entry)
                                (string= (getf entry :name) "(fs.list"))
                              entries))
+                  (paren-entry
+                    (find-if
+                     (lambda (entry)
+                       (string= (getf entry :name) "(lisp.paren-check"))
+                     entries))
                   (test-entry (find-if
                                (lambda (entry)
                                  (string= (getf entry :name)
@@ -143,6 +150,10 @@
              (test-assert
               (and fs-entry (search ":path" (or (getf fs-entry :argument) "")))
               "completion exposes dotted tool names with Lisp keyword arguments")
+             (test-assert
+              (and paren-entry
+                   (search ":path" (or (getf paren-entry :argument) "")))
+              "completion exposes the built-in source check path")
              (test-assert
               (and test-entry
                    (search ":|odd key)| VALUE"
@@ -169,6 +180,7 @@
                       ("(goal \"pause\")" :hold)
                       ("(quit)" :cancel)
                       ("(fs.list :path \".\")" :execute)
+                      ("(lisp.paren-check :path \".\")" :execute)
                       ("(shell.run :command \"true\")" :hold)
                       ("(test-operation.echo :text \"hello\")" :hold)
                       ("(self.status)" :execute)
@@ -191,6 +203,25 @@
                    (search "explicit local Lisp input"
                            (or (application-lisp-evaluation-condition evaluation) "")))
               "eval-now rejects noninteractive evaluator callers"))
+           (let ((path (merge-pathnames "operation-check.lisp" root)))
+             (with-open-file (stream path
+                                     :direction :output
+                                     :if-exists :supersede
+                                     :if-does-not-exist :create
+                                     :external-format :utf-8)
+               (write-string "(defun operation-check () 42)" stream))
+             (let ((evaluation
+                     (application-lisp-evaluate
+                      (format nil "(lisp.paren-check :path ~S)"
+                              (namestring path))
+                      :application application)))
+               (test-assert
+                (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+                     (some (lambda (value)
+                             (search "No unmatched or mismatched delimiters found"
+                                     value))
+                           (application-lisp-evaluation-values evaluation)))
+                "canonical Lisp dispatch executes the built-in source checker")))
            (let ((command-authorizations 0)
                  (tool-authorizations 0))
              (test-call-with-function-replacements

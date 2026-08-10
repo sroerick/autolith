@@ -79,7 +79,7 @@
                                "arguments" "{}"))
                 (result (tool-registry-execute-call
                          registry unknown-call context)))
-           (test-assert (= (length (tool-registry-tools registry)) 60)
+           (test-assert (= (length (tool-registry-tools registry)) 61)
                         "the default registry exposes the complete initial tool set")
            (test-assert (= (length schemas) 12)
                         "the provider schemas contain twelve namespaces")
@@ -123,10 +123,13 @@
                         "the plan namespace exposes three operations")
            (test-assert (string= (json-get (aref schemas 9) "name") "lisp")
                         "the named Lisp namespace follows the workspace tools")
-           (test-assert (= (length (json-get (aref schemas 9) "tools")) 18)
-                        "the Lisp namespace exposes eighteen worker operations")
+           (test-assert (= (length (json-get (aref schemas 9) "tools")) 19)
+                        "the Lisp namespace exposes nineteen worker and source operations")
            (test-assert (tool-registry-find registry "lisp" "source")
                         "matching implementation source has a dedicated Lisp tool")
+           (test-assert (typep (tool-registry-find registry "lisp" "paren-check")
+                               'lisp-paren-check-tool)
+                        "Lisp-family delimiter checking has a dedicated workspace tool")
            (dolist (name '("scratchpad-list" "scratchpad-read"
                            "scratchpad-write" "scratchpad-edit"
                            "scratchpad-run" "scratchpad-delete"))
@@ -146,7 +149,7 @@
                   (immutable-schemas
                     (tool-registry-provider-schemas immutable-registry))
                   (self-schema (aref immutable-schemas 10)))
-             (test-assert (= (length (tool-registry-tools immutable-registry)) 51)
+             (test-assert (= (length (tool-registry-tools immutable-registry)) 52)
                           "immutable mode omits nine active-image state tools")
              (test-assert (= (length (json-get self-schema "tools")) 5)
                           "immutable mode advertises five self inspection tools")

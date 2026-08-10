@@ -236,7 +236,7 @@
     ((string= namespace "agenda")
      "Short persistent tasks and notes keyed by workspace directory.")
     ((string= namespace "lisp")
-     "Operations in named, heap-isolated Common Lisp REPLs.")
+     "Named Common Lisp workers, scratchpads, and Lisp-family source checks.")
     ((string= namespace "self")
      "Operations on the active Autolith Common Lisp image.")
     ((string= namespace "task")

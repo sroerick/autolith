@@ -347,11 +347,13 @@ a user-local init.lisp change, or a private image commit.
   inspection, bounded retention, cancellation cleanup, and worker restart
   guarantees with less project-specific scheduling code.
 
-** Lisp-family edit delimiter warnings
+** Lisp-family delimiter checking
 
 - Problem: successful text edits could leave Common Lisp, Scheme, or Clojure
   source with unmatched or type-mismatched structural delimiters, while the model
-  received only a success result and could continue from invalid source.
+  received only a success result. The repository's separate copied Rust checker
+  duplicated a weaker parenthesis-only implementation and was unavailable through
+  the normal tool and canonical Lisp operation surfaces.
 - Behavior: successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
   =lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations classify the
   resulting file by extension and run a language-aware lexical delimiter scan.
@@ -359,19 +361,27 @@ a user-local init.lisp change, or a private image commit.
   headers, and reader-specific escapes avoid structural false positives. The scan
   counts every issue while retaining bounded exact-location details, appends an
   advisory warning to the successful model-visible result, and never rolls back
-  the edit. Unexpected scanner failures preserve success with a manual-review
-  warning.
+  the edit. =lisp.paren-check= applies the same scanner explicitly to one file or
+  a recursive directory tree with deterministic discovery, fixed canonical read
+  authority, descriptor-bound repeated directory classification, repeated file
+  snapshots, input and traversal budgets, bounded diagnostics, and failed
+  results for issues, changes, or incomplete checks.
 - Scope and location: tracked project work in
-  =src/tools/lisp-source-balance.lisp=, the workspace, resource, and scratchpad
-  editing tools, tool descriptions, ASDF wiring, regressions, guide, and
-  specification.
+  =src/tools/lisp-source-balance.lisp=, =src/tools/lisp-paren-check.lisp=, the
+  workspace, resource, and scratchpad editing tools, tool registry and defaults,
+  ASDF wiring, focused regressions, guide, specification, and repository agent
+  instructions. The copied =tools/paren-check.rs= utility and ignored binary were
+  removed.
 - Verification: extension coverage, lexical exclusions, typed mismatch locations,
-  bounded issue retention, successful warning propagation through all five edit
-  seams, balanced repair, and unknown-file silence pass in focused regressions;
-  the complete repository check passes.
-- Removal condition: a replacement editing protocol provides equivalent
-  language-aware post-edit structural validation, bounded exact diagnostics,
-  non-fatal model feedback, and the same workspace and scratchpad coverage.
+  direct and recursive checks, deterministic language filtering, fixed read
+  authority, file and directory replacement races, same-size in-place changes,
+  symbolic-link escapes, malformed UTF-8, discovery and input limits including a
+  zero result bound, complete output bounds, successful warning propagation
+  through all five edit seams, balanced repair, and canonical operation discovery
+  pass focused regressions.
+- Removal condition: a replacement source-validation protocol provides equivalent
+  language-aware post-edit advice and explicit bounded tree checking with exact
+  diagnostics, workspace authority, and honest incomplete-scan failures.
 
 ** Lisp-first unified interaction
 

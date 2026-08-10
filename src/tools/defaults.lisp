@@ -610,7 +610,7 @@
 
 (-> default-tools--register-lisp (tool-registry) tool-registry)
 (defun default-tools--register-lisp (registry)
-  "Register named, isolated Common Lisp worker tools in REGISTRY."
+  "Register Lisp worker, scratchpad, and source-checking tools in REGISTRY."
   (let ((empty-schema (tool-object-schema (json-object) nil)))
     (dolist
         (specification
@@ -697,6 +697,15 @@
              "path" (tool-string-property
                      "An optional relative file or directory to delete."))
             nil))
+          (list
+           'lisp-paren-check-tool
+           "lisp" "paren-check"
+           "Check one workspace file or directory recursively for unmatched or mismatched Common Lisp, Scheme, and Clojure delimiters."
+           (tool-object-schema
+            (json-object
+             "path" (tool-string-property
+                     "The workspace-relative or absolute source file or directory path."))
+            '("path")))
           (list
            'lisp-load-system-tool
            "lisp" "load-system"

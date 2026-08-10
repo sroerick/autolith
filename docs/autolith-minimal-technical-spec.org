@@ -376,6 +376,20 @@ they prefix. The warning scan counts every issue while retaining only bounded
 exact-location details in the successful model-visible tool result; it never
 rolls back an edit or changes its success status.
 
+=lisp.paren-check= applies the same lexical scanner explicitly to one recognized
+source file or to every recognized file found recursively beneath a directory.
+Discovery is stable and bounded by directory, entry, depth, and file limits. It
+snapshots canonical readable roots, binds each traversed directory to its opened
+descriptor identity, repeats directory classification, rejects recursive
+symbolic-link escapes, and rechecks fixed workspace read authority before file
+input. Each regular file is read twice through one verified nonblocking
+descriptor and accepted only when the snapshots and file identity agree. Source
+input, retained issue details, reported file sections, and complete result text
+are bounded. A complete clean scan succeeds. Any delimiter issue, unreadable,
+changing, or oversized file, traversal limit, or incomplete scan returns an
+unsuccessful tool result with exact retained locations and checked and unchecked
+counts.
+
 The =agenda:= resolver exposes only =agenda:current=, bound to the caller's
 canonical current workspace, and denies task child-agent contexts. It never
 resolves other workspace identifiers or the underlying agenda state file.
@@ -437,11 +451,12 @@ memory log.
 
 ** 5.1 =lisp.*=
 
-=lisp.*= tools operate only in named, heap-isolated Lisp workers. Operations
-that evaluate, compile, load, describe, inspect source, or run tests accept a
-REPL name and default to =default=. A nonexistent REPL starts from pristine
-SBCL. An explicit start or reset may instead select any compatible saved worker
-image. An existing REPL never changes its base image implicitly.
+=lisp.*= groups named heap-isolated Common Lisp workers, conversation scratchpads,
+and the native workspace =lisp.paren-check= source operation. Worker operations
+that evaluate, compile, load, describe, inspect source, or run tests accept a REPL
+name and default to =default=. A nonexistent REPL starts from pristine SBCL. An
+explicit start or reset may instead select any compatible saved worker image. An
+existing REPL never changes its base image implicitly.
 
 The execution-oriented =lisp.eval=, =lisp.compile=, =lisp.load-system=,
 =lisp.run-tests=, and =lisp.scratchpad-run= operations accept an optional
@@ -462,6 +477,7 @@ Initial operations should include:
 - =lisp.load-system=
 - =lisp.describe=
 - =lisp.source=
+- =lisp.paren-check=
 - =lisp.run-tests=
 - =lisp.start=
 - =lisp.stop=

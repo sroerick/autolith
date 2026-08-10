@@ -93,6 +93,7 @@
                              (:file "tools/workspace-edit")
                              (:file "tools/lisp-source-balance")
                              (:file "tools/workspace")
+                             (:file "tools/lisp-paren-check")
                              (:file "resource/workspace-file")
                              (:file "resource/agenda")
                              (:file "resource/memory")

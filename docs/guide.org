@@ -1024,6 +1024,17 @@ their data. Any unmatched or mismatched delimiter produces a warning with exact
 line and column details in the successful tool result sent to the model. The
 scan counts all issues but retains only a bounded number of details. The warning
 is advisory and never rolls back the edit.
+
+=lisp.paren-check= runs the same checker explicitly against one recognized file
+or recursively against a directory. It discovers recognized files in stable
+path order, fixes canonical readable roots for the call, verifies every opened
+directory descriptor, repeats directory classification, refuses recursive
+symbolic-link escapes, and reads each regular file twice through one verified
+nonblocking descriptor. Traversal, source input, retained issue details, and
+complete result text are bounded. A clean complete scan succeeds. Any delimiter
+issue, changing, unreadable or oversized file, traversal limit, or incomplete
+scan returns a failed tool result with exact retained locations and honest
+checked and unchecked counts.
 =async: true= returns the authorized command as an inspectable job immediately;
 an ordinary call uses the shared ten-second grace before handing off the same
 execution.
