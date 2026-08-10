@@ -1043,6 +1043,7 @@
            (symbol-function 'application-input-controller-create))
          (observed-load-pending-p :unset)
          (observed-persistence-p :unset)
+         (observed-start-reader-p :unset)
          (pending-at-create-p :unset)
          (vault-at-create-p :unset)
          (observed-first-work :unset)
@@ -1071,9 +1072,11 @@
               'application-input-controller-create
               (lambda (run-application
                        &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t))
+                            (pending-persistence-enabled-p t)
+                            (start-reader-p t))
                 (setf observed-load-pending-p load-pending-p
                       observed-persistence-p pending-persistence-enabled-p
+                      observed-start-reader-p start-reader-p
                       pending-at-create-p (not (null (probe-file pending-pathname)))
                       vault-at-create-p (not (null (probe-file vault-pathname))))
                 (funcall original-create
@@ -1081,7 +1084,8 @@
                          :initial-work-items initial-work-items
                          :load-pending-p load-pending-p
                          :pending-persistence-enabled-p
-                         pending-persistence-enabled-p)))
+                         pending-persistence-enabled-p
+                         :start-reader-p start-reader-p)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)
@@ -1114,11 +1118,12 @@
              (test-assert
               (and (null observed-load-pending-p)
                    observed-persistence-p
+                   (null observed-start-reader-p)
                    (null pending-at-create-p)
                    vault-at-create-p
                    (not (probe-file pending-pathname))
                    (probe-file vault-pathname))
-              "recovery import completes before a nonloading controller is created")
+              "recovery vaulting precedes nonloading controller creation without a reader")
              (test-assert
               (and (equal observed-first-work
                           '(:recovery-diagnosis "diagnose recovered crash"))
@@ -1166,6 +1171,7 @@
          (vault-octets nil)
          (observed-load-pending-p :unset)
          (observed-persistence-p :unset)
+         (observed-start-reader-p :unset)
          (observed-first-work :unset)
          (observed-work :unset)
          (observed-steering :unset)
@@ -1206,15 +1212,18 @@
               'application-input-controller-create
               (lambda (run-application
                        &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t))
+                            (pending-persistence-enabled-p t)
+                            (start-reader-p t))
                 (setf observed-load-pending-p load-pending-p
-                      observed-persistence-p pending-persistence-enabled-p)
+                      observed-persistence-p pending-persistence-enabled-p
+                      observed-start-reader-p start-reader-p)
                 (funcall original-create
                          run-application
                          :initial-work-items initial-work-items
                          :load-pending-p load-pending-p
                          :pending-persistence-enabled-p
-                         pending-persistence-enabled-p)))
+                         pending-persistence-enabled-p
+                         :start-reader-p start-reader-p)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)
@@ -1271,6 +1280,7 @@
              (test-assert
               (and (null observed-load-pending-p)
                    (null observed-persistence-p)
+                   (null observed-start-reader-p)
                    (typep (application-recovery-input-vault-failure application)
                           'recovery-input-vault-error)
                    ingress-blocked-p
@@ -1321,6 +1331,7 @@
            (symbol-function 'application-input-controller-create))
          (observed-load-pending-p :unset)
          (observed-persistence-p :unset)
+         (observed-start-reader-p :unset)
          (observed-first-work :unset)
          (observed-work :unset)
          (observed-steering :unset))
@@ -1347,15 +1358,18 @@
               'application-input-controller-create
               (lambda (run-application
                        &key initial-work-items (load-pending-p t)
-                            (pending-persistence-enabled-p t))
+                            (pending-persistence-enabled-p t)
+                            (start-reader-p t))
                 (setf observed-load-pending-p load-pending-p
-                      observed-persistence-p pending-persistence-enabled-p)
+                      observed-persistence-p pending-persistence-enabled-p
+                      observed-start-reader-p start-reader-p)
                 (funcall original-create
                          run-application
                          :initial-work-items initial-work-items
                          :load-pending-p load-pending-p
                          :pending-persistence-enabled-p
-                         pending-persistence-enabled-p)))
+                         pending-persistence-enabled-p
+                         :start-reader-p start-reader-p)))
              (list
               'application-input-controller--run-work
               (lambda (controller work)
@@ -1387,6 +1401,7 @@
              (test-assert
               (and observed-load-pending-p
                    observed-persistence-p
+                   (null observed-start-reader-p)
                    (equal observed-first-work
                           '(:message "ordinary steering"))
                    (equal observed-work
