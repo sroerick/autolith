@@ -3122,34 +3122,353 @@
                                 (agenda-load configuration)
                                 (agenda-item-identifier item)
                                 :text "unobserved live agenda text"))
+                (let* ((entry
+                         (call-entry
+                          application
+                          "resource"
+                          "edit"
+                          (json-object
+                           "uri" "agenda:current"
+                           "base-revision" revision
+                           "operations"
+                           (json-array
+                            (json-object
+                             "op" "agenda-update"
+                             "id" (agenda-item-identifier item)
+                             "text" "resource agenda text")))))
+                       (text (markdown-tests--row-text entry)))
+                  (test-assert
+                   (and (find (terminal-span ':dim "  1 │ ")
+                              entry :test #'equal)
+                        (find (terminal-span ':failure "- 2 │ ")
+                              entry :test #'equal)
+                        (find (terminal-span ':success "+ 2 │ ")
+                              entry :test #'equal)
+                        (find (terminal-span ':dim "  3 │ ")
+                              entry :test #'equal)
+                        (search "text: old agenda text" text)
+                        (search "text: resource agenda text" text)
+                        (not (search "unobserved live agenda text" text)))
+                   "agenda resource edits use their exact observed preimage"))
+                (let* ((entry
+                         (call-entry
+                          application
+                          "resource"
+                          "edit"
+                          (json-object
+                           "uri" "agenda:current"
+                           "base-revision" revision
+                           "operations"
+                           (json-array
+                            (json-object
+                             "op" "agenda-update"
+                             "id" (agenda-item-identifier item)
+                             "text" "first invalid agenda text")
+                            (json-object
+                             "op" "agenda-update"
+                             "id" (agenda-item-identifier item)
+                             "text" "second invalid agenda text")))))
+                       (text (markdown-tests--row-text entry)))
+                  (test-assert
+                   (and (not (find (terminal-span ':success "+ 2 │ ")
+                                   entry :test #'equal))
+                        (search "operation 1 · update agenda item" text)
+                        (search "operation 2 · update agenda item" text))
+                   "invalid multi-operation agenda edits stay structured"))))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
+(-> test-memory-change-tool-presentation () null)
+(defun test-memory-change-tool-presentation ()
+  "Test native and revision-gated memory mutations use the shared change viewer."
+  (labels ((call-entry (application namespace name arguments)
+             "Render one function call into APPLICATION's transcript."
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" namespace
+               "name" name
+               "arguments" (json-encode arguments)))))
+    (let* ((configuration (test-configuration))
+           (root (test-configuration-root configuration))
+           (conversation
+             (conversation-create configuration :identifier "memory-change-view"))
+           (application
+             (application-tests--ui-application
+              :columns 100
+              :compact-view-p nil))
+           (memory
+             (memory-remember
+              configuration
+              :title "old memory title"
+              :content "old memory content"
+              :scope ':workspace
+              :tags '("viewer")
+              :source-conversation "memory-change-view"))
+           (identifier (memory-identifier memory))
+           (uri (memory-resource--item-uri identifier))
+           (item-revision "Rmemory-change-item")
+           (collection-revision "Rmemory-change-collection")
+           (global-revision "Rmemory-change-global"))
+      (unwind-protect
+           (progn
+             (setf (application-configuration application) configuration
+                   (application-conversation application) conversation)
+             (let ((entry
+                     (call-entry
+                      application
+                      "memory"
+                      "remember"
+                      (json-object
+                       "title" "new memory title"
+                       "content" "new memory content"
+                       "tags" (json-array "viewer" "VIEWER" "diff")))))
+               (test-assert
+                (and (find (terminal-span ':success "+ 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 5 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':code "tags: viewer, diff")
+                           entry :test #'equal)
+                     (search "title: new memory title"
+                             (markdown-tests--row-text entry))
+                     (search "new memory content"
+                             (markdown-tests--row-text entry)))
+                "memory.remember creations use numbered green added rows"))
+             (let* ((entry
+                      (call-entry
+                       application
+                       "memory"
+                       "remember"
+                       (json-object
+                        "id" identifier
+                        "title" "old memory title"
+                        "content" "updated memory content"
+                        "tags" (json-array "viewer"))))
+                    (text (markdown-tests--row-text entry)))
+               (test-assert
+                (and (find (terminal-span ':dim "  4 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':failure "- 5 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':success "+ 5 │ ")
+                           entry :test #'equal)
+                     (search "old memory content" text)
+                     (search "updated memory content" text))
+                "memory.remember replacements use numbered red and green rows"))
+             (let ((entry
+                     (call-entry
+                      application
+                      "memory"
+                      "forget"
+                      (json-object "id" identifier))))
+               (test-assert
+                (and (find (terminal-span ':failure "- 1 │ ")
+                           entry :test #'equal)
+                     (find (terminal-span ':failure "- 5 │ ")
+                           entry :test #'equal)
+                     (not (find (terminal-span ':success "+ 1 │ ")
+                                entry :test #'equal)))
+                "memory.forget uses numbered red removed rows"))
+             (let* ((item-observation
+                      (make-instance
+                       'memory-observation
+                       :uri uri
+                       :revision "memory-change-item-digest"
+                       :content (memory-tool--render-memory memory)
+                       :identifier identifier
+                       :kind ':item
+                       :snapshot (list :kind ':item
+                                       :identifier identifier
+                                       :record (memory--record memory))))
+                    (item-state
+                      (make-instance
+                       'memory-observation-state
+                       :alias item-revision
+                       :observation item-observation))
+                    (workspace
+                      (namestring
+                       (truename
+                        (configuration-working-directory configuration))))
+                    (collection-observation
+                      (make-instance
+                       'memory-observation
+                       :uri "memory:workspace"
+                       :revision "memory-change-collection-digest"
+                       :content (memory-resource--render-collection
+                                 "workspace" (list memory))
+                       :identifier "workspace"
+                       :kind ':collection
+                       :snapshot (list :kind ':collection
+                                       :identifier "workspace"
+                                       :workspace workspace
+                                       :records (list (memory--record memory)))))
+                    (collection-state
+                      (make-instance
+                       'memory-observation-state
+                       :alias collection-revision
+                       :observation collection-observation))
+                    (global-observation
+                      (make-instance
+                       'memory-observation
+                       :uri "memory:global"
+                       :revision "memory-change-global-digest"
+                       :content (memory-resource--render-collection "global" nil)
+                       :identifier "global"
+                       :kind ':collection
+                       :snapshot (list :kind ':collection
+                                       :identifier "global"
+                                       :workspace nil
+                                       :records nil)))
+                    (global-state
+                      (make-instance
+                       'memory-observation-state
+                       :alias global-revision
+                       :observation global-observation)))
+               (with-recursive-lock-held
+                   ((conversation-resource-observation-lock conversation))
+                 (setf (gethash item-revision
+                                (conversation-resource-observations conversation))
+                       item-state
+                       (gethash collection-revision
+                                (conversation-resource-observations conversation))
+                       collection-state
+                       (gethash global-revision
+                                (conversation-resource-observations conversation))
+                       global-state
+                       (conversation-resource-observation-order conversation)
+                       (list item-revision collection-revision global-revision)))
+               (memory-remember
+                configuration
+                :identifier identifier
+                :title "old memory title"
+                :content "unobserved live memory content"
+                :scope ':workspace
+                :tags '("viewer")
+                :source-conversation "memory-change-view")
                (let* ((entry
                         (call-entry
                          application
                          "resource"
                          "edit"
                          (json-object
-                          "uri" "agenda:current"
-                          "base-revision" revision
+                          "uri" uri
+                          "base-revision" item-revision
                           "operations"
                           (json-array
                            (json-object
-                            "op" "agenda-update"
-                            "id" (agenda-item-identifier item)
-                            "text" "resource agenda text")))))
+                            "op" "memory-replace"
+                            "title" "old memory title"
+                            "content" "resource memory content"
+                            "tags" (json-array "viewer"))))))
                       (text (markdown-tests--row-text entry)))
                  (test-assert
-                  (and (find (terminal-span ':dim "  1 │ ")
+                  (and (find (terminal-span ':dim "  4 │ ")
                              entry :test #'equal)
-                       (find (terminal-span ':failure "- 2 │ ")
+                       (find (terminal-span ':failure "- 5 │ ")
                              entry :test #'equal)
-                       (find (terminal-span ':success "+ 2 │ ")
+                       (find (terminal-span ':success "+ 5 │ ")
                              entry :test #'equal)
-                       (find (terminal-span ':dim "  3 │ ")
+                       (search "old memory content" text)
+                       (search "resource memory content" text)
+                       (not (search "unobserved live memory content" text)))
+                  "memory item resources use their exact observed preimage"))
+               (let* ((entry
+                        (call-entry
+                         application
+                         "resource"
+                         "edit"
+                         (json-object
+                          "uri" uri
+                          "base-revision" item-revision
+                          "operations"
+                          (json-array
+                           (json-object "op" "memory-forget")))))
+                      (text (markdown-tests--row-text entry)))
+                 (test-assert
+                  (and (find (terminal-span ':failure "- 1 │ ")
                              entry :test #'equal)
-                       (search "text: old agenda text" text)
-                       (search "text: resource agenda text" text)
-                       (not (search "unobserved live agenda text" text)))
-                  "agenda resource edits use their exact observed preimage"))))
+                       (find (terminal-span ':failure "- 5 │ ")
+                             entry :test #'equal)
+                       (not (find (terminal-span ':success "+ 1 │ ")
+                                  entry :test #'equal))
+                       (search "old memory content" text)
+                       (not (search "unobserved live memory content" text)))
+                  "memory-forget resources use their exact observed preimage"))
+               (let* ((entry
+                        (call-entry
+                         application
+                         "resource"
+                         "edit"
+                         (json-object
+                          "uri" "memory:workspace"
+                          "base-revision" collection-revision
+                          "operations"
+                          (json-array
+                           (json-object
+                            "op" "memory-remember"
+                            "title" "resource-created memory"
+                            "content" "resource-created content")))))
+                      (text (markdown-tests--row-text entry)))
+                 (test-assert
+                  (and (find (terminal-span ':success "+ 1 │ ")
+                             entry :test #'equal)
+                       (find (terminal-span ':success "+ 5 │ ")
+                             entry :test #'equal)
+                       (search "scope: workspace" text)
+                       (search "resource-created content" text))
+                  "memory collection resources use numbered green added rows"))
+               (let* ((entry
+                        (call-entry
+                         application
+                         "resource"
+                         "edit"
+                         (json-object
+                          "uri" "memory:global"
+                          "base-revision" global-revision
+                          "operations"
+                          (json-array
+                           (json-object
+                            "op" "memory-remember"
+                            "title" "global resource memory"
+                            "content" "global resource content")))))
+                      (text (markdown-tests--row-text entry)))
+                 (test-assert
+                  (and (find (terminal-span ':success "+ 1 │ ")
+                             entry :test #'equal)
+                       (find (terminal-span ':success "+ 5 │ ")
+                             entry :test #'equal)
+                       (search "scope: global" text)
+                       (search "global resource content" text))
+                  "global memory collections derive global scope in change rows"))
+               (let* ((entry
+                        (call-entry
+                         application
+                         "resource"
+                         "edit"
+                         (json-object
+                          "uri" "memory:workspace"
+                          "base-revision" collection-revision
+                          "operations"
+                          (json-array
+                           (json-object
+                            "op" "memory-remember"
+                            "title" "first invalid memory"
+                            "content" "first invalid content")
+                           (json-object
+                            "op" "memory-remember"
+                            "title" "second invalid memory"
+                            "content" "second invalid content")))))
+                      (text (markdown-tests--row-text entry)))
+                 (test-assert
+                  (and (not (find (terminal-span ':success "+ 1 │ ")
+                                  entry :test #'equal))
+                       (search "operation 1 · remember memory" text)
+                       (search "operation 2 · remember memory" text))
+                  "invalid multi-operation memory edits stay structured"))))
         (uiop:delete-directory-tree root
                                     :validate t
                                     :if-does-not-exist :ignore))))
@@ -8020,6 +8339,7 @@
   (test-transcript-entries)
   (test-line-change-tool-presentation)
   (test-agenda-change-tool-presentation)
+  (test-memory-change-tool-presentation)
   (test-structured-tool-presentation)
   (test-plan-update-call-presentation)
   (test-task-run-call-presentation)

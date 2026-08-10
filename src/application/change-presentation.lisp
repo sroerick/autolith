@@ -14,6 +14,13 @@
                arguments))
     operation))
 
+(-> application--single-resource-operation-p (t) boolean)
+(defun application--single-resource-operation-p (operations)
+  "Return whether OPERATIONS is exactly one JSON operation vector."
+  (and (vectorp operations)
+       (not (stringp operations))
+       (= (length operations) 1)))
+
 
 ;;; Agenda changes
 
@@ -203,6 +210,264 @@
   (application--agenda-call-entry application call "agenda-remove"))
 
 
+;;; Memory changes
+
+(-> application--memory-document
+    (&key (:title string) (:content string) (:scope memory-scope) (:tags list))
+    string)
+(defun application--memory-document (&key title content scope tags)
+  "Return one stable editable line document for a persistent memory."
+  (format nil "title: ~A~%scope: ~(~A~)~%tags: ~:[none~;~:*~{~A~^, ~}~]~%content:~%~A"
+          title scope tags content))
+
+(-> application--memory->document (memory) string)
+(defun application--memory->document (memory)
+  "Return MEMORY as one stable editable line document."
+  (application--memory-document
+   :title (memory-title memory)
+   :content (memory-content memory)
+   :scope (memory-scope memory)
+   :tags (memory-tags memory)))
+
+(-> application--memory-current
+    (application non-empty-string)
+    (values (option memory) boolean))
+(defun application--memory-current (application identifier)
+  "Return active memory IDENTIFIER and whether state was read for presentation."
+  (block nil
+    (unless (slot-boundp application 'configuration)
+      (return (values nil nil)))
+    (let ((configuration (application-configuration application)))
+      (unless (typep configuration 'configuration)
+        (return (values nil nil)))
+      (handler-case
+          (values (memory-find configuration identifier) t)
+        (error ()
+          (values nil nil))))))
+
+(-> application--memory-remember-change-documents
+    (application (option json-object))
+    (values (option string) (option string)
+            (option integer) (option integer) boolean))
+(defun application--memory-remember-change-documents (application arguments)
+  "Return before and after documents for one memory.remember call."
+  (handler-case
+      (let* ((identifier (and arguments (json-get arguments "id")))
+             (title
+               (memory--validate-text
+                (and arguments (json-get arguments "title"))
+                "title"
+                *memory-title-limit*))
+             (content
+               (memory--validate-text
+                (and arguments (json-get arguments "content"))
+                "content"
+                *memory-content-limit*))
+             (scope (memory-tool--write-scope arguments))
+             (tags
+               (memory--validate-tags (memory-tool--tags arguments))))
+        (unless (or (null identifier) (non-empty-string-p identifier))
+          (return-from application--memory-remember-change-documents
+            (values nil nil nil nil nil)))
+        (if identifier
+            (multiple-value-bind (existing state-read-p)
+                (application--memory-current application identifier)
+              (if (and state-read-p existing)
+                  (values
+                   (application--memory->document existing)
+                   (application--memory-document
+                    :title title
+                    :content content
+                    :scope (or scope (memory-scope existing))
+                    :tags tags)
+                   1 1 t)
+                  (values nil nil nil nil nil)))
+             (values
+              nil
+              (application--memory-document
+               :title title
+               :content content
+               :scope (or scope ':workspace)
+               :tags tags)
+              nil 1 t)))
+    (error ()
+      (values nil nil nil nil nil))))
+
+(-> application--memory-forget-change-documents
+    (application (option json-object))
+    (values (option string) (option string)
+            (option integer) (option integer) boolean))
+(defun application--memory-forget-change-documents (application arguments)
+  "Return the removed document for one memory.forget call."
+  (let ((identifier (and arguments (json-get arguments "id"))))
+    (if (non-empty-string-p identifier)
+        (multiple-value-bind (existing state-read-p)
+            (application--memory-current application identifier)
+          (if (and state-read-p existing)
+              (values (application--memory->document existing)
+                      nil 1 nil t)
+              (values nil nil nil nil nil)))
+        (values nil nil nil nil nil))))
+
+(-> application--memory-call-entry
+    (application json-object keyword)
+    list)
+(defun application--memory-call-entry (application call operation)
+  "Present one native memory mutation CALL through the shared change viewer."
+  (let* ((arguments (application--function-call-arguments call))
+         (identifier (and arguments (json-get arguments "id"))))
+    (multiple-value-bind (old-text new-text old-start-line new-start-line available-p)
+        (ecase operation
+          (:remember
+           (application--memory-remember-change-documents application arguments))
+          (:forget
+           (application--memory-forget-change-documents application arguments)))
+      (let ((change-rows
+              (and available-p
+                   (application--change-view-rows
+                    old-text
+                    new-text
+                    :old-start-line old-start-line
+                    :new-start-line new-start-line))))
+        (application--tool-entry
+         application
+         :style ':tool
+         :header (format nil "▸ ~A" (function-call-canonical-name call))
+         :rows
+         (or (and change-rows
+                  (append
+                   (when (non-empty-string-p identifier)
+                     (append
+                      (application--tool-field-rows
+                       application
+                       (list (list :label "id" :value identifier :style ':code)))
+                      (list nil)))
+                   change-rows))
+             (application--generic-argument-rows application arguments)))))))
+
+(defmethod application-tool-call-entry
+    ((tool memory-remember-tool) (application application) (call hash-table))
+  "Present memory.remember as a numbered creation or replacement document."
+  (declare (ignore tool))
+  (application--memory-call-entry application call ':remember))
+
+(defmethod application-tool-call-entry
+    ((tool memory-forget-tool) (application application) (call hash-table))
+  "Present memory.forget as a numbered removed memory document."
+  (declare (ignore tool))
+  (application--memory-call-entry application call ':forget))
+
+(-> application--memory-resource-observation
+    (application string string)
+    (values (option memory-observation) boolean))
+(defun application--memory-resource-observation (application uri revision)
+  "Return the exact retained memory observation for URI and REVISION."
+  (block nil
+    (unless (and (slot-boundp application 'conversation)
+                 (non-empty-string-p uri)
+                 (non-empty-string-p revision))
+      (return (values nil nil)))
+    (let ((conversation (application-conversation application)))
+      (unless (typep conversation 'conversation)
+        (return (values nil nil)))
+      (with-recursive-lock-held
+          ((conversation-resource-observation-lock conversation))
+        (let ((state
+                (resource-observation-state-find
+                 (conversation-resource-observations conversation)
+                 revision
+                 'memory-observation-state)))
+          (unless state
+            (return (values nil nil)))
+          (let ((observation (resource-observation-state-observation state)))
+            (if (and (typep observation 'memory-observation)
+                     (string= uri (resource-observation-uri observation)))
+                (values observation t)
+                (values nil nil))))))))
+
+(-> application--memory-observation-item
+    (memory-observation)
+    (option memory))
+(defun application--memory-observation-item (observation)
+  "Return the exact item value carried by OBSERVATION, when it is an item."
+  (when (eq (memory-observation-kind observation) ':item)
+    (let ((record (getf (memory-observation-snapshot observation) :record)))
+      (and record
+           (handler-case
+               (memory--record->memory #P"memories.sexp" record)
+             (error ()
+               nil))))))
+
+(-> application--memory-resource-operation-change-documents
+    (json-object memory-observation)
+    (values (option string) (option string)
+            (option integer) (option integer) boolean))
+(defun application--memory-resource-operation-change-documents
+    (operation observation)
+  "Return before and after memory documents for OPERATION and OBSERVATION."
+  (handler-case
+      (let ((normalized (memory-resource--normalize-operation operation)))
+        (case (getf normalized :kind)
+          (:remember
+           (let ((scope
+                   (and (eq (memory-observation-kind observation) ':collection)
+                        (cond
+                          ((string= (memory-observation-identifier observation)
+                                    "workspace")
+                           ':workspace)
+                          ((string= (memory-observation-identifier observation)
+                                    "global")
+                           ':global)
+                          (t
+                           nil)))))
+             (if scope
+                 (values
+                  nil
+                   (application--memory-document
+                    :title (getf normalized :title)
+                    :content (getf normalized :content)
+                    :scope scope
+                    :tags (getf normalized :tags))
+                  nil 1 t)
+                 (values nil nil nil nil nil))))
+          (:replace
+           (let ((memory (application--memory-observation-item observation)))
+             (if memory
+                 (values
+                  (application--memory->document memory)
+                   (application--memory-document
+                    :title (getf normalized :title)
+                    :content (getf normalized :content)
+                    :scope (or (getf normalized :scope) (memory-scope memory))
+                    :tags (getf normalized :tags))
+                  1 1 t)
+                 (values nil nil nil nil nil))))
+          (:forget
+           (let ((memory (application--memory-observation-item observation)))
+             (if memory
+                 (values (application--memory->document memory)
+                         nil 1 nil t)
+                 (values nil nil nil nil nil))))
+          (otherwise
+           (values nil nil nil nil nil))))
+    (error ()
+      (values nil nil nil nil nil))))
+
+(-> application--memory-resource-operation-change-rows
+    (json-object memory-observation)
+    (option list))
+(defun application--memory-resource-operation-change-rows
+    (operation observation)
+  "Return the shared colored line view for one memory resource OPERATION."
+  (multiple-value-bind (old-text new-text old-start-line new-start-line available-p)
+      (application--memory-resource-operation-change-documents operation observation)
+    (and available-p
+         (application--change-view-rows
+          old-text
+          new-text
+          :old-start-line old-start-line
+          :new-start-line new-start-line))))
+
 ;;; Resource edit dispatch
 
 (defmethod application-tool-call-entry
@@ -241,8 +506,21 @@
             operations
             :change-rows-function
             (and observed-p
+                 (application--single-resource-operation-p operations)
                  (lambda (operation)
                    (application--agenda-operation-change-rows
                     operation record))))))
+        ((uiop:string-prefix-p "memory:" uri)
+         (multiple-value-bind (observation observed-p)
+             (application--memory-resource-observation application uri revision)
+           (application--resource-operation-rows
+            application
+            operations
+            :change-rows-function
+            (and observed-p
+                 (application--single-resource-operation-p operations)
+                 (lambda (operation)
+                   (application--memory-resource-operation-change-rows
+                    operation observation))))))
         (t
          (application--resource-operation-rows application operations)))))))
