@@ -4327,9 +4327,9 @@
           (list (list ':project-adaptation-offer)))
    "explicit command-line resume queues interruptible adaptation work")
   (test-assert
-   (equal (application--initial-work-items "/resume" nil t)
-          (list (list ':command "/resume")))
-   "bare command-line resume qualifies only after its picker selection")
+   (equal (application--initial-work-items "(resume)" nil t)
+          (list (list ':lisp "(resume)")))
+   "bare command-line resume runs through canonical local Lisp")
   (test-assert
    (equal (application--initial-work-items nil "diagnose" nil)
           (list (list ':recovery-diagnosis "diagnose")))
@@ -4721,6 +4721,25 @@
       (main--resume-selection '("--resume" "saved-conversation"))
     (test-assert (and (not requested-p) (null identifier))
                  "the removed --resume option is not recognized"))
+  (let ((observed-initial-command nil)
+        (*active-application* nil))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application-create
+       (lambda (configuration &key conversation-id permission-mode)
+         (declare (ignore configuration conversation-id permission-mode))
+         (make-instance 'application)))
+      (list
+       'application-run
+       (lambda (application &key initial-command &allow-other-keys)
+         (declare (ignore application))
+         (setf observed-initial-command initial-command))))
+     (lambda ()
+       (main-dispatch '("resume"))))
+    (test-assert
+     (string= observed-initial-command "(resume)")
+     "plain command-line resume starts the canonical Lisp operation"))
   (test-assert
    (string= (application--selected-conversation-id
              "explicit" "recovered")

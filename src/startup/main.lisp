@@ -291,7 +291,10 @@
   "Return ordered controller work for command-line and recovery startup behavior."
   (cond
     (initial-command
-     (list (list ':command initial-command)))
+     (list (list (if (terminal-ui--lisp-draft-p initial-command)
+                     ':lisp
+                     ':command)
+                 initial-command)))
     (recovery-diagnosis
      (list (list ':recovery-diagnosis recovery-diagnosis)))
     (resume-offer-p
@@ -719,7 +722,7 @@
                *active-application*
                :initial-command (and effective-resume-requested-p
                                      (null resume-id)
-                                     "/resume")
+                                     "(resume)")
                :initial-input
                (if handoff-record
                    (localgroup-handoff-initial-input handoff-record)
