@@ -146,12 +146,89 @@
                    (application-input-controller-active-p controller) t)
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
+              controller "(fs.list :path \".\")")
+             (let ((output
+                     (clinedi:ansi-strip
+                      (recording-terminal-output terminal))))
+               (test-assert
+                (and (null (application-input-controller-work-items controller))
+                     (search "(fs.list :path \".\")" output)
+                     (not (search "scheduled" output :test #'char-equal)))
+                "a nonconflicting registered operation runs beside the active turn"))
+             (recording-terminal-reset terminal)
+             (setf *lisp-machine-test-value* nil)
+             (application-input-controller--handle-submission
+              controller
+              "(eval-now (setf *lisp-machine-test-value* :immediate))")
+             (let ((output
+                     (clinedi:ansi-strip
+                      (recording-terminal-output terminal))))
+               (test-assert
+                (and (eq *lisp-machine-test-value* ':immediate)
+                     (null (application-input-controller-work-items controller))
+                     (search "⇒ :IMMEDIATE" output))
+                "eval-now explicitly forces arbitrary local evaluation immediately"))
+             (recording-terminal-reset terminal)
+             (application-input-controller--handle-submission
+              controller "(self.eval :form \"(+ 1 2)\")")
+             (test-assert
+              (and (equal (application-input-controller-work-items controller)
+                          '((:lisp "(self.eval :form \"(+ 1 2)\")")))
+                   (search "local evaluation scheduled"
+                           (recording-terminal-output terminal)
+                           :test #'char-equal))
+              "active-image tools wait for the serialized application boundary")
+             (setf (application-input-controller-work-items controller) nil)
+             (recording-terminal-reset terminal)
+             (let ((authorization-calls 0))
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-authorize-command
+                       (lambda (observed command directory)
+                         (declare (ignore observed command directory))
+                         (incf authorization-calls)
+                         ':sandboxed)))
+                (lambda ()
+                  (application-input-controller--handle-submission
+                   controller "(shell.run :command \"true\")")))
+               (test-assert
+                (and (zerop authorization-calls)
+                     (equal (application-input-controller-work-items controller)
+                            '((:lisp "(shell.run :command \"true\")")))
+                     (search "local evaluation scheduled"
+                             (recording-terminal-output terminal)
+                             :test #'char-equal))
+                "approval-requiring tools wait instead of joining the reader"))
+             (setf (application-input-controller-work-items controller) nil)
+             (recording-terminal-reset terminal)
+             (let ((previous-reader
+                     (application-input-controller-reader-thread controller)))
+               (unwind-protect
+                    (progn
+                      (setf (application-input-controller-reader-thread controller)
+                            (current-thread))
+                      (application-input-controller--handle-submission
+                       controller
+                       "(eval-now (shell.run :command \"true\"))"))
+                 (setf (application-input-controller-reader-thread controller)
+                       previous-reader)))
+             (let ((output
+                     (clinedi:ansi-strip
+                      (recording-terminal-output terminal))))
+               (test-assert
+                (and (null (application-input-controller-work-items controller))
+                     (search "Terminal-owning work cannot pause" output)
+                     (search "aborted" output :test #'char-equal))
+                "eval-now rejects modal authorization instead of self-joining"))
+             (setf (application-input-controller-work-items controller) nil)
+             (recording-terminal-reset terminal)
+             (application-input-controller--handle-submission
               controller "(values :later)")
              (test-assert
               (and (equal (application-input-controller-work-items controller)
                           '((:lisp "(values :later)")))
                    (null (application-input-controller-steering-items controller))
-                   (search "local Lisp queued"
+                   (search "local evaluation scheduled"
                            (recording-terminal-output terminal)
                            :test #'char-equal))
               "busy arbitrary Lisp waits for the idle boundary instead of steering")

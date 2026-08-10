@@ -16,13 +16,13 @@
    (kind
     :initarg :kind
     :reader application-operation-kind
-    :type (member :command :tool)
+    :type (member :command :local :tool)
     :documentation "The authoritative backend family for this operation.")
    (backend
     :initarg :backend
     :reader application-operation-backend
-    :type (or application-command tool)
-    :documentation "The exact registered command or tool object invoked."))
+    :type (or symbol application-command tool)
+    :documentation "The exact registered command, local form, or tool invoked."))
   (:documentation
    "One immutable user-facing projection of a registered command or tool."))
 
@@ -45,6 +45,32 @@
 (defvar *application-operation-bindings* (make-hash-table :test #'eq)
   "Function bindings installed for canonical operation symbols.")
 
+(defvar *application-local-user-evaluation-p* nil
+  "Whether evaluation came from one explicit local Lisp submission.")
+
+(defmacro eval-now (&body body)
+  "Evaluate BODY as explicit local input even while an agent turn is active.
+
+Only a top-level local submission receives immediate active-turn admission. The
+runtime guard prevents provider and ordinary internal code from using this
+local-user override."
+  `(progn
+     (unless *application-local-user-evaluation-p*
+       (error 'configuration-error
+              :message
+              "EVAL-NOW is available only inside explicit local Lisp input."))
+     ,@body))
+
+(defparameter *application-local-operations*
+  (list
+   (make-instance
+    'application-operation
+    :name "eval-now"
+    :description "Force explicit local Lisp to run during an active turn."
+    :kind ':local
+    :backend 'eval-now))
+  "The built-in local forms advertised beside registered commands and tools.")
+
 (-> tool-user-callable-p (tool) boolean)
 (defgeneric tool-user-callable-p (tool)
   (:documentation "Return whether TOOL belongs to the local user's operation surface."))
@@ -58,6 +84,101 @@
   "Hide the child-only terminal yield operation from the primary user surface."
   (declare (ignore tool))
   nil)
+
+(-> tool-active-turn-action (tool) (member :execute :hold))
+(defgeneric tool-active-turn-action (tool)
+  (:documentation
+   "Return whether an explicit local call to TOOL may overlap an active turn."))
+
+(defmethod tool-active-turn-action ((tool tool))
+  "Hold unclassified tools at the agent boundary by default."
+  (declare (ignore tool))
+  ':hold)
+
+(defmethod tool-active-turn-action ((tool resource-tool))
+  "Permit revision-gated resource operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool workspace-tool))
+  "Permit non-modal workspace operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool shell-run-tool))
+  "Hold shell execution because authorization may require terminal ownership."
+  (declare (ignore tool))
+  ':hold)
+
+(defmethod tool-active-turn-action ((tool lisp-tool))
+  "Permit isolated worker operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool web-run-tool))
+  "Permit provider-backed web searches during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool memory-tool))
+  "Permit persistent-memory operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool papercut-tool))
+  "Permit papercut reporting during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool agenda-tool))
+  "Permit workspace-agenda operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool plan-tool))
+  "Permit workspace-plan operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool task-orchestrator-tool))
+  "Permit lock-protected child and job operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool mcp-managed-tool))
+  "Permit non-modal MCP discovery and resource operations during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool mcp-provider-tool))
+  "Hold external MCP calls because approval may require terminal ownership."
+  (declare (ignore tool))
+  ':hold)
+
+(defmethod tool-active-turn-action ((tool self-inspect-tool))
+  "Permit read-only active-image inspection during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool self-source-tool))
+  "Permit read-only active-image source lookup during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool self-status-tool))
+  "Permit read-only active-image status inspection during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool self-diff-tool))
+  "Permit read-only active-image mutation inspection during an active turn."
+  (declare (ignore tool))
+  ':execute)
+
+(defmethod tool-active-turn-action ((tool self-generations-tool))
+  "Permit read-only retained-generation inspection during an active turn."
+  (declare (ignore tool))
+  ':execute)
 
 
 ;;;; -- Registry Projection --
@@ -115,10 +236,11 @@
 
 (-> application-operation-list (application) list)
 (defun application-operation-list (application)
-  "Return APPLICATION's registered commands and locally callable tools in order."
+  "Return APPLICATION's commands, local forms, and callable tools in order."
   (application-operation--validate-unique-names
    (append (mapcar #'application-operation--from-command
                    (application-command-list))
+           *application-local-operations*
            (mapcar #'application-operation--from-tool
                    (application-operation--tools application)))))
 
@@ -224,6 +346,8 @@
              (:command
               (let ((hint (application-command-argument backend)))
                 (and hint (format nil "~A)" hint))))
+             (:local
+              "FORM)")
              (:tool
               (application-operation--tool-argument-hint backend)))))
     (list :name (if argument
@@ -258,19 +382,24 @@
 
 (-> application-operation-help (application) string)
 (defun application-operation-help (application)
-  "Return APPLICATION's canonical command and tool operation reference."
+  "Return APPLICATION's canonical local, command, and tool operation reference."
   (let* ((operations (application-operation-list application))
          (commands (remove-if-not
                     (lambda (operation)
                       (eq (application-operation-kind operation) ':command))
                     operations))
+         (locals (remove-if-not
+                  (lambda (operation)
+                    (eq (application-operation-kind operation) ':local))
+                  operations))
          (tools (remove-if-not
                  (lambda (operation)
                    (eq (application-operation-kind operation) ':tool))
                  operations)))
     (format nil
-            "Registered operations~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
+            "Registered operations~%~%~A~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
             (application-operation--help-group "Commands" commands)
+            (application-operation--help-group "Local evaluation" locals)
             (application-operation--help-group "Tools" tools))))
 
 (-> application-operation-connect-ui (application) application)
@@ -447,6 +576,70 @@
                    :command command)))
 
 
+;;;; -- Active-Turn Admission --
+
+(-> application-operation--immediate-argument-p (t) boolean)
+(defun application-operation--immediate-argument-p (form)
+  "Return whether FORM is literal data safe to evaluate beside an active turn."
+  (or (constantp form)
+      (and (application-operation--proper-list-p form)
+           (member (first form) '(list vector json-object) :test #'eq)
+           (every #'application-operation--immediate-argument-p (rest form)))))
+
+(-> application-operation--command-active-turn-action
+    (application-command list)
+    (member :cancel :execute :hold))
+(defun application-operation--command-active-turn-action (command argument-forms)
+  "Return COMMAND's existing busy action for literal ARGUMENT-FORMS."
+  (let* ((invocation
+           (application-operation--command-invocation command argument-forms))
+         (action (application-command-busy-action command invocation)))
+    (if (and (eq action ':execute)
+             (application-command-terminal-owner-p command invocation))
+        ':hold
+        action)))
+
+(-> application-operation--active-turn-action
+    (application-operation list)
+    (member :cancel :execute :hold))
+(defun application-operation--active-turn-action (operation argument-forms)
+  "Return OPERATION's active-turn admission decision for ARGUMENT-FORMS."
+  (ecase (application-operation-kind operation)
+    (:command
+     (application-operation--command-active-turn-action
+      (application-operation-backend operation) argument-forms))
+    (:local
+     ':execute)
+    (:tool
+     (tool-active-turn-action (application-operation-backend operation)))))
+
+(-> application-operation-source-active-turn-action
+    (application string)
+    (member :cancel :execute :hold))
+(defun application-operation-source-active-turn-action (application source)
+  "Classify one complete explicit Lisp SOURCE beside APPLICATION's active turn.
+
+Only top-level EVAL-NOW or a registered operation with literal argument forms may
+run immediately. Arbitrary Lisp and computed operation arguments wait for the
+serialized application boundary."
+  (handler-case
+      (let* ((*package* (find-package '#:autolith))
+             (form (self-read-form source :read-eval nil)))
+        (unless (and (application-operation--proper-list-p form)
+                     (symbolp (first form)))
+          (return-from application-operation-source-active-turn-action ':hold))
+        (let* ((operation (application-operation-find application (first form)))
+               (arguments (rest form)))
+          (if (and operation
+                   (or (eq (application-operation-kind operation) ':local)
+                       (every #'application-operation--immediate-argument-p
+                              arguments)))
+              (application-operation--active-turn-action operation arguments)
+              ':hold)))
+    (error ()
+      ':hold)))
+
+
 ;;;; -- Authoritative Dispatch --
 
 (-> application-operation--tool-context (application) tool-context)
@@ -531,6 +724,11 @@
       (:command
        (application-operation--call-command
         application (application-operation-backend operation) arguments))
+      (:local
+       (error 'configuration-error
+              :message
+              (format nil "Local form ~A must be submitted directly."
+                      (application-operation-name operation))))
       (:tool
        (application-operation--call-tool
         application (application-operation-backend operation) arguments)))))
@@ -582,6 +780,7 @@
 
 (-> application-operation-install-bindings (application) list)
 (defun application-operation-install-bindings (application)
-  "Install canonical Common Lisp function bindings for APPLICATION's operations."
-  (mapcar #'application-operation--install-binding
-          (application-operation-list application)))
+  "Install canonical function bindings for APPLICATION's commands and tools."
+  (loop for operation in (application-operation-list application)
+        unless (eq (application-operation-kind operation) ':local)
+          collect (application-operation--install-binding operation)))

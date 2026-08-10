@@ -99,6 +99,13 @@
                         "model tools appear in the same user operation registry")
            (test-assert (member "test-operation.echo" names :test #'string=)
                         "per-session tools appear in the local operation registry")
+           (test-assert (member "eval-now" names :test #'string=)
+                        "the immediate local evaluator is a discoverable operation")
+           (test-assert
+            (eq (application-operation-kind
+                 (application-operation-find application 'eval-now))
+                ':local)
+            "operation lookup identifies the immediate local form")
            (test-assert (not (member "yield.submit" names :test #'string=))
                         "the child-only yield operation stays hidden from users")
            (test-assert
@@ -131,14 +138,16 @@
                           "slash compatibility completion retains canonical commands")
              (test-assert (member "(help)" entry-names :test #'string=)
                           "completion offers a canonical no-argument Lisp command")
+             (test-assert (member "(eval-now" entry-names :test #'string=)
+                          "completion offers the explicit immediate local form")
              (test-assert
               (and fs-entry (search ":path" (or (getf fs-entry :argument) "")))
               "completion exposes dotted tool names with Lisp keyword arguments")
-              (test-assert
-               (and test-entry
-                    (search ":|odd key)| VALUE"
-                            (or (getf test-entry :argument) "")))
-               "completion escapes punctuation and whitespace in property names")
+             (test-assert
+              (and test-entry
+                   (search ":|odd key)| VALUE"
+                           (or (getf test-entry :argument) "")))
+              "completion escapes punctuation and whitespace in property names")
              (test-assert (not (member "/fs.list" entry-names :test #'string=))
                           "slash compatibility does not invent tool spellings")
              (test-assert
@@ -146,6 +155,42 @@
                               (uiop:string-prefix-p "(yield.submit" name))
                             entry-names))
               "completion hides child-only operations"))
+           (let ((unclassified
+                   (make-instance
+                    'tool
+                    :namespace "unclassified"
+                    :name "safe-looking"
+                    :description "An intentionally unclassified test tool."
+                    :parameters (tool-object-schema (json-object) nil))))
+             (test-assert (eq (tool-active-turn-action unclassified) ':hold)
+                          "unclassified tools wait regardless of their names"))
+           (dolist (case
+                    '(("(help)" :execute)
+                      ("(goal \"pause\")" :hold)
+                      ("(quit)" :cancel)
+                      ("(fs.list :path \".\")" :execute)
+                      ("(shell.run :command \"true\")" :hold)
+                      ("(test-operation.echo :text \"hello\")" :hold)
+                      ("(self.status)" :execute)
+                      ("(self.eval :form \"(+ 1 2)\")" :hold)
+                      ("(fs.list :path (progn (setf *print-base* 8) \".\"))"
+                       :hold)
+                      ("(eval-now (setf *print-base* 8))" :execute)))
+             (destructuring-bind (source expected) case
+               (test-assert
+                (eq (application-operation-source-active-turn-action
+                     application source)
+                    expected)
+                (format nil "~A has active-turn action ~S" source expected))))
+           (let ((evaluation
+                   (application-lisp-evaluate
+                    "(eval-now :not-local-input)"
+                    :application application)))
+             (test-assert
+              (and (eq (application-lisp-evaluation-status evaluation) ':aborted)
+                   (search "explicit local Lisp input"
+                           (or (application-lisp-evaluation-condition evaluation) "")))
+              "eval-now rejects noninteractive evaluator callers"))
            (let ((command-authorizations 0)
                  (tool-authorizations 0))
              (test-call-with-function-replacements

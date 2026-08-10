@@ -308,13 +308,14 @@ journaling or provider conversation projection."
   (application-set-activity application "evaluating local Lisp")
   (let ((evaluation
           (unwind-protect
-               (application-lisp-evaluate
-                source
-                :application application
-                :restart-selector
-                (lambda (condition restarts)
-                  (application-lisp--select-restart
-                   application condition restarts)))
+               (let ((*application-local-user-evaluation-p* t))
+                 (application-lisp-evaluate
+                  source
+                  :application application
+                  :restart-selector
+                  (lambda (condition restarts)
+                    (application-lisp--select-restart
+                     application condition restarts))))
             (application-set-activity application nil))))
     (application-present application
                          (application-lisp--result-entry evaluation))

@@ -1409,7 +1409,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
    (application-input-controller-application controller)
    (list
     (terminal-span ':hint
-                   "∙ local Lisp queued until the current response finishes")
+                   "∙ local evaluation scheduled until the current response finishes")
     (terminal-span ':plain (string #\Newline))
     (terminal-span ':dim
                    (format nil "  ~A"
@@ -1426,6 +1426,24 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   (when (application-input-controller--enqueue controller ':lisp source)
     (application-input-controller--present-scheduled-lisp controller source))
   nil)
+
+(-> application-input-controller--lisp-active-turn-action
+    (application-input-controller string)
+    (member :cancel :execute :hold))
+(defun application-input-controller--lisp-active-turn-action (controller source)
+  "Return SOURCE's admission action when CONTROLLER has an active turn."
+  (if (application-input-controller-turn-active-p controller)
+      (application-operation-source-active-turn-action
+       (application-input-controller-application controller) source)
+      ':hold))
+
+(-> application-input-controller--run-responsive-lisp
+    (application-input-controller string)
+    keyword)
+(defun application-input-controller--run-responsive-lisp (controller source)
+  "Execute immediate local Lisp SOURCE on CONTROLLER's terminal reader."
+  (application-run-lisp-input
+   (application-input-controller-application controller) source))
 
 (-> application-input-controller--run-responsive-command
     (application-input-controller application-command
@@ -1455,9 +1473,12 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
   "Atomically route recalled INPUT and report whether recalled work handled it.
 
 Blank input keeps the recalled work selected. Active messages commit to the
-current turn's steering queue before its completion can race. Active commands
-reuse their busy policy, while arbitrary local Lisp waits for the idle boundary."
-  (let* ((message (application--message-input input))
+current turn's steering queue before its completion can race. Registered
+nonconflicting operations may execute immediately; other Lisp waits for the idle
+boundary."
+  (let* ((application
+           (application-input-controller-application controller))
+         (message (application--message-input input))
          (text (user-message-input-text input))
          (lisp-input-p (terminal-ui--lisp-draft-p text))
          (work (application-input-controller--input-work input))
@@ -1472,7 +1493,8 @@ reuse their busy policy, while arbitrary local Lisp waits for the idle boundary.
          (busy-action
            (cond
              (lisp-input-p
-              ':hold)
+              (application-input-controller--lisp-active-turn-action
+               controller text))
              (invocation
               (if command
                   (application-command-busy-action command invocation)
@@ -1525,10 +1547,14 @@ reuse their busy policy, while arbitrary local Lisp waits for the idle boundary.
       (:cancel
        (application-input-controller--request-exit controller ':quit))
       (:execute
-       (when (eq (application-input-controller--run-responsive-command
-                  controller command invocation)
-                 ':quit)
-         (application-input-controller--request-exit controller ':quit)))
+       (let ((result
+               (if lisp-input-p
+                   (application-input-controller--run-responsive-lisp
+                    controller text)
+                   (application-input-controller--run-responsive-command
+                    controller command invocation))))
+         (when (eq result ':quit)
+           (application-input-controller--request-exit controller ':quit))))
       (:hold
        (if lisp-input-p
            (application-input-controller--present-scheduled-lisp controller text)
@@ -1577,7 +1603,17 @@ reuse their busy policy, while arbitrary local Lisp waits for the idle boundary.
     (cond
       ((terminal-ui--lisp-draft-p text)
        (if (application-input-controller-busy-p controller)
-           (application-input-controller--schedule-lisp controller text)
+           (ecase (application-input-controller--lisp-active-turn-action
+                   controller text)
+             (:cancel
+              (application-input-controller--request-exit controller ':quit))
+             (:execute
+              (when (eq (application-input-controller--run-responsive-lisp
+                         controller text)
+                        ':quit)
+                (application-input-controller--request-exit controller ':quit)))
+             (:hold
+              (application-input-controller--schedule-lisp controller text)))
            (application-input-controller--enqueue controller ':lisp text)))
       (message
        (if steer-p
@@ -1941,12 +1977,21 @@ reuse their busy policy, while arbitrary local Lisp waits for the idle boundary.
     t)
 (defun application-input-controller-call-with-reader-paused
     (controller function)
-  "Call FUNCTION while CONTROLLER has no live terminal reader."
-  (let ((outermost-p nil))
+  "Call FUNCTION while CONTROLLER has no competing terminal reader."
+  (let ((outermost-p nil)
+        (reader-thread-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (setf outermost-p
-            (zerop (application-input-controller-pause-depth controller)))
-      (incf (application-input-controller-pause-depth controller)))
+      (setf reader-thread-p
+            (eq (current-thread)
+                (application-input-controller-reader-thread controller)))
+      (unless reader-thread-p
+        (setf outermost-p
+              (zerop (application-input-controller-pause-depth controller)))
+        (incf (application-input-controller-pause-depth controller))))
+    (when reader-thread-p
+      (error 'configuration-error
+             :message
+             "Terminal-owning work cannot pause the current input reader. Submit it without EVAL-NOW so it can run after the active turn."))
     (when outermost-p
       (application-input-controller--pause-reader controller))
     (unwind-protect
