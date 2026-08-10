@@ -130,6 +130,7 @@
                              (:file "localgroup/terminal")
                              (:file "terminal/ui")
                              (:file "application/runtime")
+                             (:file "application/change-viewer")
                              (:file "application/tool-presentation")
                              (:file "application/recovery")
                              (:file "application/commands")

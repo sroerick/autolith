@@ -2,8 +2,6 @@
 
 ;;;; -- Tool Transcript Presentation --
 
-(defparameter *application-tool-call-lines* 8
-  "The maximum tool input lines shown in the terminal transcript.")
 
 (defparameter *application-tool-output-lines* 12
   "The maximum tool output lines shown in the terminal transcript.")
@@ -22,21 +20,6 @@
   (language-find "bash" :errorp nil)
   "The ColorLisp language used for shell command previews.")
 
-(-> application--display-lines (string) list)
-(defun application--display-lines (text)
-  "Return sanitized logical lines from TEXT without trailing blank rows."
-  (let ((trimmed (string-right-trim '(#\Newline #\Return) text)))
-    (when (plusp (length trimmed))
-      (mapcar (lambda (line)
-                (sanitize-text (string-right-trim '(#\Return) line)
-                               :single-line-p t))
-              (uiop:split-string trimmed :separator '(#\Newline))))))
-
-(-> application--file-content-lines (string) list)
-(defun application--file-content-lines (text)
-  "Return sanitized logical file TEXT lines, preserving trailing blank rows."
-  (loop for line across (workspace-file--split-lines text)
-        collect (sanitize-text line :single-line-p t)))
 
 (-> application--preview-rows
     (string terminal-style integer &key (:gutter (option string)))
@@ -659,10 +642,9 @@ structural discriminator as a readable heading instead."
      :style ':tool
      :header (format nil "▸ ~A" (function-call-canonical-name call))
      :rows (append
-            (application--source-change-rows
-             source
-             ':source
-             :language *application-common-lisp-language*)
+             (application--source-preview-rows
+              source
+              :language *application-common-lisp-language*)
             (application--restart-call-rows arguments)))))
 
 (-> application--simple-call-entry (application json-object string) list)
@@ -1432,7 +1414,7 @@ model."
                  application uri revision :start-line start :end-line end))
               (new-text (if (string= name "replace-lines") content "")))
          (if old-text
-             (application--edit-diff-rows
+             (application--change-view-rows
               old-text
               new-text
               :old-start-line start
@@ -1444,29 +1426,27 @@ model."
                               (1+ (- end start)) start (< start end) end)))
                (append
                 (list
-                 (application--edit-line-row
+                 (application--change-line-row
                   ':removed
                   message
                   :width width
                   :line-number start
                   :content-spans (list (terminal-span ':dim message))))
                 (when (string= name "replace-lines")
-                  (application--source-change-rows
+                  (application--change-view-rows
+                   nil
                    new-text
-                   ':added
-                   :path path
-                   :start-line new-start-line
-                   :file-content-p t)))))))
+                   :new-start-line new-start-line
+                   :path path)))))))
       ((and (stringp name)
             (member name '("insert-before" "insert-after" "replace-empty")
                     :test #'string=)
             (stringp content))
-       (application--source-change-rows
+       (application--change-view-rows
+        nil
         content
-        ':added
-        :path path
-        :start-line new-start-line
-        :file-content-p t))
+        :new-start-line new-start-line
+        :path path))
       (t
        nil))))
 
@@ -1656,311 +1636,14 @@ model."
           (append
             (list (application--tool-section-row
                    (format nil "content · ~:D character~:P" (length content))))
-            (or (application--source-change-rows
-                 content
-                 ':added
-                 :path path
-                 :start-line 1
-                 :file-content-p t)
+             (or (application--change-view-rows
+                  nil
+                  content
+                  :new-start-line 1
+                  :path path)
                 (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
-(-> application--edit-common-prefix-length (vector vector) integer)
-(defun application--edit-common-prefix-length (old-lines new-lines)
-  "Return the number of equal leading lines in OLD-LINES and NEW-LINES."
-  (loop for index below (min (length old-lines) (length new-lines))
-        while (string= (aref old-lines index) (aref new-lines index))
-        count t))
-
-(-> application--edit-common-suffix-length (vector vector integer) integer)
-(defun application--edit-common-suffix-length
-    (old-lines new-lines prefix-length)
-  "Return equal trailing lines after PREFIX-LENGTH without overlap."
-  (let ((maximum (min (- (length old-lines) prefix-length)
-                      (- (length new-lines) prefix-length))))
-    (loop for offset from 1 to maximum
-          while (string= (aref old-lines (- (length old-lines) offset))
-                         (aref new-lines (- (length new-lines) offset)))
-          count t)))
-
-(-> application--edit-line-number-width
-    (vector vector &key (:old-start-line (option integer))
-                        (:new-start-line (option integer)))
-    integer)
-(defun application--edit-line-number-width
-    (old-lines new-lines &key old-start-line new-start-line)
-  "Return the display width needed for OLD-LINES and NEW-LINES numbers."
-  (let ((largest
-          (max (or (and old-start-line
-                        (+ old-start-line (max 0 (1- (length old-lines)))))
-                   0)
-               (or (and new-start-line
-                        (+ new-start-line (max 0 (1- (length new-lines)))))
-                   0))))
-    (max 1 (length (princ-to-string largest)))))
-
-(-> application--edit-line-number-cell ((option integer) integer) string)
-(defun application--edit-line-number-cell (line-number width)
-  "Return LINE-NUMBER right aligned to WIDTH, or an empty cell."
-  (if line-number
-      (format nil "~V@A" width line-number)
-      (make-string width :initial-element #\Space)))
-
-
-(-> application--syntax-lines
-    (string &key (:language (option language)) (:path (option string))
-                 (:file-content-p boolean))
-    (option vector))
-(defun application--syntax-lines
-    (text &key language path (file-content-p nil))
-  "Return syntax-highlighted display lines for TEXT, or NIL.
-
-LANGUAGE handles pathless source such as eval forms. PATH selects a language
-from a file destination. FILE-CONTENT-P preserves meaningful trailing blank
-file rows. Sanitization occurs before ColorLisp sees the text."
-  (let ((lines (if file-content-p
-                   (application--file-content-lines text)
-                   (application--display-lines text))))
-    (when lines
-      (let* ((source (format nil "~{~A~^~%~}" lines))
-             (highlighted
-               (syntax--highlight-lines source
-                                        :language language
-                                        :pathname path)))
-        (and highlighted
-             (= (length highlighted) (length lines))
-             highlighted)))))
-
-(-> application--edit-line-row
-    (keyword string &key (:width integer)
-                         (:line-number (option integer))
-                         (:content-spans (option list)))
-    list)
-(defun application--edit-line-row
-    (kind text &key (width 1) line-number content-spans)
-  "Return one source, context, removed, or added row with a semantic ruler."
-  (let* ((style
-           (ecase kind
-             (:source ':success)
-             (:context ':dim)
-             (:removed ':failure)
-             (:added ':success)))
-         (marker
-           (ecase kind
-             (:source nil)
-             (:context " ")
-             (:removed "-")
-             (:added "+")))
-         (gutter
-           (cond
-             ((eq kind ':source)
-              "│ ")
-             (line-number
-              (format nil "~A ~A │ "
-                      marker
-                      (application--edit-line-number-cell line-number width)))
-             (t
-              (format nil "~A │ " marker))))
-         (content-style (if (eq kind ':context) ':dim ':code)))
-    (cons
-     (terminal-span style gutter)
-     (or content-spans
-         (list (terminal-span content-style text))))))
-
-(-> application--source-change-rows
-    (string keyword
-            &key (:path (option string)) (:language (option language))
-                 (:start-line (option integer)) (:limit integer)
-                 (:file-content-p boolean))
-    list)
-(defun application--source-change-rows
-    (text kind &key path language start-line
-                    (limit *application-tool-call-lines*)
-                    (file-content-p nil))
-  "Return bounded syntax-highlighted TEXT rows under one semantic change ruler.
-
-KIND is :SOURCE for executable input, :ADDED for inserted text, or :REMOVED for
-deleted text. Source rows use a green ruler without claiming file coordinates.
-FILE-CONTENT-P preserves meaningful trailing blank file rows."
-  (let ((lines (if file-content-p
-                   (application--file-content-lines text)
-                   (application--display-lines text))))
-    (when lines
-      (let* ((line-vector (coerce lines 'vector))
-             (highlighted
-               (application--syntax-lines
-                text
-                :language language
-                :path path
-                :file-content-p file-content-p))
-             (visible-count (min limit (length line-vector)))
-             (omitted (- (length line-vector) visible-count))
-             (width
-               (if start-line
-                   (length
-                    (princ-to-string
-                     (+ start-line (max 0 (1- (length line-vector))))))
-                   1))
-             (noun
-               (ecase kind
-                 (:source nil)
-                 (:removed "removed")
-                 (:added "added"))))
-        (append
-         (loop for index below visible-count
-               for line-number = (and start-line (+ start-line index))
-               collect (application--edit-line-row
-                        kind
-                        (aref line-vector index)
-                        :width width
-                        :line-number line-number
-                        :content-spans (and highlighted
-                                            (aref highlighted index))))
-         (when (plusp omitted)
-           (let* ((line-number (and start-line (+ start-line visible-count)))
-                  (message
-                    (if noun
-                        (format nil "… +~D more ~A line~:P" omitted noun)
-                        (format nil "… +~D more line~:P" omitted))))
-             (list
-              (application--edit-line-row
-               kind
-               message
-               :width width
-               :line-number line-number
-               :content-spans (list (terminal-span ':dim message)))))))))))
-
-(-> application--edit-change-rows
-    (vector keyword &key (:start-line (option integer)) (:width integer)
-                         (:highlighted-lines (option vector)))
-    list)
-(defun application--edit-change-rows
-    (lines kind &key start-line (width 1) highlighted-lines)
-  "Return bounded numbered changed LINES of KIND."
-  (let* ((visible-count (min *application-tool-call-lines* (length lines)))
-         (omitted (- (length lines) visible-count))
-         (noun (ecase kind
-                 (:removed "removed")
-                 (:added "added"))))
-    (append
-     (loop for index below visible-count
-           for line-number = (and start-line (+ start-line index))
-           collect (application--edit-line-row
-                    kind
-                    (aref lines index)
-                    :width width
-                    :line-number line-number
-                    :content-spans (and highlighted-lines
-                                        (aref highlighted-lines index))))
-     (when (plusp omitted)
-       (let* ((line-number (and start-line (+ start-line visible-count)))
-              (message (format nil "… +~D more ~A line~:P" omitted noun)))
-         (list
-          (application--edit-line-row
-           kind
-           message
-           :width width
-           :line-number line-number
-           :content-spans (list (terminal-span ':dim message)))))))))
-
-(-> application--edit-diff-rows
-    (string string &key (:old-start-line (option integer))
-                        (:new-start-line (option integer))
-                        (:path (option string)))
-    list)
-(defun application--edit-diff-rows
-    (old-text new-text &key old-start-line new-start-line path)
-  "Return a bounded line-numbered diff between OLD-TEXT and NEW-TEXT."
-  (let* ((old-lines
-           (coerce (application--file-content-lines old-text) 'vector))
-         (new-lines
-           (coerce (application--file-content-lines new-text) 'vector))
-         (old-highlighted
-           (and path
-                (application--syntax-lines
-                 old-text :path path :file-content-p t)))
-         (new-highlighted
-           (and path
-                (application--syntax-lines
-                 new-text :path path :file-content-p t)))
-         (prefix-length
-           (application--edit-common-prefix-length old-lines new-lines))
-         (suffix-length
-           (application--edit-common-suffix-length old-lines
-                                                   new-lines
-                                                   prefix-length))
-         (width (application--edit-line-number-width
-                 old-lines
-                 new-lines
-                 :old-start-line old-start-line
-                 :new-start-line new-start-line)))
-    (if (and (= prefix-length (length old-lines))
-             (= prefix-length (length new-lines)))
-        (list (list (terminal-span ':dim "no textual change")))
-        (let ((removed (subseq old-lines
-                               prefix-length
-                               (- (length old-lines) suffix-length)))
-              (added (subseq new-lines
-                             prefix-length
-                             (- (length new-lines) suffix-length))))
-          (append
-           (when (plusp prefix-length)
-             (list
-              (application--edit-line-row
-               ':context
-               (aref old-lines (1- prefix-length))
-               :width width
-               :line-number (or (and new-start-line
-                                     (+ new-start-line prefix-length -1))
-                                (and old-start-line
-                                     (+ old-start-line prefix-length -1)))
-               :content-spans
-               (or (and new-highlighted
-                        (aref new-highlighted (1- prefix-length)))
-                   (and old-highlighted
-                        (aref old-highlighted (1- prefix-length)))))))
-           (application--edit-change-rows
-            removed
-            ':removed
-            :start-line (and old-start-line
-                             (+ old-start-line prefix-length))
-            :width width
-            :highlighted-lines
-            (and old-highlighted
-                 (subseq old-highlighted
-                         prefix-length
-                         (- (length old-lines) suffix-length))))
-           (application--edit-change-rows
-            added
-            ':added
-            :start-line (and new-start-line
-                             (+ new-start-line prefix-length))
-            :width width
-            :highlighted-lines
-            (and new-highlighted
-                 (subseq new-highlighted
-                         prefix-length
-                         (- (length new-lines) suffix-length))))
-           (when (plusp suffix-length)
-             (list
-              (application--edit-line-row
-               ':context
-               (aref old-lines (- (length old-lines) suffix-length))
-               :width width
-               :line-number
-               (or (and new-start-line
-                        (+ new-start-line
-                           (- (length new-lines) suffix-length)))
-                   (and old-start-line
-                        (+ old-start-line
-                           (- (length old-lines) suffix-length))))
-               :content-spans
-               (or (and new-highlighted
-                        (aref new-highlighted
-                              (- (length new-lines) suffix-length)))
-                   (and old-highlighted
-                        (aref old-highlighted
-                              (- (length old-lines) suffix-length))))))))))))
 
 (-> application--edit-file-hunks
     (application string string &key (:new-text string) (:replace-all boolean))
@@ -2014,7 +1697,7 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
                 :new-text new-text
                 :replace-all replace-all)))
     (if (null hunks)
-        (application--edit-diff-rows old-text new-text :path path)
+          (application--change-view-rows old-text new-text :path path)
         (let* ((visible-count (min *application-tool-diff-hunks*
                                    (length hunks)))
                (omitted (- (length hunks) visible-count)))
@@ -2024,7 +1707,7 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
                  for first-p = t then nil
                  append (append
                          (unless first-p (list nil))
-                         (application--edit-diff-rows
+                          (application--change-view-rows
                           old-text
                           new-text
                           :old-start-line old-start-line
@@ -2083,12 +1766,11 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
           (append
             (list (application--tool-section-row
                    (format nil "content · ~:D character~:P" (length content))))
-            (or (application--source-change-rows
-                 content
-                 ':added
-                 :path path
-                 :start-line 1
-                 :file-content-p t)
+             (or (application--change-view-rows
+                  nil
+                  content
+                  :new-start-line 1
+                  :path path)
                 (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
 
@@ -2115,7 +1797,7 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
          application
          (list (list :label "scope" :value "all occurrences"))))
       (list nil)
-      (application--edit-diff-rows old-text new-text :path path)))))
+       (application--change-view-rows old-text new-text :path path)))))
 
 (-> application--shell-command-rows (string) list)
 (defun application--shell-command-rows (command)
@@ -2133,7 +1815,7 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
            for first-p = t then nil
            for content-spans = (or (and highlighted (aref highlighted index))
                                    (list (terminal-span ':code line)))
-           collect (application--edit-line-row
+            collect (application--change-line-row
                     ':source
                     line
                     :content-spans
@@ -2143,7 +1825,7 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
      (when (plusp omitted)
        (let ((message (format nil "… +~D more line~:P" omitted)))
          (list
-          (application--edit-line-row
+           (application--change-line-row
            ':source
            message
            :content-spans (list (terminal-span ':dim message)))))))))
@@ -2231,10 +1913,9 @@ FILE-CONTENT-P preserves meaningful trailing blank file rows."
              application
              (list (list :label "symbol" :value symbol :style ':code)))
             (list (application--tool-section-row "value"))
-            (application--source-change-rows
-             value
-             ':source
-             :language *application-common-lisp-language*)
+             (application--source-preview-rows
+              value
+              :language *application-common-lisp-language*)
             (application--restart-call-rows arguments)))))
 
 (defmethod application-tool-call-entry
