@@ -573,6 +573,8 @@ local-user override."
                    :name name
                    :remainder remainder
                    :argument (application-command--first-token remainder)
+                   :arguments (copy-list arguments)
+                   :supplied-argument-count (length arguments)
                    :command command)))
 
 

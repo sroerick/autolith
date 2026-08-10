@@ -25,6 +25,9 @@
    :terminal-behavior terminal-behavior
    :handler handler))
 
+(defvar *application-command-tests-semantic-call* nil
+  "The arguments observed by the semantic command protocol fixture.")
+
 (-> application-command-tests--macroexpand-error-p (list) boolean)
 (defun application-command-tests--macroexpand-error-p (form)
   "Return true when macroexpanding FORM signals an error."
@@ -80,22 +83,144 @@
                (application invocation)
              (declare (ignore application invocation))
              :continue)
-           (define-application-command :keyword-definition
-               (:name "/keyword"
-                :argument nil
-                :description "keyword identity"
-                :tip "has invalid identity."
-                :busy-behavior :inspect
-                :terminal-behavior :shared)
-               (application invocation)
-             (declare (ignore application invocation))
-             :continue)))
+            (define-application-command :keyword-definition
+                (:name "/keyword"
+                 :argument nil
+                 :description "keyword identity"
+                 :tip "has invalid identity."
+                 :busy-behavior :inspect
+                 :terminal-behavior :shared)
+                (application invocation)
+              (declare (ignore application invocation))
+              :continue)
+            (define-application-command application-command-tests--missing-slash-mode
+                (:name "/missing-slash-mode"
+                 :argument "VALUE"
+                 :description "missing slash mode"
+                 :tip "has incomplete callable metadata."
+                 :busy-behavior :inspect
+                 :terminal-behavior :shared
+                 :call-lambda-list (value))
+                (application value)
+              (declare (ignore application value))
+              :continue)
+            (define-application-command application-command-tests--mismatched-call
+                (:name "/mismatched-call"
+                 :argument "VALUE"
+                 :description "mismatched call lambda list"
+                 :tip "has inconsistent callable metadata."
+                 :busy-behavior :inspect
+                 :terminal-behavior :shared
+                 :call-lambda-list (value)
+                 :slash-argument-mode :first)
+                (application other)
+              (declare (ignore application other))
+              :continue)))
       (test-assert
        (application-command-tests--macroexpand-error-p form)
        "invalid command metadata fails during macro expansion"))
     (test-assert
      (equal snapshot (application-command--registry-snapshot))
      "macro expansion never mutates the live command registry"))
+  nil)
+
+(-> test-application-command-semantic-calls () null)
+(defun test-application-command-semantic-calls ()
+  "Test callable commands retain ordinary lambda-list and slash semantics."
+  (let ((snapshot (application-command--registry-snapshot)))
+    (unwind-protect
+         (progn
+           (eval
+             '(define-application-command application-command-tests--semantic
+                  (:name "/semantic"
+                   :argument "REQUIRED [OPTIONAL]"
+                   :description "exercise semantic command arguments"
+                   :tip "exists for semantic argument tests."
+                   :busy-behavior :inspect
+                   :terminal-behavior :exclusive-without-arguments
+                   :call-lambda-list (required &optional (optional "default"))
+                   :slash-argument-mode :tokens)
+                  (application required &optional (optional "default"))
+                (declare (ignore application))
+                (setf *application-command-tests-semantic-call*
+                      (list required optional))
+                :continue))
+            (let ((command (application-command-find "/semantic")))
+              (test-assert
+               (and command
+                    (application-command-semantic-handler-p command)
+                    (equal (application-command-call-lambda-list command)
+                           '(required &optional (optional "default"))))
+               "callable command metadata retains the ordinary lambda list")
+              (let ((invocation
+                      (application-operation--command-invocation command nil)))
+                (test-assert
+                 (and (zerop
+                       (application-command-invocation-supplied-argument-count
+                        invocation))
+                      (eq (application-command-busy-action command invocation)
+                          ':execute)
+                      (application-command-terminal-owner-p command invocation))
+                 "canonical calls without arguments retain argument-free policy"))
+              (dolist (argument '(nil ""))
+                (let ((invocation
+                        (application-operation--command-invocation
+                         command (list argument))))
+                  (test-assert
+                   (and (= 1
+                           (application-command-invocation-supplied-argument-count
+                            invocation))
+                        (equal (application-command-invocation-arguments invocation)
+                               (list argument))
+                        (eq (application-command-busy-action command invocation)
+                            ':hold)
+                        (not
+                         (application-command-terminal-owner-p command invocation)))
+                   "canonical explicit NIL and empty strings count as supplied")))
+             (let ((invocation
+                     (application-command-invocation-parse "/semantic alpha")))
+               (test-assert
+                (equal (application-command-invocation-arguments invocation)
+                       '("alpha"))
+                "slash compatibility projects token arguments")
+               (application-command-execute command nil invocation)
+               (test-assert
+                (equal *application-command-tests-semantic-call*
+                       '("alpha" "default"))
+                "omitted optional arguments receive their Common Lisp defaults"))
+             (let ((invocation
+                     (make-instance
+                      'application-command-invocation
+                      :input "(semantic nil nil)"
+                      :name "/semantic"
+                      :remainder "nil nil"
+                      :argument "nil"
+                      :arguments '(nil nil)
+                      :supplied-argument-count 2
+                      :command command)))
+               (application-command-execute command nil invocation)
+               (test-assert
+                (equal *application-command-tests-semantic-call* '(nil nil))
+                "explicit NIL arguments remain explicitly supplied"))
+             (test-assert
+              (handler-case
+                  (progn
+                    (application-command-execute
+                     command nil
+                     (make-instance
+                      'application-command-invocation
+                      :input "(semantic)"
+                      :name "/semantic"
+                      :remainder ""
+                      :argument nil
+                      :arguments nil
+                      :supplied-argument-count 0
+                      :command command))
+                    nil)
+                (program-error ()
+                  t))
+              "missing required arguments signal the ordinary program error")))
+      (application-command--registry-restore snapshot)))
   nil)
 
 (-> test-application-command-registry () null)
@@ -372,6 +497,7 @@
 (defun run-application-command-tests ()
   "Run application command protocol tests and return true."
   (test-application-command-defining-form)
+  (test-application-command-semantic-calls)
   (test-application-command-registry)
   (test-application-command-policies)
   (test-built-in-application-command-policies)

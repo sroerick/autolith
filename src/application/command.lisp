@@ -5,7 +5,8 @@
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defparameter *application-command-metadata-keys*
     '(:name :aliases :argument :description :tip
-      :busy-behavior :terminal-behavior)
+      :busy-behavior :terminal-behavior
+      :call-lambda-list :slash-argument-mode)
     "The literal metadata keys accepted by DEFINE-APPLICATION-COMMAND.")
 
   (defparameter *application-command-required-metadata-keys*
@@ -19,6 +20,10 @@
   (defparameter *application-command-terminal-behaviors*
     '(:shared :exclusive :exclusive-without-arguments)
     "The supported command policies for terminal reader ownership.")
+
+  (defparameter *application-command-slash-argument-modes*
+    '(:none :first :remainder :tokens)
+    "The supported slash compatibility projections into Lisp arguments.")
 
   (defun application-command--proper-list-p (value)
     "Return true when VALUE is a finite proper list."
@@ -105,17 +110,54 @@
       (unless (= (application-command--metadata-key-count metadata key) 1)
         (error "Application command ~S requires literal metadata key ~S."
                definition-name key)))
-    (unless (and (application-command--proper-list-p lambda-list)
-                 (= (length lambda-list) 2)
-                 (every (lambda (parameter)
-                          (and (symbolp parameter)
-                               parameter
-                               (not (keywordp parameter))))
-                        lambda-list)
-                 (not (eq (first lambda-list) (second lambda-list))))
-      (error
-       "Application command ~S needs two distinct required handler parameters."
-       definition-name))
+    (let ((semantic-p
+            (= (application-command--metadata-key-count
+                metadata :call-lambda-list)
+               1)))
+      (if semantic-p
+          (let ((call-lambda-list (getf metadata :call-lambda-list)))
+            (unless (= (application-command--metadata-key-count
+                        metadata :slash-argument-mode)
+                       1)
+              (error
+               "Callable application command ~S requires :SLASH-ARGUMENT-MODE."
+               definition-name))
+            (unless (application-command--proper-list-p call-lambda-list)
+              (error
+               "Application command ~S has an invalid callable lambda list."
+               definition-name))
+            (unless (and (application-command--proper-list-p lambda-list)
+                         (plusp (length lambda-list))
+                         (symbolp (first lambda-list))
+                         (first lambda-list)
+                         (not (keywordp (first lambda-list)))
+                         (equal (rest lambda-list) call-lambda-list))
+              (error
+               "Callable application command ~S must receive APPLICATION followed by its :CALL-LAMBDA-LIST."
+               definition-name))
+            (unless (member (getf metadata :slash-argument-mode)
+                            *application-command-slash-argument-modes*
+                            :test #'eq)
+              (error
+               "Application command ~S has invalid slash argument mode ~S."
+               definition-name (getf metadata :slash-argument-mode))))
+          (progn
+            (when (plusp (application-command--metadata-key-count
+                          metadata :slash-argument-mode))
+              (error
+               "Legacy application command ~S cannot declare :SLASH-ARGUMENT-MODE."
+               definition-name))
+            (unless (and (application-command--proper-list-p lambda-list)
+                         (= (length lambda-list) 2)
+                         (every (lambda (parameter)
+                                  (and (symbolp parameter)
+                                       parameter
+                                       (not (keywordp parameter))))
+                                lambda-list)
+                         (not (eq (first lambda-list) (second lambda-list))))
+              (error
+               "Legacy application command ~S needs two distinct required handler parameters."
+               definition-name)))))
     (application-command--validate-metadata
      (getf metadata :name)
      (getf metadata :aliases)
@@ -167,6 +209,24 @@
     :reader application-command-terminal-behavior
     :type (member :shared :exclusive :exclusive-without-arguments)
     :documentation "When command execution requires exclusive terminal input.")
+    (call-lambda-list
+     :initarg :call-lambda-list
+     :initform nil
+     :reader application-command-call-lambda-list
+     :type list
+     :documentation "The ordinary lambda list following APPLICATION for Lisp calls.")
+    (semantic-handler-p
+     :initarg :semantic-handler-p
+     :initform nil
+     :reader application-command-semantic-handler-p
+     :type boolean
+     :documentation "Whether the handler receives normalized Lisp arguments.")
+    (slash-argument-mode
+     :initarg :slash-argument-mode
+     :initform :legacy
+     :reader application-command-slash-argument-mode
+     :type (member :legacy :none :first :remainder :tokens)
+     :documentation "How slash compatibility text becomes semantic arguments.")
    (handler
     :initarg :handler
     :reader application-command-handler
@@ -196,6 +256,18 @@
     :reader application-command-invocation-argument
     :type (option string)
     :documentation "The first whitespace-delimited remainder argument.")
+    (arguments
+     :initarg :arguments
+     :initform nil
+     :reader application-command-invocation-arguments
+     :type list
+     :documentation "The raw semantic argument values supplied by this invocation.")
+    (supplied-argument-count
+     :initarg :supplied-argument-count
+     :initform 0
+     :reader application-command-invocation-supplied-argument-count
+     :type (integer 0)
+     :documentation "The number of semantic arguments explicitly supplied.")
    (command
     :initarg :command
     :reader application-command-invocation-command
@@ -261,17 +333,44 @@
     (error 'configuration-error
            :message (format nil "Application command ~A has no callable handler."
                             (application-command-name command))))
+  (if (application-command-semantic-handler-p command)
+      (progn
+        (unless (application-command--proper-list-p
+                 (application-command-call-lambda-list command))
+          (error 'configuration-error
+                 :message
+                 (format nil
+                         "Application command ~A has an invalid callable lambda list."
+                         (application-command-name command))))
+        (unless (member (application-command-slash-argument-mode command)
+                        *application-command-slash-argument-modes*
+                        :test #'eq)
+          (error 'configuration-error
+                 :message
+                 (format nil
+                         "Application command ~A has invalid slash argument mode ~S."
+                         (application-command-name command)
+                         (application-command-slash-argument-mode command)))))
+      (unless (and (null (application-command-call-lambda-list command))
+                   (eq (application-command-slash-argument-mode command) ':legacy))
+        (error 'configuration-error
+               :message
+               (format nil
+                       "Legacy application command ~A has callable metadata."
+                       (application-command-name command)))))
   command)
 
 (-> application-command-create
     (&key (:definition-name symbol) (:name string) (:aliases list)
           (:argument (option string)) (:description string) (:tip string)
           (:busy-behavior keyword) (:terminal-behavior keyword)
-          (:handler function))
+          (:call-lambda-list list) (:semantic-handler-p boolean)
+          (:slash-argument-mode keyword) (:handler function))
     application-command)
 (defun application-command-create
     (&key definition-name name aliases argument description tip busy-behavior
-          terminal-behavior handler)
+          terminal-behavior call-lambda-list semantic-handler-p
+          (slash-argument-mode ':legacy) handler)
   "Create and validate one immutable interactive command."
   (unless (and (symbolp definition-name)
                definition-name
@@ -300,6 +399,9 @@
     :tip (copy-seq tip)
     :busy-behavior busy-behavior
     :terminal-behavior terminal-behavior
+    :call-lambda-list (copy-tree call-lambda-list)
+    :semantic-handler-p semantic-handler-p
+    :slash-argument-mode slash-argument-mode
     :handler handler)))
 
 
@@ -566,6 +668,9 @@ without changing the registry."
 (defvar *application-command-presentation-pending-p* nil
   "Whether the current command invocation still needs its presentation heading.")
 
+(defvar *application-command-interactive-p* nil
+  "Whether the current local command call may acquire omitted arguments interactively.")
+
 (defparameter *application-command-whitespace*
   '(#\Space #\Tab #\Newline #\Return #\Page)
   "Characters separating command tokens and arguments.")
@@ -581,6 +686,32 @@ without changing the registry."
       (if end
           (subseq text 0 end)
           (copy-seq text)))))
+
+(-> application-command--tokens (string) list)
+(defun application-command--tokens (text)
+  "Return TEXT's nonempty whitespace-delimited compatibility arguments."
+  (remove-if-not
+   #'non-empty-string-p
+   (uiop:split-string text :separator *application-command-whitespace*)))
+
+(-> application-command--slash-arguments
+    ((option application-command) string (option string))
+    list)
+(defun application-command--slash-arguments (command remainder argument)
+  "Project slash REMAINDER into COMMAND's raw semantic argument list."
+  (unless (and command (application-command-semantic-handler-p command))
+    (return-from application-command--slash-arguments nil))
+  (case (application-command-slash-argument-mode command)
+    (:none
+     (if (non-empty-string-p remainder) (list remainder) nil))
+    (:first
+     (if argument (list argument) nil))
+    (:remainder
+     (if (non-empty-string-p remainder) (list remainder) nil))
+    (:tokens
+     (application-command--tokens remainder))
+    (otherwise
+     nil)))
 
 (-> application-command--call-with-presentation
     (application-command-invocation function)
@@ -611,14 +742,19 @@ without changing the registry."
                (string-trim *application-command-whitespace*
                             (subseq trimmed separator))
                ""))
-         (argument (application-command--first-token remainder)))
+         (argument (application-command--first-token remainder))
+         (command (application-command-find submitted-name))
+         (arguments
+           (application-command--slash-arguments command remainder argument)))
     (make-instance
      'application-command-invocation
      :input (copy-seq input)
      :name submitted-name
      :remainder remainder
      :argument argument
-     :command (application-command-find submitted-name))))
+     :arguments arguments
+     :supplied-argument-count (length arguments)
+     :command command)))
 
 (defgeneric application-command-execute (command application invocation)
   (:documentation
@@ -632,8 +768,13 @@ without changing the registry."
   (labels ((invoke ()
              "Invoke COMMAND's handler and validate its result."
              (let ((result
-                     (funcall (application-command-handler command)
-                              application invocation)))
+                     (if (application-command-semantic-handler-p command)
+                         (apply (application-command-handler command)
+                                application
+                                (application-command-invocation-arguments
+                                 invocation))
+                         (funcall (application-command-handler command)
+                                  application invocation))))
                (unless (member result '(:continue :quit) :test #'eq)
                  (error 'configuration-error
                         :message
@@ -645,6 +786,17 @@ without changing the registry."
     (if (eq *application-command-presentation-invocation* invocation)
         (invoke)
         (application-command--call-with-presentation invocation #'invoke))))
+
+(-> application-command-invocation-argument-free-p
+    (application-command application-command-invocation)
+    boolean)
+(defun application-command-invocation-argument-free-p (command invocation)
+  "Return whether INVOCATION supplied no arguments for COMMAND's call protocol."
+  (if (application-command-semantic-handler-p command)
+      (zerop
+       (application-command-invocation-supplied-argument-count invocation))
+      (zerop
+       (length (application-command-invocation-remainder invocation)))))
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
@@ -658,8 +810,7 @@ without changing the registry."
     (:hold
      ':hold)
     (:inspect
-     (if (zerop
-          (length (application-command-invocation-remainder invocation)))
+     (if (application-command-invocation-argument-free-p command invocation)
          ':execute
          ':hold))
     (:execute
@@ -681,8 +832,7 @@ without changing the registry."
     (:exclusive
      t)
     (:exclusive-without-arguments
-     (zerop
-      (length (application-command-invocation-remainder invocation))))
+     (application-command-invocation-argument-free-p command invocation))
     (otherwise
      nil)))
 
@@ -712,24 +862,36 @@ without changing the registry."
   "Define and register one complete, live-redefinable application command.
 
 METADATA must contain literal :NAME, :ARGUMENT, :DESCRIPTION, :TIP,
-:BUSY-BEHAVIOR, and :TERMINAL-BEHAVIOR values. :ALIASES defaults to NIL. The
-handler receives APPLICATION and an APPLICATION-COMMAND-INVOCATION and must
-return :CONTINUE or :QUIT."
+:BUSY-BEHAVIOR, and :TERMINAL-BEHAVIOR values. :ALIASES defaults to NIL.
+Legacy handlers receive APPLICATION and an APPLICATION-COMMAND-INVOCATION.
+A callable command additionally declares :CALL-LAMBDA-LIST and
+:SLASH-ARGUMENT-MODE; its handler receives APPLICATION followed by ordinary
+Common Lisp arguments. Every handler returns :CONTINUE or :QUIT."
   (application-command--validate-defining-form
    definition-name metadata lambda-list)
-  `(progn
-     (defun ,definition-name ,lambda-list
-       ,@body)
-     (eval-when (:load-toplevel :execute)
-       (register-application-command
-        (application-command-create
-         :definition-name ',definition-name
-         :name ,(getf metadata :name)
-         :aliases ',(getf metadata :aliases)
-         :argument ,(getf metadata :argument)
-         :description ,(getf metadata :description)
-         :tip ,(getf metadata :tip)
-         :busy-behavior ',(getf metadata :busy-behavior)
-         :terminal-behavior ',(getf metadata :terminal-behavior)
-         :handler #',definition-name)))
-     ',definition-name))
+  (let ((semantic-p
+          (= (application-command--metadata-key-count
+              metadata :call-lambda-list)
+             1)))
+    `(progn
+       (defun ,definition-name ,lambda-list
+         ,@body)
+       (eval-when (:load-toplevel :execute)
+         (register-application-command
+          (application-command-create
+           :definition-name ',definition-name
+           :name ,(getf metadata :name)
+           :aliases ',(getf metadata :aliases)
+           :argument ,(getf metadata :argument)
+           :description ,(getf metadata :description)
+           :tip ,(getf metadata :tip)
+           :busy-behavior ',(getf metadata :busy-behavior)
+           :terminal-behavior ',(getf metadata :terminal-behavior)
+           :call-lambda-list ',(and semantic-p
+                                    (getf metadata :call-lambda-list))
+           :semantic-handler-p ,semantic-p
+           :slash-argument-mode ',(if semantic-p
+                                      (getf metadata :slash-argument-mode)
+                                      ':legacy)
+           :handler #',definition-name)))
+       ',definition-name)))
