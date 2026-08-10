@@ -7415,7 +7415,7 @@
   "Test active, steering, recalled, and legacy pending input survives safely."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (terminal (make-instance 'recording-terminal :columns 60))
+         (terminal (make-instance 'waiting-recording-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal))
          (conversation
            (conversation-create configuration :identifier "pending-inputs"))
