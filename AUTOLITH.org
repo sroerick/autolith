@@ -448,6 +448,44 @@ a user-local init.lisp change, or a private image commit.
   admission policy, ordered live presentation, and semantic prompt boundaries
   with less project-specific code.
 
+** Unified mutation change viewer
+
+- Problem: file mutations had numbered colored source changes, while agenda and
+  memory mutations fell back to unrelated field or operation renderings. The
+  divergent paths made equivalent state changes harder to scan and risked using
+  current live state when a revision-gated resource call referred to an older
+  exact observation.
+- Behavior: file, agenda, and memory mutation calls now use one bounded line
+  change viewer whenever an exact semantic projection is available. Its single
+  keyword-only API receives complete removed and added content, optional source
+  coordinates, classification-only pathname metadata or an explicit syntax
+  language, an explicit highlighting switch, and a line bound. It never reads
+  the pathname, and mutation-domain projection remains outside the renderer.
+  Removed rows are red with preimage line numbers, added rows are green with
+  resulting line numbers, and retained context is dim. Recognized file content
+  keeps ColorLisp syntax highlighting. Agenda items project stable =status=,
+  =text=, and =memory-ids= documents; memories project stable =title=, =scope=,
+  =tags=, and =content= documents. Revision-gated agenda and memory previews use
+  only the retained observation matching both URI and revision. Invalid operation
+  shapes, missing snapshots, and unavailable exact state fall back to structured
+  semantic fields rather than displaying a speculative diff.
+- Scope and location: tracked project work in
+  =src/application/change-viewer.lisp=,
+  =src/application/change-presentation.lisp=,
+  =src/application/tool-presentation.lisp=, ASDF wiring, focused application
+  regressions, the guide, and the minimal technical specification. Implementation
+  commits are =448d355=, =3a3c596=, =63ae1fb=, and =1d8dcb6=.
+- Verification: fresh-SBCL focused tests cover numbered and syntax-highlighted
+  file changes, native and revision-gated agenda and memory creation, replacement,
+  removal, global scope, canonical tags, exact observed preimages, and structured
+  fallback for invalid multi-operation calls. Source and test delimiter checks
+  and =git diff --check= pass. The complete repository check was intentionally not
+  run because this is not a release.
+- Removal condition: a replacement mutation-presentation protocol provides the
+  same exact preimage discipline, stable semantic documents, numbered colored
+  context, applicable syntax highlighting, bounded output, and honest structured
+  fallback with less project-specific code.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

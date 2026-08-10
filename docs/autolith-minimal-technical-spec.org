@@ -1273,6 +1273,19 @@ Failures, file writes and edits, and arbitrary execution through =shell.run=,
 condensation never remove records from conversation storage, request projection,
 or compaction input.
 
+Tool-call presentation for file, agenda, and memory mutations uses one shared
+line change viewer whenever an exact semantic before-and-after projection is
+available. Removed rows are red and carry preimage line numbers, added rows are
+green and carry resulting line numbers, and retained context rows are dim. File
+changes additionally syntax-highlight recognized content from the applicable
+pathname or explicit language. Agenda changes project =status=, =text=, and
+=memory-ids= as a stable item document; memory changes project =title=, =scope=,
+=tags=, and =content= as a stable memory document. A revision-gated resource
+preview derives its preimage only from the retained observation matching both
+URI and revision. Missing exact state, an invalid operation shape, or a change
+that cannot be validated exactly falls back to structured semantic operation
+fields rather than inventing a diff.
+
 Initial startup and conversation resume replay at most the newest 500 transcript
 entries visible under the current presentation settings. This is only a
 terminal presentation bound. =/history= appends the immediately preceding page

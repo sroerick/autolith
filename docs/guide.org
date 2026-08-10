@@ -1021,6 +1021,17 @@ accepts exactly one closed agenda operation against that revision. This is the
 revision-gated interface; =agenda.list=, =agenda.add=, =agenda.update=, and
 =agenda.remove= remain valid compatibility and convenience tools.
 
+Mutation call entries for files, agendas, and memories share one compact line
+change viewer when Autolith can derive an exact before-and-after projection.
+Removed rows are red with original line numbers, added rows are green with
+resulting line numbers, and unchanged context is dim. Recognized file content is
+syntax highlighted. Agenda entries use stable =status=, =text=, and =memory-ids=
+lines; memory entries use stable =title=, =scope=, =tags=, and =content= lines.
+Revision-gated agenda and memory previews use only the exact retained observation
+for the supplied URI and revision. Invalid multi-operation calls, missing
+snapshots, and other nonexact cases stay in the structured semantic presentation
+instead of showing a speculative diff.
+
 The =fs.*= and =shell.*= tools cover remaining everyday workspace work:
 =fs.read= returns numbered file lines from an optional window, =fs.list= lists
 one directory with entry kinds and sizes, =fs.write= creates or replaces a file,
