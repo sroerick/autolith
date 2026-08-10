@@ -1684,6 +1684,7 @@
                 (tool-entered-observed-p nil)
                 (cancellation-finished-observed-p nil)
                 (next-turn-observed-p nil)
+                (next-turn-finished-observed-p nil)
                 (producer-condition nil)
                 (producer nil))
            (tool-registry-register registry tool)
@@ -1723,10 +1724,28 @@
                                  (queued-recording-terminal-enqueue terminal ':submit)
                                  (setf next-turn-observed-p
                                        (application-test-counting-provider-wait-for-requests
-                                        provider 2 2))))
+                                        provider 2 2))
+                                 (when next-turn-observed-p
+                                   (setf next-turn-finished-observed-p
+                                         (task-tests--wait-until
+                                          (lambda ()
+                                            (let ((controller
+                                                    (application-input-controller
+                                                     application)))
+                                              (and controller
+                                                   (not
+                                                    (application-input-controller-turn-active-p
+                                                     controller))
+                                                   (not
+                                                    (application-input-controller--turn-cancellation-active-p
+                                                     controller)))))
+                                          2)))))
                            (error (condition)
                              (setf producer-condition condition)))
-                      (queued-recording-terminal-enqueue terminal ':interrupt)))
+                      (queued-recording-terminal-enqueue terminal ':interrupt)
+                      (queued-recording-terminal-enqueue
+                       terminal '(:insert "/quit"))
+                      (queued-recording-terminal-enqueue terminal ':submit)))
                   :name "Autolith active tool stop-key test"))
            (unwind-protect
                 (let ((*application-forced-exit-function*
@@ -1745,6 +1764,8 @@
                         "active-tool cancellation finishes before the next turn")
            (test-assert next-turn-observed-p
                         "the next queued message reaches the provider")
+           (test-assert next-turn-finished-observed-p
+                        "the repaired next turn finishes before test shutdown")
            (test-assert (not (application-test-gated-tool-completed-p tool))
                         "cancellation leaves the tool outcome unknown")
            (test-assert (null forced-status)
