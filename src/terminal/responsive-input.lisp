@@ -2769,10 +2769,13 @@ the next application boundary because it does not depend on the provider."
         :goal-continuations-p nil
         :fatal-agent-loop-errors-p nil))
       (:lisp
-       (application-input-controller-call-with-reader-paused
-        controller
-        (lambda ()
-          (application-run-lisp-input application (second work)))))
+       (let ((result
+               (application-input-controller-call-with-reader-paused
+                controller
+                (lambda ()
+                  (application-run-lisp-input application (second work))))))
+         (when (eq result ':quit)
+           (application-input-controller--request-exit controller ':quit))))
       (:command
        (let* ((input (second work))
               (invocation (application-command-invocation-parse input))

@@ -8,13 +8,14 @@
 
 (defstruct (application-lisp-evaluation
              (:constructor application-lisp-evaluation-create
-                 (&key status output values condition restart-names)))
+                 (&key status output values condition restart-names loop-action)))
   "Captured outcome of one explicit active-image Common Lisp evaluation."
   (status ':ok :type application-lisp-evaluation-status)
   (output "" :type string)
   (values nil :type list)
   (condition nil :type (option string))
-  (restart-names nil :type list))
+  (restart-names nil :type list)
+  (loop-action nil :type (option (member :quit))))
 
 (defparameter *application-lisp-value-restart-names*
   '(use-value store-value)
@@ -55,7 +56,8 @@ are presented by the evaluator."
 (defun application-lisp--control-condition-p (condition)
   "Return true when CONDITION belongs to Autolith's own control boundary."
   (typep condition
-         '(or application-turn-cancelled
+         '(or application-operation-loop-action
+              application-turn-cancelled
               application-input-failed
               rollback-requested
               agent-loop-error
@@ -83,21 +85,24 @@ are presented by the evaluator."
   (multiple-value-list (eval (self-read-form source))))
 
 (-> application-lisp-evaluate
-    (string &key (:restart-selector (option function)))
+    (string &key (:restart-selector (option function))
+                 (:application (option application)))
     application-lisp-evaluation)
-(defun application-lisp-evaluate (source &key restart-selector)
+(defun application-lisp-evaluate (source &key restart-selector application)
   "Evaluate exactly one SOURCE form in the active AUTOLITH package.
 
 RESTART-SELECTOR receives the signaling condition and selectable restart
 objects. It returns a selected restart and, optionally, a Lisp source form whose
 multiple values become restart arguments. Returning NIL aborts only this local
-evaluation. Output and every returned value are captured without mutation
+evaluation. APPLICATION enables its registered command and tool function
+bindings. Output and every returned value are captured without mutation
 journaling or provider conversation projection."
   (let ((output-stream (make-string-output-stream))
         (raw-values nil)
         (status ':ok)
         (condition-text nil)
         (restart-names nil)
+        (loop-action nil)
         (handling-condition-p nil))
     (labels ((abort-evaluation ()
                (let ((restart (find-restart 'abort-lisp-evaluation)))
@@ -131,7 +136,10 @@ journaling or provider conversation projection."
           (let ((*standard-output* output-stream)
                 (*error-output* output-stream)
                 (*trace-output* output-stream)
-                (*package* (find-package '#:autolith)))
+                (*package* (find-package '#:autolith))
+                (*application-operation-application* application))
+            (when application
+              (application-operation-install-bindings application))
             (restart-case
                 (handler-bind ((serious-condition #'handle-condition))
                   (setf raw-values
@@ -141,6 +149,11 @@ journaling or provider conversation projection."
                 :report "Return to the Autolith prompt."
                 (setf status ':aborted
                       raw-values nil))))
+        (application-operation-loop-action (condition)
+          (setf status ':ok
+                loop-action
+                (application-operation-loop-action-action condition)
+                raw-values nil))
         ((or application-turn-cancelled
              application-input-failed
              rollback-requested
@@ -158,7 +171,8 @@ journaling or provider conversation projection."
      :output (get-output-stream-string output-stream)
      :values (mapcar #'sbcl-worker-render-value raw-values)
      :condition condition-text
-     :restart-names restart-names)))
+     :restart-names restart-names
+     :loop-action loop-action)))
 
 
 ;;;; -- Local Evaluation Presentation --
@@ -296,6 +310,7 @@ journaling or provider conversation projection."
           (unwind-protect
                (application-lisp-evaluate
                 source
+                :application application
                 :restart-selector
                 (lambda (condition restarts)
                   (application-lisp--select-restart
@@ -304,6 +319,7 @@ journaling or provider conversation projection."
     (application-present application
                          (application-lisp--result-entry evaluation))
     (case (application-lisp-evaluation-status evaluation)
-      (:ok ':continue)
+      (:ok
+       (or (application-lisp-evaluation-loop-action evaluation) ':continue))
       (:aborted ':aborted)
       (:error ':failed))))

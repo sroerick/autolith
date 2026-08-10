@@ -175,7 +175,23 @@
                        (equal provider-items-before
                               (conversation-input-items
                                (application-conversation application))))
-                  "local work shows exact source and values without model context"))))
+                  "local work shows exact source and values without model context")))
+             (let ((quit-controller
+                     (lisp-machine-tests--controller application)))
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-input-controller-call-with-reader-paused
+                       (lambda (ignored function)
+                         (declare (ignore ignored))
+                         (funcall function))))
+                (lambda ()
+                  (application-input-controller--run-work
+                   quit-controller '(:lisp "(quit)"))))
+               (test-assert
+                (and (application-input-controller-stopping-p quit-controller)
+                     (eq (application-input-controller-exit-reason quit-controller)
+                         ':quit))
+                "a Lisp quit operation exits through the responsive controller")))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors
           (tool-registry-close-runtime-state
