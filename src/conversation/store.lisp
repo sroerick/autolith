@@ -154,6 +154,12 @@
     :accessor conversation-picker-preview
     :type (option string)
     :documentation "The newest user or assistant text retained for conversation pickers.")
+   (user-operation-records
+    :initform nil
+    :accessor conversation-user-operation-records
+    :type list
+    :documentation
+    "Recent bounded local user operations in chronological durable order.")
    (latest-goal-record
     :initform nil
     :accessor conversation-latest-goal-record
@@ -2005,6 +2011,18 @@ invariant errors while callback conditions propagate unchanged."
          :pathname (conversation-pathname conversation)
          :sequence (getf properties :seq)))
 
+(-> conversation--record-form-p (t) boolean)
+(defun conversation--record-form-p (value)
+  "Return true when VALUE is a finite keyword record with paired properties."
+  (handler-case
+      (let ((length (list-length value)))
+        (and (integerp length)
+             (plusp length)
+             (oddp length)
+             (keywordp (first value))))
+    (error ()
+      nil)))
+
 (-> conversation--tool-content-block-from-record (conversation list list) t)
 (defun conversation--tool-content-block-from-record
     (conversation descriptor properties)
@@ -2200,9 +2218,9 @@ invariant errors while callback conditions propagate unchanged."
 (-> conversation--apply-record (conversation list) null)
 (defun conversation--apply-record (conversation record)
   "Project one persisted RECORD into CONVERSATION's in-memory state."
-  (unless (and (listp record) (keywordp (first record)))
+  (unless (conversation--record-form-p record)
     (conversation--record-error
-     conversation nil "A persisted conversation record is not a keyword list."))
+     conversation nil "A persisted conversation record is not a keyword property list."))
   (let* ((kind (first record))
          (properties (rest record))
          (sequence (getf properties :seq))
@@ -2257,7 +2275,7 @@ conversation files."
         (let* ((*read-eval* nil)
                (end-marker (cons nil nil))
                (form (read stream nil end-marker)))
-          (if (and (listp form)
+          (if (and (conversation--record-form-p form)
                    (eq (first form) :conversation))
               form
               nil)))
@@ -2267,7 +2285,7 @@ conversation files."
 (-> conversation--from-header (pathname list) conversation)
 (defun conversation--from-header (pathname header)
   "Validate HEADER and return its empty in-memory conversation projection."
-  (unless (and (listp header)
+  (unless (and (conversation--record-form-p header)
                (eq (first header) :conversation)
                (= (or (getf (rest header) :version) 0) 1)
                (non-empty-string-p (getf (rest header) :id)))

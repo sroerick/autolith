@@ -239,6 +239,7 @@
     (task-tests--close-orchestrators)
     (run-application-tests)
     (run-lisp-machine-tests)
+    (run-user-operation-context-tests)
     (run-application-operation-tests)
     (run-recovery-input-vault-tests))
   (format t "~&~:D Autolith tests passed.~%" *test-count*)
