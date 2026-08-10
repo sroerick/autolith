@@ -222,6 +222,10 @@
                       (task-tests--register-job
                        orchestrator primary definition
                        :name "identifier-review"))
+                    (autolith-named
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "autolith"))
                     (queued
                       (task-tests--register-job
                        orchestrator primary definition
@@ -268,8 +272,8 @@
                       (length (task-orchestrator-list-jobs orchestrator))))
                (declare (ignore duplicate-one duplicate-two hidden))
                 (mapc (lambda (job) (mark-state job ':running))
-                      (list named blocking identifier-target closing-job closed-job
-                            race-closing race-closed))
+                      (list named blocking identifier-target autolith-named
+                            closing-job closed-job race-closing race-closed))
                 (mark-state terminal-job ':completed)
                 (task-job-cancel cancelled ':test-cancellation)
                 (with-lock-held ((cl-jobpond::job--lock closing-job))
@@ -298,6 +302,23 @@
                   (equal (steering-texts named)
                          '("first child context" "second child context"))
                   "multiple child prompts enter the existing mailbox in FIFO order")
+                 (let* ((primary-work-count
+                          (length
+                           (application-input-controller-work-items controller)))
+                        (receipt
+                          (prompt :to 'autolith
+                                  "context for child named autolith")))
+                   (test-assert
+                    (and (eq (getf (rest receipt) :target) ':child)
+                         (string= (getf (rest receipt) :child-name) "autolith")
+                         (string= (getf (rest receipt) :job-id)
+                                  (session-job-identifier autolith-named))
+                         (equal (steering-texts autolith-named)
+                                '("context for child named autolith"))
+                         (= (length
+                             (application-input-controller-work-items controller))
+                            primary-work-count))
+                    ":TO AUTOLITH resolves the running child, not the primary agent"))
                   (let ((*task-steering-maximum-items* 2))
                     (test-assert
                      (eq (prompt-reason

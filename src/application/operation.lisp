@@ -101,11 +101,11 @@
   (copy-seq content))
 
 (-> application-submit-prompt
-    (application (or string symbol) non-empty-string)
+    (application (or null string) non-empty-string)
     list)
 (defgeneric application-submit-prompt (application target content)
   (:documentation
-   "Submit validated CONTENT to TARGET through APPLICATION and return a receipt."))
+   "Submit CONTENT to primary when TARGET is NIL, or to child TARGET."))
 
 (-> read-file ((or string pathname)) string)
 (defun read-file (path)
@@ -136,24 +136,27 @@
     (prompt--error
      ':no-application
      "PROMPT requires an active local Autolith evaluation."))
-  (multiple-value-bind (target content)
+  (multiple-value-bind (target content primary-target-p)
       (cond
         ((= (length arguments) 1)
-         (values 'autolith (first arguments)))
+         (values nil (first arguments) t))
         ((and (= (length arguments) 3)
               (eq (first arguments) ':to))
-         (values (second arguments) (third arguments)))
+         (values (second arguments) (third arguments) nil))
         (t
          (prompt--error
           ':malformed-arguments
           "Use (prompt CONTENT) or (prompt :to TARGET CONTENT).")))
-    (unless (typep target '(or string symbol))
+    (unless (or primary-target-p
+                (typep target '(or string symbol)))
       (prompt--error
        ':invalid-target
        "PROMPT target must be a symbol or string."
        :target target))
-    (let ((target-name (prompt--target-name target))
-          (validated-content (prompt--content content)))
+    (let ((validated-content (prompt--content content))
+          (target-name
+            (and (not primary-target-p)
+                 (prompt--target-name target))))
       (application-submit-prompt
        *application-operation-application* target-name validated-content))))
 

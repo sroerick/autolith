@@ -1302,10 +1302,10 @@ the ordinary FIFO queue."
     (application-input-controller--publish-counts controller)
     (values (not (null delivery)) (or delivery ':rejected))))
 
-(-> application-prompt--primary-target-p (string) boolean)
+(-> application-prompt--primary-target-p ((or null string)) boolean)
 (defun application-prompt--primary-target-p (target)
-  "Return whether TARGET names the primary Autolith agent."
-  (string-equal target "autolith"))
+  "Return whether TARGET is the internal primary-agent designator."
+  (null target))
 
 (-> application-prompt--primary-rejection-reason
     (application-input-controller)
