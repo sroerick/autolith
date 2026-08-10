@@ -352,8 +352,8 @@ matching reports for :AMBIGUOUS."
         (papercut--append-record configuration (papercut--record papercut))
         papercut))))
 
-(-> papercut-close (configuration string &key (:resolution string)) papercut)
-(defun papercut-close (configuration identifier &key resolution)
+(-> papercut-mark-closed (configuration string &key (:resolution string)) papercut)
+(defun papercut-mark-closed (configuration identifier &key resolution)
   "Close active papercut IDENTIFIER with a durable RESOLUTION and return it."
   (unless (non-empty-string-p identifier)
     (error 'papercut-error

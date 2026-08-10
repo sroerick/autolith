@@ -149,7 +149,7 @@
         (papercut-resolve configuration identifier)
       (case status
         (:found
-         (papercut-close
+         (papercut-mark-closed
           configuration
           (papercut-identifier papercut)
           :resolution "Closed through /papercut-close.")

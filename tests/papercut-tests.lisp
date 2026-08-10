@@ -96,7 +96,7 @@
                       configuration
                       :title "Obsolete report"
                       :content "This report is ready to close.")))
-               (papercut-close
+               (papercut-mark-closed
                 configuration
                 (papercut-identifier closed)
                 :resolution "The underlying problem was fixed.")
@@ -108,7 +108,7 @@
                (test-assert
                 (handler-case
                     (progn
-                      (papercut-close
+                      (papercut-mark-closed
                        configuration
                        (papercut-identifier closed)
                        :resolution "Duplicate closure must fail.")

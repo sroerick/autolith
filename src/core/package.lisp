@@ -1,5 +1,6 @@
 (defpackage #:autolith
   (:use #:cl)
+  (:shadow #:trace)
   (:import-from #:cl-base64
                 #:base64-string-to-usb8-array
                 #:base64-string-to-string
