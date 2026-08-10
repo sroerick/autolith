@@ -2413,26 +2413,26 @@ frames, so this function never paints directly from a child thread."
            (completion-items
              (and (member event '(:complete :complete-previous))
                   (terminal-ui--reconcile-completions ui)))
-           (effective-event
-             (cond
-               ((and (eq event :complete)
-                     (null completion-items))
-                (cond
-                  ((and queue-editing-p
-                        (zerop (length (line-editor-text editor))))
-                   ':keep-queue-edit)
-                  ((not queue-completion-p)
-                   ':submit)
-                  ((plusp (length (line-editor-text editor)))
-                   ':queue-submit)
-                  (t
-                   ':edit-queue)))
-               ((and (eq event :complete-previous)
-                     queue-editing-p
-                     (null completion-items))
-                ':cycle-queue)
-               (t
-                event))))
+            (effective-event
+              (cond
+                ((and (eq event :complete-previous)
+                      queue-editing-p
+                      (not (terminal-ui-completion-active-p ui)))
+                 ':cycle-queue)
+                ((and (eq event :complete)
+                      (null completion-items))
+                 (cond
+                   ((and queue-editing-p
+                         (zerop (length (line-editor-text editor))))
+                    ':keep-queue-edit)
+                   ((not queue-completion-p)
+                    ':submit)
+                   ((plusp (length (line-editor-text editor)))
+                    ':queue-submit)
+                   (t
+                    ':edit-queue)))
+                (t
+                 event))))
       (multiple-value-bind (completion-action completion-payload)
           (terminal-ui--handle-completion-event ui effective-event)
         (if completion-action
