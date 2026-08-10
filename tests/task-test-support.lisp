@@ -426,10 +426,11 @@
           properties))
 
 (-> task-tests--yield-fixture
-    (configuration task-agent-definition string)
+    (configuration task-agent-definition string &key (:state keyword))
     list)
-(defun task-tests--yield-fixture (configuration definition identifier)
-  "Return an isolated child, yield registry, and completion fixture."
+(defun task-tests--yield-fixture
+    (configuration definition identifier &key (state ':running))
+  "Return an isolated child, yield registry, and completion fixture in STATE."
   (let* ((orchestrator (task-tests--orchestrator))
          (parent-registry (make-instance 'tool-registry))
          (parent-conversation
@@ -480,6 +481,13 @@
                           :conversation conversation
                           :registry registry
                           :agent child)))
+    (ecase state
+      (:queued
+       nil)
+      (:running
+       (with-lock-held ((cl-jobpond::job--lock job))
+         (setf (job-state job) ':running))
+       (task-job--set-progress-state job ':running)))
     (list :registry registry
           :context context
           :completion completion

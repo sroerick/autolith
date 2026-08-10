@@ -110,6 +110,15 @@
 (defparameter *task-result-label-maximum-characters* 256
   "The maximum child yield label length accepted and retained.")
 
+(defparameter *task-steering-maximum-items* 32
+  "The most accepted child steering messages awaiting durable append.")
+
+(defparameter *task-steering-maximum-characters* 131072
+  "The largest individual steering message accepted for a running child.")
+
+(defparameter *task-steering-maximum-total-characters* 262144
+  "The largest combined queued and in-flight child steering text.")
+
 
 (defclass task-completion nil
   ((called-p :initform nil :accessor task-completion-called-p :type
@@ -308,6 +317,25 @@ nesting depth, and lifecycle listeners."))
     :type (option function)
     :documentation
     "The parent capability used to authorize child external tool calls.")
+    (steering-lock
+     :initform (make-lock "Autolith task steering")
+     :reader task-job-steering-lock
+     :documentation "The lock serializing child steering and terminal claims.")
+    (steering-items
+     :initform nil
+     :accessor task-job-steering-items
+     :type list
+     :documentation "Accepted steering entries waiting for the next safe boundary.")
+    (steering-in-flight-items
+     :initform nil
+     :accessor task-job-steering-in-flight-items
+     :type list
+     :documentation "Steering entries drained but not yet durably acknowledged.")
+    (steering-closed-p
+     :initform nil
+     :accessor task-job-steering-closed-p
+     :type boolean
+     :documentation "Whether this child has atomically stopped accepting steering.")
    (progress :initform (make-instance 'task-progress) :reader
              task-job-progress :type task-progress :documentation
              "The normalized progress visible to job inspection."))
@@ -356,6 +384,61 @@ parent, and borrowed capabilities are released at terminal state."))
   "Return true when the parent is not waiting for task JOB."
   (session-job-detached-p job))
 
+(-> task-job--steering-pending-p (task-job) boolean)
+(defun task-job--steering-pending-p (job)
+  "Return true when locked JOB has queued or in-flight steering."
+  (or (not (null (task-job-steering-items job)))
+      (not (null (task-job-steering-in-flight-items job)))))
+
+(-> task-job--terminal-admission-reason-locked
+    (task-job)
+    (option keyword))
+(defun task-job--terminal-admission-reason-locked (job)
+  "Return lifecycle reason locked JOB cannot accept a terminal claim, or NIL."
+  (cond
+    ((not (eq (job-state job) ':running))
+     ':not-running)
+    ((or (job-cancellation-reason job)
+         (cl-jobpond::job--publication-claimed-p job))
+     ':closing)
+    (t
+     nil)))
+
+(-> task-job--claim-normal-completion (task-job) boolean)
+(defun task-job--claim-normal-completion (job)
+  "Atomically close running JOB for normal completion unless steering is pending."
+  (with-lock-held ((cl-jobpond::job--lock job))
+    (unless (task-job--terminal-admission-reason-locked job)
+      (with-lock-held ((task-job-steering-lock job))
+        (cond
+          ((task-job-steering-closed-p job)
+           t)
+          ((task-job--steering-pending-p job)
+           nil)
+          (t
+           (setf (task-job-steering-closed-p job) t)
+           t))))))
+
+(-> task-job--call-with-yield-claim
+    (task-job function)
+    (values boolean keyword))
+(defun task-job--call-with-yield-claim (job function)
+  "Call FUNCTION under JOB's terminal-yield claim, or return its rejection reason."
+  (with-lock-held ((cl-jobpond::job--lock job))
+    (let ((reason (task-job--terminal-admission-reason-locked job)))
+      (if reason
+          (values nil reason)
+          (with-lock-held ((task-job-steering-lock job))
+            (cond
+              ((task-job-steering-closed-p job)
+               (values nil ':closed))
+              ((task-job--steering-pending-p job)
+               (values nil ':steering-pending))
+              (t
+               (setf (task-job-steering-closed-p job) t)
+               (funcall function)
+               (values t ':accepted))))))))
+
 (defclass task-child-agent (agent)
   ((definition :initarg :definition :reader task-child-agent-definition
                :type task-agent-definition :documentation
@@ -397,9 +480,11 @@ parent, and borrowed capabilities are released at terminal state."))
 
 (defmethod agent-turn-complete-p
     ((agent task-child-agent) (result provider-result))
-  "Return true after AGENT yields or stops without requesting continuation."
+  "Return true after AGENT atomically yields or claims an unsteered stop."
   (or (task-completion-called-p (task-child-agent-completion agent))
-      (call-next-method)))
+      (and (call-next-method)
+           (task-job--claim-normal-completion
+            (task-child-agent-job agent)))))
 
 (defmethod agent-turn-completion-details ((agent task-child-agent))
   "Identify whether AGENT completed through its explicit yield protocol."

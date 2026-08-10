@@ -759,7 +759,7 @@
 
 (-> agent--apply-steering-input (agent agent-observer integer) null)
 (defun agent--apply-steering-input (agent observer request-number)
-  "Persist user messages drained from OBSERVER after one completed tool round."
+  "Persist user messages drained from OBSERVER at a safe provider boundary."
   (let ((messages (agent-observer-take-steering observer))
         (conversation (agent-conversation agent)))
     (unless (listp messages)
@@ -992,7 +992,9 @@ checkpoint preserves the current model's opaque reasoning state."
              (agent-observer-status
               observer
               :provider-follow-up
-              (list :request-number request-number)))
+              (list :request-number request-number))
+             (agent--apply-steering-input
+              agent observer request-number))
             (t
              (incf tool-rounds)
              (incf tool-calls (length calls))

@@ -488,6 +488,112 @@ name is bounded here, because only the identifier derived from it was."
         (subseq name 0 (min (length name) *task-identifier-maximum-characters*))
         (job-identifier job))))
 
+
+;;;; -- Child Steering --
+
+(-> task-job--steering-content-characters
+    ((or string user-message-input))
+    (integer 0))
+(defun task-job--steering-content-characters (content)
+  "Return the text character count carried by steering CONTENT."
+  (length (user-message-input-text content)))
+
+(-> task-job--steering-entry-characters (agent-steering-input) (integer 0))
+(defun task-job--steering-entry-characters (entry)
+  "Return the text character count retained by steering ENTRY."
+  (task-job--steering-content-characters
+   (agent-steering-input-content entry)))
+
+(-> task-job--steering-character-count-locked (task-job) (integer 0))
+(defun task-job--steering-character-count-locked (job)
+  "Return locked JOB's combined queued and in-flight steering characters."
+  (loop for entry in (append (task-job-steering-items job)
+                             (task-job-steering-in-flight-items job))
+        sum (task-job--steering-entry-characters entry)))
+
+(-> task-job-steering-pending-count (task-job) (integer 0))
+(defun task-job-steering-pending-count (job)
+  "Return JOB's accepted steering messages not yet durably acknowledged."
+  (with-lock-held ((task-job-steering-lock job))
+    (+ (length (task-job-steering-items job))
+       (length (task-job-steering-in-flight-items job)))))
+
+(-> task-job-enqueue-steering
+    (task-job (or string user-message-input))
+    (values (option agent-steering-input) keyword))
+(defun task-job-enqueue-steering (job content)
+  "Atomically accept CONTENT for running JOB, returning an entry and reason."
+  (block nil
+    (let* ((copy (user-message-input-copy content))
+           (characters (task-job--steering-content-characters copy)))
+      (unless (or (plusp characters)
+                  (user-message-input-image-pathnames copy))
+        (return (values nil ':empty)))
+      (when (> characters *task-steering-maximum-characters*)
+        (return (values nil ':content-too-large)))
+      (with-lock-held ((cl-jobpond::job--lock job))
+        (unless (eq (job-state job) ':running)
+          (return (values nil ':not-running)))
+        (when (or (job-cancellation-reason job)
+                  (cl-jobpond::job--publication-claimed-p job))
+          (return (values nil ':closing)))
+        (with-lock-held ((task-job-steering-lock job))
+          (when (task-job-steering-closed-p job)
+            (return (values nil ':closed)))
+          (let ((count (+ (length (task-job-steering-items job))
+                          (length (task-job-steering-in-flight-items job))))
+                (retained-characters
+                  (task-job--steering-character-count-locked job)))
+            (when (or (>= count *task-steering-maximum-items*)
+                      (> (+ retained-characters characters)
+                         *task-steering-maximum-total-characters*))
+              (return (values nil ':full))))
+          (let ((entry
+                  (agent-steering-input-create
+                   :identifier (make-identifier)
+                   :content copy)))
+            (setf (task-job-steering-items job)
+                  (nconc (task-job-steering-items job) (list entry)))
+            (values entry ':accepted)))))))
+
+(-> task-job-take-steering (task-job) list)
+(defun task-job-take-steering (job)
+  "Move JOB's queued steering into in-flight state and return it in FIFO order."
+  (with-lock-held ((task-job-steering-lock job))
+    (let ((entries (task-job-steering-items job)))
+      (setf (task-job-steering-in-flight-items job)
+            (nconc (task-job-steering-in-flight-items job) entries)
+            (task-job-steering-items job) nil)
+      entries)))
+
+(-> task-job-acknowledge-steering (task-job non-empty-string) boolean)
+(defun task-job-acknowledge-steering (job identifier)
+  "Forget one in-flight steering IDENTIFIER after its child append is durable."
+  (with-lock-held ((task-job-steering-lock job))
+    (let ((entry
+            (find identifier
+                  (task-job-steering-in-flight-items job)
+                  :key #'agent-steering-input-identifier
+                  :test #'string=)))
+      (when entry
+        (setf (task-job-steering-in-flight-items job)
+              (delete entry
+                      (task-job-steering-in-flight-items job)
+                      :test #'eq
+                      :count 1))
+        t))))
+
+(-> task-job-close-steering (task-job) (integer 0))
+(defun task-job-close-steering (job)
+  "Close JOB's mailbox, release its content, and return undelivered entry count."
+  (with-lock-held ((task-job-steering-lock job))
+    (let ((count (+ (length (task-job-steering-items job))
+                    (length (task-job-steering-in-flight-items job)))))
+      (setf (task-job-steering-closed-p job) t
+            (task-job-steering-items job) nil
+            (task-job-steering-in-flight-items job) nil)
+      count)))
+
 (-> task-job-identity (task-job) list)
 (defun task-job-identity (job)
   "Return JOB's stable identity plist.
@@ -575,6 +681,7 @@ values from either side of a terminal transition."
           :execution-id (task-job-execution-identifier job)
           :type :task
           :state (getf snapshot :state)
+          :pending-prompt-count (task-job-steering-pending-count job)
           :detached (task-job-detached-p job)
           :agent (task-job-agent-name job)
           :assignment
@@ -660,6 +767,8 @@ values from either side of a terminal transition."
                   :index (job-index job)
                   :agent (task-job-agent-name job)
                   :state state
+                  :pending-prompt-count
+                  (task-job-steering-pending-count job)
                   :current-tool (task-progress-current-tool progress)
                   :current-tool-duration-ms
                   (and (task-progress-current-tool-started-at progress)

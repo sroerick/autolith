@@ -200,6 +200,7 @@
     (test-task-tool-default-argument-types)
     (test-task-native-output-contracts)
     (test-task-yield-contract)
+    (test-task-child-steering-mailbox)
     (test-task-abort-control-condition)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)

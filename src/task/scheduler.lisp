@@ -30,7 +30,7 @@
                     :structured-output-present-p :structured-output :label
                     :request-count :usage :duration-ms :model
                     :conversation-file :detached :output-path
-                    :agent-definition)
+                    :undelivered-prompt-count :agent-definition)
                 append (list field (getf result field))))
         (storage (if artifact-available-p :artifact :omitted)))
     (flet ((compact-string
@@ -160,7 +160,8 @@ is compacted, and the parent session and borrowed capabilities are dropped last.
 The child's reported status decides the terminal state, since the pool only sees
 that a body returned. An artifact that cannot be written downgrades the state to
 :FAILED rather than claiming a success whose output nobody can find."
-  (let* ((reported (and (listp result) (getf result :status)))
+  (let* ((undelivered-prompt-count (task-job-close-steering job))
+         (reported (and (listp result) (getf result :status)))
          (final-state (case reported
                         (:success :completed)
                         (:aborted :aborted)
@@ -181,6 +182,9 @@ that a body returned. An artifact that cannot be written downgrades the state to
                                  (or final-report "The child produced no result."))
             final-state
             (if (eq final-state :completed) :failed final-state)))
+    (when (plusp undelivered-prompt-count)
+      (setf (getf final-result :undelivered-prompt-count)
+            undelivered-prompt-count))
     (setf (getf final-result :status)
           (case final-state
             (:completed :success)

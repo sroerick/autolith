@@ -316,17 +316,32 @@ boundary cannot fit within that budget."
                           "A failed or aborted yield must not contain structured data."))))
                     (when data-present-p
                       (task-json->sexp data))
-                    (setf (task-completion-called-p completion) t
-                          (task-completion-status completion) status
-                          (task-completion-text completion) text
-                          (task-completion-data completion) data
-                          (task-completion-data-present-p completion)
-                          data-present-p
-                          (task-completion-error completion) failure
-                          (task-completion-label completion) label)
-                    (tool-success
-                     (task--write-readable-sexp
-                      '(:yield-submit :accepted-p t)))))))))))))
+                    (multiple-value-bind (accepted-p reason)
+                        (task-job--call-with-yield-claim
+                         (task-child-agent-job agent)
+                         (lambda ()
+                           (setf (task-completion-called-p completion) t
+                                 (task-completion-status completion) status
+                                 (task-completion-text completion) text
+                                 (task-completion-data completion) data
+                                 (task-completion-data-present-p completion)
+                                 data-present-p
+                                 (task-completion-error completion) failure
+                                 (task-completion-label completion) label)))
+                      (unless accepted-p
+                        (yield-error
+                         (ecase reason
+                           (:closed
+                            "This child can no longer accept a terminal yield.")
+                           (:closing
+                            "This child is closing and cannot accept a terminal yield.")
+                           (:not-running
+                            "This child is not running and cannot accept a terminal yield.")
+                           (:steering-pending
+                            "Additional user context is waiting. Continue the child turn before yielding."))))
+                      (tool-success
+                       (task--write-readable-sexp
+                        '(:yield-submit :accepted-p t))))))))))))))
 
 (defun task--utf8-length (text)
   "Return the UTF-8 byte length of TEXT on the supported SBCL runtime."
@@ -566,6 +581,13 @@ boundary cannot fit within that budget."
                                             (task-progress-note-status job
                                                                        status
                                                                        details))
+                                          :steering-callback
+                                          (lambda ()
+                                            (task-job-take-steering job))
+                                          :steering-persisted-callback
+                                          (lambda (identifier)
+                                            (task-job-acknowledge-steering
+                                             job identifier))
                                           :command-authorization-callback
                                           (task-job-command-authorization-function
                                            job)

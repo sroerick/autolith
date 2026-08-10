@@ -519,6 +519,9 @@
             (lambda (command directory)
               (declare (ignore command directory))
               ':sandboxed))))
+    (with-lock-held ((cl-jobpond::job--lock job))
+      (setf (job-state job) ':running))
+    (task-job--set-progress-state job ':running)
     (unwind-protect
          (let ((*task-test-command-decision* nil)
                (*task-test-effect-count* 0))
