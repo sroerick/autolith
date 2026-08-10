@@ -141,10 +141,12 @@
     (application-command)
     terminal-styled-text)
 (defun application--command-tip-spans (entry)
-  "Return a startup tip with ENTRY's command token styled as code."
+  "Return a startup tip with ENTRY's canonical Lisp call styled as code."
   (list (terminal-span :plain (format nil "~2%"))
         (terminal-span :dim "Tip: ")
-        (terminal-span :code (application-command-name entry))
+        (terminal-span
+         :code
+         (format nil "(~A)" (application-operation--command-name entry)))
         (terminal-span :plain
                        (format nil " ~A" (application-command-tip entry)))))
 

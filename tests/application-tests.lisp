@@ -391,10 +391,13 @@
          (command-span (third spans))
          (tip-span (fourth spans)))
     (test-assert (eq (terminal-span-style command-span) ':code)
-                 "the command token uses the colored code style")
-    (test-assert (string= (terminal-span-text command-span)
-                          (application-command-name entry))
-                 "the colored span contains only the canonical command")
+                 "the canonical Lisp call uses the colored code style")
+    (test-assert
+     (string= (terminal-span-text command-span)
+              (format nil
+                      "(~A)"
+                      (application-operation--command-name entry)))
+     "the colored span contains the canonical parenthesized command")
     (test-assert (string= (terminal-span-text tip-span)
                           (format nil " ~A" (application-command-tip entry)))
                  "the command's mandatory tip follows its colored token"))
