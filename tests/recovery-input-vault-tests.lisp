@@ -405,7 +405,9 @@
                    (search "/status" output))
               "/vault lists chronological captures with bounded previews"))
            (with-lock-held ((application-input-controller-lock controller))
-             (setf (application-input-controller-active-p controller) t))
+             (setf (application-input-controller-active-p controller) t
+                   (application-input-controller-active-work-kind controller)
+                   ':message))
            (application-input-controller--enqueue
             controller ':message "current recalled")
            (test-assert
@@ -453,16 +455,16 @@
                      (application-input-controller--virtual-work-items controller)))
                (test-assert
                 (and (= (length work) 7)
-                     (zerop
-                      (application-input-controller-steering-promotion-prefix-count
-                       controller))
+                     (= (application-input-controller-steering-promotion-prefix-count
+                         controller)
+                        6)
                      (= (application-input-controller-follow-up-edit-index
                          controller)
                         6)
                      (typep (second (first work)) 'user-message-input)
                      (string= (second (sixth work)) "typed during restore")
                      (string= (second (seventh work)) "current recalled"))
-                "finishing restore promotes newer steering after the restored prefix"))))
+                "finishing restore promotes newer steering and retains its durable prefix"))))
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
