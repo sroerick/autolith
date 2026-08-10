@@ -241,6 +241,34 @@ form after use; =(help)= is canonical. A user call and a provider call reach
 the same named operation, while authority still follows the caller and the
 operation's approval policy.
 
+The canonical =prompt= operation routes exact computed text through the
+responsive input path:
+
+#+BEGIN_SRC lisp
+(prompt "ordinary text")
+(prompt (read-file "/root/blabla.txt"))
+(prompt :to 'shared-diff-final-review "additional context")
+#+END_SRC
+
+With one argument, =prompt= submits a nonempty string to the primary agent just
+like ordinary text. =read-file= supplies bounded UTF-8 text, so local Lisp may
+compute or load the prompt first. Only the one-argument form targets primary
+Autolith. Every =:to= target resolves one child visible to the primary session
+by its unique case-insensitive display name, then falls back to its visible job
+ID. The child must already be running; prompting never spawns, revives, or
+replaces it. Accepted child prompts enter its bounded FIFO steering mailbox.
+Thus =(prompt :to 'autolith "...")= targets a visible running child named
+=autolith=, never the primary agent.
+
+Each accepted child-targeted =prompt= reserves one FIFO response-promotion
+token. Tool calls, reasoning, and blank or whitespace-only assistant output do
+not consume a token. The first later nonblank verbal response durably persisted
+by that child consumes the oldest token and appears in the primary window as
+=● autolith [child-name] YYYY-MM-DD HH:MM= followed by its Markdown-rendered
+body. The child name uses xterm-256 color 78 with a green fallback. Promotion
+does not append a primary conversation record, expose hidden reasoning, or
+change the private child transcript.
+
 Provider tool requests have no original Lisp spelling. Their transcript rows keep
 the canonical tool name and show a deterministic syntax-highlighted Lisp form
 without claiming that the provider literally sent it, followed by the ordinary

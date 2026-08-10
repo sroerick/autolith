@@ -751,6 +751,22 @@ A blocking batch waits only for members that explicitly or structurally block.
 Detached members remain independently inspectable while the primary loop
 continues.
 
+Every running task job owns a bounded FIFO steering mailbox. Each accepted
+child-targeted =prompt= call atomically appends one steering entry and one FIFO
+response-promotion token. The first later nonblank assistant response that the
+child durably persists consumes the oldest token exactly once and emits a
+portable verbal-response event. Reasoning, tool traffic, blank or
+whitespace-only assistant output, and persistence failures do not consume a
+token. Closing a child clears undelivered steering and unused promotion tokens.
+
+The application accepts a verbal-response event only from its exact current
+task orchestrator and listener. It presents the text in the primary window with
+the unconditional local header
+=● autolith [child-name] YYYY-MM-DD HH:MM= and a Markdown-rendered body. The
+child name uses xterm-256 color 78 with a green basic-color fallback. This
+projection does not append a primary conversation record, copy hidden
+reasoning, or alter the private child transcript.
+
 Admission is bounded by batch and live-job limits. A bounded FIFO feeds a
 reusable worker pool with configured concurrency and an implementation maximum.
 Nested synchronous delegation must make progress even when every reusable
@@ -1784,6 +1800,19 @@ safely to the prompt. Legacy invocation-object handlers remain supported for
 compatibility. When a registered command runs inside one explicit local Lisp
 form, nested command recording is suppressed and the enclosing =:lisp= outcome
 is the sole user-operation record.
+
+The built-in =prompt= local operation accepts exactly =(prompt CONTENT)= or
+=(prompt :to TARGET CONTENT)= with bounded nonempty string content. The
+one-argument form is the only primary-target form and submits through the
+ordinary primary responsive-input path, so computed local Lisp may send exact
+text, including bounded UTF-8 text read by =(read-file PATH)=. Every =:to=
+TARGET is resolved among jobs visible to the primary session, matching one
+case-insensitive display name before falling back to a visible job ID. That
+form accepts only an already running child and never spawns, revives, or
+replaces one. Thus =(prompt :to 'autolith "...")= targets a visible running
+child named =autolith=, never the primary agent. Invalid, ambiguous, unknown,
+nonrunning, closing, full, and oversized requests signal typed =prompt-error=
+reasons instead of guessing a target or dropping content.
 
 A user and the provider reach the same named operation while retaining their
 separate authority. Provider calls are displayed as deterministic equivalent
