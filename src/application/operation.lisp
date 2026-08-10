@@ -48,6 +48,116 @@
 (defvar *application-local-user-evaluation-p* nil
   "Whether evaluation came from one explicit local Lisp submission.")
 
+(define-condition prompt-error (autolith-error)
+  ((reason
+    :initarg :reason
+    :reader prompt-error-reason
+    :type keyword
+    :documentation "The stable reason prompt admission failed.")
+   (target
+    :initarg :target
+    :initform nil
+    :reader prompt-error-target
+    :type t
+    :documentation "The requested primary or child target, when available."))
+  (:documentation "A local PROMPT form could not be validated or admitted."))
+
+(defparameter *prompt-maximum-characters* 131072
+  "The largest text accepted by one local PROMPT form.")
+
+(defparameter *prompt-target-maximum-characters* 200
+  "The largest child target name accepted by one local PROMPT form.")
+
+(-> prompt--error (keyword string &key (:target t)) nil)
+(defun prompt--error (reason message &key target)
+  "Signal a typed prompt failure with stable REASON and optional TARGET."
+  (error 'prompt-error :message message :reason reason :target target))
+
+(-> prompt--target-name ((or string symbol)) non-empty-string)
+(defun prompt--target-name (target)
+  "Return TARGET as a bounded case-preserving name or signal PROMPT-ERROR."
+  (let ((name (string target)))
+    (unless (and (non-empty-string-p name)
+                 (<= (length name) *prompt-target-maximum-characters*))
+      (prompt--error
+       ':invalid-target
+       (format nil "PROMPT target must contain from 1 to ~D characters."
+               *prompt-target-maximum-characters*)
+       :target target))
+    (copy-seq name)))
+
+(-> prompt--content (t) non-empty-string)
+(defun prompt--content (content)
+  "Return validated prompt CONTENT or signal a typed prompt failure."
+  (unless (stringp content)
+    (prompt--error ':invalid-content "PROMPT content must be a string."))
+  (unless (plusp (length content))
+    (prompt--error ':empty-content "PROMPT content must not be empty."))
+  (when (> (length content) *prompt-maximum-characters*)
+    (prompt--error
+     ':content-too-large
+     (format nil "PROMPT content exceeds the ~D-character limit."
+             *prompt-maximum-characters*)))
+  (copy-seq content))
+
+(-> application-submit-prompt
+    (application (or string symbol) non-empty-string)
+    list)
+(defgeneric application-submit-prompt (application target content)
+  (:documentation
+   "Submit validated CONTENT to TARGET through APPLICATION and return a receipt."))
+
+(-> read-file ((or string pathname)) string)
+(defun read-file (path)
+  "Read UTF-8 text from PATH without exceeding the local prompt content bound."
+  (let ((pathname (pathname path))
+        (buffer (make-string 4096))
+        (output (make-string-output-stream))
+        (characters 0))
+    (with-open-file (stream pathname
+                            :direction :input
+                            :external-format :utf-8)
+      (loop for count = (read-sequence buffer stream)
+            while (plusp count)
+            do (incf characters count)
+               (when (> characters *prompt-maximum-characters*)
+                 (prompt--error
+                  ':content-too-large
+                  (format nil "File ~A exceeds the PROMPT content limit."
+                          (namestring pathname))
+                  :target (namestring pathname)))
+               (write-string buffer output :end count)))
+    (get-output-stream-string output)))
+
+(-> prompt (&rest t) list)
+(defun prompt (&rest arguments)
+  "Prompt primary Autolith, or steer a named running child with :TO TARGET."
+  (unless (typep *application-operation-application* 'application)
+    (prompt--error
+     ':no-application
+     "PROMPT requires an active local Autolith evaluation."))
+  (multiple-value-bind (target content)
+      (cond
+        ((= (length arguments) 1)
+         (values 'autolith (first arguments)))
+        ((and (= (length arguments) 3)
+              (eq (first arguments) ':to))
+         (values (second arguments) (third arguments)))
+        (t
+         (prompt--error
+          ':malformed-arguments
+          "Use (prompt CONTENT) or (prompt :to TARGET CONTENT).")))
+    (unless (typep target '(or string symbol))
+      (prompt--error
+       ':invalid-target
+       "PROMPT target must be a symbol or string."
+       :target target))
+    (let ((target-name (prompt--target-name target))
+          (validated-content (prompt--content content)))
+      (application-submit-prompt
+       *application-operation-application* target-name validated-content))))
+
+
 (defmacro eval-now (&body body)
   "Evaluate BODY as explicit local input even while an agent turn is active.
 
@@ -63,6 +173,18 @@ local-user override."
 
 (defparameter *application-local-operations*
   (list
+   (make-instance
+    'application-operation
+    :name "prompt"
+    :description "Prompt primary Autolith or steer a named running child."
+    :kind ':local
+    :backend 'prompt)
+   (make-instance
+    'application-operation
+    :name "read-file"
+    :description "Read bounded UTF-8 text for a computed local prompt."
+    :kind ':local
+    :backend 'read-file)
    (make-instance
     'application-operation
     :name "eval-now"

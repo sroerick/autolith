@@ -85,9 +85,311 @@
      terminal
      tool)))
 
+(-> test-prompt-operation () null)
+(defun test-prompt-operation ()
+  "Test local primary prompting, computed content, and named child steering."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "prompt-operation"))
+         (registry (task-augment-tool-registry (make-default-tool-registry)))
+         (primary
+           (agent-create :configuration configuration
+                         :conversation conversation
+                         :tool-registry registry
+                         :worker nil))
+         (terminal (make-instance 'recording-terminal :columns 100))
+         (ui (terminal-ui-create :terminal terminal))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :provider nil
+                          :tool-registry registry
+                          :worker nil
+                          :agent primary
+                          :ui ui))
+         (controller nil)
+         (orchestrator (application--task-orchestrator application))
+         (definition
+           (task-agent-definition-create
+            :name "prompt-child"
+            :description "Exercise named child prompting."
+            :instructions "Accept ordered steering."
+            :source :test)))
+    (labels ((mark-state (job state)
+               (with-lock-held ((cl-jobpond::job--lock job))
+                 (setf (job-state job) state))
+               (task-job--set-progress-state job state)
+               job)
+
+             (prompt-reason (function)
+               (handler-case
+                   (progn
+                     (funcall function)
+                     nil)
+                 (prompt-error (condition)
+                   (prompt-error-reason condition))))
+
+             (steering-texts (job)
+               (mapcar
+                (lambda (entry)
+                  (user-message-input-text
+                   (agent-steering-input-content entry)))
+                (task-job-steering-items job))))
+      (unwind-protect
+           (progn
+             (setf controller
+                   (application-input-controller-create
+                    application
+                    :load-pending-p nil
+                    :start-reader-p nil))
+             (let ((path (merge-pathnames "prompt-content.txt" root)))
+               (with-open-file (stream path
+                                       :direction :output
+                                       :if-exists :supersede
+                                       :if-does-not-exist :create
+                                       :external-format :utf-8)
+                 (write-string "computed prompt text" stream))
+               (let ((*application-operation-application* application))
+                 (let ((receipt (prompt "ordinary prompt text")))
+                   (test-assert
+                    (and (eq (first receipt) ':prompt)
+                         (getf (rest receipt) :accepted-p)
+                         (eq (getf (rest receipt) :target) ':autolith)
+                         (eq (getf (rest receipt) :delivery) ':queued))
+                    "PROMPT returns a portable primary acceptance receipt")))
+               (let ((evaluation
+                       (application-lisp-evaluate
+                        (format nil "(prompt (read-file ~S))" (namestring path))
+                        :application application)))
+                 (test-assert
+                  (eq (application-lisp-evaluation-status evaluation) ':ok)
+                  "computed READ-FILE prompt executes through local Lisp"))
+               (test-assert
+                (equal
+                 (mapcar
+                  (lambda (work)
+                    (user-message-input-text (second work)))
+                  (application-input-controller-work-items controller))
+                 '("ordinary prompt text" "computed prompt text"))
+                "primary PROMPT preserves exact computed content and FIFO order")
+                (test-assert
+                 (string= (read-file path) "computed prompt text")
+                 "READ-FILE returns exact UTF-8 text")
+                (test-assert
+                 (eq (let ((*prompt-maximum-characters* 3))
+                       (prompt-reason (lambda () (read-file path))))
+                     ':content-too-large)
+                 "READ-FILE enforces its bound while consuming one open stream"))
+             (dolist (case
+                      (list
+                       (list nil ':malformed-arguments)
+                       (list '("one" "two") ':malformed-arguments)
+                       (list '(:to child) ':malformed-arguments)
+                       (list '(:to 42 "text") ':invalid-target)
+                       (list '("") ':empty-content)
+                       (list '(42) ':invalid-content)))
+               (destructuring-bind (arguments expected) case
+                 (test-assert
+                  (eq
+                   (let ((*application-operation-application* application))
+                     (prompt-reason
+                      (lambda () (apply #'prompt arguments))))
+                   expected)
+                  (format nil "PROMPT rejects malformed arguments with ~S" expected))))
+             (test-assert
+              (eq (let ((*application-operation-application* nil))
+                    (prompt-reason (lambda () (prompt "text"))))
+                  ':no-application)
+              "PROMPT rejects calls outside local application evaluation")
+             (test-assert
+              (eq (let ((*application-operation-application* application)
+                        (*prompt-maximum-characters* 3))
+                    (prompt-reason (lambda () (prompt "four"))))
+                  ':content-too-large)
+              "PROMPT enforces its content bound before routing")
+             (let* ((named
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "shared-diff-final-review"))
+                    (blocking
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "blocking-review"
+                       :detached-p nil))
+                    (identifier-target
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "identifier-review"))
+                    (queued
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "queued-review"))
+                    (terminal-job
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "terminal-review"))
+                    (cancelled
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "cancelled-review"))
+                    (duplicate-one
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "duplicate-review"))
+                    (duplicate-two
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "duplicate-review"))
+                    (hidden
+                      (task-tests--register-job
+                       orchestrator primary definition
+                       :name "hidden-review"
+                       :owner-identifiers '("foreign-owner")
+                       :root-conversation-identifier "foreign-root"))
+                     (closing-job
+                       (task-tests--register-job
+                        orchestrator primary definition
+                        :name "closing-review"))
+                     (closed-job
+                       (task-tests--register-job
+                        orchestrator primary definition
+                        :name "closed-review"))
+                     (race-closing
+                       (task-tests--register-job
+                        orchestrator primary definition
+                        :name "race-closing-review"))
+                     (race-closed
+                       (task-tests--register-job
+                        orchestrator primary definition
+                        :name "race-closed-review"))
+                    (job-count
+                      (length (task-orchestrator-list-jobs orchestrator))))
+               (declare (ignore duplicate-one duplicate-two hidden))
+                (mapc (lambda (job) (mark-state job ':running))
+                      (list named blocking identifier-target closing-job closed-job
+                            race-closing race-closed))
+                (mark-state terminal-job ':completed)
+                (task-job-cancel cancelled ':test-cancellation)
+                (with-lock-held ((cl-jobpond::job--lock closing-job))
+                  (setf (cl-jobpond::job--publication-claimed-p closing-job) t))
+                (task-job-close-steering closed-job)
+               (let ((*application-operation-application* application))
+                 (let ((receipt
+                         (prompt :to 'shared-diff-final-review
+                                 "first child context")))
+                   (test-assert
+                    (and (eq (first receipt) ':prompt)
+                         (getf (rest receipt) :accepted-p)
+                         (eq (getf (rest receipt) :target) ':child)
+                         (string= (getf (rest receipt) :child-name)
+                                  "shared-diff-final-review")
+                         (string= (getf (rest receipt) :job-id)
+                                  (session-job-identifier named))
+                         (string= (getf (rest receipt) :execution-id)
+                                  (task-job-execution-identifier named))
+                         (non-empty-string-p
+                          (getf (rest receipt) :steering-id))
+                         (eq (getf (rest receipt) :delivery) ':steering))
+                    "named child PROMPT returns stable job and steering identity"))
+                 (prompt :to "shared-diff-final-review" "second child context")
+                 (test-assert
+                  (equal (steering-texts named)
+                         '("first child context" "second child context"))
+                  "multiple child prompts enter the existing mailbox in FIFO order")
+                  (let ((*task-steering-maximum-items* 2))
+                    (test-assert
+                     (eq (prompt-reason
+                          (lambda ()
+                            (prompt :to "shared-diff-final-review" "overflow")))
+                         ':full)
+                     "PROMPT reports a full child steering mailbox"))
+                  (let ((*task-steering-maximum-characters* 3))
+                    (test-assert
+                     (eq (prompt-reason
+                          (lambda ()
+                            (prompt :to "shared-diff-final-review" "four")))
+                         ':content-too-large)
+                     "PROMPT reports the child steering content bound"))
+                 (let ((receipt
+                         (prompt :to "blocking-review" "blocking context")))
+                   (test-assert
+                    (and (eq (first receipt) ':prompt)
+                         (getf (rest receipt) :accepted-p)
+                         (not (task-job-detached-p blocking)))
+                    "blocking children accept steering without respawn"))
+                 (let ((receipt
+                         (prompt :to (session-job-identifier identifier-target)
+                                 "identifier context")))
+                   (test-assert
+                    (string= (getf (rest receipt) :job-id)
+                             (session-job-identifier identifier-target))
+                    "PROMPT falls back from display name to visible job ID"))
+                  (dolist (case
+                           (list
+                            (list "missing-review" ':unknown-target)
+                            (list "duplicate-review" ':ambiguous-target)
+                            (list "queued-review" ':not-running)
+                            (list "terminal-review" ':terminal)
+                            (list "cancelled-review" ':cancelled)
+                            (list "closing-review" ':closing)
+                            (list "closed-review" ':closed)
+                            (list "hidden-review" ':unknown-target)))
+                    (destructuring-bind (target expected) case
+                      (test-assert
+                       (eq (prompt-reason
+                            (lambda () (prompt :to target "context")))
+                           expected)
+                       (format nil "child target ~A rejects with ~S"
+                               target expected)))))
+                (let ((*application-operation-application* application)
+                      (original-enqueue
+                        (symbol-function 'task-job-enqueue-steering)))
+                  (test-call-with-function-replacements
+                   (list
+                    (list
+                     'task-job-enqueue-steering
+                     (lambda (job content)
+                       (cond
+                         ((eq job race-closing)
+                          (with-lock-held ((cl-jobpond::job--lock job))
+                            (setf (cl-jobpond::job--publication-claimed-p job) t)))
+                         ((eq job race-closed)
+                          (task-job-close-steering job)))
+                       (funcall original-enqueue job content))))
+                   (lambda ()
+                     (test-assert
+                      (eq (prompt-reason
+                           (lambda ()
+                             (prompt :to "race-closing-review" "context")))
+                          ':closing)
+                      "PROMPT reports closure beginning after child lookup")
+                     (test-assert
+                      (eq (prompt-reason
+                           (lambda ()
+                             (prompt :to "race-closed-review" "context")))
+                          ':closed)
+                      "PROMPT reports mailbox closure after child lookup")))
+                  (test-assert
+                   (and (zerop (task-job-steering-pending-count race-closing))
+                        (zerop (task-job-steering-pending-count race-closed)))
+                   "racing child closure never admits a steering entry"))
+               (test-assert
+                (= (length (task-orchestrator-list-jobs orchestrator)) job-count)
+                "named child prompting never respawns or changes job identity")))
+        (when controller
+          (application-input-controller-stop controller))
+        (ignore-errors (terminal-ui-stop ui))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist :ignore))))
+  nil)
+
 (-> run-application-operation-tests () boolean)
 (defun run-application-operation-tests ()
   "Run focused unified command and tool operation tests."
+  (test-prompt-operation)
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (unwind-protect
@@ -103,6 +405,10 @@
                         "per-session tools appear in the local operation registry")
            (test-assert (member "eval-now" names :test #'string=)
                         "the immediate local evaluator is a discoverable operation")
+           (test-assert (member "prompt" names :test #'string=)
+                        "the canonical primary and child prompt is discoverable")
+           (test-assert (member "read-file" names :test #'string=)
+                        "bounded prompt file input is discoverable")
            (test-assert
             (eq (application-operation-kind
                  (application-operation-find application 'eval-now))
@@ -147,6 +453,10 @@
                           "completion offers a canonical no-argument Lisp command")
              (test-assert (member "(eval-now" entry-names :test #'string=)
                           "completion offers the explicit immediate local form")
+             (test-assert (member "(prompt" entry-names :test #'string=)
+                          "completion offers the canonical prompt operation")
+             (test-assert (member "(read-file" entry-names :test #'string=)
+                          "completion offers bounded computed prompt input")
              (test-assert
               (and fs-entry (search ":path" (or (getf fs-entry :argument) "")))
               "completion exposes dotted tool names with Lisp keyword arguments")
@@ -176,18 +486,20 @@
              (test-assert (eq (tool-active-turn-action unclassified) ':hold)
                           "unclassified tools wait regardless of their names"))
            (dolist (case
-                    '(("(help)" :execute)
-                      ("(goal \"pause\")" :hold)
-                      ("(quit)" :cancel)
-                      ("(fs.list :path \".\")" :execute)
-                      ("(lisp.paren-check :path \".\")" :execute)
-                      ("(shell.run :command \"true\")" :hold)
-                      ("(test-operation.echo :text \"hello\")" :hold)
-                      ("(self.status)" :execute)
-                      ("(self.eval :form \"(+ 1 2)\")" :hold)
-                      ("(fs.list :path (progn (setf *print-base* 8) \".\"))"
-                       :hold)
-                      ("(eval-now (setf *print-base* 8))" :execute)))
+                     '(("(help)" :execute)
+                       ("(prompt \"text\")" :execute)
+                       ("(prompt (read-file \"/tmp/example\"))" :execute)
+                       ("(goal \"pause\")" :hold)
+                       ("(quit)" :cancel)
+                       ("(fs.list :path \".\")" :execute)
+                       ("(lisp.paren-check :path \".\")" :execute)
+                       ("(shell.run :command \"true\")" :hold)
+                       ("(test-operation.echo :text \"hello\")" :hold)
+                       ("(self.status)" :execute)
+                       ("(self.eval :form \"(+ 1 2)\")" :hold)
+                       ("(fs.list :path (progn (setf *print-base* 8) \".\"))"
+                        :hold)
+                       ("(eval-now (setf *print-base* 8))" :execute)))
              (destructuring-bind (source expected) case
                (test-assert
                 (eq (application-operation-source-active-turn-action
