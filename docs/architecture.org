@@ -158,6 +158,20 @@ Composes the default registry from one focused registration function per
 namespace. This keeps a schema or tool-set change local instead of requiring a
 replacement of the complete registry definition in the live image.
 
+** =application/command.lisp=, =application/operation.lisp=, and =application/lisp-machine.lisp=
+
+Own one layered user-visible operation surface. Command definitions retain
+interactive metadata and slash compatibility, while operation projection
+combines commands and model tools into canonical Lisp calls, completion
+entries, active-turn admission policy, and deterministic provider-equivalent
+transcript forms. Exact parenthesized user source remains exact; provider calls
+are labeled equivalent forms and are never represented as literal source.
+=lisp-machine.lisp= reads and evaluates one explicit top-level form in the
+active image, captures printed output and multiple values, and presents
+conditions with live restarts. Caller-specific authority remains enforced.
+=(eval-now FORM)= is a local scheduling override, not an authorization,
+terminal-ownership, or provider-authority override.
+
 ** =workspace-tools.lisp=
 
 Owns the workspace filesystem and command surfaces. One workspace policy
@@ -242,34 +256,47 @@ without changing the tracked source repository.
 
 Owns a restrained primary-screen interface. Finalized transcript output is
 written once and left in normal terminal scrollback. Autolith never enters the
-alternate screen and never clears scrollback. Only the bounded live region,
-holding transient reasoning previews, unfinished status, the full-width multiline
-prompt, and any command completion suggestions, may be repainted. Reasoning
+alternate screen and never clears scrollback. Only the bounded live region may
+be repainted. From top to bottom it contains the optional =COMPACTING= row and
+animated =READ / EVAL / PRINT / LOOP= modeline; local Lisp and child-agent
+activity; provider, tool, reasoning, and streaming activity; transient notices;
+steering and queued previews; and the prompt with any completion candidates.
+The modeline is an animation, not a literal execution-phase report. Reasoning
 previews enter scrollback only when finalized. Active status includes phase
 elapsed time and identifies how long no provider progress has arrived after a
-bounded idle interval. Clinedi owns Unicode-aware editor state, input decoding,
-screen geometry, candidate navigation and arrangement,
-and the scrollback-safe live-region mechanics. Autolith owns candidate data,
-command filtering, its semantic palette, terminal mode, and application event
-policy. cl-colorist owns ANSI color capability detection, basic and indexed
-style encoding, and ANSI control-sequence parsing shared with Clinedi. Kernel
-TTY rows and columns take precedence over environment hints.
+bounded idle interval.
+
+Parenthesized drafts use a red =*= prompt and ColorLisp highlighting. Autolith
+owns candidate data, operation filtering, its semantic palette, terminal mode,
+application event policy, and a small OSC 133 prompt-block state machine. On an
+interactive terminal, =A= and =B= are emitted before the reader can accept
+foreground input, =C= begins execution, and =D;STATUS= completes it exactly
+once. Repaint, resize, animation, streaming, and internal work emit no prompt
+markers. Immediate local operations running beneath an active interaction never
+open nested blocks, and terminal shutdown closes unfinished execution as a
+failure. Clinedi remains responsible for Unicode-aware editor state, input
+decoding, screen geometry, candidate navigation and arrangement, and the
+scrollback-safe live-region mechanics. cl-colorist owns ANSI color capability
+detection, basic and indexed style encoding, and ANSI control-sequence parsing
+shared with Clinedi. Kernel TTY rows and columns take precedence over
+environment hints.
+
 Long drafts use a cursor-following viewport capped below the terminal height,
-and each replacement is emitted as one hidden-cursor update.
-The startup identity uses a
-capability-checked xterm-256 green gradient with bold basic-green fallback,
-while a process started by recovery uses a red gradient with bold basic-red
-fallback. One leading blank row and a divider separate its identity from model
-and workspace metadata. Internal conversation identifiers are omitted. Other
-semantic styles resolve to basic terminal palette colors and emphasis. Untrusted
-text is sanitized before trusted styling controls are added around it. During
-an active turn, a neutral full-width status background carries the current
-model, effort, and enclosing Git branch. The branch is captured at activity
-transitions and never queried by the animation repaint loop. Ctrl-C at
-an empty prompt exits and leaves a paste-ready resume command in scrollback only
-when the active conversation is durable. The input reader remains available
-during graceful interruption so another Ctrl-C can restore the terminal and
-force process status 130 without waiting for the main agent thread.
+and each replacement is emitted as one hidden-cursor update. The startup
+identity uses a capability-checked xterm-256 green gradient with bold
+basic-green fallback, while a process started by recovery uses a red gradient
+with bold basic-red fallback. One leading blank row and a divider separate its
+identity from model and workspace metadata. Internal conversation identifiers
+are omitted. Other semantic styles resolve to basic terminal palette colors
+and emphasis. Untrusted text is sanitized before trusted styling controls are
+added around it. During an active turn, a neutral full-width status background
+carries the current model, effort, and enclosing Git branch. The branch is
+captured at activity transitions and never queried by the animation repaint
+loop. Ctrl-C at an empty prompt exits and leaves a paste-ready resume command in
+scrollback only when the active conversation is durable. The input reader
+remains available during graceful interruption so another Ctrl-C can restore
+the terminal and force process status 130 without waiting for the main agent
+thread.
 
 Command-line resume may open one project-adaptation picker after selecting a
 qualifying conversation. Its decisions are atomic S-expression state keyed by
@@ -278,15 +305,23 @@ a permanent refusal remains local to that repository or workspace path.
 
 ** =responsive-input.lisp=
 
-Owns the ephemeral terminal-reader thread and FIFO submitted-message queue.
-Model turns and commands remain on the application main thread, while the reader
-applies editor events through the terminal UI lock. This keeps drafts editable
-during provider streaming and tool execution without allowing concurrent model
-turns. Modal pickers temporarily join the reader and take terminal ownership.
-Checkpoint creation uses the same nested quiescence boundary, so its process
-fork still occurs with exactly one live Lisp thread. The reader restarts after
-the modal or checkpoint operation. This controller is lexical to one
-application run and is never captured in a retained generation.
+Owns the ephemeral terminal-reader thread and FIFO submitted-input queue. The
+controller opens the semantic =A=/=B= prompt before the reader starts accepting
+input, then classifies chat messages, explicit Lisp, and canonical operation
+calls. Model turns and boundary-requiring operations remain on the application
+main thread, so no concurrent model turns are possible. Nonconflicting local
+operations may run immediately while an active turn continues. If another
+interaction already owns the prompt block, responsive work reuses it rather
+than emitting nested =C=/=D= markers; startup and other internal work add no
+execution markers.
+
+The reader applies editor events through the terminal UI lock. Modal pickers and
+terminal-owning, authorization-gated, or conflicting operations wait for a safe
+boundary, temporarily join the reader, and take terminal ownership. Checkpoint
+creation uses the same nested quiescence boundary, so its process fork still
+occurs with exactly one live Lisp thread. The reader restarts after the modal or
+checkpoint operation. This controller is lexical to one application run and is
+never captured in a retained generation.
 
 ** =localgroup/protocol.lisp=, =localgroup/runtime.lisp=, and =localgroup/handoff.lisp=
 

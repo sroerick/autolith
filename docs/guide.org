@@ -213,6 +213,47 @@ approval for unknown commands, =sandbox= permits workspace-scoped commands in
 the host command sandbox, and =full= grants the process full user privileges.
 The selection is not persisted.
 
+** Lisp-first interaction
+
+The primary prompt is a Common Lisp interaction surface with prose convenience.
+A draft whose first character is =(= is explicit user Lisp evaluated directly
+in the active Autolith image. The normal =>= prompt changes to a red =*= while
+such a draft is being edited, and ColorLisp highlights the complete multiline
+form. Autolith reads exactly one top-level form and presents captured output,
+zero or more values, conditions, and available restarts without asking the
+model to reinterpret the request. Ordinary prose keeps the normal model-message
+path. Image attachments remain available there but cannot accompany explicit
+local Lisp.
+
+Registered commands, model tools, and built-in local operations appear through
+one Lisp-shaped operation surface. For example:
+
+#+BEGIN_SRC lisp
+(help)
+(fs.list :path ".")
+(eval-now (setf *print-pretty* nil))
+#+END_SRC
+
+Typing =(= completes only registered user-facing operation names, not every
+symbol in the image. Arbitrary manually entered Lisp remains legal. Existing
+=/command= spellings remain compatibility sugar and show the preferred Lisp
+form after use; =(help)= is canonical. A user call and a provider call reach
+the same named operation, while authority still follows the caller and the
+operation's approval policy.
+
+Provider tool requests have no original Lisp spelling. Their transcript rows
+therefore show a deterministic equivalent Lisp form without claiming that the
+provider literally sent it, followed by the ordinary rich result or failure.
+User-entered Lisp is shown exactly as submitted.
+
+During an active turn, registered nonconflicting operations may run immediately.
+Work needing an agent boundary, exclusive terminal ownership, authorization, or
+serialized active-image mutation waits for the idle boundary. Arbitrary Lisp
+also waits unless the local user explicitly wraps it with =(eval-now FORM)=.
+=eval-now= is a local scheduling override, not an authority bypass: approval and
+terminal-ownership boundaries still apply, and provider-originated calls retain
+their normal permission policy.
+
 ** Local session control
 
 Each interactive Autolith process publishes a private authenticated endpoint on
@@ -283,6 +324,16 @@ emphasis. cl-colorist owns terminal color capability detection and ANSI style
 encoding, while Autolith retains its semantic palette. Set =NO_COLOR= to disable
 styling entirely.
 
+Interactive terminals also receive invisible OSC 133 shell-integration
+boundaries for prompt start, input start, execution start, and completion
+status. Autolith emits one block per semantic user interaction. The prompt and
+input boundaries precede reader acceptance; execution and completion bracket
+foreground work exactly once. Repaint, resize, animation, streaming, and
+individual model-tool paths emit no additional markers. Successful interactions
+finish with status zero; failed or cancelled interactions finish nonzero.
+Redirected and otherwise noninteractive terminals receive no prompt markers.
+The controls occupy no cells and preserve the primary-screen scrollback design.
+
 Tool details, Markdown tables, and interactive picker descriptions use the same
 terminal-cell-aware column allocator. Long labels and values shrink or wrap
 within the current width instead of relying on tabs or fixed character columns.
@@ -313,24 +364,30 @@ While a recalled follow-up remains in the composer, including after the active
 turn ends, Shift-Tab cycles backward through the queued follow-ups and wraps from
 the oldest to the newest. Edits stay at the selected follow-up's FIFO position.
 When Autolith is idle without a recalled follow-up, Tab submits like Enter. On
-styled terminals, active status uses a neutral full-width background and colors
-the current model, reasoning effort, and enclosing Git worktree branch with the
-basic palette. Branch discovery occurs when the activity phase changes, not
-during the four-times-per-second animation repaint. While context compaction is
-active, a bright =COMPACTING  [....====>....]= row sits immediately above the
-modeline. Its traveling head is indeterminate and never implies a percentage.
-Active status includes elapsed time; after 30 seconds without provider progress
-it also shows the no-update duration.
-A draft that has not been submitted survives streaming updates unchanged. Slash
-commands that cannot run during an active turn are scheduled as follow-up work
-and run at the first opportunity after the current response finishes; the live
-region previews them alongside queued messages, and Tab with an empty draft
-recalls the newest one for editing. Nonmodal commands such as =/compact= retain
-responsive input while they run. During an active turn, Escape cancels only the
-current turn, preserves the draft and queued messages, and permits queued work to
-continue normally. Ctrl-C cancels the current turn and holds queued follow-ups and
-unconsumed steering at the prompt until the user submits new input. It briefly
-explains the hold after cancellation. Active Ctrl-C also opens a 2.5-second
+styled terminals, the bounded live region is ordered from top to bottom as the
+optional =COMPACTING= indicator and animated =READ / EVAL / PRINT / LOOP=
+modeline; local Lisp and child-agent activity; provider, tool, reasoning, and
+streaming activity; transient notices; steering and queued previews; and the
+prompt. The modeline remains an animation rather than a literal execution-phase
+report. Its neutral full-width background colors the current model, reasoning
+effort, and enclosing Git worktree branch with the basic palette. Branch
+discovery occurs when the activity phase changes, not during the four-times-per-
+second animation repaint. The bright =COMPACTING  [....====>....]= row uses a
+traveling indeterminate head and never implies a percentage. Active status
+includes elapsed time; after 30 seconds without provider progress it also shows
+the no-update duration.
+
+A draft that has not been submitted survives streaming updates unchanged. Only
+work whose operation policy requires an idle agent boundary is described and
+previewed as scheduled follow-up work. Nonconflicting registered operations run
+immediately, while modal or conflicting work runs at the first safe boundary.
+Tab with an empty draft recalls the newest queued message or operation for
+editing. Nonmodal operations such as =(compact)= retain responsive input while
+they run. During an active turn, Escape cancels only the current turn, preserves
+the draft and queued messages, and permits queued work to continue normally.
+Ctrl-C cancels the current turn and holds queued follow-ups and unconsumed
+steering at the prompt until the user submits new input. It briefly explains
+the hold after cancellation. Active Ctrl-C also opens a 2.5-second
 force-exit window while cancellation is pending; pressing Ctrl-C again during that
 window restores the terminal and forces Autolith to exit. A cancellation that
 finishes promptly never announces the force window. Escape never opens or counts

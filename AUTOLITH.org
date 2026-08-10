@@ -373,6 +373,45 @@ a user-local init.lisp change, or a private image commit.
   language-aware post-edit structural validation, bounded exact diagnostics,
   non-fatal model feedback, and the same workspace and scratchpad coverage.
 
+** Lisp-first unified interaction
+
+- Problem: chat messages, slash commands, local Lisp, and model tools were
+  separate terminal languages. Explicit Lisp needed model reinterpretation,
+  provider calls exposed tool syntax unlike user calls, safe local work waited
+  unnecessarily during active turns, activity rows appeared above the animated
+  modeline, and terminal scrollback had no semantic prompt boundaries.
+- Behavior: parenthesized input is direct active-image Lisp with a red =*= prompt,
+  ColorLisp draft highlighting, multiline reading, printed output, multiple
+  values, conditions, and restarts. Commands and tools project through one
+  canonical Lisp operation surface with restricted completion and slash
+  compatibility hints. Provider calls render as deterministic equivalent Lisp
+  without claiming literal source. Active-turn policy runs nonconflicting local
+  operations immediately, keeps modal, authorized, or serialized work at safe
+  boundaries, and provides =(eval-now FORM)= as a local-only scheduling override.
+  The live region keeps the animated status row above local, child, provider,
+  notice, queued, and prompt rows. Interactive terminals emit exactly one OSC
+  133 =A=/=B=/=C=/=D;STATUS= block per foreground interaction and none for
+  repaint or internal work.
+- Scope and location: tracked project work in =src/application/command.lisp=,
+  =src/application/operation.lisp=, =src/application/lisp-machine.lisp=,
+  =src/terminal/protocol.lisp=, =src/terminal/syntax-highlighting.lisp=,
+  =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
+  =src/startup/main.lisp=, provider and tool presentation, focused regressions,
+  the guide, architecture, and specification. Implementation commits are
+  =2cb9e51= through =9d5d2d7=.
+- Verification: direct evaluation, operation discovery and dispatch, transcript
+  equivalence, active-turn admission, live-row ordering, exact OSC sequences,
+  reader ordering, failure, cancellation, quit status, repaint nonduplication,
+  noninteractive silence, and shutdown closure pass focused tests. Source and
+  test delimiter checks and =git diff --check= pass. Three OSC reviews found and
+  verified fixes for both reader-order races; the final review found no blocking
+  or important defect. The complete repository check was intentionally not run.
+  A known unrelated repeated Shift-Tab test race remains outside this adaptation.
+- Removal condition: a replacement interaction model provides the same direct
+  Lisp semantics, unified authority-aware operation surface, honest transcript,
+  concurrent admission policy, ordered live presentation, and semantic prompt
+  boundaries with less project-specific code.
+
 * Candidates
 
 Record only concrete improvements with evidence of recurring value. Remove

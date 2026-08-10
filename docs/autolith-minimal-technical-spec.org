@@ -1621,6 +1621,29 @@ It should show:
 The interface should remain responsive during tool execution and model
 streaming.
 
+Input whose first character is =(= is explicit local Common Lisp evaluated in
+the active image without provider interpretation. The prompt changes from =>=
+to a red =*= while such input is composed, ColorLisp highlights the complete
+multiline draft, and evaluation presents output, zero or more values,
+conditions, and live restarts. Ordinary prose remains convenient model input.
+Image attachments remain available for model messages and are rejected on
+explicit local Lisp.
+
+The bounded live region orders the optional compaction indicator and animated
+=READ / EVAL / PRINT / LOOP= modeline first; local Lisp and child-agent activity
+next; provider, tool, reasoning, and streaming activity next; then notices,
+steering and queued previews, and the prompt. The modeline remains an animation,
+not a semantic phase report. Only work that truly requires an idle agent
+boundary is described as scheduled.
+
+An interactive terminal emits OSC 133 prompt-start, input-start,
+execution-start, and completion-status boundaries once per semantic user
+interaction. The input boundary is present before the reader accepts input.
+Repaint, resize, animation, streaming, internal startup work, and individual
+model tool calls emit no additional command block. Success finishes with status
+zero; failure or cancellation finishes nonzero. Noninteractive terminals emit
+no prompt markers, and the primary-screen scrollback design remains unchanged.
+
 Each conversation accumulates its working time from durable record
 timestamps, counting gaps between records except the idle gap immediately
 before a user message, and reconstructs the total exactly on resume. While a
@@ -1680,16 +1703,29 @@ in a saved image. The command token is colored separately from its explanation.
 Every canonical command definition carries a non-empty tip, and omitting it is
 a compile-time error. Declared aliases share their canonical command's tip.
 
-Interactive commands are immutable CLOS objects in a live layered registry.
-Help, completion, startup tips, dispatch, busy-turn routing, and terminal
-ownership all query that registry. Each command declares whether an invocation
-is held, cancels the active turn, or may execute as an argument-free inspection
-while work is active. It also declares whether it needs exclusive terminal
-ownership. =define-application-command= is a complete supported
-self-modification defining form. Exploratory installation and discard restore
-both its function binding and exact registry layer, and private replay
-reconstructs both. User initialization uses the same registration protocol and
-remains the final command layer.
+Interactive commands, model tools, and built-in local forms project as
+immutable operation objects through one live user-facing surface. Help,
+completion, startup tips, dispatch, transcript presentation, active-turn
+admission, terminal ownership, and authorization consume the corresponding
+registered metadata. Provider schemas retain authoritative model-tool metadata.
+Canonical user calls are Lisp forms such as =(help)= and
+=(fs.list :path ".")=. Slash spellings remain
+compatibility sugar and show the preferred Lisp form; completion after =(=
+offers only registered user-facing operations and never restricts arbitrary
+manually entered Lisp.
+
+A user and the provider reach the same named operation while retaining their
+separate authority. Provider calls are displayed as deterministic equivalent
+Lisp forms because no original Lisp spelling exists; the interface must not
+claim otherwise. User-entered source is displayed exactly as submitted.
+Operation policy decides whether active-turn work may run immediately or must
+wait for an agent boundary, authorization, exclusive terminal ownership, or
+serialized active-image access. =(eval-now FORM)= lets the local user force
+arbitrary evaluation immediately without bypassing those authority or terminal
+boundaries. =define-application-command= remains a complete supported
+self-modification form whose exploratory installation, discard, and private
+replay restore its function binding and exact command-registry layer. User
+initialization remains the final command layer.
 
 =/ste on= enables a global, opt-in Simple Technical English response style, and
 =/ste off= restores the ordinary style. The default is off. =/ste= without an
