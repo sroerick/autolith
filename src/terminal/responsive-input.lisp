@@ -2569,30 +2569,35 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
     (application-command--call-with-presentation
      invocation
      (lambda ()
-       (handler-bind
-           ((serious-condition
-              (lambda (condition)
-                (declare (ignore condition))
-                (setf signal-backtrace (application-safe-backtrace)))))
-         (handler-case
-             (application-handle-input application input)
-           (application-turn-cancelled (condition)
-             (error condition))
-           (application-input-failed (condition)
-             (error condition))
-           (rollback-requested (condition)
-             (error condition))
-           ((or agent-loop-error
-                conversation-invariant-error
-                active-image-corruption)
-            (condition)
-             (application-raise-fatal application condition signal-backtrace))
-           (autolith-error (condition)
-             (application-handle-expected-error application condition)
-             ':failed)
-           (serious-condition (condition)
-             (application-raise-fatal
-              application condition signal-backtrace))))))))
+       (let ((result
+               (handler-bind
+                   ((serious-condition
+                      (lambda (condition)
+                        (declare (ignore condition))
+                        (setf signal-backtrace
+                              (application-safe-backtrace)))))
+                 (handler-case
+                     (application-handle-input application input)
+                   (application-turn-cancelled (condition)
+                     (error condition))
+                   (application-input-failed (condition)
+                     (error condition))
+                   (rollback-requested (condition)
+                     (error condition))
+                   ((or agent-loop-error
+                        conversation-invariant-error
+                        active-image-corruption)
+                    (condition)
+                     (application-raise-fatal
+                      application condition signal-backtrace))
+                   (autolith-error (condition)
+                     (application-handle-expected-error application condition)
+                     ':failed)
+                   (serious-condition (condition)
+                     (application-raise-fatal
+                      application condition signal-backtrace))))))
+         (application-operation-present-command-hint application invocation)
+         result)))))
 
 (-> application-input-controller--run-later
     (application-input-controller later-entry)

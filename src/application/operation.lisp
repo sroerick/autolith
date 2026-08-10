@@ -135,6 +135,214 @@
                  (string-downcase (application-operation-name operation))))))
 
 
+;;;; -- Completion and Slash Compatibility --
+
+(-> application-operation--displayable-property-name-p (t) boolean)
+(defun application-operation--displayable-property-name-p (value)
+  "Return whether VALUE is a non-empty string safe for one completion row."
+  (and (non-empty-string-p value)
+       (every #'graphic-char-p value)))
+
+(-> application-operation--tool-property-names (tool) (values list list))
+(defun application-operation--tool-property-names (tool)
+  "Return TOOL's displayable required and optional properties in stable order."
+  (let* ((parameters (tool-parameters tool))
+         (properties (and (json-object-p parameters)
+                          (json-get parameters "properties")))
+         (required-value (and (json-object-p parameters)
+                              (json-get parameters "required")))
+         (property-names
+           (if (json-object-p properties)
+               (sort (loop for name being the hash-keys of properties
+                           when (application-operation--displayable-property-name-p
+                                 name)
+                             collect name)
+                     #'string<)
+               nil))
+         (required-order
+           (remove-if-not
+            #'stringp
+            (typecase required-value
+              (null nil)
+              (list required-value)
+              (vector (coerce required-value 'list))
+              (t nil))))
+         (required
+           (remove-if-not (lambda (name)
+                            (member name property-names :test #'string=))
+                          required-order))
+         (optional
+           (remove-if (lambda (name)
+                        (member name required :test #'string=))
+                      property-names)))
+    (values required optional)))
+
+(-> application-operation--simple-keyword-name-p (string) boolean)
+(defun application-operation--simple-keyword-name-p (name)
+  "Return whether NAME can be shown as an unescaped Lisp keyword token."
+  (every (lambda (character)
+           (or (alphanumericp character)
+               (find character "-+*/<>=!?$%_&~^." :test #'char=)))
+         name))
+
+(-> application-operation--escaped-symbol-name (string) string)
+(defun application-operation--escaped-symbol-name (name)
+  "Return NAME as a Common Lisp multiple-escape symbol token."
+  (with-output-to-string (stream)
+    (write-char #\| stream)
+    (loop for character across name
+          do
+             (when (find character "\\|" :test #'char=)
+               (write-char #\\ stream))
+             (write-char character stream))
+    (write-char #\| stream)))
+
+(-> application-operation--tool-property-keyword (string) string)
+(defun application-operation--tool-property-keyword (name)
+  "Return property NAME as one reader-safe Lisp keyword token."
+  (format nil
+          ":~A"
+          (if (application-operation--simple-keyword-name-p name)
+              name
+              (application-operation--escaped-symbol-name name))))
+
+(-> application-operation--tool-argument-fragment (string boolean) string)
+(defun application-operation--tool-argument-fragment (name required-p)
+  "Return one readable completion fragment for tool property NAME."
+  (let ((fragment
+          (format nil
+                  "~A ~A"
+                  (application-operation--tool-property-keyword name)
+                  (if (application-operation--simple-keyword-name-p name)
+                      (string-upcase name)
+                      "VALUE"))))
+    (if required-p fragment (format nil "[~A]" fragment))))
+
+(-> application-operation--tool-argument-hint (tool) (option string))
+(defun application-operation--tool-argument-hint (tool)
+  "Return TOOL's Lisp keyword argument hint, including the closing parenthesis."
+  (multiple-value-bind (required optional)
+      (application-operation--tool-property-names tool)
+    (let ((fragments
+            (append
+             (mapcar (lambda (name)
+                       (application-operation--tool-argument-fragment name t))
+                     required)
+             (mapcar (lambda (name)
+                       (application-operation--tool-argument-fragment name nil))
+                     optional))))
+      (when fragments
+        (format nil "~{~A~^ ~})" fragments)))))
+
+(-> application-operation-completion-entry (application-operation) list)
+(defun application-operation-completion-entry (operation)
+  "Return OPERATION's canonical parenthesized completion entry."
+  (let* ((name (application-operation-name operation))
+         (backend (application-operation-backend operation))
+         (argument
+           (ecase (application-operation-kind operation)
+             (:command
+              (let ((hint (application-command-argument backend)))
+                (and hint (format nil "~A)" hint))))
+             (:tool
+              (application-operation--tool-argument-hint backend)))))
+    (list :name (if argument
+                    (format nil "(~A" name)
+                    (format nil "(~A)" name))
+          :argument argument
+          :description (copy-seq (application-operation-description operation)))))
+
+(-> application-operation-completion-entries (application) list)
+(defun application-operation-completion-entries (application)
+  "Return slash command and canonical Lisp operation completions for APPLICATION."
+  (append (application-command-completion-entries)
+          (mapcar #'application-operation-completion-entry
+                  (application-operation-list application))))
+
+(-> application-operation--help-group (string list) string)
+(defun application-operation--help-group (title operations)
+  "Return one aligned TITLE section for ordered OPERATIONS."
+  (let* ((entries (mapcar #'application-operation-completion-entry operations))
+         (label-width
+           (loop for entry in entries
+                 maximize (length (terminal-completion-label entry)))))
+    (format nil
+            "~A~%~{~A~^~%~}"
+            title
+            (loop for entry in entries
+                  collect
+                  (format nil "~vA  ~A"
+                          label-width
+                          (terminal-completion-label entry)
+                          (getf entry :description))))))
+
+(-> application-operation-help (application) string)
+(defun application-operation-help (application)
+  "Return APPLICATION's canonical command and tool operation reference."
+  (let* ((operations (application-operation-list application))
+         (commands (remove-if-not
+                    (lambda (operation)
+                      (eq (application-operation-kind operation) ':command))
+                    operations))
+         (tools (remove-if-not
+                 (lambda (operation)
+                   (eq (application-operation-kind operation) ':tool))
+                 operations)))
+    (format nil
+            "Registered operations~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
+            (application-operation--help-group "Commands" commands)
+            (application-operation--help-group "Tools" tools))))
+
+(-> application-operation-connect-ui (application) application)
+(defun application-operation-connect-ui (application)
+  "Connect APPLICATION's UI to its dynamic per-session operation completions."
+  (let ((ui (and (slot-boundp application 'ui)
+                 (application-ui application))))
+    (when (typep ui 'terminal-ui)
+      (setf (terminal-ui-completion-function ui)
+            (lambda ()
+              (application-operation-completion-entries application)))))
+  application)
+
+(defmethod initialize-instance :after ((application application) &key)
+  "Connect a newly initialized APPLICATION to dynamic operation completion."
+  (application-operation-connect-ui application))
+
+(-> application-operation-command-hint-form
+    (application-command-invocation)
+    string)
+(defun application-operation-command-hint-form (invocation)
+  "Return INVOCATION's preferred canonical Lisp spelling."
+  (let* ((command (application-command-invocation-command invocation))
+         (name (application-operation--command-name command))
+         (remainder (application-command-invocation-remainder invocation)))
+    (if (non-empty-string-p remainder)
+        (format nil "(~A ~S)" name remainder)
+        (format nil "(~A)" name))))
+
+(-> application-operation-present-command-hint
+    (application application-command-invocation)
+    null)
+(defun application-operation-present-command-hint (application invocation)
+  "Present INVOCATION's canonical Lisp spelling once per command and session."
+  (let ((command (application-command-invocation-command invocation)))
+    (when command
+      (let ((name (application-operation--command-name command)))
+        (with-recursive-lock-held ((application-render-lock application))
+          (unless (member name
+                          (application-lisp-hinted-command-names application)
+                          :test #'string=)
+            (push name (application-lisp-hinted-command-names application))
+            (application-present
+             application
+             (list (terminal-span ':hint "Prefer ")
+                   (terminal-span
+                    ':code
+                    (application-operation-command-hint-form invocation))
+                   (terminal-span ':hint "."))))))))
+  nil)
+
+
 ;;;; -- Lisp Argument Boundary --
 
 (-> application-operation--proper-list-p (t) boolean)

@@ -59,7 +59,8 @@
              (json-object
               "text" (tool-string-property "Text to echo.")
               "enabled" (json-object "type" "boolean")
-              "items" (json-object "type" "array"))
+              "items" (json-object "type" "array")
+              "odd key)" (tool-string-property "Escaped completion key."))
              '("text"))))
          (terminal (make-instance 'recording-terminal :columns 100))
          (ui (terminal-ui-create :terminal terminal)))
@@ -110,6 +111,41 @@
                  (application-operation-find application "FS.LIST"))
                 ':tool)
             "operation lookup resolves dotted tool names case-insensitively")
+           (let* ((provider (terminal-ui-completion-function
+                             (application-ui application)))
+                  (entries (and provider (funcall provider)))
+                  (entry-names (mapcar (lambda (entry) (getf entry :name))
+                                       entries))
+                  (fs-entry (find-if
+                             (lambda (entry)
+                               (string= (getf entry :name) "(fs.list"))
+                             entries))
+                  (test-entry (find-if
+                               (lambda (entry)
+                                 (string= (getf entry :name)
+                                          "(test-operation.echo"))
+                               entries)))
+             (test-assert (functionp provider)
+                          "applications install a dynamic operation completion provider")
+             (test-assert (member "/help" entry-names :test #'string=)
+                          "slash compatibility completion retains canonical commands")
+             (test-assert (member "(help)" entry-names :test #'string=)
+                          "completion offers a canonical no-argument Lisp command")
+             (test-assert
+              (and fs-entry (search ":path" (or (getf fs-entry :argument) "")))
+              "completion exposes dotted tool names with Lisp keyword arguments")
+              (test-assert
+               (and test-entry
+                    (search ":|odd key)| VALUE"
+                            (or (getf test-entry :argument) "")))
+               "completion escapes punctuation and whitespace in property names")
+             (test-assert (not (member "/fs.list" entry-names :test #'string=))
+                          "slash compatibility does not invent tool spellings")
+             (test-assert
+              (not (find-if (lambda (name)
+                              (uiop:string-prefix-p "(yield.submit" name))
+                            entry-names))
+              "completion hides child-only operations"))
            (let ((command-authorizations 0)
                  (tool-authorizations 0))
              (test-call-with-function-replacements
@@ -178,16 +214,37 @@
                           (format nil "canonical operation ~S has a Lisp function binding"
                                   name)))
            (recording-terminal-reset terminal)
-           (let ((evaluation
-                   (application-lisp-evaluate
-                    "(progn (help) :finished)"
-                    :application application)))
+           (let* ((evaluation
+                    (application-lisp-evaluate
+                     "(progn (help) :finished)"
+                     :application application))
+                  (output (recording-terminal-output terminal)))
              (test-assert
               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
-                   (search "/help" (recording-terminal-output terminal)))
-              "registered command functions remain callable inside arbitrary Lisp"))
+                   (search "(help)" output)
+                   (search "(fs.list" output)
+                   (search "Slash commands remain compatibility spellings."
+                           output))
+              "nested help shows canonical command and tool operations"))
+           (recording-terminal-reset terminal)
+           (test-assert (eq (application--run-command-input application "/help")
+                            ':continue)
+                        "slash compatibility still executes the command backend")
+           (test-assert
+            (search "Prefer (help)." (recording-terminal-output terminal))
+            "the first slash spelling shows its canonical Lisp form")
+           (recording-terminal-reset terminal)
+           (application--run-command-input application "/help")
+           (test-assert
+            (not (search "Prefer (help)." (recording-terminal-output terminal)))
+            "a command's preferred Lisp spelling appears only once per session")
+           (recording-terminal-reset terminal)
+           (test-assert
+            (and (eq (application--run-command-input application "/exit") ':quit)
+                 (search "Prefer (quit)." (recording-terminal-output terminal)))
+            "slash aliases hint the canonical command operation name")
            (let ((evaluation
                    (application-lisp-evaluate "(quit)" :application application)))
              (test-assert

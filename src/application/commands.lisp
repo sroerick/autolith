@@ -1488,12 +1488,12 @@ to TERMINAL-UI-SELECT."
     (:name "/help"
      :argument nil
      :description "show this reference"
-     :tip "shows every interactive command."
+     :tip "shows every registered command and tool operation."
      :busy-behavior :inspect
      :terminal-behavior :shared)
     (application invocation)
   (declare (ignore invocation))
-  (application-present application (application-help))
+  (application-present application (application-operation-help application))
   ':continue)
 
 (define-application-command application--builtin-new-command

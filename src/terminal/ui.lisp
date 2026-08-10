@@ -449,7 +449,7 @@ emergency terminal input responsive while another thread owns presentation."
                 (concatenate 'string prompt-display wrapped-display))
                (+ (length prompt-text) wrapped-cursor))))))))
 
-;;;; -- Command Completion Suggestions --
+;;;; -- Operation Completion Suggestions --
 
 (-> terminal-ui--current-completions (terminal-ui) list)
 (defun terminal-ui--current-completions (ui)
@@ -466,20 +466,30 @@ emergency terminal input responsive while another thread owns presentation."
              :cause nil))
     completions))
 
+(-> terminal-ui--operation-completion-prefix-p (string) boolean)
+(defun terminal-ui--operation-completion-prefix-p (text)
+  "Return whether TEXT is a slash or parenthesized operation name prefix."
+  (and (non-empty-string-p text)
+       (member (char text 0) '(#\/ #\() :test #'char=)
+       (not (find-if (lambda (character)
+                       (find character '(#\Space #\Tab #\Newline #\Return)))
+                     text))
+       (or (char= (char text 0) #\/)
+           (not (find #\) text)))))
+
 (-> terminal-ui--matching-completions (terminal-ui) list)
 (defun terminal-ui--matching-completions (ui)
-  "Return UI completions whose names extend the command currently being typed."
+  "Return registered operation completions extending the current name prefix."
   (let ((text (line-editor-text (terminal-ui-editor ui)))
         (completions (terminal-ui--current-completions ui)))
     (if (and (terminal-interactive-p (terminal-ui-terminal ui))
              completions
-             (uiop:string-prefix-p "/" text)
-             (not (find #\Space text))
-             (not (find #\Newline text)))
-        (remove-if-not (lambda (entry)
-                         (uiop:string-prefix-p (string-downcase text)
-                                               (getf entry :name)))
-                       completions)
+             (terminal-ui--operation-completion-prefix-p text))
+        (remove-if-not
+         (lambda (entry)
+           (uiop:string-prefix-p (string-downcase text)
+                                 (string-downcase (getf entry :name))))
+         completions)
         nil)))
 
 (-> terminal-ui--reconcile-completions (terminal-ui) list)

@@ -44,6 +44,11 @@
     :accessor application-ui
     :type (option terminal-ui)
     :documentation "The reconnectable primary-screen terminal UI.")
+   (lisp-hinted-command-names
+    :initform nil
+    :accessor application-lisp-hinted-command-names
+    :type list
+    :documentation "Canonical slash commands already given a Lisp spelling hint.")
    (goal
     :initform nil
     :accessor application-goal
@@ -347,7 +352,7 @@
   "The styled input prompt shown on the live editor row.")
 
 (defparameter *application-placeholder*
-  "Ask Autolith anything. Type /help for commands."
+  "Ask Autolith anything. Type (help) for operations."
   "The dim hint shown on the prompt row while input is empty.")
 
 (-> application-terminal-ui-create () terminal-ui)

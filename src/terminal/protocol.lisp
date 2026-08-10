@@ -143,7 +143,7 @@
    (completion-function
     :initarg :completion-function
     :initform nil
-    :reader terminal-ui-completion-function
+    :accessor terminal-ui-completion-function
     :type (option function)
     :documentation
     "Optional function returning the current completion entries on demand.")
