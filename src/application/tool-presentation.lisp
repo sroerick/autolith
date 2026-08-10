@@ -51,6 +51,269 @@
                         ':dim
                         (format nil "… +~D more line~:P" omitted))))))))))
 
+(defvar *application-provider-call-presentation* nil
+  "The provider function call currently being rendered as one transcript entry.")
+
+(-> application--function-call-arguments (json-object) (option json-object))
+(defun application--function-call-arguments (call)
+  "Decode exactly one CALL argument object, returning NIL when it is malformed."
+  (let ((source (json-get call "arguments")))
+    (when (non-empty-string-p source)
+      (handler-case
+          (with-input-from-string (stream source)
+            (let ((yason:*parse-json-arrays-as-vectors* t)
+                  (end (gensym "END")))
+              (let ((arguments (yason:parse stream)))
+                (and (eq (peek-char t stream nil end) end)
+                     (json-object-p arguments)
+                     arguments))))
+        (error ()
+          nil)))))
+
+(defparameter *application-provider-form-source-characters* 65536
+  "The largest provider argument source decoded solely for equivalent Lisp display.")
+
+(defparameter *application-provider-form-characters* 32768
+  "The largest complete equivalent provider-call form materialized for display.")
+
+(defparameter *application-provider-form-string-characters* 24576
+  "The largest individual JSON string rendered into an equivalent provider form.")
+
+(defparameter *application-provider-form-items* 128
+  "The largest object or array rendered into an equivalent provider form.")
+
+(defparameter *application-provider-form-depth* 16
+  "The largest nested container depth rendered into an equivalent provider form.")
+
+(defparameter *application-provider-form-name-characters* 160
+  "The largest provider namespace or operation name rendered as equivalent Lisp.")
+
+(defparameter *application-provider-form-key-characters* 512
+  "The largest JSON object key rendered into an equivalent provider form.")
+
+(-> application--provider-form-string-p (t) boolean)
+(defun application--provider-form-string-p (value)
+  "Return whether VALUE is a bounded string safe in an equivalent Lisp form."
+  (and (stringp value)
+       (<= (length value) *application-provider-form-string-characters*)
+       (every (lambda (character)
+                (or (graphic-char-p character)
+                    (member character '(#\Newline #\Return #\Tab)
+                            :test #'char=)))
+              value)))
+
+(define-condition application-provider-form-limit (condition)
+  ((reason
+    :initarg :reason
+    :reader application-provider-form-limit-reason
+    :type string
+    :documentation "The bounded rendering policy which the provider call exceeded."))
+  (:report
+   (lambda (condition stream)
+     (format stream "Provider call Lisp rendering stopped: ~A"
+             (application-provider-form-limit-reason condition))))
+  (:documentation
+   "A provider call cannot be rendered as complete equivalent Lisp within bounds."))
+
+(-> application--provider-form-limit (string) null)
+(defun application--provider-form-limit (reason)
+  "Signal that complete equivalent provider-call rendering exceeded REASON."
+  (error 'application-provider-form-limit :reason reason))
+
+(-> application--provider-call-preserved-arguments
+    (json-object)
+    (option json-object))
+(defun application--provider-call-preserved-arguments (call)
+  "Decode exactly one bounded CALL argument object while preserving JSON values."
+  (let ((source (json-get call "arguments")))
+    (when (and (non-empty-string-p source)
+               (<= (length source)
+                   *application-provider-form-source-characters*))
+      (handler-case
+          (with-input-from-string (stream source)
+            (let ((yason:*parse-json-arrays-as-vectors* t)
+                  (yason:*parse-json-booleans-as-symbols* t)
+                  (yason:*parse-json-null-as-keyword* t)
+                  (yason:true t)
+                  (end (gensym "END")))
+              (let ((arguments (yason:parse stream)))
+                (and (eq (peek-char t stream nil end) end)
+                     (json-object-p arguments)
+                     arguments))))
+        (error ()
+          nil)))))
+
+(-> application--lisp-simple-symbol-name-p (string) boolean)
+(defun application--lisp-simple-symbol-name-p (name)
+  "Return whether NAME is a conservative unescaped Lisp symbol token."
+  (and (non-empty-string-p name)
+       (alpha-char-p (char name 0))
+       (every (lambda (character)
+                (or (alphanumericp character)
+                    (find character "-+*/<>=!?$%_&~^." :test #'char=)))
+              name)))
+
+(-> application--lisp-escaped-symbol-name (string) string)
+(defun application--lisp-escaped-symbol-name (name)
+  "Return NAME as a Common Lisp multiple-escape symbol token."
+  (with-output-to-string (stream)
+    (write-char #\| stream)
+    (loop for character across name
+          do
+             (when (find character "\\|" :test #'char=)
+               (write-char #\\ stream))
+             (write-char character stream))
+    (write-char #\| stream)))
+
+(-> application--lisp-symbol-token (string) string)
+(defun application--lisp-symbol-token (name)
+  "Return NAME as one reader-safe unqualified Lisp symbol token."
+  (if (application--lisp-simple-symbol-name-p name)
+      name
+      (application--lisp-escaped-symbol-name name)))
+
+(-> application--lisp-readable-atom (t) string)
+(defun application--lisp-readable-atom (value)
+  "Return atomic VALUE using deterministic readable Common Lisp syntax."
+  (with-standard-io-syntax
+    (write-to-string value :escape t :readably t)))
+
+(-> application--lisp-key-token (string) string)
+(defun application--lisp-key-token (name)
+  "Return JSON property NAME as one reader-safe Lisp keyword token."
+  (format nil ":~A" (application--lisp-symbol-token name)))
+
+(-> application--provider-form-write (stream string cons) null)
+(defun application--provider-form-write (stream text budget)
+  "Write TEXT to STREAM while consuming the remaining character BUDGET."
+  (when (> (length text) (first budget))
+    (application--provider-form-limit "the total character limit"))
+  (decf (first budget) (length text))
+  (write-string text stream)
+  nil)
+
+(-> application--json-lisp-value-write (stream t cons integer) null)
+(defun application--json-lisp-value-write (stream value budget depth)
+  "Write bounded deterministic Lisp recreating JSON VALUE to STREAM."
+  (cond
+    ((eq value t)
+     (application--provider-form-write stream "t" budget))
+    ((eq value false)
+     (application--provider-form-write stream "nil" budget))
+    ((or (null value) (eq value ':null))
+     (application--provider-form-write stream ":null" budget))
+    ((stringp value)
+     (unless (application--provider-form-string-p value)
+       (application--provider-form-limit "the individual string boundary"))
+     (application--provider-form-write
+      stream (application--lisp-readable-atom value) budget))
+    ((json-object-p value)
+     (unless (plusp depth)
+       (application--provider-form-limit "the nesting depth limit"))
+     (let ((count (hash-table-count value)))
+       (when (> count *application-provider-form-items*)
+         (application--provider-form-limit "the object item limit"))
+       (let ((keys
+               (sort (loop for key being the hash-keys of value
+                           when (stringp key)
+                             collect key)
+                     #'string<)))
+         (unless (and (= (length keys) count)
+                      (every (lambda (key)
+                               (and (<= (length key)
+                                        *application-provider-form-key-characters*)
+                                    (every #'graphic-char-p key)))
+                             keys))
+           (application--provider-form-limit "the object key boundary"))
+         (application--provider-form-write stream "(json-object" budget)
+         (dolist (key keys)
+           (application--provider-form-write stream " " budget)
+           (application--provider-form-write
+            stream (application--lisp-readable-atom key) budget)
+           (application--provider-form-write stream " " budget)
+           (application--json-lisp-value-write
+            stream (json-get value key) budget (1- depth)))
+         (application--provider-form-write stream ")" budget))))
+    ((and (vectorp value) (not (stringp value)))
+     (unless (plusp depth)
+       (application--provider-form-limit "the nesting depth limit"))
+     (when (> (length value) *application-provider-form-items*)
+       (application--provider-form-limit "the array item limit"))
+     (application--provider-form-write stream "(vector" budget)
+     (loop for item across value
+           do
+              (application--provider-form-write stream " " budget)
+              (application--json-lisp-value-write
+               stream item budget (1- depth)))
+     (application--provider-form-write stream ")" budget))
+    (t
+     (application--provider-form-write
+      stream (application--lisp-readable-atom value) budget)))
+  nil)
+
+(-> application--provider-call-equivalent-form (json-object) (option string))
+(defun application--provider-call-equivalent-form (call)
+  "Return complete bounded equivalent Lisp, or NIL when CALL cannot be represented."
+  (let ((arguments (application--provider-call-preserved-arguments call))
+        (namespace (json-get call "namespace"))
+        (name (json-get call "name")))
+    (when (and arguments
+               (non-empty-string-p namespace)
+               (non-empty-string-p name)
+               (<= (length namespace)
+                   *application-provider-form-name-characters*)
+               (<= (length name)
+                   *application-provider-form-name-characters*))
+      (handler-case
+          (let* ((canonical-name (format nil "~A.~A" namespace name))
+                 (keys
+                   (progn
+                     (when (> (hash-table-count arguments)
+                              *application-provider-form-items*)
+                       (application--provider-form-limit
+                        "the argument item limit"))
+                     (sort (loop for key being the hash-keys of arguments
+                                 when (stringp key)
+                                   collect key)
+                           #'string<)))
+                 (budget (list *application-provider-form-characters*)))
+            (unless (and (= (length keys) (hash-table-count arguments))
+                         (every (lambda (key)
+                                  (and (non-empty-string-p key)
+                                       (<= (length key)
+                                           *application-provider-form-key-characters*)
+                                       (every #'graphic-char-p key)
+                                       (string= key (string-downcase key))))
+                                keys))
+              (application--provider-form-limit
+               "the local operation key boundary"))
+            (with-output-to-string (stream)
+              (application--provider-form-write stream "(" budget)
+              (application--provider-form-write
+               stream (application--lisp-symbol-token canonical-name) budget)
+              (dolist (key keys)
+                (application--provider-form-write stream " " budget)
+                (application--provider-form-write
+                 stream (application--lisp-key-token key) budget)
+                (application--provider-form-write stream " " budget)
+                (application--json-lisp-value-write
+                 stream
+                 (json-get arguments key)
+                 budget
+                 *application-provider-form-depth*))
+              (application--provider-form-write stream ")" budget)))
+        (application-provider-form-limit ()
+          nil)
+        (error ()
+          nil)))))
+
+(-> application--provider-call-equivalent-rows (json-object) list)
+(defun application--provider-call-equivalent-rows (call)
+  "Return bounded code rows for CALL's deterministic equivalent Lisp form."
+  (let ((form (application--provider-call-equivalent-form call)))
+    (when form
+      (application--preview-rows form ':code *application-tool-call-lines*))))
+
 (-> application--tool-row-spans (application list) list)
 (defun application--tool-row-spans (application row)
   "Return one indented, sanitized, width-bounded tool transcript ROW."
@@ -70,15 +333,39 @@
 (defun application--tool-entry
     (application &key (style ':plain) (header "") detail rows)
   "Return a transcript header followed by concise styled tool ROWS."
-  (append
-   (application--transcript-entry application
-                                  :style style
-                                  :header header
-                                  :detail detail)
-   (loop for row in rows
-         append (list (terminal-span ':plain (string #\Newline)))
-         when row
-           append (application--tool-row-spans application row))))
+  (let* ((provider-context-p
+           (and *application-provider-call-presentation* t))
+         (equivalent-rows
+           (and provider-context-p
+                (application--provider-call-equivalent-rows
+                 *application-provider-call-presentation*)))
+         (equivalent-p (and equivalent-rows t))
+         (effective-header (if provider-context-p "▸ provider call" header))
+         (effective-detail
+           (cond
+             (equivalent-p
+              (if detail
+                  (format nil "equivalent Lisp · ~A" detail)
+                  "equivalent Lisp"))
+             (provider-context-p
+              (if detail
+                  (format nil "equivalent Lisp unavailable · ~A" detail)
+                  "equivalent Lisp unavailable"))
+             (t
+              detail)))
+         (effective-rows
+           (if equivalent-p
+               (append equivalent-rows (when rows (list nil)) rows)
+               rows)))
+    (append
+     (application--transcript-entry application
+                                    :style style
+                                    :header effective-header
+                                    :detail effective-detail)
+     (loop for row in effective-rows
+           append (list (terminal-span ':plain (string #\Newline)))
+           when row
+             append (application--tool-row-spans application row)))))
 
 (-> application--tool-field-rows (application list) list)
 (defun application--tool-field-rows (application fields)
@@ -134,16 +421,6 @@ Each field is a plist containing :LABEL, :VALUE, and an optional :STYLE."
   "Return one dim tool transcript section heading row."
   (list (terminal-span ':dim label)))
 
-(-> application--function-call-arguments (json-object) (option json-object))
-(defun application--function-call-arguments (call)
-  "Decode CALL's argument object, returning NIL when it is malformed."
-  (let ((source (json-get call "arguments")))
-    (when (non-empty-string-p source)
-      (handler-case
-          (let ((arguments (json-decode source)))
-            (and (json-object-p arguments) arguments))
-        (error ()
-          nil)))))
 
 (defparameter *application-tool-structure-items* 12
   "The maximum nested fields or items shown for one generic tool value.")
@@ -297,6 +574,13 @@ structural discriminator as a readable heading instead."
           application
           (application--function-call-arguments call))))
 
+(defmethod application-tool-call-entry :around
+    ((tool t) (application application) (call hash-table))
+  "Render provider CALL as equivalent Lisp around its specialized detail rows."
+  (declare (ignore tool application))
+  (let ((*application-provider-call-presentation* call))
+    (call-next-method)))
+
 (defmethod application-tool-call-entry
     ((tool tool) (application application) (call hash-table))
   "Present CALL using the generic readable argument layout."
@@ -355,10 +639,11 @@ structural discriminator as a readable heading instead."
      application
      :style ':tool
      :header (format nil "▸ ~A" (function-call-canonical-name call))
-     :rows (when value
-             (list (list (terminal-span
-                          ':code
-                          (application--presentation-value value))))))))
+     :rows (unless *application-provider-call-presentation*
+             (when value
+               (list (list (terminal-span
+                            ':code
+                            (application--presentation-value value)))))))))
 
 ;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.
 (-> application--plan-update-text (t) (option string))
@@ -488,17 +773,19 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool plan-update-tool) (application application) (call hash-table))
-  "Present plan.update as a wrapped checklist instead of argument JSON."
+  "Present plan.update as equivalent Lisp followed by its wrapped checklist."
   (declare (ignore tool))
   (let ((rows
           (application--plan-update-rows
            application (application--function-call-arguments call))))
-    (append
-     (list (terminal-span ':dim "• ")
-           (terminal-span ':strong "Updated Plan"))
-     (loop for row in rows
-           append (list (terminal-span ':plain (string #\Newline)))
-           append (application--tool-row-spans application row)))))
+    (application--tool-entry
+     application
+     :style ':tool
+     :header "▸ plan.update"
+     :rows (append
+            (list (list (terminal-span ':dim "• ")
+                        (terminal-span ':strong "Updated Plan")))
+            rows))))
 
 (-> application--task-run-arguments
     (task-run-tool json-object)

@@ -137,10 +137,14 @@
 
 ;;;; -- Completion and Slash Compatibility --
 
+(defparameter *application-operation-property-name-characters* 80
+  "The largest JSON property name displayed in one operation completion.")
+
 (-> application-operation--displayable-property-name-p (t) boolean)
 (defun application-operation--displayable-property-name-p (value)
-  "Return whether VALUE is a non-empty string safe for one completion row."
+  "Return whether VALUE is a bounded non-empty string safe for one completion row."
   (and (non-empty-string-p value)
+       (<= (length value) *application-operation-property-name-characters*)
        (every #'graphic-char-p value)))
 
 (-> application-operation--tool-property-names (tool) (values list list))
@@ -177,34 +181,10 @@
                       property-names)))
     (values required optional)))
 
-(-> application-operation--simple-keyword-name-p (string) boolean)
-(defun application-operation--simple-keyword-name-p (name)
-  "Return whether NAME can be shown as an unescaped Lisp keyword token."
-  (every (lambda (character)
-           (or (alphanumericp character)
-               (find character "-+*/<>=!?$%_&~^." :test #'char=)))
-         name))
-
-(-> application-operation--escaped-symbol-name (string) string)
-(defun application-operation--escaped-symbol-name (name)
-  "Return NAME as a Common Lisp multiple-escape symbol token."
-  (with-output-to-string (stream)
-    (write-char #\| stream)
-    (loop for character across name
-          do
-             (when (find character "\\|" :test #'char=)
-               (write-char #\\ stream))
-             (write-char character stream))
-    (write-char #\| stream)))
-
 (-> application-operation--tool-property-keyword (string) string)
 (defun application-operation--tool-property-keyword (name)
   "Return property NAME as one reader-safe Lisp keyword token."
-  (format nil
-          ":~A"
-          (if (application-operation--simple-keyword-name-p name)
-              name
-              (application-operation--escaped-symbol-name name))))
+  (application--lisp-key-token name))
 
 (-> application-operation--tool-argument-fragment (string boolean) string)
 (defun application-operation--tool-argument-fragment (name required-p)
@@ -213,7 +193,7 @@
           (format nil
                   "~A ~A"
                   (application-operation--tool-property-keyword name)
-                  (if (application-operation--simple-keyword-name-p name)
+                  (if (application--lisp-simple-symbol-name-p name)
                       (string-upcase name)
                       "VALUE"))))
     (if required-p fragment (format nil "[~A]" fragment))))

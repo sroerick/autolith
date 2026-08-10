@@ -2175,6 +2175,93 @@
                 (<= (terminal--spans-width row) 29))
               rows)
        "tool detail columns stay inside their transcript cell budget"))
+    (let ((form
+            (application--provider-call-equivalent-form
+             (json-object
+              "type" "function_call"
+              "namespace" "odd"
+              "name" "tool"
+              "arguments"
+              "{\"z\":[true,false,null],\"a key)\":{\"b\":true,\"a\":\"x\"}}"))))
+      (test-assert
+       (string=
+        form
+        "(odd.tool :|a key)| (json-object \"a\" \"x\" \"b\" t) :z (vector t nil :null))")
+       "provider calls render deterministic readable Lisp with distinct JSON values"))
+    (let ((form
+            (application--provider-call-equivalent-form
+             (json-object
+              "type" "function_call"
+              "namespace" "1"
+              "name" "2"
+              "arguments" "{\"path\":\"x\"}"))))
+      (test-assert (string= form "(|1.2| :path \"x\")")
+                   "numeric provider names are escaped into a Lisp symbol token"))
+    (let* ((call
+             (json-object
+              "type" "function_call"
+              "namespace" "fs"
+              "name" "read"
+              "arguments" "{\"path\":\"x\"} trailing"))
+           (wide-application
+             (application-tests--ui-application
+              :columns 80
+              :compact-view-p nil))
+           (entry (response-item-entry wide-application call))
+           (text (markdown-tests--row-text entry)))
+      (test-assert (null (application--provider-call-equivalent-form call))
+                   "trailing JSON data cannot be presented as equivalent Lisp")
+      (test-assert
+       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+            (search "equivalent Lisp unavailable" text)
+            (not (search "(fs.read" text)))
+       "unrepresentable provider calls receive an explicit bounded fallback"))
+    (let ((*application-provider-form-characters* 10))
+      (test-assert
+       (null
+        (application--provider-call-equivalent-form
+         (json-object
+          "type" "function_call"
+          "namespace" "fs"
+          "name" "list"
+          "arguments" "{\"path\":\"a path beyond the bound\"}")))
+       "equivalent provider forms stop before exceeding their output bound"))
+    (let* ((form
+             (application--provider-call-equivalent-form
+              (json-object
+               "type" "function_call"
+               "namespace" "x|y"
+               "name" "z\\q"
+               "arguments" "{}"))))
+      (multiple-value-bind (expression end)
+          (read-from-string form)
+        (test-assert
+         (and (= end (length form))
+              (consp expression)
+              (symbolp (first expression))
+              (string= (symbol-name (first expression)) "x|y.z\\q"))
+         "hostile provider names remain one escaped readable function symbol")))
+    (labels ((render (source)
+               "Render SOURCE as one ordinary fs.list provider call."
+               (application--provider-call-equivalent-form
+                (json-object
+                 "type" "function_call"
+                 "namespace" "fs"
+                 "name" "list"
+                 "arguments" source))))
+      (test-assert
+       (and (let ((*application-provider-form-source-characters* 1))
+              (null (render "{}")))
+            (let ((*application-provider-form-items* 1))
+              (null (render "{\"a\":1,\"b\":2}")))
+            (let ((*application-provider-form-depth* 1))
+              (null (render "{\"value\":{\"a\":{\"b\":1}}}")))
+            (let ((*application-provider-form-string-characters* 3))
+              (null (render "{\"path\":\"four\"}")))
+            (let ((*application-provider-form-key-characters* 2))
+              (null (render "{\"path\":\"x\"}")))
+            (null (render "{\"x\\ny\":1}")))
+       "provider forms enforce source, item, depth, string, and key boundaries"))
     (let* ((source (format nil "~{form-line-~D~^~%~}"
                            (loop for index from 1 to 10 collect index)))
            (entry (response-item-entry
@@ -2188,8 +2275,11 @@
                                   "form" source
                                   "restart" "CONTINUE")))))
            (text (markdown-tests--row-text entry)))
-      (test-assert (equal (first entry) (terminal-span :tool "▸ self.eval"))
-                   "tool requests present a styled tool header")
+      (test-assert
+       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+            (find (terminal-span :dim "  equivalent Lisp") entry :test #'equal)
+            (search "(self.eval :form" text))
+       "provider tool requests are honestly labelled as equivalent Lisp")
       (test-assert (and (search "form-line-1" text)
                         (search "… +2 more lines" text))
                    "self.eval previews only the first configured source lines")
@@ -2211,11 +2301,12 @@
                     "arguments" (json-encode
                                  (json-object "form" "(+ 1 2)")))))
            (text (markdown-tests--row-text entry)))
-      (test-assert (and (equal (first entry)
-                               (terminal-span :tool "▸ lisp.eval"))
-                        (search "(+ 1 2)" text)
-                        (not (search "{\"form\"" text)))
-                   "lisp.eval calls show bounded Lisp source instead of JSON"))
+      (test-assert
+       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+            (find (terminal-span :dim "  equivalent Lisp") entry :test #'equal)
+            (search "(lisp.eval :form \"(+ 1 2)\")" text)
+            (not (search "{\"form\"" text)))
+       "lisp.eval calls show deterministic equivalent Lisp instead of JSON"))
     (let* ((entry (response-item-entry
                    application
                    (json-object
@@ -2713,7 +2804,8 @@
                    "text" "Finish the release")))))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ resource.edit"))
+       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+            (search "(resource.edit" text)
             (search "replace lines 4-6" text)
             (search "update agenda item agenda-7" text)
             (search "(defun example" text)
@@ -2787,10 +2879,11 @@
                              "status" "pending")))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (equal (subseq entry 0 2)
-              (list (terminal-span :dim "• ")
-                    (terminal-span :strong "Updated Plan")))
-       "plan.update uses the Codex-style updated-plan heading")
+       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+            (search "equivalent Lisp" text)
+            (search "(plan.update" text)
+            (search "Updated Plan" text))
+       "plan.update keeps its checklist beneath the equivalent Lisp call")
       (test-assert
        (and (search "└ Adapt the implementation." text)
             (search "✔ Inspect existing behavior" text)
@@ -2921,17 +3014,18 @@
                     (markdown-tests--row-text compact-entry))
                   (expanded-text
                     (markdown-tests--row-text expanded-entry)))
-             (test-assert
-              (and (equal (first compact-entry)
-                          (terminal-span :tool "▸ task.run"))
-                   (search "Shared read-only background" compact-text)
-                   (search "alpha" compact-text)
-                   (search "beta" compact-text)
-                   (search "librarian" compact-text)
-                   (search "scout" compact-text)
-                   (search "detached" compact-text)
-                   (search "Alpha has one item-specific" compact-text))
-              "compact task.run calls retain shared context and child identity")
+              (test-assert
+               (and (equal (first compact-entry)
+                           (terminal-span :tool "▸ provider call"))
+                    (search "(task.run" compact-text)
+                    (search "Shared read-only background" compact-text)
+                    (search "alpha" compact-text)
+                    (search "beta" compact-text)
+                    (search "librarian" compact-text)
+                    (search "scout" compact-text)
+                    (search "detached" compact-text)
+                    (search "Alpha has one item-specific" compact-text))
+               "compact task.run calls retain shared context and child identity")
              (test-assert
               (and (not (search "EXPANDED-TAIL" compact-text))
                    (< (count #\Newline compact-text)
@@ -3763,10 +3857,11 @@
                          "◇ reasoning summary"
                          output)
                         1)
-                     (search "<thought>" output)
-                     (search "▸ self.eval" output)
-                     (null (terminal-ui-preview-rows
-                            (application-ui application))))
+                       (search "<thought>" output)
+                       (search "▸ provider call" output)
+                       (search "(self.eval :form" output)
+                       (null (terminal-ui-preview-rows
+                              (application-ui application))))
                 "tool-only provider steps finalize one trace before the tool call")))
            (conversation-append-tool-result
             conversation
