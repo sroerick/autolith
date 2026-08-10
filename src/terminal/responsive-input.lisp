@@ -396,7 +396,7 @@ second reports whether shutdown was prepared."
     ((or string user-message-input))
     (option (or string user-message-input)))
 (defun application--message-input (input)
-  "Return INPUT's model message, or NIL when it is empty or a slash command."
+  "Return INPUT's model message, or NIL for empty, Lisp, or slash input."
   (let ((text (user-message-input-text input)))
     (cond
       ((and (not (non-empty-string-p text))
@@ -409,6 +409,8 @@ second reports whether shutdown was prepared."
           (user-message-input-create
            :text (subseq text 1)
            :image-pathnames (user-message-input-image-pathnames input)))))
+      ((terminal-ui--lisp-draft-p text)
+       nil)
       ((uiop:string-prefix-p "/" text)
        nil)
       (t
@@ -416,9 +418,9 @@ second reports whether shutdown was prepared."
 
 (-> application-input-controller--follow-up-work-p (t) boolean)
 (defun application-input-controller--follow-up-work-p (work)
-  "Return true when WORK is an editable queued message or command."
+  "Return true when WORK is an editable queued message, command, or Lisp form."
   (and (consp work)
-       (member (first work) '(:message :command) :test #'eq)
+       (member (first work) '(:message :command :lisp) :test #'eq)
        (consp (rest work))
        (typep (second work) '(or string user-message-input))))
 
@@ -430,12 +432,42 @@ second reports whether shutdown was prepared."
   (let ((message (application--message-input input))
         (text (user-message-input-text input)))
     (cond
+      ((terminal-ui--lisp-draft-p text)
+       (list ':lisp (copy-seq text)))
       (message
        (list ':message message))
       ((non-empty-string-p text)
        (list ':command (copy-seq text)))
       (t
        nil))))
+
+(-> application-input-controller--defer-lisp-submission-p
+    (application-input-controller (or string user-message-input))
+    boolean)
+(defun application-input-controller--defer-lisp-submission-p (controller input)
+  "Continue incomplete Lisp INPUT or reject its image attachments in place."
+  (let ((text (user-message-input-text input)))
+    (when (terminal-ui--lisp-draft-p text)
+      (let* ((application
+               (application-input-controller-application controller))
+             (ui (application-ui application)))
+        (cond
+          ((user-message-input-image-pathnames input)
+           (application-present
+            application
+            (list
+             (terminal-span ':failure
+                            "Local Lisp input cannot include image attachments.")))
+           (terminal-ui-set-input ui input)
+           t)
+          ((application-lisp-input-incomplete-p text)
+           (terminal-ui-set-input
+            ui
+            (application-lisp-input-with-text
+             input (concatenate 'string text (string #\Newline))))
+           t)
+          (t
+           nil))))))
 
 (-> application-input-controller--insert-work-at (list integer list) list)
 (defun application-input-controller--insert-work-at (work-items index work)
@@ -525,7 +557,7 @@ The caller must hold CONTROLLER's lock."
 (defun application-input-controller--restore-work-item (form)
   "Return one validated in-memory work item restored from durable FORM."
   (when (and (listp form)
-             (member (first form) '(:message :command) :test #'eq))
+             (member (first form) '(:message :command :lisp) :test #'eq))
     (let ((input (application-input--restore-pending-form (second form))))
       (when input
         (list (first form) input)))))
@@ -1368,6 +1400,33 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (application-input-controller--present-scheduled-command controller input))
   nil)
 
+(-> application-input-controller--present-scheduled-lisp
+    (application-input-controller string)
+    null)
+(defun application-input-controller--present-scheduled-lisp (controller source)
+  "Present the active-turn scheduling result for explicit local Lisp SOURCE."
+  (application-present
+   (application-input-controller-application controller)
+   (list
+    (terminal-span ':hint
+                   "∙ local Lisp queued until the current response finishes")
+    (terminal-span ':plain (string #\Newline))
+    (terminal-span ':dim
+                   (format nil "  ~A"
+                           (text-cell-prefix
+                            (sanitize-text source :single-line-p t)
+                            72)))))
+  nil)
+
+(-> application-input-controller--schedule-lisp
+    (application-input-controller string)
+    null)
+(defun application-input-controller--schedule-lisp (controller source)
+  "Queue local Lisp SOURCE to run at the first idle opportunity."
+  (when (application-input-controller--enqueue controller ':lisp source)
+    (application-input-controller--present-scheduled-lisp controller source))
+  nil)
+
 (-> application-input-controller--run-responsive-command
     (application-input-controller application-command
      application-command-invocation)
@@ -1397,22 +1456,27 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 
 Blank input keeps the recalled work selected. Active messages commit to the
 current turn's steering queue before its completion can race. Active commands
-commit their busy policy before the recalled work is removed."
+reuse their busy policy, while arbitrary local Lisp waits for the idle boundary."
   (let* ((message (application--message-input input))
          (text (user-message-input-text input))
+         (lisp-input-p (terminal-ui--lisp-draft-p text))
          (work (application-input-controller--input-work input))
          (invocation
            (and (null message)
+                (not lisp-input-p)
                 (non-empty-string-p text)
                 (application-command-invocation-parse text)))
          (command
            (and invocation
                 (application-command-invocation-command invocation)))
          (busy-action
-           (and invocation
-                (if command
-                    (application-command-busy-action command invocation)
-                    ':hold)))
+           (cond
+             (lisp-input-p
+              ':hold)
+             (invocation
+              (if command
+                  (application-command-busy-action command invocation)
+                  ':hold))))
          (handled-p nil)
          (changed-p nil)
          (post-action nil))
@@ -1466,7 +1530,9 @@ commit their busy policy before the recalled work is removed."
                  ':quit)
          (application-input-controller--request-exit controller ':quit)))
       (:hold
-       (application-input-controller--present-scheduled-command controller text)))
+       (if lisp-input-p
+           (application-input-controller--present-scheduled-lisp controller text)
+           (application-input-controller--present-scheduled-command controller text))))
     handled-p))
 
 (-> application-input-controller--vault-command-p
@@ -1500,7 +1566,7 @@ commit their busy policy before the recalled work is removed."
     null)
 (defun application-input-controller--handle-submission
     (controller input &key steer-p)
-  "Route submitted INPUT to model work, command work, or busy-command policy."
+  "Route submitted INPUT to local Lisp, model work, or command policy."
   (unless (application-input-controller--submission-storage-ready-p
            controller input)
     (return-from application-input-controller--handle-submission nil))
@@ -1509,6 +1575,10 @@ commit their busy policy before the recalled work is removed."
   (let ((message (application--message-input input))
         (text (user-message-input-text input)))
     (cond
+      ((terminal-ui--lisp-draft-p text)
+       (if (application-input-controller-busy-p controller)
+           (application-input-controller--schedule-lisp controller text)
+           (application-input-controller--enqueue controller ':lisp text)))
       (message
        (if steer-p
            (application-input-controller--enqueue-steering controller message)
@@ -1718,16 +1788,23 @@ commit their busy policy before the recalled work is removed."
                     (application-input-controller--clear-follow-up-edit controller))
                    (:submit
                     (unless
-                        (application-input-controller--handle-recalled-submission
+                        (application-input-controller--defer-lisp-submission-p
                          controller payload)
-                      (application-input-controller--handle-submission
-                       controller
-                       payload
-                       :steer-p
-                       (application-input-controller-turn-active-p controller))))
+                      (unless
+                          (application-input-controller--handle-recalled-submission
+                           controller payload)
+                        (application-input-controller--handle-submission
+                         controller
+                         payload
+                         :steer-p
+                         (application-input-controller-turn-active-p
+                          controller)))))
                    (:queue
-                    (application-input-controller--handle-queue-submission
-                     controller payload))
+                    (unless
+                        (application-input-controller--defer-lisp-submission-p
+                         controller payload)
+                      (application-input-controller--handle-queue-submission
+                       controller payload)))
                    (:edit-queue
                     (application-input-controller--recall-follow-up controller))
                    (:cycle-queue
@@ -2563,11 +2640,11 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
     (application-input-controller)
     null)
 (defun application-input-controller--defer-after-rate-limit (controller)
-  "Move remaining queued work into durable deferred inputs after a 429.
+  "Defer provider-dependent queued work after a 429.
 
-A failed rate-limited turn must not immediately submit the next follow-up.
-Queued messages, commands, and unconsumed steering become later entries at the
-provider reset deadline, or a five-minute fallback when no reset is known."
+Messages, commands, and unconsumed steering move to the provider reset deadline,
+or a five-minute fallback when no reset is known. Local Lisp stays runnable at
+the next application boundary because it does not depend on the provider."
   (let* ((application (application-input-controller-application controller))
          (configuration (application-configuration application))
          (provider (application-provider application))
@@ -2585,21 +2662,31 @@ provider reset deadline, or a five-minute fallback when no reset is known."
                               "5 minute retry"))
             (pending nil))
         (with-lock-held ((application-input-controller-lock controller))
-          (setf pending
-                (append
-                 (mapcar
-                  (lambda (entry)
-                    (list ':message (agent-steering-input-content entry)))
-                  (application-input-controller-steering-in-flight-items
-                   controller))
-                 (mapcar (lambda (input)
-                           (list ':message input))
-                         (application-input-controller-steering-items controller))
-                 (application-input-controller-work-items controller))
-                (application-input-controller-steering-in-flight-items controller)
-                nil
-                (application-input-controller-steering-items controller) nil
-                (application-input-controller-work-items controller) nil))
+          (let* ((queued-work
+                   (application-input-controller-work-items controller))
+                 (local-work
+                   (remove-if-not (lambda (work)
+                                    (eq (first work) ':lisp))
+                                  queued-work))
+                 (provider-work
+                   (remove-if (lambda (work)
+                                (eq (first work) ':lisp))
+                              queued-work)))
+            (setf pending
+                  (append
+                   (mapcar
+                    (lambda (entry)
+                      (list ':message (agent-steering-input-content entry)))
+                    (application-input-controller-steering-in-flight-items
+                     controller))
+                   (mapcar (lambda (input)
+                             (list ':message input))
+                           (application-input-controller-steering-items controller))
+                   provider-work)
+                  (application-input-controller-steering-in-flight-items controller)
+                  nil
+                  (application-input-controller-steering-items controller) nil
+                  (application-input-controller-work-items controller) local-work)))
         (dolist (item pending)
           (let ((input
                   (case (first item)
@@ -2681,6 +2768,11 @@ provider reset deadline, or a five-minute fallback when no reset is known."
         :tool-restriction-p t
         :goal-continuations-p nil
         :fatal-agent-loop-errors-p nil))
+      (:lisp
+       (application-input-controller-call-with-reader-paused
+        controller
+        (lambda ()
+          (application-run-lisp-input application (second work)))))
       (:command
        (let* ((input (second work))
               (invocation (application-command-invocation-parse input))
