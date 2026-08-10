@@ -246,6 +246,17 @@ the canonical tool name and show a deterministic syntax-highlighted Lisp form
 without claiming that the provider literally sent it, followed by the ordinary
 rich result or failure. User-entered Lisp is shown exactly as submitted.
 
+Executed local Lisp and registered interactive commands stay outside ordinary
+provider message history. For each completed outcome, Autolith attempts to append
+a durable user-operation record to the conversation's append-only file. A
+successful record has individually bounded submitted source and rendered result
+fields. A separate bounded live projection supplies the newest records as
+untrusted request-local evidence before every normal provider request, repeats
+them until count or character bounds evict them, and omits them from compaction
+side requests. If the append fails, no record or later evidence exists. A
+completed local Lisp result is presented before that attempt, so the structured
+persistence failure propagates without hiding already-applied side effects.
+
 During an active turn, registered nonconflicting operations may run immediately.
 Work needing an agent boundary, exclusive terminal ownership, authorization, or
 serialized active-image mutation waits for the idle boundary. Arbitrary Lisp
@@ -831,23 +842,34 @@ Interactive commands use the same live extension model:
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
     (:name "/my-version"
-     :argument nil
-     :description "show my local integration version"
+     :argument "[LABEL]"
+     :description "show a labeled local integration version"
      :tip "shows the version supplied by init.lisp."
      :busy-behavior :inspect
-     :terminal-behavior :shared)
-    (application invocation)
-  (declare (ignore invocation))
-  (application-present application "integration 3")
+     :terminal-behavior :shared
+     :call-lambda-list (&optional (label "integration"))
+     :slash-argument-mode :first)
+    (application &optional (label "integration"))
+  (application-present application (format nil "~A 3" label))
   :continue)
 #+END_SRC
 
 The stable Lisp definition name identifies revisions even when slash names or
-aliases change. =:inspect= permits only an argument-free invocation while a
-turn is active; =:execute= runs immediately with or without arguments,
-=:hold= waits for the main application thread, and =:cancel= requests shutdown.
-Terminal behavior is =:shared=, =:exclusive=, or
-=:exclusive-without-arguments=. Every command requires a nonblank tip. The
+aliases change. A callable command declares an ordinary Common Lisp
+=:call-lambda-list= and how compatibility slash text maps into it with
+=:slash-argument-mode=. Programmatic calls outside interactive dispatch retain
+ordinary arity errors and never acquire arguments from the terminal. Explicit
+user Lisp and slash dispatch are interactive: an arity condition enters the
+styled restart debugger, where =supply-arguments= accepts one Lisp form whose
+multiple values become replacement arguments and abort returns to the prompt.
+Other local Lisp conditions use the same debugger and its live restarts.
+
+=:inspect= permits only an argument-free invocation while a turn is active;
+=:execute= runs immediately with or without arguments, =:hold= waits for the main
+application thread, and =:cancel= requests shutdown. Terminal behavior is
+=:shared=, =:exclusive=, or =:exclusive-without-arguments=. Every command
+requires a nonblank tip. Startup selects from the canonical commands and renders
+the Lisp call, such as =(my-version)=, rather than its slash spelling. The
 defining form participates in =self.redefine=, =self.discard=, private replay,
 dynamic completion, help, and startup tips.
 

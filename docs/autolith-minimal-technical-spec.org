@@ -294,6 +294,29 @@ contributors recompute their output for every request. Non-model diagnostics
 retain contributor identifiers, selection, omission, and bounded failure
 reports so the mechanism remains observable.
 
+One mandatory state-bound contributor projects recent direct user operations.
+After an explicit local Lisp evaluation or resolved registered interactive
+command reaches a terminal outcome, Autolith attempts to append a
+=:user-operation= record to that conversation with sequence, time, =:lisp= or
+=:command= kind, bounded submitted source, =:ok=, =:aborted=, or =:error=
+status, and bounded rendered result. A successful append is durable but never
+becomes an ordinary provider input item, model conversation history, memory
+candidate, or compaction input. If the append fails, no user-operation record or
+later request-local evidence exists for that outcome and the structured
+persistence failure propagates. Rejected unknown slash text is not an executed
+registered command and is not recorded as a user operation.
+
+Source and result retention default to 4,000 characters each with an explicit
+truncation marker. Replay permits bounded unknown keyword fields for forward
+compatibility, requires every keyword field name to be unique, rejects malformed
+or circular records, and caps either text field at 65,536 characters. The live
+projection retains at most 16 records and 32,000 aggregate source and result
+characters, evicting the oldest records first. Before every normal provider
+request it renders newest-first untrusted evidence under a 1,900-character
+default additionally capped by the 2,000-character contribution protocol. The
+same evidence repeats until eviction, does not mutate provider history, and is
+omitted from compaction side requests.
+
 The same registration API is available to tracked code, private
 self-modifications, and the user initialization file. A failing contributor is
 reported and omitted without preventing unrelated provider work.
@@ -1641,9 +1664,17 @@ Input whose first character is =(= is explicit local Common Lisp evaluated in
 the active image without provider interpretation. The prompt changes from =>=
 to a red =*= while such input is composed, ColorLisp highlights the complete
 multiline draft, and evaluation presents output, zero or more values,
-conditions, and live restarts. Ordinary prose remains convenient model input.
-Image attachments remain available for model messages and are rejected on
-explicit local Lisp.
+conditions, and live restarts. A non-control serious condition enters a styled
+local restart debugger showing the condition and selectable live restarts.
+The supported value-taking restarts =supply-arguments=, =use-value=, and
+=store-value= accept one Lisp form whose multiple values become restart
+arguments; declining selection invokes =abort-user-operation=. Autolith
+control and corruption conditions remain outside this user boundary. Ordinary
+prose remains convenient model input. Image attachments remain available for
+model messages and are rejected on explicit local Lisp. A completed evaluation
+result is presented before its attempted durable user-operation append, so a
+persistence failure cannot conceal completed side effects. The failure leaves no
+user-operation record or later request-local evidence and still propagates.
 
 The bounded live region orders the optional compaction indicator and animated
 =READ / EVAL / PRINT / LOOP= modeline first; local Lisp and child-agent activity
@@ -1729,6 +1760,17 @@ Canonical user calls are Lisp forms such as =(help)= and
 compatibility sugar and show the preferred Lisp form; completion after =(=
 offers only registered user-facing operations and never restricts arbitrary
 manually entered Lisp.
+
+A callable registered command declares an ordinary Common Lisp call lambda list
+and a compatibility slash-argument mapping. Programmatic calls outside
+interactive dispatch preserve ordinary arity semantics and do not acquire
+arguments from the terminal. Explicit user Lisp and slash dispatch are
+interactive: they establish a =supply-arguments= restart around the semantic
+call, and the styled debugger may invoke it with values read as Lisp or abort
+safely to the prompt. Legacy invocation-object handlers remain supported for
+compatibility. When a registered command runs inside one explicit local Lisp
+form, nested command recording is suppressed and the enclosing =:lisp= outcome
+is the sole user-operation record.
 
 A user and the provider reach the same named operation while retaining their
 separate authority. Provider calls are displayed as deterministic equivalent

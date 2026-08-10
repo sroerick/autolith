@@ -386,43 +386,67 @@ a user-local init.lisp change, or a private image commit.
 ** Lisp-first unified interaction
 
 - Problem: chat messages, slash commands, local Lisp, and model tools were
-  separate terminal languages. Explicit Lisp needed model reinterpretation,
-  provider calls exposed tool syntax unlike user calls, safe local work waited
+  separate terminal languages. Startup tips exposed compatibility slash syntax,
+  commands received fixed invocation objects instead of ordinary Lisp arguments,
+  and local conditions had no integrated restart selector. Direct local side
+  effects also disappeared from later model context because they correctly
+  bypassed ordinary provider message history. Safe local work waited
   unnecessarily during active turns, activity rows appeared above the animated
   modeline, and terminal scrollback had no semantic prompt boundaries.
 - Behavior: parenthesized input is direct active-image Lisp with a red =*= prompt,
   ColorLisp draft highlighting, multiline reading, printed output, multiple
-  values, conditions, and restarts. Commands and tools project through one
-  canonical Lisp operation surface with restricted completion and slash
-  compatibility hints. Provider calls keep their canonical tool names and render
-  deterministic syntax-highlighted Lisp without claiming literal source. File
-  changes number removed and added rows whenever exact original and resulting
-  coordinates are known. Active-turn policy runs nonconflicting local operations
-  immediately, keeps modal, authorized, or serialized work at safe boundaries,
-  and provides =(eval-now FORM)= as a local-only scheduling override.
-  The live region keeps the animated status row above local, child, provider,
-  notice, queued, and prompt rows. Interactive terminals emit exactly one OSC
-  133 =A=/=B=/=C=/=D;STATUS= block per foreground interaction and none for
-  repaint or internal work.
+  values, conditions, and a styled selector for live restarts. Commands and tools
+  project through one canonical Lisp operation surface with restricted completion
+  and slash compatibility hints; startup tips render canonical Lisp calls.
+  Callable commands declare ordinary Common Lisp lambda lists and explicit slash
+  argument mappings. Noninteractive calls preserve ordinary arity errors, while
+  interactive calls can supply replacement arguments through the restart
+  debugger or abort safely to the prompt. Provider calls keep their canonical
+  tool names and render deterministic syntax-highlighted Lisp without claiming
+  literal source. File changes number removed and added rows whenever exact
+  original and resulting coordinates are known.
+
+  Explicit Lisp and resolved registered interactive commands attempt to append
+  durable outcome records with bounded source and result fields outside ordinary
+  provider history. Successful records reappear as untrusted request-local
+  evidence on every normal provider request until count or character eviction,
+  and never enter compaction side requests. Nested command calls inside one
+  explicit Lisp form do not duplicate evidence. If an append fails, no record or
+  later evidence exists. A completed Lisp result is presented before that attempt
+  so the persistence failure cannot hide already-applied side effects.
+
+  Active-turn policy runs nonconflicting local operations immediately, keeps
+  modal, authorized, or serialized work at safe boundaries, and provides
+  =(eval-now FORM)= as a local-only scheduling override. The live region keeps the
+  animated status row above local, child, provider, notice, queued, and prompt
+  rows. Interactive terminals emit exactly one OSC 133 =A=/=B=/=C=/=D;STATUS=
+  block per foreground interaction and none for repaint or internal work.
 - Scope and location: tracked project work in =src/application/command.lisp=,
-  =src/application/operation.lisp=, =src/application/lisp-machine.lisp=,
+  =src/application/commands.lisp=, =src/application/operation.lisp=,
+  =src/application/lisp-machine.lisp=,
+  =src/application/user-operation-context.lisp=, =src/conversation/store.lisp=,
   =src/terminal/protocol.lisp=, =src/terminal/syntax-highlighting.lisp=,
   =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
   =src/startup/main.lisp=, provider and tool presentation, focused regressions,
   the guide, architecture, and specification. Implementation commits are
-  =2cb9e51= through =9d5d2d7=.
-- Verification: direct evaluation, operation discovery and dispatch, transcript
-  equivalence, active-turn admission, live-row ordering, exact OSC sequences,
-  reader ordering, failure, cancellation, quit status, repaint nonduplication,
-  noninteractive silence, and shutdown closure pass focused tests. Source and
-  test delimiter checks and =git diff --check= pass. Three OSC reviews found and
-  verified fixes for both reader-order races; the final review found no blocking
-  or important defect. The complete repository check was intentionally not run.
-  A known unrelated repeated Shift-Tab test race remains outside this adaptation.
+  =2cb9e51= through =1910b1a=.
+- Verification: direct evaluation, canonical startup tips, operation discovery
+  and dispatch, ordinary noninteractive arity, interactive argument recovery,
+  styled restart selection and abort, transcript equivalence, active-turn
+  admission, live-row ordering, exact OSC sequences, reader ordering, file-change
+  numbering, and provider call rendering pass focused tests. User-operation
+  persistence, forward-compatible replay, malformed and circular rejection,
+  count and character eviction, request bounds, compaction exclusion, successful,
+  aborted, failed, quit, responsive, conversation-switching, nested-suppression,
+  and retention-failure paths also pass focused tests. Source and test delimiter
+  checks and =git diff --check= pass. Reviews of the final capture slice found no
+  findings. The complete repository check was intentionally not run. A known
+  unrelated repeated Shift-Tab test race remains outside this adaptation.
 - Removal condition: a replacement interaction model provides the same direct
-  Lisp semantics, unified authority-aware operation surface, honest transcript,
-  concurrent admission policy, ordered live presentation, and semantic prompt
-  boundaries with less project-specific code.
+  Lisp semantics, ordinary callable command protocol, integrated restart
+  debugger, bounded local-operation continuity, honest transcript, concurrent
+  admission policy, ordered live presentation, and semantic prompt boundaries
+  with less project-specific code.
 
 * Candidates
 
