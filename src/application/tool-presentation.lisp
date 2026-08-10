@@ -71,29 +71,29 @@
           nil)))))
 
 (defparameter *application-provider-form-source-characters* 65536
-  "The largest provider argument source decoded solely for equivalent Lisp display.")
+  "The largest provider argument source decoded solely for Lisp display.")
 
 (defparameter *application-provider-form-characters* 32768
-  "The largest complete equivalent provider-call form materialized for display.")
+  "The largest complete provider-call Lisp form materialized for display.")
 
 (defparameter *application-provider-form-string-characters* 24576
-  "The largest individual JSON string rendered into an equivalent provider form.")
+  "The largest individual JSON string rendered into a provider-call Lisp form.")
 
 (defparameter *application-provider-form-items* 128
-  "The largest object or array rendered into an equivalent provider form.")
+  "The largest object or array rendered into a provider-call Lisp form.")
 
 (defparameter *application-provider-form-depth* 16
-  "The largest nested container depth rendered into an equivalent provider form.")
+  "The largest nested container depth rendered into a provider-call Lisp form.")
 
 (defparameter *application-provider-form-name-characters* 160
-  "The largest provider namespace or operation name rendered as equivalent Lisp.")
+  "The largest provider namespace or operation name rendered as Lisp.")
 
 (defparameter *application-provider-form-key-characters* 512
-  "The largest JSON object key rendered into an equivalent provider form.")
+  "The largest JSON object key rendered into a provider-call Lisp form.")
 
 (-> application--provider-form-string-p (t) boolean)
 (defun application--provider-form-string-p (value)
-  "Return whether VALUE is a bounded string safe in an equivalent Lisp form."
+  "Return whether VALUE is a bounded string safe in a provider-call Lisp form."
   (and (stringp value)
        (<= (length value) *application-provider-form-string-characters*)
        (every (lambda (character)
@@ -113,11 +113,11 @@
      (format stream "Provider call Lisp rendering stopped: ~A"
              (application-provider-form-limit-reason condition))))
   (:documentation
-   "A provider call cannot be rendered as complete equivalent Lisp within bounds."))
+   "A provider call cannot be rendered as complete Lisp within bounds."))
 
 (-> application--provider-form-limit (string) null)
 (defun application--provider-form-limit (reason)
-  "Signal that complete equivalent provider-call rendering exceeded REASON."
+  "Signal that complete provider-call Lisp rendering exceeded REASON."
   (error 'application-provider-form-limit :reason reason))
 
 (-> application--provider-call-preserved-arguments
@@ -253,7 +253,7 @@
 
 (-> application--provider-call-equivalent-form (json-object) (option string))
 (defun application--provider-call-equivalent-form (call)
-  "Return complete bounded equivalent Lisp, or NIL when CALL cannot be represented."
+  "Return a complete bounded Lisp form, or NIL when CALL cannot be represented."
   (let ((arguments (application--provider-call-preserved-arguments call))
         (namespace (json-get call "namespace"))
         (name (json-get call "name")))
@@ -309,10 +309,46 @@
 
 (-> application--provider-call-equivalent-rows (json-object) list)
 (defun application--provider-call-equivalent-rows (call)
-  "Return bounded code rows for CALL's deterministic equivalent Lisp form."
+  "Return bounded syntax-highlighted rows for CALL's deterministic Lisp form."
   (let ((form (application--provider-call-equivalent-form call)))
     (when form
-      (application--preview-rows form ':code *application-tool-call-lines*))))
+      (let ((highlighted
+              (and *application-common-lisp-language*
+                   (syntax--highlight-lines
+                    form :language *application-common-lisp-language*))))
+        (if highlighted
+            (let* ((visible-count
+                     (min *application-tool-call-lines* (length highlighted)))
+                   (omitted (- (length highlighted) visible-count)))
+              (append
+               (loop for index below visible-count
+                     collect (aref highlighted index))
+               (when (plusp omitted)
+                 (list
+                  (list
+                   (terminal-span
+                    ':dim
+                    (format nil "… +~D more line~:P" omitted)))))))
+            (application--preview-rows
+             form ':code *application-tool-call-lines*))))))
+
+(-> application--tool-header (application string) string)
+(defun application--tool-header (application header)
+  "Return HEADER sanitized and clipped to APPLICATION's transcript width."
+  (let* ((safe-header (sanitize-text header :single-line-p t))
+         (maximum-width
+           (max 1
+                (1- (terminal-columns
+                     (terminal-ui-terminal (application-ui application)))))))
+    (cond
+      ((<= (text-cell-width safe-header) maximum-width)
+       safe-header)
+      ((= maximum-width 1)
+       "…")
+      (t
+       (concatenate 'string
+                    (text-cell-prefix safe-header (1- maximum-width))
+                    "…")))))
 
 (-> application--tool-row-spans (application list) list)
 (defun application--tool-row-spans (application row)
@@ -328,40 +364,33 @@
 
 (-> application--tool-entry
     (application &key (:style terminal-style) (:header string)
-                 (:detail (option string)) (:rows list))
+                 (:detail (option string)) (:rows list)
+                 (:provider-form-replaces-rows-p boolean))
     list)
 (defun application--tool-entry
-    (application &key (style ':plain) (header "") detail rows)
+    (application &key (style ':plain) (header "") detail rows
+                      (provider-form-replaces-rows-p nil))
   "Return a transcript header followed by concise styled tool ROWS."
   (let* ((provider-context-p
            (and *application-provider-call-presentation* t))
-         (equivalent-rows
+         (provider-form-rows
            (and provider-context-p
                 (application--provider-call-equivalent-rows
                  *application-provider-call-presentation*)))
-         (equivalent-p (and equivalent-rows t))
-         (effective-header (if provider-context-p "▸ provider call" header))
-         (effective-detail
-           (cond
-             (equivalent-p
-              (if detail
-                  (format nil "equivalent Lisp · ~A" detail)
-                  "equivalent Lisp"))
-             (provider-context-p
-              (if detail
-                  (format nil "equivalent Lisp unavailable · ~A" detail)
-                  "equivalent Lisp unavailable"))
-             (t
-              detail)))
          (effective-rows
-           (if equivalent-p
-               (append equivalent-rows (when rows (list nil)) rows)
-               rows)))
+           (cond
+             ((and provider-form-rows provider-form-replaces-rows-p)
+              provider-form-rows)
+             (provider-form-rows
+              (append provider-form-rows (when rows (list nil)) rows))
+             (t
+              rows))))
     (append
-     (application--transcript-entry application
-                                    :style style
-                                    :header effective-header
-                                    :detail effective-detail)
+     (application--transcript-entry
+      application
+      :style style
+      :header (application--tool-header application header)
+      :detail detail)
      (loop for row in effective-rows
            append (list (terminal-span ':plain (string #\Newline)))
            when row
@@ -576,7 +605,7 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry :around
     ((tool t) (application application) (call hash-table))
-  "Render provider CALL as equivalent Lisp around its specialized detail rows."
+  "Render provider CALL as highlighted Lisp above its specialized detail rows."
   (declare (ignore tool application))
   (let ((*application-provider-call-presentation* call))
     (call-next-method)))
@@ -632,18 +661,18 @@ structural discriminator as a readable heading instead."
 
 (-> application--simple-call-entry (application json-object string) list)
 (defun application--simple-call-entry (application call argument-name)
-  "Return CALL with one concise ARGUMENT-NAME row."
+  "Return CALL with one concise ARGUMENT-NAME row when Lisp rendering fails."
   (let* ((arguments (application--function-call-arguments call))
          (value (and arguments (json-get arguments argument-name))))
     (application--tool-entry
      application
      :style ':tool
      :header (format nil "▸ ~A" (function-call-canonical-name call))
-     :rows (unless *application-provider-call-presentation*
-             (when value
-               (list (list (terminal-span
-                            ':code
-                            (application--presentation-value value)))))))))
+     :provider-form-replaces-rows-p t
+     :rows (when value
+             (list (list (terminal-span
+                          ':code
+                          (application--presentation-value value))))))))
 
 ;; Codex PlanUpdateCell reference: 5c19155cbd93bfa099016e7487259f61669823ff.
 (-> application--plan-update-text (t) (option string))
@@ -773,7 +802,7 @@ structural discriminator as a readable heading instead."
 
 (defmethod application-tool-call-entry
     ((tool plan-update-tool) (application application) (call hash-table))
-  "Present plan.update as equivalent Lisp followed by its wrapped checklist."
+  "Present plan.update as highlighted Lisp followed by its wrapped checklist."
   (declare (ignore tool))
   (let ((rows
           (application--plan-update-rows

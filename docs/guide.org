@@ -241,10 +241,10 @@ form after use; =(help)= is canonical. A user call and a provider call reach
 the same named operation, while authority still follows the caller and the
 operation's approval policy.
 
-Provider tool requests have no original Lisp spelling. Their transcript rows
-therefore show a deterministic equivalent Lisp form without claiming that the
-provider literally sent it, followed by the ordinary rich result or failure.
-User-entered Lisp is shown exactly as submitted.
+Provider tool requests have no original Lisp spelling. Their transcript rows keep
+the canonical tool name and show a deterministic syntax-highlighted Lisp form
+without claiming that the provider literally sent it, followed by the ordinary
+rich result or failure. User-entered Lisp is shown exactly as submitted.
 
 During an active turn, registered nonconflicting operations may run immediately.
 Work needing an agent boundary, exclusive terminal ownership, authorization, or

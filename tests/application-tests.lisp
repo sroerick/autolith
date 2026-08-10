@@ -2213,12 +2213,52 @@
            (entry (response-item-entry wide-application call))
            (text (markdown-tests--row-text entry)))
       (test-assert (null (application--provider-call-equivalent-form call))
-                   "trailing JSON data cannot be presented as equivalent Lisp")
+                   "trailing JSON data cannot be presented as a Lisp form")
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
-            (search "equivalent Lisp unavailable" text)
+       (and (equal (first entry) (terminal-span :tool "▸ fs.read"))
+            (not (search "equivalent Lisp" text))
             (not (search "(fs.read" text)))
-       "unrepresentable provider calls receive an explicit bounded fallback"))
+       "malformed provider calls keep their tool name without fabricated Lisp"))
+    (let* ((narrow-application
+             (application-tests--ui-application
+              :columns 20
+              :compact-view-p nil))
+           (entry
+             (response-item-entry
+              narrow-application
+              (json-object
+               "type" "function_call"
+               "namespace"
+               (format nil
+                       "unsafe~%~C[31mnamespace-with-a-long-name"
+                       *terminal-escape-character*)
+               "name" "tool-with-a-long-name"
+               "arguments" "{}")))
+           (header (terminal-span-text (first entry))))
+      (test-assert
+       (and (eq (terminal-span-style (first entry)) ':tool)
+            (not (find #\Newline header))
+            (not (find #\Return header))
+            (not (find *terminal-escape-character* header))
+            (<= (text-cell-width header) 19)
+            (char= (char header (1- (length header))) #\…))
+       "provider-controlled tool names are sanitized and width-bounded"))
+    (let* ((*application-provider-form-characters* 10)
+           (path "/tmp/provider-form-fallback")
+           (entry
+             (response-item-entry
+              application
+              (json-object
+               "type" "function_call"
+               "namespace" "fs"
+               "name" "list"
+               "arguments" (json-encode (json-object "path" path)))))
+           (text (markdown-tests--row-text entry)))
+      (test-assert
+       (and (equal (first entry) (terminal-span :tool "▸ fs.list"))
+            (not (search "(fs.list" text))
+            (search path text))
+       "simple tool calls retain their detail when Lisp rendering is bounded out"))
     (let ((*application-provider-form-characters* 10))
       (test-assert
        (null
@@ -2279,10 +2319,13 @@
                                   "restart" "CONTINUE")))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
-            (find (terminal-span :dim "  equivalent Lisp") entry :test #'equal)
-            (search "(self.eval :form" text))
-       "provider tool requests are honestly labelled as equivalent Lisp")
+       (and (equal (first entry) (terminal-span :tool "▸ self.eval"))
+            (find (terminal-span :syntax-function "self.eval")
+                  entry
+                  :test #'equal)
+            (search "(self.eval :form" text)
+            (not (search "equivalent Lisp" text)))
+       "provider tool requests keep their names and syntax-highlighted Lisp forms")
       (test-assert (and (search "form-line-1" text)
                         (search "… +2 more lines" text))
                    "self.eval previews only the first configured source lines")
@@ -2305,11 +2348,14 @@
                                  (json-object "form" "(+ 1 2)")))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
-            (find (terminal-span :dim "  equivalent Lisp") entry :test #'equal)
+       (and (equal (first entry) (terminal-span :tool "▸ lisp.eval"))
+            (find (terminal-span :syntax-function "lisp.eval")
+                  entry
+                  :test #'equal)
             (search "(lisp.eval :form \"(+ 1 2)\")" text)
+            (not (search "equivalent Lisp" text))
             (not (search "{\"form\"" text)))
-       "lisp.eval calls show deterministic equivalent Lisp instead of JSON"))
+       "lisp.eval calls show syntax-highlighted Lisp instead of JSON"))
     (let* ((entry (response-item-entry
                    application
                    (json-object
@@ -2807,7 +2853,7 @@
                    "text" "Finish the release")))))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
+       (and (equal (first entry) (terminal-span :tool "▸ resource.edit"))
             (search "(resource.edit" text)
             (search "replace lines 4-6" text)
             (search "update agenda item agenda-7" text)
@@ -2882,11 +2928,11 @@
                              "status" "pending")))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ provider call"))
-            (search "equivalent Lisp" text)
+       (and (equal (first entry) (terminal-span :tool "▸ plan.update"))
             (search "(plan.update" text)
+            (not (search "equivalent Lisp" text))
             (search "Updated Plan" text))
-       "plan.update keeps its checklist beneath the equivalent Lisp call")
+       "plan.update keeps its checklist beneath the highlighted Lisp call")
       (test-assert
        (and (search "└ Adapt the implementation." text)
             (search "✔ Inspect existing behavior" text)
@@ -3019,7 +3065,7 @@
                     (markdown-tests--row-text expanded-entry)))
               (test-assert
                (and (equal (first compact-entry)
-                           (terminal-span :tool "▸ provider call"))
+                           (terminal-span :tool "▸ task.run"))
                     (search "(task.run" compact-text)
                     (search "Shared read-only background" compact-text)
                     (search "alpha" compact-text)
@@ -3861,7 +3907,7 @@
                          output)
                         1)
                        (search "<thought>" output)
-                       (search "▸ provider call" output)
+                       (search "▸ self.eval" output)
                        (search "(self.eval :form" output)
                        (null (terminal-ui-preview-rows
                               (application-ui application))))

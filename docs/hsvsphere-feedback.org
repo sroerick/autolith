@@ -80,8 +80,8 @@ boundaries.
 ** 4. Lisp-shaped transcripts
 
 - A user-entered Lisp call is displayed exactly as submitted.
-- A model tool call is displayed as a deterministic equivalent Lisp form because
-  the provider call has no original Lisp spelling.
+- A model tool call keeps its canonical tool name and displays a deterministic,
+  syntax-highlighted Lisp form because the provider call has no original spelling.
 - Autolith must not claim that a provider-originated tool call was literally sent
   as Lisp.
 - Normal operation display should not expose recipient blocks or raw JSON

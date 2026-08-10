@@ -384,10 +384,11 @@ a user-local init.lisp change, or a private image commit.
   ColorLisp draft highlighting, multiline reading, printed output, multiple
   values, conditions, and restarts. Commands and tools project through one
   canonical Lisp operation surface with restricted completion and slash
-  compatibility hints. Provider calls render as deterministic equivalent Lisp
-  without claiming literal source. Active-turn policy runs nonconflicting local
-  operations immediately, keeps modal, authorized, or serialized work at safe
-  boundaries, and provides =(eval-now FORM)= as a local-only scheduling override.
+  compatibility hints. Provider calls keep their canonical tool names and render
+  deterministic syntax-highlighted Lisp without claiming literal source. Active-turn
+  policy runs nonconflicting local operations immediately, keeps modal, authorized,
+  or serialized work at safe boundaries, and provides =(eval-now FORM)= as a
+  local-only scheduling override.
   The live region keeps the animated status row above local, child, provider,
   notice, queued, and prompt rows. Interactive terminals emit exactly one OSC
   133 =A=/=B=/=C=/=D;STATUS= block per foreground interaction and none for
