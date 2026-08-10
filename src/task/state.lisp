@@ -119,6 +119,9 @@
 (defparameter *task-steering-maximum-total-characters* 262144
   "The largest combined queued and in-flight child steering text.")
 
+(defparameter *task-response-promotion-maximum-items* 32
+  "The most steered child responses awaiting one verbal result each.")
+
 
 (defclass task-completion nil
   ((called-p :initform nil :accessor task-completion-called-p :type
@@ -320,7 +323,8 @@ nesting depth, and lifecycle listeners."))
     (steering-lock
      :initform (make-lock "Autolith task steering")
      :reader task-job-steering-lock
-     :documentation "The lock serializing child steering and terminal claims.")
+     :documentation
+     "The lock serializing steering, response promotion, and terminal claims.")
     (steering-items
      :initform nil
      :accessor task-job-steering-items
@@ -331,6 +335,11 @@ nesting depth, and lifecycle listeners."))
      :accessor task-job-steering-in-flight-items
      :type list
      :documentation "Steering entries drained but not yet durably acknowledged.")
+    (response-promotion-identifiers
+     :initform nil
+     :accessor task-job-response-promotion-identifiers
+     :type list
+     :documentation "FIFO steering identifiers awaiting one durable verbal response.")
     (steering-closed-p
      :initform nil
      :accessor task-job-steering-closed-p

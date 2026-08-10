@@ -509,6 +509,25 @@
            :usage (agent--portable-value (provider-result-usage result)))))
   nil)
 
+(-> agent--note-persisted-assistant-response
+    (agent-observer provider-result integer)
+    null)
+(defun agent--note-persisted-assistant-response (observer result request-number)
+  "Report RESULT's durable verbal assistant text through OBSERVER, when present."
+  (let ((text (provider-result-assistant-text result)))
+    (when (and (non-empty-string-p text)
+               (plusp
+                (length
+                 (string-trim '(#\Space #\Tab #\Newline #\Return) text))))
+      (agent-observer-status
+       observer
+       ':assistant-response-persisted
+       (list :request-number request-number
+             :response-id (provider-result-response-id result)
+             :text text
+             :time (get-universal-time)))))
+  nil)
+
 (-> agent--tool-call-plans (agent list) list)
 (defun agent--tool-call-plans (agent calls)
   "Return CALLS annotated with tools, persistence, and round-trip barriers."
@@ -964,6 +983,8 @@ checkpoint preserves the current model's opaque reasoning state."
            result
            :request-number request-number
            :call-plans call-plans)
+          (agent--note-persisted-assistant-response
+           observer result request-number)
           (setf (conversation-turn-state conversation)
                 (provider-result-turn-state result))
           (agent-observer-status

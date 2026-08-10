@@ -1464,7 +1464,8 @@ the ordinary FIFO queue."
           (application-prompt--child-admission-error
            job target ':not-running))
         (multiple-value-bind (entry reason)
-            (task-job-enqueue-steering job content)
+            (task-job-enqueue-steering
+             job content :promote-response-p t)
           (unless entry
             (application-prompt--child-admission-error job target reason))
           (list :prompt

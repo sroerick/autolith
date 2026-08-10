@@ -536,6 +536,17 @@ boundary cannot fit within that budget."
        (conversation-identifier (agent-conversation parent))
        (task-job-inherited-reference-items job)))))
 
+(-> task-job-note-agent-status (task-job keyword list) null)
+(defun task-job-note-agent-status (job status details)
+  "Project one child observer STATUS into progress or durable response delivery."
+  (if (eq status ':assistant-response-persisted)
+      (let ((text (getf details :text))
+            (timestamp (getf details :time)))
+        (when (and (stringp text) (typep timestamp 'timestamp))
+          (task-job-note-verbal-response job text timestamp)))
+      (task-progress-note-status job status details))
+  nil)
+
 (defun task-run-child (job)
   "Create and run JOB's real in-process child session through terminal yield."
   (let* ((parent (task-job-parent-agent job))
@@ -568,32 +579,27 @@ boundary cannot fit within that budget."
                          job))
          (progress (task-job-progress job))
          (observer
-          (callback-agent-observer-create :text-callback
-                                          (lambda (text)
-                                            (task-progress-append-output
-                                             progress text))
-                                          :reasoning-callback
-                                          (lambda (text)
-                                            (declare (ignore text))
-                                            nil)
-                                          :status-callback
-                                          (lambda (status details)
-                                            (task-progress-note-status job
-                                                                       status
-                                                                       details))
-                                          :steering-callback
-                                          (lambda ()
-                                            (task-job-take-steering job))
-                                          :steering-persisted-callback
-                                          (lambda (identifier)
-                                            (task-job-acknowledge-steering
-                                             job identifier))
-                                          :command-authorization-callback
-                                          (task-job-command-authorization-function
-                                           job)
-                                          :tool-authorization-callback
-                                          (task-job-tool-authorization-function
-                                           job))))
+          (callback-agent-observer-create
+           :text-callback
+           (lambda (text)
+             (task-progress-append-output progress text))
+           :reasoning-callback
+           (lambda (text)
+             (declare (ignore text))
+             nil)
+           :status-callback
+           (lambda (status details)
+             (task-job-note-agent-status job status details))
+           :steering-callback
+           (lambda ()
+             (task-job-take-steering job))
+           :steering-persisted-callback
+           (lambda (identifier)
+             (task-job-acknowledge-steering job identifier))
+           :command-authorization-callback
+           (task-job-command-authorization-function job)
+           :tool-authorization-callback
+           (task-job-tool-authorization-function job))))
     (unwind-protect
          (progn
            (task-child-inherit-reference-history job conversation provider)

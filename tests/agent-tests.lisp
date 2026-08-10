@@ -232,63 +232,119 @@
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration :identifier "agent-loop"))
-         (call (json-object
-                "type" "function_call"
-                "call_id" "call-1"
-                "namespace" "test"
-                "name" "echo"
-                "arguments" "{\"value\":\"hello\"}"))
-         (message (json-object
-                   "type" "message"
-                   "role" "assistant"
-                   "content" (json-array
-                              (json-object
-                               "type" "output_text"
-                               "text" "complete"))))
+         (call
+           (json-object
+            "type" "function_call"
+            "call_id" "call-1"
+            "namespace" "test"
+            "name" "echo"
+            "arguments" "{\"value\":\"hello\"}"))
+         (blank-message (agent-test-message "   "))
+         (message
+           (json-object
+            "type" "message"
+            "role" "assistant"
+            "content" (json-array
+                       (json-object
+                        "type" "output_text"
+                        "text" "complete"))))
          (provider
            (make-instance
             'scripted-provider
-            :results (list (agent-test-result "response-1"
-                                              (list call)
-                                              :turn-state "turn-state-1")
-                           (agent-test-result "response-2" (list message)))))
+            :results
+            (list
+             (agent-test-result
+              "response-1"
+              (list call blank-message)
+              :turn-state "turn-state-1")
+             (agent-test-result "response-2" (list message)))))
          (registry (agent-test-registry))
          (deltas nil)
-         (statuses nil))
+         (statuses nil)
+         (persisted-responses nil))
     (unwind-protect
          (progn
-           (let* ((agent (agent-create
-                          :configuration configuration
-                          :provider provider
-                          :conversation conversation
-                          :tool-registry registry
-                          :worker ':unused))
+           (let* ((agent
+                    (agent-create
+                     :configuration configuration
+                     :provider provider
+                     :conversation conversation
+                     :tool-registry registry
+                     :worker ':unused))
                   (observer
                     (callback-agent-observer-create
-                     :text-callback (lambda (text)
-                                      (push text deltas))
-                     :status-callback (lambda (status details)
-                                        (declare (ignore details))
-                                        (push status statuses))))
-                  (result (agent-run-user-turn agent "run the echo" :observer observer)))
-             (test-assert (string= (provider-result-response-id result) "response-2")
-                          "the agent returns the final tool-free provider result")
-             (test-assert (equal (nreverse (scripted-provider-input-counts provider))
-                                 '(1 3))
-                          "the second request replays the call and its correlated output")
-             (test-assert (equal (nreverse (scripted-provider-turn-states provider))
-                                 '(nil "turn-state-1"))
-                          "provider turn state is replayed only inside the active turn")
-             (test-assert (null (conversation-turn-state conversation))
-                          "the agent clears request-local turn state after completion")
-             (test-assert (= (length (conversation-input-items conversation)) 4)
-                          "conversation history contains user, call, output, and answer")
-             (test-assert (equal (nreverse deltas) '("delta" "delta"))
-                          "the observer receives deltas from every provider request")
-             (test-assert (member :tool-call-completed statuses)
-                          "the observer receives correlated tool lifecycle status")
-             (test-assert (member :user-message-persisted statuses)
-                          "the observer learns when user input becomes durable")
+                     :text-callback
+                     (lambda (text)
+                       (push text deltas))
+                     :status-callback
+                     (lambda (status details)
+                       (push status statuses)
+                       (when (eq status ':assistant-response-persisted)
+                         (let ((text (getf details :text)))
+                           (push
+                            (list
+                             :details (copy-tree details)
+                             :durable-p
+                             (some
+                              (lambda (item)
+                                (and
+                                 (json-object-p item)
+                                 (string=
+                                  (or (response-item-assistant-text item) "")
+                                  text)))
+                              (conversation-input-items conversation)))
+                            persisted-responses))))))
+                  (result
+                    (agent-run-user-turn
+                     agent "run the echo" :observer observer)))
+             (test-assert
+              (string= (provider-result-response-id result) "response-2")
+              "the agent returns the final tool-free provider result")
+             (test-assert
+              (equal (nreverse (scripted-provider-input-counts provider))
+                     '(1 4))
+              "the second request replays the call, blank message, and tool output")
+             (test-assert
+              (equal (nreverse (scripted-provider-turn-states provider))
+                     '(nil "turn-state-1"))
+              "provider turn state is replayed only inside the active turn")
+             (test-assert
+              (null (conversation-turn-state conversation))
+              "the agent clears request-local turn state after completion")
+             (test-assert
+              (= (length (conversation-input-items conversation)) 5)
+              "conversation history contains user, call, blank answer, output, and answer")
+             (test-assert
+              (equal (nreverse deltas) '("delta" "delta"))
+              "the observer receives deltas from every provider request")
+             (test-assert
+              (member :tool-call-completed statuses)
+              "the observer receives correlated tool lifecycle status")
+             (test-assert
+              (member :user-message-persisted statuses)
+              "the observer learns when user input becomes durable")
+             (let* ((responses (nreverse persisted-responses))
+                    (response (first responses))
+                    (details (getf response :details))
+                    (ordered-statuses (reverse statuses))
+                    (response-position
+                      (position ':assistant-response-persisted ordered-statuses))
+                    (completion-position
+                      (position ':provider-request-completed ordered-statuses
+                                :from-end t)))
+               (test-assert
+                (and (= (length responses) 1)
+                     (= (getf details :request-number) 2)
+                     (string= (getf details :response-id) "response-2")
+                     (string= (getf details :text) "complete")
+                     (typep (getf details :time) 'timestamp)
+                     (getf response :durable-p))
+                "only durable nonblank verbal provider results emit response status")
+               (test-assert
+                (and response-position
+                     completion-position
+                     (= (1+ response-position) completion-position))
+                "durable verbal response status precedes request completion"))
              (let* ((records
                       (conversation--read-records
                        (conversation-pathname conversation)))
@@ -300,8 +356,9 @@
                      (typep (getf (rest tool-result) :real-microseconds)
                             '(integer 0)))
                 "executed tool results persist CPU and real timing"))
-             (test-assert (= (count :provider-progress statuses) 2)
-                          "every streamed delta refreshes visible provider progress")))
+             (test-assert
+              (= (count :provider-progress statuses) 2)
+              "every streamed delta refreshes visible provider progress")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 

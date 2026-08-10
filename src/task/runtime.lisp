@@ -518,11 +518,21 @@ name is bounded here, because only the identifier derived from it was."
     (+ (length (task-job-steering-items job))
        (length (task-job-steering-in-flight-items job)))))
 
+(-> task-job-response-promotion-pending-count (task-job) (integer 0))
+(defun task-job-response-promotion-pending-count (job)
+  "Return JOB's accepted steering prompts still awaiting a verbal response."
+  (with-lock-held ((task-job-steering-lock job))
+    (length (task-job-response-promotion-identifiers job))))
+
 (-> task-job-enqueue-steering
-    (task-job (or string user-message-input))
+    (task-job (or string user-message-input)
+     &key (:promote-response-p boolean))
     (values (option agent-steering-input) keyword))
-(defun task-job-enqueue-steering (job content)
-  "Atomically accept CONTENT for running JOB, returning an entry and reason."
+(defun task-job-enqueue-steering (job content &key (promote-response-p nil))
+  "Atomically accept CONTENT for running JOB, returning an entry and reason.
+
+When PROMOTE-RESPONSE-P is true, acceptance also reserves one FIFO token for
+JOB's first later durable verbal response."
   (block nil
     (let* ((copy (user-message-input-copy content))
            (characters (task-job--steering-content-characters copy)))
@@ -545,6 +555,10 @@ name is bounded here, because only the identifier derived from it was."
                 (retained-characters
                   (task-job--steering-character-count-locked job)))
             (when (or (>= count *task-steering-maximum-items*)
+                      (and promote-response-p
+                           (>= (length
+                                (task-job-response-promotion-identifiers job))
+                               *task-response-promotion-maximum-items*))
                       (> (+ retained-characters characters)
                          *task-steering-maximum-total-characters*))
               (return (values nil ':full))))
@@ -554,6 +568,11 @@ name is bounded here, because only the identifier derived from it was."
                    :content copy)))
             (setf (task-job-steering-items job)
                   (nconc (task-job-steering-items job) (list entry)))
+            (when promote-response-p
+              (setf (task-job-response-promotion-identifiers job)
+                    (nconc
+                     (task-job-response-promotion-identifiers job)
+                     (list (agent-steering-input-identifier entry)))))
             (values entry ':accepted)))))))
 
 (-> task-job-take-steering (task-job) list)
@@ -583,6 +602,32 @@ name is bounded here, because only the identifier derived from it was."
                       :count 1))
         t))))
 
+(-> task-job-note-verbal-response (task-job string timestamp) boolean)
+(defun task-job-note-verbal-response (job text timestamp)
+  "Consume one FIFO promotion token and emit JOB's durable verbal response."
+  (unless (and (non-empty-string-p text)
+               (plusp (length (task--trim text))))
+    (return-from task-job-note-verbal-response nil))
+  (let ((steering-identifier
+          (with-lock-held ((task-job-steering-lock job))
+            (let ((identifiers
+                    (task-job-response-promotion-identifiers job)))
+              (when identifiers
+                (setf (task-job-response-promotion-identifiers job)
+                      (rest identifiers))
+                (first identifiers))))))
+    (when steering-identifier
+      (task-orchestrator-emit
+       (task-job-orchestrator job)
+       ':task-subagent-verbal-response
+       (list :id (session-job-identifier job)
+             :execution-id (task-job-execution-identifier job)
+             :child-name (copy-seq (task-job-display-name job))
+             :steering-id (copy-seq steering-identifier)
+             :text (copy-seq text)
+             :time timestamp)))
+    (not (null steering-identifier))))
+
 (-> task-job-close-steering (task-job) (integer 0))
 (defun task-job-close-steering (job)
   "Close JOB's mailbox, release its content, and return undelivered entry count."
@@ -591,7 +636,8 @@ name is bounded here, because only the identifier derived from it was."
                     (length (task-job-steering-in-flight-items job)))))
       (setf (task-job-steering-closed-p job) t
             (task-job-steering-items job) nil
-            (task-job-steering-in-flight-items job) nil)
+            (task-job-steering-in-flight-items job) nil
+            (task-job-response-promotion-identifiers job) nil)
       count)))
 
 (-> task-job-identity (task-job) list)

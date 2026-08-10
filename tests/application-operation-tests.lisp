@@ -350,14 +350,16 @@
                    (list
                     (list
                      'task-job-enqueue-steering
-                     (lambda (job content)
+                     (lambda (job content &key (promote-response-p nil))
                        (cond
                          ((eq job race-closing)
                           (with-lock-held ((cl-jobpond::job--lock job))
                             (setf (cl-jobpond::job--publication-claimed-p job) t)))
                          ((eq job race-closed)
                           (task-job-close-steering job)))
-                       (funcall original-enqueue job content))))
+                       (funcall original-enqueue
+                                job content
+                                :promote-response-p promote-response-p))))
                    (lambda ()
                      (test-assert
                       (eq (prompt-reason
