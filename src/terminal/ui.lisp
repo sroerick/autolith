@@ -38,6 +38,9 @@
   #("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
   "The shared running-child spinner cycle.")
 
+(defvar *terminal-ui-lisp-input-p* nil
+  "Whether the active editor is explicitly reading Common Lisp input.")
+
 (-> terminal-ui--monotonic-seconds () real)
 (defun terminal-ui--monotonic-seconds ()
   "Return monotonic process time in seconds for live activity accounting."
@@ -397,7 +400,9 @@ emergency terminal input responsive while another thread owns presentation."
          (columns (terminal-columns terminal))
          (editor (terminal-ui-editor ui))
          (raw-content (line-editor-text editor))
-         (lisp-draft-p (terminal-ui--lisp-draft-p raw-content))
+         (lisp-draft-p
+           (or *terminal-ui-lisp-input-p*
+               (terminal-ui--lisp-draft-p raw-content)))
          (safe-prompt (sanitize-text (terminal-ui-prompt ui)
                                      :single-line-p t)))
     (multiple-value-bind (prompt-text prompt-spans)

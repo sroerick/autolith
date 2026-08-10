@@ -580,7 +580,16 @@
         (terminal-ui--live-content ui)
       (declare (ignore display cursor))
       (test-assert (uiop:string-prefix-p "❯ ordinary prose" text)
-                   "removing the opening parenthesis restores the normal prompt")))
+                   "removing the opening parenthesis restores the normal prompt"))
+    (line-editor-set-text editor "42")
+    (let ((*terminal-ui-lisp-input-p* t))
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content ui)
+        (declare (ignore cursor))
+        (test-assert
+         (and (uiop:string-prefix-p "* 42" text)
+              (search (terminal-style-sequence ':syntax-number) display))
+         "an explicit Lisp reader highlights forms without an opening parenthesis"))))
   nil)
 
 (-> test-terminal-image-attachments () null)

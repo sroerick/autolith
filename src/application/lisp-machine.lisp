@@ -8,13 +8,15 @@
 
 (defstruct (application-lisp-evaluation
              (:constructor application-lisp-evaluation-create
-                 (&key status output values condition restart-names loop-action)))
+                 (&key status output values condition restart-names
+                       selected-restart-name loop-action)))
   "Captured outcome of one explicit active-image Common Lisp evaluation."
   (status ':ok :type application-lisp-evaluation-status)
   (output "" :type string)
   (values nil :type list)
   (condition nil :type (option string))
   (restart-names nil :type list)
+  (selected-restart-name nil :type (option string))
   (loop-action nil :type (option (member :quit))))
 
 (defparameter *application-lisp-value-restart-names*
@@ -81,8 +83,87 @@ are presented by the evaluator."
 
 (-> application-lisp--restart-arguments (string) list)
 (defun application-lisp--restart-arguments (source)
-  "Evaluate one Lisp SOURCE form and return all its values as restart arguments."
-  (multiple-value-list (eval (self-read-form source))))
+  "Evaluate one Lisp SOURCE form in AUTOLITH and return all restart arguments."
+  (let ((*package* (find-package '#:autolith)))
+    (multiple-value-list (eval (self-read-form source)))))
+
+(-> application-lisp-call-with-debugger
+    (function &key (:restart-selector (option function))
+                   (:debug-condition-p function))
+    (values list (member :ok :aborted) (option string) list (option string)))
+(defun application-lisp-call-with-debugger
+    (function &key restart-selector (debug-condition-p (constantly t)))
+  "Call FUNCTION under live restart selection without entering SBCL's debugger.
+
+RESTART-SELECTOR receives each signaling condition accepted by DEBUG-CONDITION-P
+and its selectable live restarts. It returns a selected restart and optional
+Lisp source whose multiple values become restart arguments. Returning NIL
+invokes ABORT-USER-OPERATION. Autolith control and corruption conditions remain
+outside this user boundary. Return captured values, status, condition text,
+available restart names, and the selected restart name."
+  (let ((raw-values nil)
+        (status ':ok)
+        (condition-text nil)
+        (restart-names nil)
+        (selected-restart-name nil)
+        (handling-condition-p nil))
+    (labels ((abort-operation ()
+               (let ((restart (find-restart 'abort-user-operation)))
+                 (if restart
+                     (progn
+                       (setf selected-restart-name
+                             (symbol-name (restart-name restart)))
+                       (invoke-restart restart))
+                     (setf status ':aborted
+                           raw-values nil))))
+
+             (invoke-selected (selected argument-source)
+               (setf selected-restart-name
+                     (symbol-name (restart-name selected)))
+               (handler-case
+                   (if (non-empty-string-p argument-source)
+                       (apply #'invoke-restart
+                              selected
+                              (application-lisp--restart-arguments
+                               argument-source))
+                       (invoke-restart selected))
+                 (serious-condition (condition)
+                   (if (application-lisp--control-condition-p condition)
+                       (error condition)
+                       (progn
+                         (setf condition-text (princ-to-string condition))
+                         (abort-operation))))))
+
+             (handle-condition (condition)
+               (unless (or handling-condition-p
+                           (application-lisp--control-condition-p condition))
+                 (setf handling-condition-p t)
+                 (unwind-protect
+                      (when (funcall debug-condition-p condition)
+                        (let ((restarts
+                                (application-lisp--selectable-restarts condition)))
+                          (setf condition-text (princ-to-string condition)
+                                restart-names
+                                (mapcar (lambda (restart)
+                                          (symbol-name (restart-name restart)))
+                                        restarts))
+                          (multiple-value-bind (selected argument-source)
+                              (and restart-selector
+                                   (funcall restart-selector condition restarts))
+                            (if (and selected
+                                     (member selected restarts :test #'eq))
+                                (invoke-selected selected argument-source)
+                                (abort-operation)))))
+                   (setf handling-condition-p nil)))))
+      (restart-case
+          (handler-bind ((serious-condition #'handle-condition))
+            (setf raw-values (multiple-value-list (funcall function))))
+        (abort-user-operation ()
+          :report "Return to the Autolith prompt."
+          (setf status ':aborted
+                raw-values nil))))
+    (values raw-values status condition-text restart-names
+            selected-restart-name)))
 
 (-> application-lisp-evaluate
     (string &key (:restart-selector (option function))
@@ -102,76 +183,51 @@ journaling or provider conversation projection."
         (status ':ok)
         (condition-text nil)
         (restart-names nil)
-        (loop-action nil)
-        (handling-condition-p nil))
-    (labels ((abort-evaluation ()
-               (let ((restart (find-restart 'abort-lisp-evaluation)))
-                 (if restart
-                     (invoke-restart restart)
-                     (setf status ':aborted))))
-
-             (handle-condition (condition)
-               (unless (or handling-condition-p
-                           (application-lisp--control-condition-p condition))
-                 (let* ((handling-condition-p t)
-                        (restarts
-                          (application-lisp--selectable-restarts condition)))
-                   (setf condition-text (princ-to-string condition)
-                         restart-names
-                         (mapcar (lambda (restart)
-                                   (symbol-name (restart-name restart)))
-                                 restarts))
-                   (multiple-value-bind (selected argument-source)
-                       (and restart-selector
-                            (funcall restart-selector condition restarts))
-                     (if (and selected (member selected restarts :test #'eq))
-                         (if (non-empty-string-p argument-source)
-                             (apply #'invoke-restart
-                                    selected
-                                    (application-lisp--restart-arguments
-                                     argument-source))
-                             (invoke-restart selected))
-                         (abort-evaluation)))))))
-      (handler-case
-          (let ((*standard-output* output-stream)
-                (*error-output* output-stream)
-                (*trace-output* output-stream)
-                (*package* (find-package '#:autolith))
-                (*application-operation-application* application))
-            (when application
-              (application-operation-install-bindings application))
-            (restart-case
-                (handler-bind ((serious-condition #'handle-condition))
-                  (setf raw-values
-                        (multiple-value-list
-                         (eval (self-read-form source)))))
-              (abort-lisp-evaluation ()
-                :report "Return to the Autolith prompt."
-                (setf status ':aborted
-                      raw-values nil))))
-        (application-operation-loop-action (condition)
-          (setf status ':ok
-                loop-action
-                (application-operation-loop-action-action condition)
-                raw-values nil))
-        ((or application-turn-cancelled
-             application-input-failed
-             rollback-requested
-             agent-loop-error
-             conversation-invariant-error
-             active-image-corruption)
-         (condition)
-          (error condition))
-        (serious-condition (condition)
-          (setf status ':error
-                condition-text (princ-to-string condition)
-                raw-values nil))))
+        (selected-restart-name nil)
+        (loop-action nil))
+    (handler-case
+        (let ((*standard-output* output-stream)
+              (*error-output* output-stream)
+              (*trace-output* output-stream)
+              (*package* (find-package '#:autolith))
+              (*application-operation-application* application))
+          (multiple-value-bind
+                (values debugger-status debugger-condition debugger-restart-names
+                        debugger-selected-restart-name)
+              (application-lisp-call-with-debugger
+               (lambda ()
+                 (when application
+                   (application-operation-install-bindings application))
+                 (eval (self-read-form source)))
+               :restart-selector restart-selector)
+            (setf raw-values values
+                  status debugger-status
+                  condition-text debugger-condition
+                  restart-names debugger-restart-names
+                  selected-restart-name debugger-selected-restart-name)))
+      (application-operation-loop-action (condition)
+        (setf status ':ok
+              loop-action (application-operation-loop-action-action condition)
+              raw-values nil))
+      ((or application-turn-cancelled
+           application-input-failed
+           rollback-requested
+           agent-loop-error
+           conversation-invariant-error
+           active-image-corruption)
+       (condition)
+        (error condition))
+      (serious-condition (condition)
+        (setf status ':error
+              condition-text (princ-to-string condition)
+              raw-values nil)))
     (application-lisp-evaluation-create
      :status status
      :output (get-output-stream-string output-stream)
      :values (mapcar #'sbcl-worker-render-value raw-values)
      :condition condition-text
      :restart-names restart-names
+     :selected-restart-name selected-restart-name
      :loop-action loop-action)))
 
 
@@ -236,16 +292,23 @@ journaling or provider conversation projection."
 
 (-> application-lisp--restart-items (list) list)
 (defun application-lisp--restart-items (restarts)
-  "Return modal selector items for ordered RESTARTS."
+  "Return styled modal selector items for ordered RESTARTS."
   (loop for restart in restarts
         for index from 0
+        for name = (restart-name restart)
+        for name-text = (format nil "~(~A~)" name)
+        for report = (application-lisp--restart-report restart)
+        for description = (format nil "~A  ~A" name-text report)
         collect
         (list :name (format nil "~D" index)
               :argument nil
-              :description
-              (format nil "~(~A~)  ~A"
-                      (restart-name restart)
-                      (application-lisp--restart-report restart)))))
+              :group "live restarts"
+              :description description
+              :description-spans
+              (list (terminal-span
+                     (if (eq name 'abort-user-operation) ':failure ':code)
+                     name-text)
+                    (terminal-span ':dim (format nil "  ~A" report))))))
 
 (-> application-lisp--read-restart-value (application) (option string))
 (defun application-lisp--read-restart-value (application)
@@ -254,40 +317,82 @@ journaling or provider conversation projection."
          (editor (terminal-ui-editor ui))
          (saved-input
            (terminal-ui--submission-input ui (line-editor-text editor))))
-    (unwind-protect
-         (progn
-           (terminal-ui-set-input ui "")
-           (application-present
-            application
-            (list (terminal-span ':hint
-                                 "Enter one Lisp form. Its multiple values become restart arguments.")))
-           (loop
-             (multiple-value-bind (action payload)
-                 (terminal-ui-process-event ui (terminal-ui-read-event ui))
-               (case action
-                 (:submit
-                  (return (user-message-input-text payload)))
-                 ((:interrupt :end-of-input :escape)
-                  (return nil))))))
-      (terminal-ui-set-input ui saved-input))))
+    (let ((*terminal-ui-lisp-input-p* t))
+      (unwind-protect
+           (progn
+             (terminal-ui-set-input ui "")
+             (application-present
+              application
+              (list
+               (terminal-span
+                ':hint
+                "Enter one Lisp form. Its multiple values become restart arguments.")))
+             (loop
+               (multiple-value-bind (action payload)
+                   (terminal-ui-process-event ui (terminal-ui-read-event ui))
+                 (case action
+                   (:submit
+                    (if (user-message-input-image-pathnames payload)
+                        (progn
+                          (application-present
+                           application
+                           (list
+                            (terminal-span
+                             ':failure
+                             "Restart argument input cannot include image attachments.")))
+                          (terminal-ui-set-input ui payload))
+                        (return (user-message-input-text payload))))
+                   ((:interrupt :end-of-input :escape)
+                    (return nil))))))
+        (terminal-ui-set-input ui saved-input)))))
+
+(-> application-lisp--debugger-condition-entry (serious-condition) list)
+(defun application-lisp--debugger-condition-entry (condition)
+  "Return a prominent styled debugger heading for CONDITION."
+  (list
+   (terminal-span ':failure "restart debugger")
+   (terminal-span ':plain (string #\Newline))
+   (terminal-span ':failure "condition: ")
+   (terminal-span
+    ':plain
+    (text-cell-prefix
+     (sanitize-text (princ-to-string condition) :single-line-p t)
+     512))))
+
+(-> application-lisp--preferred-restart-index (list) (integer 0))
+(defun application-lisp--preferred-restart-index (restarts)
+  "Return the most useful initial selector index for live RESTARTS."
+  (or (position-if
+       (lambda (restart)
+         (member (restart-name restart)
+                 *application-lisp-value-restart-names*
+                 :test #'eq))
+       restarts)
+      (position 'abort-user-operation restarts :key #'restart-name :test #'eq)
+      0))
 
 (-> application-lisp--select-restart
     (application serious-condition list)
     (values (option restart) (option string)))
 (defun application-lisp--select-restart (application condition restarts)
-  "Let the local user choose one live RESTART for CONDITION."
+  "Present CONDITION and let the local user choose one live RESTART."
   (let* ((ui (application-ui application))
          (terminal (and ui (terminal-ui-terminal ui))))
+    (when ui
+      (application-present
+       application
+       (application-lisp--debugger-condition-entry condition)))
     (unless (and ui terminal (terminal-interactive-p terminal))
       (return-from application-lisp--select-restart (values nil nil)))
-    (let* ((choice
+    (let* ((items (application-lisp--restart-items restarts))
+           (preferred-index
+             (application-lisp--preferred-restart-index restarts))
+           (choice
              (terminal-ui-select
               ui
-              :title (text-cell-prefix
-                      (sanitize-text (princ-to-string condition)
-                                     :single-line-p t)
-                      72)
-              :items (application-lisp--restart-items restarts)
+              :title "restart debugger"
+              :items items
+              :initial-name (format nil "~D" preferred-index)
               :resize-callback #'application-pending-terminal-size))
            (index (and choice (parse-integer choice :junk-allowed t)))
            (restart (and index (nth index restarts))))
@@ -300,6 +405,19 @@ journaling or provider conversation projection."
                 (values restart source)
                 (values nil nil)))
           (values restart nil)))))
+
+(-> application-lisp-call-with-ui-debugger
+    (application function &key (:debug-condition-p function))
+    (values list (member :ok :aborted) (option string) list (option string)))
+(defun application-lisp-call-with-ui-debugger
+    (application function &key (debug-condition-p (constantly t)))
+  "Call FUNCTION under APPLICATION's styled local restart debugger."
+  (application-lisp-call-with-debugger
+   function
+   :restart-selector
+   (lambda (condition restarts)
+     (application-lisp--select-restart application condition restarts))
+   :debug-condition-p debug-condition-p))
 
 (-> application-run-lisp-input (application string) keyword)
 (defun application-run-lisp-input (application source)

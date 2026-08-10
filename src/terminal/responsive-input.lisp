@@ -1510,6 +1510,49 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
                    (not (and result-p (eq result ':quit))))
           (application-input-controller--open-prompt-if-ready controller))))))
 
+(-> application--call-with-command-debugger
+    (application function &key (:expected-error-function function))
+    keyword)
+(defun application--call-with-command-debugger
+    (application function
+     &key (expected-error-function #'application-handle-expected-error))
+  "Call FUNCTION under the user restart debugger and fatal condition boundary."
+  (let ((signal-backtrace nil))
+    (handler-bind
+        ((serious-condition
+           (lambda (condition)
+             (declare (ignore condition))
+             (setf signal-backtrace (application-safe-backtrace)))))
+      (handler-case
+          (multiple-value-bind
+                (values debugger-status condition restart-names
+                        selected-restart-name)
+              (application-lisp-call-with-ui-debugger
+               application function
+               :debug-condition-p
+               (lambda (condition)
+                 (not (typep condition 'autolith-error))))
+            (declare (ignore condition restart-names selected-restart-name))
+            (if (eq debugger-status ':aborted)
+                ':aborted
+                (first values)))
+        ((or application-operation-loop-action
+             application-turn-cancelled
+             application-input-failed
+             rollback-requested)
+         (condition)
+          (error condition))
+        ((or agent-loop-error
+             conversation-invariant-error
+             active-image-corruption)
+         (condition)
+          (application-raise-fatal application condition signal-backtrace))
+        (autolith-error (condition)
+          (funcall expected-error-function application condition)
+          ':failed)
+        (serious-condition (condition)
+          (application-raise-fatal application condition signal-backtrace))))))
+
 (-> application-input-controller--run-responsive-lisp
     (application-input-controller string)
     keyword)
@@ -1527,7 +1570,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     keyword)
 (defun application-input-controller--run-responsive-command
     (controller command invocation)
-  "Execute an immediate COMMAND without converting its errors on the reader."
+  "Execute an immediate COMMAND through the local restart debugger."
   (application-input-controller--call-with-responsive-prompt-block
    controller
    (lambda ()
@@ -1537,13 +1580,16 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
        (application-command--call-with-presentation
         invocation
         (lambda ()
-          (handler-case
-              (application-command-execute command application invocation)
-            (autolith-error (condition)
-              (application-present
-               application
-               (application--expected-error-entry application condition))
-              ':failed))))))))
+          (application--call-with-command-debugger
+           application
+           (lambda ()
+             (application-command-execute command application invocation))
+           :expected-error-function
+           (lambda (observed-application condition)
+             (application-present
+              observed-application
+              (application--expected-error-entry
+               observed-application condition))))))))))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input))
@@ -2724,39 +2770,16 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 
 (-> application--run-command-input (application string) keyword)
 (defun application--run-command-input (application input)
-  "Run command INPUT with established expected and fatal handling."
-  (let ((signal-backtrace nil)
-        (invocation (application-command-invocation-parse input)))
+  "Run command INPUT through the local restart debugger."
+  (let ((invocation (application-command-invocation-parse input)))
     (application-command--call-with-presentation
      invocation
      (lambda ()
        (let ((result
-               (handler-bind
-                   ((serious-condition
-                      (lambda (condition)
-                        (declare (ignore condition))
-                        (setf signal-backtrace
-                              (application-safe-backtrace)))))
-                 (handler-case
-                     (application-handle-input application input)
-                   (application-turn-cancelled (condition)
-                     (error condition))
-                   (application-input-failed (condition)
-                     (error condition))
-                   (rollback-requested (condition)
-                     (error condition))
-                   ((or agent-loop-error
-                        conversation-invariant-error
-                        active-image-corruption)
-                    (condition)
-                     (application-raise-fatal
-                      application condition signal-backtrace))
-                   (autolith-error (condition)
-                     (application-handle-expected-error application condition)
-                     ':failed)
-                   (serious-condition (condition)
-                     (application-raise-fatal
-                      application condition signal-backtrace))))))
+               (application--call-with-command-debugger
+                application
+                (lambda ()
+                  (application-handle-input application input)))))
          (application-operation-present-command-hint application invocation)
          result)))))
 
