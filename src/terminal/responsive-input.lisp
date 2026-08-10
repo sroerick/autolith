@@ -106,6 +106,12 @@
     :accessor application-input-controller-active-p
     :type boolean
     :documentation "Whether the main thread is processing one work item.")
+    (active-work-kind
+     :initform nil
+     :accessor application-input-controller-active-work-kind
+     :type (option keyword)
+     :documentation
+     "The kind of work currently executing, independent of durable message state.")
    (active-work
     :initform nil
     :accessor application-input-controller-active-work
@@ -1028,16 +1034,34 @@ snapshot after shutdown cleared the process-local queues."
     (with-lock-held ((application-input-controller-lock controller))
       (application-input-controller-follow-up-edit-index controller)))))
 
+(-> application-input-controller--remove-recalled-prefix-slot-locked
+    (application-input-controller (integer 0))
+    null)
+(defun application-input-controller--remove-recalled-prefix-slot-locked
+    (controller index)
+  "Remove recalled virtual INDEX from CONTROLLER's promoted FIFO prefix."
+  (when (< index
+           (application-input-controller-steering-promotion-prefix-count
+            controller))
+    (decf
+     (application-input-controller-steering-promotion-prefix-count controller)))
+  nil)
+
 (-> application-input-controller--clear-follow-up-edit
     (application-input-controller)
     null)
 (defun application-input-controller--clear-follow-up-edit (controller)
   "Discard CONTROLLER's recalled follow-up without changing its draft."
   (with-lock-held ((application-input-controller-lock controller))
-    (setf (application-input-controller-follow-up-edit-index controller) nil
-          (application-input-controller-follow-up-edit-work controller) nil)
-    (sb-thread:condition-broadcast
-     (application-input-controller-condition-variable controller)))
+    (let ((index
+            (application-input-controller-follow-up-edit-index controller)))
+      (when index
+        (application-input-controller--remove-recalled-prefix-slot-locked
+         controller index))
+      (setf (application-input-controller-follow-up-edit-index controller) nil
+            (application-input-controller-follow-up-edit-work controller) nil)
+      (sb-thread:condition-broadcast
+       (application-input-controller-condition-variable controller))))
   (application-input-controller--publish-counts controller)
   nil)
 
@@ -1177,36 +1201,114 @@ snapshot after shutdown cleared the process-local queues."
       (application-input-controller--publish-counts controller))
     queued-p))
 
-(-> application-input-controller--enqueue-steering
-    (application-input-controller (or string user-message-input))
-    null)
-(defun application-input-controller--enqueue-steering (controller input)
-  "Queue INPUT for the active turn, or promote it before follow-ups if that turn ended."
-  (let ((resumed-p nil))
+(-> application-input-controller--prompt-storage-ready-p
+    (application-input-controller)
+    boolean)
+(defun application-input-controller--prompt-storage-ready-p (controller)
+  "Return whether a primary prompt can be durably accepted by CONTROLLER."
+  (or (application-input-controller-pending-persistence-enabled-p controller)
+      (progn
+        (application-present
+         (application-input-controller-application controller)
+         "Recovered input storage is unavailable. Use /vault to inspect it or /vault-discard to discard the preserved input before submitting more work.")
+        nil)))
+
+(-> application-input-controller--admit-primary-prompt-locked
+    (application-input-controller (or string user-message-input)
+     &key (:prefer-steering-p boolean)
+          (:queue-index (option (integer 0))))
+    (option (member :queued :steering)))
+(defun application-input-controller--admit-primary-prompt-locked
+    (controller input &key (prefer-steering-p t) queue-index)
+  "Admit INPUT while CONTROLLER's lock is held and return its delivery mode.
+
+QUEUE-INDEX restores recalled work to its virtual FIFO position when INPUT does
+not steer the active primary message."
+  (when (or (application-input-controller-stopping-p controller)
+            (application-input-controller-localgroup-handoff-p controller))
+    (return-from application-input-controller--admit-primary-prompt-locked nil))
+  (let ((copied-input (user-message-input-copy input)))
+    (cond
+      ((and prefer-steering-p
+            (eq (application-input-controller-active-work-kind controller)
+                ':message))
+       (setf (application-input-controller-steering-items controller)
+             (nconc (application-input-controller-steering-items controller)
+                    (list copied-input)))
+       ':steering)
+      (queue-index
+       (setf (application-input-controller-work-items controller)
+             (application-input-controller--insert-work-at
+              (application-input-controller-work-items controller)
+              (min queue-index
+                   (length (application-input-controller-work-items controller)))
+              (list ':message copied-input)))
+       ':queued)
+      ((and prefer-steering-p
+            (not (application-input-controller-active-p controller)))
+       (let ((index
+               (min
+                (application-input-controller-steering-promotion-prefix-count
+                 controller)
+                (length (application-input-controller-work-items controller)))))
+         (setf (application-input-controller-work-items controller)
+               (application-input-controller--insert-work-at
+                (application-input-controller-work-items controller)
+                index
+                (list ':message copied-input))
+               (application-input-controller-steering-promotion-prefix-count
+                controller)
+               (1+ index))
+         (when (application-input-controller-follow-up-edit-index controller)
+           (incf (application-input-controller-follow-up-edit-index controller))))
+       ':queued)
+      (t
+       (setf (application-input-controller-work-items controller)
+             (nconc (application-input-controller-work-items controller)
+                    (list (list ':message copied-input))))
+       ':queued))))
+
+(-> application-input-controller-submit-primary-prompt
+    (application-input-controller (or string user-message-input)
+     &key (:prefer-steering-p boolean))
+    (values boolean (member :queued :rejected :steering)))
+(defun application-input-controller-submit-primary-prompt
+    (controller input &key (prefer-steering-p t))
+  "Submit INPUT to the primary agent and report acceptance and delivery mode.
+
+When steering is preferred, an active message receives INPUT through its
+steering mailbox. Input submitted after that message ended runs before older
+follow-ups. Input submitted during local Lisp or other non-message work joins
+the ordinary FIFO queue."
+  (unless (application-input-controller--prompt-storage-ready-p controller)
+    (return-from application-input-controller-submit-primary-prompt
+      (values nil ':rejected)))
+  (let ((delivery nil)
+        (resumed-p nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (unless (or (application-input-controller-stopping-p controller)
-                  (application-input-controller-localgroup-handoff-p controller))
+      (setf delivery
+            (application-input-controller--admit-primary-prompt-locked
+             controller input :prefer-steering-p prefer-steering-p))
+      (when delivery
         (setf resumed-p
               (application-input-controller-queued-work-paused-p controller)
               (application-input-controller-queued-work-paused-p controller) nil)
-        (if (application-input-controller-active-p controller)
-            (setf (application-input-controller-steering-items controller)
-                  (nconc (application-input-controller-steering-items controller)
-                         (list (user-message-input-copy input))))
-            (progn
-              (push (list ':message (user-message-input-copy input))
-                    (application-input-controller-work-items controller))
-              (when (application-input-controller-follow-up-edit-index controller)
-                (incf
-                 (application-input-controller-follow-up-edit-index
-                  controller)))))
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
     (when resumed-p
       (terminal-ui-set-notice
        (application-ui (application-input-controller-application controller))
        nil))
-    (application-input-controller--publish-counts controller))
+    (application-input-controller--publish-counts controller)
+    (values (not (null delivery)) (or delivery ':rejected))))
+
+(-> application-input-controller--enqueue-steering
+    (application-input-controller (or string user-message-input))
+    null)
+(defun application-input-controller--enqueue-steering (controller input)
+  "Prefer steering INPUT into the active primary message turn."
+  (application-input-controller-submit-primary-prompt
+   controller input :prefer-steering-p t)
   nil)
 
 (-> application-input-controller--take-steering
@@ -1642,35 +1744,50 @@ boundary."
       (let ((index
               (application-input-controller-follow-up-edit-index controller))
             (held-work
-              (application-input-controller-follow-up-edit-work controller)))
+              (application-input-controller-follow-up-edit-work controller))
+            (accepted-p nil)
+            (restored-p nil))
         (when (and index held-work)
           (setf handled-p t)
           (when work
-            (if (application-input-controller-active-p controller)
-                (cond
-                  (message
-                   (setf (application-input-controller-steering-items controller)
-                         (nconc
-                          (application-input-controller-steering-items controller)
-                          (list (user-message-input-copy message)))))
-                  ((eq busy-action ':hold)
-                   (setf (application-input-controller-work-items controller)
-                         (nconc
-                          (application-input-controller-work-items controller)
-                          (list work))
-                         post-action ':hold))
-                  (t
-                   (setf post-action busy-action)))
-                (setf (application-input-controller-work-items controller)
-                      (application-input-controller--insert-work-at
-                       (application-input-controller-work-items controller)
-                       index
-                       work)))
-            (setf (application-input-controller-follow-up-edit-index controller) nil
-                  (application-input-controller-follow-up-edit-work controller) nil
-                  changed-p t)
-            (sb-thread:condition-broadcast
-             (application-input-controller-condition-variable controller))))))
+            (cond
+              (message
+               (let ((delivery
+                       (application-input-controller--admit-primary-prompt-locked
+                        controller
+                        message
+                        :prefer-steering-p t
+                        :queue-index index)))
+                 (setf accepted-p (not (null delivery))
+                       restored-p (eq delivery ':queued))))
+              ((application-input-controller-active-p controller)
+               (cond
+                 ((eq busy-action ':hold)
+                  (setf (application-input-controller-work-items controller)
+                        (nconc
+                         (application-input-controller-work-items controller)
+                         (list work))
+                        post-action ':hold))
+                 (t
+                  (setf post-action busy-action)))
+               (setf accepted-p t))
+              (t
+               (setf (application-input-controller-work-items controller)
+                     (application-input-controller--insert-work-at
+                      (application-input-controller-work-items controller)
+                      index
+                      work)
+                     accepted-p t
+                     restored-p t)))
+            (when accepted-p
+              (unless restored-p
+                (application-input-controller--remove-recalled-prefix-slot-locked
+                 controller index))
+              (setf (application-input-controller-follow-up-edit-index controller) nil
+                    (application-input-controller-follow-up-edit-work controller) nil
+                    changed-p t)
+              (sb-thread:condition-broadcast
+               (application-input-controller-condition-variable controller)))))))
     (when changed-p
       (application-input-controller--publish-counts controller))
     (case post-action
@@ -1710,11 +1827,7 @@ boundary."
   "Return true when INPUT may be accepted without replacing preserved state."
   (or (application-input-controller-pending-persistence-enabled-p controller)
       (application-input-controller--vault-command-p input)
-      (progn
-        (application-present
-         (application-input-controller-application controller)
-         "Recovered input storage is unavailable. Use /vault to inspect it or /vault-discard to discard the preserved input before submitting more work.")
-        nil)))
+      (application-input-controller--prompt-storage-ready-p controller)))
 
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
@@ -1746,9 +1859,8 @@ boundary."
               (application-input-controller--schedule-lisp controller text)))
            (application-input-controller--enqueue controller ':lisp text)))
       (message
-       (if steer-p
-           (application-input-controller--enqueue-steering controller message)
-           (application-input-controller--enqueue controller ':message message)))
+       (application-input-controller-submit-primary-prompt
+        controller message :prefer-steering-p steer-p))
       ((not (non-empty-string-p text))
        nil)
       ((application-input-controller-busy-p controller)
@@ -2460,7 +2572,8 @@ boundary."
   (let ((application (application-input-controller-application controller))
         (work nil))
     (with-lock-held ((application-input-controller-lock controller))
-      (setf (application-input-controller-active-work-interactive-p controller) nil)
+      (setf (application-input-controller-active-work-kind controller) nil
+            (application-input-controller-active-work-interactive-p controller) nil)
       (loop
         (application-input-controller--promote-due-later
          controller (get-universal-time))
@@ -2542,6 +2655,9 @@ boundary."
               (condition-wait
                (application-input-controller-condition-variable controller)
                (application-input-controller-lock controller)))))
+      (when work
+        (setf (application-input-controller-active-work-kind controller)
+              (first work)))
       (when (application-input-controller-failure controller)
         (error
          'application-input-failed
@@ -2593,7 +2709,7 @@ boundary."
                 (application-input-controller-steering-items controller) nil
                 (application-input-controller-steering-promotion-prefix-count
                  controller)
-                0)))
+                (+ steering-promotion-prefix-count (length steering-items)))))
       (when (and (application-input-controller-turn-cancellation-p controller)
                  (not (eq (application-input-controller-exit-reason controller)
                           ':quit)))
@@ -2608,6 +2724,7 @@ boundary."
             reopen-p
             (application-input-controller-prompt-marker-reopen-p controller)
             (application-input-controller-active-p controller) nil
+            (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work controller) nil
             (application-input-controller-active-work-identifier controller) nil
             (application-input-controller-active-work-interactive-p controller) nil
@@ -2662,6 +2779,7 @@ boundary."
             (application-input-controller-steering-in-flight-items controller) nil
             (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
+            (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work controller) nil
             (application-input-controller-active-work-identifier controller) nil
             (application-input-controller-active-work-interactive-p controller) nil

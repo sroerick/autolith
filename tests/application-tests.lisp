@@ -5096,6 +5096,249 @@
      "recovery diagnosis enables only its read-only tool surface"))
   nil)
 
+(-> test-primary-prompt-admission () null)
+(defun test-primary-prompt-admission ()
+  "Test primary prompts share message steering and FIFO queue admission."
+  (labels ((call-with-controller (function)
+             (let* ((terminal
+                      (make-instance 'waiting-recording-terminal :columns 60))
+                    (ui (terminal-ui-create :terminal terminal))
+                    (application (make-instance 'application :ui ui))
+                    (controller nil))
+               (with-terminal-ui (active-ui ui)
+                 (declare (ignore active-ui))
+                 (setf controller
+                       (application-input-controller-create
+                        application
+                        :load-pending-p nil
+                        :start-reader-p nil))
+                 (unwind-protect
+                      (funcall function controller)
+                   (application-input-controller-stop controller))))))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue
+        controller ':message "active message")
+       (test-assert
+        (equal (application-input-controller--next-work controller)
+               '(:message "active message"))
+        "the primary message becomes active")
+       (let ((identifier
+               (application-input-controller-active-work-identifier controller)))
+         (test-assert
+          (application-input-controller--acknowledge-active-work
+           controller identifier)
+          "the durable user message clears its pending active record"))
+       (test-assert
+        (and (null (application-input-controller-active-work controller))
+             (eq (application-input-controller-active-work-kind controller)
+                 ':message))
+        "message kind survives durable active-work acknowledgment")
+       (multiple-value-bind (accepted-p delivery)
+           (application-input-controller-submit-primary-prompt
+            controller "steer active message")
+         (test-assert
+          (and accepted-p
+               (eq delivery ':steering)
+               (equal
+                (mapcar #'user-message-input-text
+                        (application-input-controller-steering-items controller))
+                '("steer active message")))
+          "prompt steers an active message after its user record is durable"))))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue controller ':lisp "(+ 1 2)")
+       (test-assert
+        (equal (application-input-controller--next-work controller)
+               '(:lisp "(+ 1 2)"))
+        "local Lisp becomes active work")
+        (let ((ui
+                (application-ui
+                 (application-input-controller-application controller))))
+          (terminal-ui-set-input ui "ordinary during local Lisp")
+          (application-input-controller--process-event controller ':complete))
+        (test-assert
+         (and (null (application-input-controller-steering-items controller))
+              (equal (application-input-controller-work-items controller)
+                     '((:message "ordinary during local Lisp"))))
+         "ordinary terminal prose during local Lisp queues through prompt admission")
+        (multiple-value-bind (accepted-p delivery)
+            (application-input-controller-submit-primary-prompt
+             controller "computed prompt")
+          (test-assert
+           (and accepted-p
+                (eq delivery ':queued)
+                (equal (application-input-controller-work-items controller)
+                       '((:message "ordinary during local Lisp")
+                         (:message "computed prompt"))))
+           "computed prompt during local Lisp joins the ordinary FIFO queue"))))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue
+        controller ':message "older follow-up")
+       (dolist (text '("first late steer" "second late steer"))
+         (multiple-value-bind (accepted-p delivery)
+             (application-input-controller-submit-primary-prompt controller text)
+           (test-assert
+            (and accepted-p (eq delivery ':queued))
+            "late steering intent is accepted as queued work")))
+       (test-assert
+        (equal (application-input-controller-work-items controller)
+               '((:message "first late steer")
+                 (:message "second late steer")
+                 (:message "older follow-up")))
+        "late steering intent precedes older follow-ups without reversing FIFO")
+       (test-assert
+        (= (application-input-controller-steering-promotion-prefix-count controller)
+           2)
+        "promoted steering records its durable FIFO prefix")))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue controller ':lisp "(+ 3 4)")
+       (application-input-controller--next-work controller)
+       (setf (application-input-controller-work-items controller)
+             '((:message "older queued") (:message "newer queued"))
+             (application-input-controller-follow-up-edit-index controller) 1
+             (application-input-controller-follow-up-edit-work controller)
+             '(:message "recalled original"))
+       (test-assert
+        (application-input-controller--handle-recalled-submission
+         controller "edited recalled")
+        "recalled prose is handled during local Lisp")
+       (test-assert
+        (and (null (application-input-controller-steering-items controller))
+             (equal (application-input-controller-work-items controller)
+                    '((:message "older queued")
+                      (:message "edited recalled")
+                      (:message "newer queued")))
+             (null (application-input-controller-follow-up-edit-index controller))
+             (null (application-input-controller-follow-up-edit-work controller)))
+        "recalled prose preserves its FIFO slot instead of entering steering")))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue
+        controller ':message "active message")
+       (application-input-controller--next-work controller)
+       (application-input-controller--enqueue
+        controller ':message "older follow-up")
+       (application-input-controller-submit-primary-prompt
+        controller "older accepted steer")
+       (application-input-controller--finish-work controller)
+       (multiple-value-bind (accepted-p delivery)
+           (application-input-controller-submit-primary-prompt
+            controller "late accepted steer")
+         (test-assert
+          (and accepted-p
+               (eq delivery ':queued)
+               (equal (application-input-controller-work-items controller)
+                      '((:message "older accepted steer")
+                        (:message "late accepted steer")
+                        (:message "older follow-up"))))
+          "completion race keeps earlier steering ahead of a late prompt"))))
+    (call-with-controller
+     (lambda (controller)
+       (setf (application-input-controller-localgroup-handoff-p controller) t)
+       (multiple-value-bind (accepted-p delivery)
+           (application-input-controller-submit-primary-prompt
+            controller "handoff prompt")
+         (test-assert
+          (and (null accepted-p)
+               (eq delivery ':rejected)
+               (null (application-input-controller-work-items controller)))
+          "localgroup handoff rejects new primary prompts"))
+       (setf (application-input-controller-localgroup-handoff-p controller) nil
+             (application-input-controller-stopping-p controller) t)
+       (multiple-value-bind (accepted-p delivery)
+           (application-input-controller-submit-primary-prompt
+            controller "stopping prompt")
+         (test-assert
+          (and (null accepted-p)
+               (eq delivery ':rejected)
+               (null (application-input-controller-work-items controller)))
+          "stopping rejects new primary prompts"))))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue
+        controller ':message "initial active message")
+       (application-input-controller--next-work controller)
+       (application-input-controller-submit-primary-prompt
+        controller "first promoted steer")
+       (application-input-controller-submit-primary-prompt
+        controller "second promoted steer")
+       (application-input-controller--finish-work controller)
+       (test-assert
+        (= (application-input-controller-steering-promotion-prefix-count controller)
+           2)
+        "completion records both promoted steering messages")
+       (application-input-controller--next-work controller)
+       (test-assert
+        (= (application-input-controller-steering-promotion-prefix-count controller)
+           1)
+        "dispatch consumes one promoted prefix slot")
+       (test-assert
+        (application-input-controller--recall-follow-up controller)
+        "remaining promoted steering may be recalled while work is active")
+       (application-input-controller--process-event controller ':interrupt)
+       (test-assert
+        (= (application-input-controller-steering-promotion-prefix-count controller)
+           0)
+        "discarding recalled promoted work removes its prefix slot")
+       (application-input-controller--enqueue
+        controller ':message "older follow-up")
+       (application-input-controller--finish-work controller)
+       (application-input-controller-submit-primary-prompt
+        controller "late prompt after discard")
+       (test-assert
+        (equal (application-input-controller-work-items controller)
+               '((:message "late prompt after discard")
+                 (:message "older follow-up")))
+        "discarded prefix leaves no phantom slot ahead of a late prompt")))
+    (call-with-controller
+     (lambda (controller)
+       (application-input-controller--enqueue controller ':lisp "(+ 5 6)")
+       (application-input-controller--next-work controller)
+       (setf (application-input-controller-follow-up-edit-index controller) 0
+             (application-input-controller-follow-up-edit-work controller)
+             '(:message "recalled original")
+             (application-input-controller-localgroup-handoff-p controller) t)
+       (let ((ui
+               (application-ui
+                (application-input-controller-application controller))))
+         (terminal-ui-set-input ui "recalled during handoff")
+         (application-input-controller--process-event controller ':complete)
+         (test-assert
+          (and (eql (application-input-controller-follow-up-edit-index controller)
+                    0)
+               (equal (application-input-controller-follow-up-edit-work controller)
+                      '(:message "recalled original"))
+               (null (application-input-controller-work-items controller)))
+          "terminal event keeps recalled prose selected during handoff")
+         (setf (application-input-controller-localgroup-handoff-p controller) nil
+               (application-input-controller-stopping-p controller) t)
+         (terminal-ui-set-input ui "recalled while stopping")
+         (application-input-controller--process-event controller ':complete)
+         (test-assert
+          (and (eql (application-input-controller-follow-up-edit-index controller)
+                    0)
+               (equal (application-input-controller-follow-up-edit-work controller)
+                      '(:message "recalled original"))
+               (null (application-input-controller-work-items controller)))
+          "terminal event keeps recalled prose selected while stopping"))))
+    (call-with-controller
+     (lambda (controller)
+       (setf (application-input-controller-pending-persistence-enabled-p controller)
+             nil)
+       (multiple-value-bind (accepted-p delivery)
+           (application-input-controller-submit-primary-prompt
+            controller "/vault")
+         (test-assert
+          (and (null accepted-p)
+               (eq delivery ':rejected)
+               (null (application-input-controller-steering-items controller))
+               (null (application-input-controller-work-items controller)))
+          "callable prompts cannot bypass unavailable recovery-vault storage"))))
+    nil))
+
 (-> test-late-steering-promotion () null)
 (defun test-late-steering-promotion ()
   "Test steering with no later tool runs before already queued follow-up input."
@@ -8379,6 +8622,7 @@
   (test-responsive-command-scheduling)
   (test-recovery-diagnosis-tool-surface)
   (test-input-reader-quiescence)
+  (test-primary-prompt-admission)
   (test-late-steering-promotion)
   (test-conversation-picker)
   (test-working-directory-switch)
