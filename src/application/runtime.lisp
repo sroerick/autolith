@@ -407,35 +407,56 @@ model's effort choice to CONFIGURATION--CLONE."
         (and (typep tool 'task-run-tool)
              (task-run-tool-orchestrator tool))))))
 
+(-> application--refresh-task-presentation-locked
+    (application task-orchestrator)
+    null)
+(defun application--refresh-task-presentation-locked (application orchestrator)
+  "Project ORCHESTRATOR's live children while APPLICATION's task lock is held."
+  (when (eq orchestrator
+            (application-task-presentation-orchestrator application))
+    (let ((ui
+            (and (slot-boundp application 'ui)
+                 (application-ui application))))
+      (when (typep ui 'terminal-ui)
+        (terminal-ui-set-agent-activities
+         ui
+         (task-orchestrator-live-activities orchestrator)))))
+  nil)
+
 (-> application--refresh-task-presentation
     (application task-orchestrator)
     null)
 (defun application--refresh-task-presentation (application orchestrator)
   "Project ORCHESTRATOR's newest live children into APPLICATION's UI."
   (with-lock-held ((application-task-presentation-lock application))
-    (when (eq orchestrator
-              (application-task-presentation-orchestrator application))
-      (let ((ui
-              (and (slot-boundp application 'ui)
-                   (application-ui application))))
-        (when (typep ui 'terminal-ui)
-          (terminal-ui-set-agent-activities
-           ui
-           (task-orchestrator-live-activities orchestrator))))))
+    (application--refresh-task-presentation-locked application orchestrator))
   nil)
 
-(-> application-disconnect-task-presentation (application) null)
-(defun application-disconnect-task-presentation (application)
-  "Disconnect APPLICATION's task observer and clear its child-agent rows."
-  (let ((orchestrator nil)
-        (listener nil))
-    (with-lock-held ((application-task-presentation-lock application))
-      (setf orchestrator
-            (application-task-presentation-orchestrator application)
-            listener
-            (application-task-presentation-listener application)
-            (application-task-presentation-orchestrator application) nil
-            (application-task-presentation-listener application) nil))
+(-> application--present-task-response
+    (application task-orchestrator function list)
+    null)
+(defun application--present-task-response
+    (application orchestrator listener payload)
+  "Present one response from APPLICATION's exact current task LISTENER."
+  (with-lock-held ((application-task-presentation-lock application))
+    (when (and (eq orchestrator
+                   (application-task-presentation-orchestrator application))
+               (eq listener
+                   (application-task-presentation-listener application)))
+      (let ((entry (application--child-response-entry application payload)))
+        (when entry
+          (application-present application entry)))))
+  nil)
+
+(-> application--disconnect-task-presentation-locked (application) null)
+(defun application--disconnect-task-presentation-locked (application)
+  "Disconnect APPLICATION's task observer while its presentation lock is held."
+  (let ((orchestrator
+          (application-task-presentation-orchestrator application))
+        (listener
+          (application-task-presentation-listener application)))
+    (setf (application-task-presentation-orchestrator application) nil
+          (application-task-presentation-listener application) nil)
     (when (and orchestrator listener)
       (task-orchestrator-remove-listener orchestrator listener))
     (let ((ui
@@ -445,34 +466,43 @@ model's effort choice to CONFIGURATION--CLONE."
         (terminal-ui-set-agent-activities ui nil))))
   nil)
 
+(-> application-disconnect-task-presentation (application) null)
+(defun application-disconnect-task-presentation (application)
+  "Disconnect APPLICATION's task observer and clear its child-agent rows."
+  (with-lock-held ((application-task-presentation-lock application))
+    (application--disconnect-task-presentation-locked application))
+  nil)
+
 (-> application-connect-task-presentation (application) null)
 (defun application-connect-task-presentation (application)
-  "Project task lifecycle and progress events into APPLICATION's active UI."
-  (application-disconnect-task-presentation application)
-  (let ((agent (and (slot-boundp application 'agent)
-                    (application-agent application))))
-    (when (typep agent 'agent)
-      (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
-  (let ((orchestrator (application--task-orchestrator application)))
-    (when orchestrator
-      (task-orchestrator-set-hurry-up
-       orchestrator (application-hurry-up-p application))
-      (let ((listener
-              (lambda (channel payload)
-                (declare (ignore payload))
-                (when (member channel
-                              '(:task-subagent-lifecycle
-                                :task-subagent-progress)
-                              :test #'eq)
-                  (application--refresh-task-presentation
-                   application orchestrator)))))
-        (with-lock-held ((application-task-presentation-lock application))
+  "Atomically replace APPLICATION's task listener and active UI projection."
+  (with-lock-held ((application-task-presentation-lock application))
+    (application--disconnect-task-presentation-locked application)
+    (let ((agent (and (slot-boundp application 'agent)
+                      (application-agent application))))
+      (when (typep agent 'agent)
+        (setf (agent-hurry-up-p agent) (application-hurry-up-p application))))
+    (let ((orchestrator (application--task-orchestrator application)))
+      (when orchestrator
+        (task-orchestrator-set-hurry-up
+         orchestrator (application-hurry-up-p application))
+        (let ((listener nil))
+          (setf listener
+                (lambda (channel payload)
+                  (case channel
+                    ((:task-subagent-lifecycle :task-subagent-progress)
+                     (application--refresh-task-presentation
+                      application orchestrator))
+                    (:task-subagent-verbal-response
+                     (application--present-task-response
+                      application orchestrator listener payload)))))
           (setf (application-task-presentation-orchestrator application)
                 orchestrator
                 (application-task-presentation-listener application)
-                listener))
-        (task-orchestrator-add-listener orchestrator listener)
-        (application--refresh-task-presentation application orchestrator))))
+                listener)
+          (task-orchestrator-add-listener orchestrator listener)
+          (application--refresh-task-presentation-locked
+           application orchestrator)))))
   nil)
 
 (-> application--create-tool-registry (configuration) tool-registry)
@@ -1651,18 +1681,49 @@ newly acquired lease."
                                              ':plain
                                              (string #\Newline))))))))
 
-(-> application--turn-timestamp-text
-    (application (option timestamp))
+(-> application--timestamp-text
+    ((option timestamp))
     (option string))
-(defun application--turn-timestamp-text (application timestamp)
-  "Return TIMESTAMP as a local turn-header label when that display is enabled."
-  (when (and (application-turn-timestamps-p application)
-             (typep timestamp 'timestamp))
+(defun application--timestamp-text (timestamp)
+  "Return TIMESTAMP as a local minute-resolution label."
+  (when (typep timestamp 'timestamp)
     (multiple-value-bind (second minute hour date month year)
         (decode-universal-time timestamp)
       (declare (ignore second))
       (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D"
               year month date hour minute))))
+
+(-> application--turn-timestamp-text
+    (application (option timestamp))
+    (option string))
+(defun application--turn-timestamp-text (application timestamp)
+  "Return TIMESTAMP as a turn-header label when that display is enabled."
+  (and (application-turn-timestamps-p application)
+       (application--timestamp-text timestamp)))
+
+(-> application--child-response-entry (application list) (option list))
+(defun application--child-response-entry (application payload)
+  "Return one canonical primary-window entry for a portable child response."
+  (let* ((child-name (getf payload :child-name))
+         (text (getf payload :text))
+         (timestamp (getf payload :time))
+         (safe-child-name
+           (and (stringp child-name)
+                (sanitize-text child-name :single-line-p t)))
+         (timestamp-text (application--timestamp-text timestamp)))
+    (when (and (non-empty-string-p safe-child-name)
+               (stringp text)
+               (plusp
+                (length
+                 (string-trim '(#\Space #\Tab #\Newline #\Return) text)))
+               timestamp-text)
+      (append
+       (list (terminal-span ':brand "● autolith [")
+             (terminal-span ':child-name safe-child-name)
+             (terminal-span ':brand "] ")
+             (terminal-span ':dim timestamp-text)
+             (terminal-span ':plain (string #\Newline)))
+       (application--markdown-body application text)))))
 
 (-> application--transcript-entry
     (application &key (:style terminal-style) (:header string)

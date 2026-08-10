@@ -7431,19 +7431,25 @@
   "Test task events drive one reconnectable child-agent terminal projection."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create
+            configuration :identifier "task-presentation-primary-window"))
          (registry
            (task-augment-tool-registry
             (make-default-tool-registry)))
          (run-tool (tool-registry-find registry "task" "run"))
          (orchestrator (task-run-tool-orchestrator run-tool))
          (clock 65)
+         (terminal
+           (make-instance 'recording-terminal :columns 72 :styled-p t))
          (ui
            (terminal-ui-create
-            :terminal (make-instance 'recording-terminal :columns 72)
+            :terminal terminal
             :clock-function (lambda () clock)))
          (application
            (make-instance 'application
                           :configuration configuration
+                          :conversation conversation
                           :tool-registry registry
                           :ui ui))
          (primary
@@ -7456,15 +7462,124 @@
             :instructions "Remain visible while the test inspects the UI."
             :source ':test))
          (queued nil)
-         (running nil))
+         (running nil)
+         (replacement-registry nil)
+         (replacement-orchestrator nil))
     (unwind-protect
          (progn
            (application-connect-task-presentation application)
            (application-connect-task-presentation application)
            (test-assert
-            (= (length (task-orchestrator-listeners orchestrator))
-               1)
+            (= (length (task-orchestrator-listeners orchestrator)) 1)
             "reconnection retains exactly one task presentation listener")
+           (let* ((original-add-listener
+                    (symbol-function 'task-orchestrator-add-listener))
+                  (gate-lock
+                    (make-lock "Autolith task presentation connect race"))
+                  (gate-condition (make-condition-variable))
+                  (first-add-entered-p nil)
+                  (release-first-add-p nil)
+                  (second-started-p nil)
+                  (add-call-count 0)
+                  (first-condition nil)
+                  (second-condition nil)
+                  (first-thread nil)
+                  (second-thread nil))
+             (test-call-with-function-replacements
+              (list
+               (list
+                'task-orchestrator-add-listener
+                (lambda (target listener)
+                  (let ((block-p nil))
+                    (with-lock-held (gate-lock)
+                      (incf add-call-count)
+                      (unless first-add-entered-p
+                        (setf first-add-entered-p t
+                              block-p t)
+                        (task--condition-broadcast gate-condition)))
+                    (when block-p
+                      (with-lock-held (gate-lock)
+                        (loop until release-first-add-p
+                              unless
+                              (condition-wait
+                               gate-condition gate-lock :timeout 2)
+                                do (error
+                                    "Timed out holding the first presentation listener add."))))
+                     (funcall original-add-listener target listener)))))
+              (lambda ()
+                (unwind-protect
+                     (progn
+                       (setf first-thread
+                             (make-thread
+                              (lambda ()
+                                (handler-case
+                                    (application-connect-task-presentation
+                                     application)
+                                  (condition (condition)
+                                    (setf first-condition condition))))
+                              :name "Autolith first task presentation connect"))
+                       (with-lock-held (gate-lock)
+                         (loop until first-add-entered-p
+                               unless
+                               (condition-wait
+                                gate-condition gate-lock :timeout 2)
+                                 do (error
+                                     "Timed out waiting for the first listener add.")))
+                       (let ((acquired-p
+                               (bordeaux-threads:acquire-lock
+                                (application-task-presentation-lock application)
+                                nil)))
+                         (when acquired-p
+                           (bordeaux-threads:release-lock
+                            (application-task-presentation-lock application)))
+                         (test-assert
+                          (not acquired-p)
+                          "listener registration remains inside the presentation transaction"))
+                       (setf second-thread
+                             (make-thread
+                              (lambda ()
+                                (with-lock-held (gate-lock)
+                                  (setf second-started-p t)
+                                  (task--condition-broadcast gate-condition))
+                                (handler-case
+                                    (application-connect-task-presentation
+                                     application)
+                                  (condition (condition)
+                                    (setf second-condition condition))))
+                              :name "Autolith second task presentation connect"))
+                       (with-lock-held (gate-lock)
+                         (loop until second-started-p
+                               unless
+                               (condition-wait
+                                gate-condition gate-lock :timeout 2)
+                                 do (error
+                                     "Timed out starting the second listener connect."))
+                         (setf release-first-add-p t)
+                         (task--condition-broadcast gate-condition))
+                       (join-thread first-thread)
+                       (setf first-thread nil)
+                       (join-thread second-thread)
+                       (setf second-thread nil)
+                       (let ((listeners
+                               (task-orchestrator-listeners orchestrator)))
+                         (test-assert
+                          (and (null first-condition)
+                               (null second-condition)
+                               (= add-call-count 2)
+                               (= (length listeners) 1)
+                               (member
+                                (application-task-presentation-listener
+                                 application)
+                                listeners
+                                :test #'eq))
+                          "overlapping reconnects retain one exact active listener")))
+                  (with-lock-held (gate-lock)
+                    (setf release-first-add-p t)
+                    (task--condition-broadcast gate-condition))
+                  (when first-thread
+                    (ignore-errors (join-thread first-thread)))
+                  (when second-thread
+                     (ignore-errors (join-thread second-thread)))))))
            (setf queued
                  (task-tests--register-job
                   orchestrator primary definition :name "queued-agent")
@@ -7530,13 +7645,140 @@
            (test-assert
             (null (terminal-ui-agent-activities ui))
             "late progress cannot resurrect a terminal child")
+           (let* ((timestamp
+                    (encode-universal-time 0 53 22 10 8 2026))
+                  (payload
+                    (list :id "child-1"
+                          :execution-id "execution-1"
+                          :child-name "shared-diff-final-review"
+                          :steering-id "steering-1"
+                          :text "Use **careful** context."
+                          :time timestamp))
+                  (entry
+                    (application--child-response-entry application payload))
+                  (conversation-path (conversation-pathname conversation))
+                  (records-before
+                    (and (probe-file conversation-path)
+                         (copy-tree
+                          (conversation--read-records conversation-path))))
+                  (stale-listener
+                    (application-task-presentation-listener application)))
+             (test-assert
+              (and (find
+                    (terminal-span ':child-name "shared-diff-final-review")
+                    entry
+                    :test #'equal)
+                   (find (terminal-span ':strong "careful")
+                         entry
+                         :test #'equal)
+                   (not (application-turn-timestamps-p application)))
+              "child response entries retain semantic name and markdown spans")
+             (application-connect-task-presentation application)
+             (test-assert
+              (and (= (length (task-orchestrator-listeners orchestrator)) 1)
+                   (not
+                    (eq stale-listener
+                        (application-task-presentation-listener application))))
+              "same-orchestrator reconnection replaces the exact listener")
+             (recording-terminal-reset terminal)
+             (funcall stale-listener
+                      ':task-subagent-verbal-response
+                      payload)
+             (test-assert
+              (string= (recording-terminal-output terminal) "")
+              "a snapshotted stale listener cannot present after reconnection")
+             (recording-terminal-reset terminal)
+             (let ((cl-colorist:*color-level* ':indexed))
+               (task-orchestrator-emit
+                orchestrator ':task-subagent-verbal-response payload))
+             (let* ((output (recording-terminal-output terminal))
+                    (plain-output (cl-colorist:strip-ansi output))
+                    (child-style (terminal-style-sequence ':child-name t))
+                    (basic-child-style
+                      (terminal-style-sequence ':child-name nil)))
+               (test-assert
+                (and
+                 (search
+                  "● autolith [shared-diff-final-review] 2026-08-10 22:53"
+                  plain-output)
+                 (= (terminal-tests--substring-count
+                     "● autolith [shared-diff-final-review]" plain-output)
+                    1)
+                 (search "Use careful context." plain-output)
+                 (search child-style output)
+                 (search "38;5;78" child-style)
+                 (string= basic-child-style
+                          (terminal-style-sequence ':success nil)))
+                "one child response is presented once with color 78 or green fallback"))
+             (test-assert
+              (and
+               (equal records-before
+                      (and (probe-file conversation-path)
+                           (conversation--read-records conversation-path)))
+               (null (conversation-input-items conversation)))
+              "promoted child presentation does not mutate primary conversation state")
+             (application-disconnect-task-presentation application)
+             (recording-terminal-reset terminal)
+             (task-orchestrator-emit
+              orchestrator ':task-subagent-verbal-response payload)
+             (test-assert
+              (string= (recording-terminal-output terminal) "")
+              "a disconnected orchestrator cannot present child responses")
+             (setf replacement-registry
+                   (task-augment-tool-registry
+                    (make-default-tool-registry))
+                   replacement-orchestrator
+                   (task-run-tool-orchestrator
+                    (tool-registry-find replacement-registry "task" "run"))
+                   (application-tool-registry application)
+                   replacement-registry)
+             (application-connect-task-presentation application)
+             (test-assert
+              (and (zerop (length (task-orchestrator-listeners orchestrator)))
+                   (= (length
+                       (task-orchestrator-listeners replacement-orchestrator))
+                      1))
+              "runtime replacement moves the exact presentation listener")
+             (recording-terminal-reset terminal)
+             (task-orchestrator-emit
+              orchestrator ':task-subagent-verbal-response payload)
+             (test-assert
+              (string= (recording-terminal-output terminal) "")
+              "the retired orchestrator cannot present after replacement")
+             (let ((replacement-payload
+                     (list :id "child-2"
+                           :execution-id "execution-2"
+                           :child-name "replacement-review"
+                           :steering-id "steering-2"
+                           :text "Replacement response."
+                           :time timestamp)))
+               (let ((cl-colorist:*color-level* ':indexed))
+                 (task-orchestrator-emit
+                  replacement-orchestrator
+                  ':task-subagent-verbal-response
+                  replacement-payload))
+               (let ((plain-output
+                       (cl-colorist:strip-ansi
+                        (recording-terminal-output terminal))))
+                 (test-assert
+                  (and
+                   (search
+                    "● autolith [replacement-review] 2026-08-10 22:53"
+                    plain-output)
+                   (= (terminal-tests--substring-count
+                       "● autolith [replacement-review]" plain-output)
+                      1)
+                   (not (search "shared-diff-final-review" plain-output)))
+                  "only the active orchestrator presents its current child response"))))
            (application-disconnect-task-presentation application)
            (test-assert
             (and
              (null (application-task-presentation-orchestrator application))
              (null (application-task-presentation-listener application))
-             (zerop
-              (length (task-orchestrator-listeners orchestrator))))
+             (or (null replacement-orchestrator)
+                 (zerop
+                  (length
+                   (task-orchestrator-listeners replacement-orchestrator)))))
             "disconnect removes the exact observer and retained scheduler link"))
       (application-disconnect-task-presentation application)
       (dolist (job (remove nil (list queued running)))
@@ -7546,6 +7788,9 @@
            ':aborted
            (task-tests--terminal-result
             job :status ':aborted :output "test cleanup"))))
+      (when replacement-registry
+        (ignore-errors
+          (tool-registry-close-runtime-state replacement-registry)))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))

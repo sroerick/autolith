@@ -11,7 +11,7 @@
            :recovery-gradient-4 :recovery-gradient-5 :recovery-gradient-6
            :user :tool :success :failure :notice :dim :hint :selected
            :strong :emphasis :code :lisp-prompt :plan-active :timestamp-time
-           :agent-spinner :agent-name :agent-role :agent-tool
+           :agent-spinner :agent-name :child-name :agent-role :agent-tool
            :status-plain :status-dim :status-accent
            :status-model :status-effort :status-branch
            :compaction-label :compaction-track :compaction-head
@@ -21,8 +21,8 @@
 
 (defparameter *terminal-style-table*
   ;; General interface styles use the basic ANSI palette so Autolith follows
-  ;; the terminal theme. Only the startup mark and status background opt into
-  ;; indexed colors.
+  ;; the terminal theme. Only the startup mark, promoted child name, and status
+  ;; background opt into indexed colors.
   (append
    (loop for (name arguments) in
          '((:plain ())
@@ -56,6 +56,10 @@
            (:syntax-heading (:foreground :magenta :bold t))
            (:syntax-link (:foreground :cyan :underline t)))
          collect (cons name (apply #'make-style arguments)))
+   (list
+    (cons ':child-name
+          (make-style
+           :foreground (indexed-color 78 :fallback ':green))))
    (loop for name in '(:brand-gradient-1 :brand-gradient-2 :brand-gradient-3
                        :brand-gradient-4 :brand-gradient-5 :brand-gradient-6)
          for index in '(193 157 121 85 84 83)
