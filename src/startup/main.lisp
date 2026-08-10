@@ -396,10 +396,15 @@
                             resume-offer-p)
                            :load-pending-p (not recovery-startup-p)
                            :pending-persistence-enabled-p
-                           recovery-input-storage-ready-p))
+                           recovery-input-storage-ready-p
+                           :start-reader-p nil))
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)
+                    (application-input-controller--open-prompt-if-ready
+                     input-controller)
+                    (application-input-controller--start-reader
+                     input-controller)
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*

@@ -39,6 +39,23 @@
   (with-output-to-string (stream)
     (disable-keyboard-enhancement :stream stream)))
 
+(-> terminal-prompt-marker-sequence
+    (keyword &optional (integer 0))
+    string)
+(defun terminal-prompt-marker-sequence (marker &optional (status 0))
+  "Return one OSC 133 control for semantic prompt MARKER and completion STATUS."
+  (let ((payload
+          (ecase marker
+            (:prompt-start "A")
+            (:input-start "B")
+            (:execution-start "C")
+            (:command-finished (format nil "D;~D" status)))))
+    (format nil "~C]133;~A~C~C"
+            *terminal-escape-character*
+            payload
+            *terminal-escape-character*
+            #\\)))
+
 
 ;;;; -- Terminal Objects --
 
@@ -128,6 +145,11 @@
     :reader terminal-ui-prompt
     :type string
     :documentation "The untrusted-text-safe prompt prefix.")
+   (prompt-marker-state
+    :initform ':closed
+    :accessor terminal-ui-prompt-marker-state
+    :type (member :closed :prompt :input :executing)
+    :documentation "The current semantic OSC 133 prompt-block boundary.")
    (placeholder
     :initarg :placeholder
     :initform ""
@@ -338,3 +360,15 @@
 
 (defgeneric terminal-flush (terminal)
   (:documentation "Make all pending TERMINAL output visible."))
+
+
+(-> terminal-write-prompt-marker
+    (terminal keyword &optional (integer 0))
+    boolean)
+(defun terminal-write-prompt-marker (terminal marker &optional (status 0))
+  "Write and flush one OSC 133 MARKER for interactive TERMINAL, if applicable."
+  (when (terminal-interactive-p terminal)
+    (terminal--write terminal
+                     (terminal-prompt-marker-sequence marker status))
+    (terminal-flush terminal)
+    t))

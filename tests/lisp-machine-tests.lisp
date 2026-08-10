@@ -314,10 +314,217 @@
                                     :if-does-not-exist :ignore))))
   nil)
 
+(-> test-application-prompt-marker-reader-order () null)
+(defun test-application-prompt-marker-reader-order ()
+  "Test that an idle prompt is marked before its terminal reader can accept input."
+  (multiple-value-bind (application root)
+      (lisp-machine-tests--application)
+    (let* ((ui (application-ui application))
+           (terminal (terminal-ui-terminal ui))
+           (controller nil)
+           (reader-state nil)
+           (reader-output nil)
+           (prompt-start
+             (terminal-prompt-marker-sequence ':prompt-start))
+           (input-start
+             (terminal-prompt-marker-sequence ':input-start)))
+      (unwind-protect
+           (progn
+             (terminal-ui-start ui)
+             (recording-terminal-reset terminal)
+             (test-call-with-function-replacements
+              (list
+               (list 'application-input-controller--start-reader
+                     (lambda (observed-controller)
+                       (declare (ignore observed-controller))
+                       (setf reader-state
+                             (terminal-ui-prompt-marker-state ui)
+                             reader-output
+                             (recording-terminal-output terminal))
+                       nil)))
+               (lambda ()
+                 (setf controller
+                       (application-input-controller-create
+                        application
+                        :initial-work-items
+                        '((:recovery-diagnosis "internal"))
+                        :load-pending-p nil))))
+             (test-assert
+              (and (eq reader-state ':input)
+                   (= (terminal-tests--substring-count
+                       prompt-start reader-output)
+                      1)
+                   (= (terminal-tests--substring-count
+                       input-start reader-output)
+                      1)
+                   (< (search prompt-start reader-output)
+                      (search input-start reader-output))
+                   (null
+                    (application-input-controller-reader-thread controller)))
+               "initial work still emits A/B before starting its reader"))
+        (when controller
+          (ignore-errors (application-input-controller-stop controller)))
+        (ignore-errors (terminal-ui-stop ui))
+        (ignore-errors
+          (tool-registry-close-runtime-state
+           (application-tool-registry application)))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
+  nil)
+
+(-> test-application-prompt-marker-lifecycle () null)
+(defun test-application-prompt-marker-lifecycle ()
+  "Test prompt blocks around foreground, failed, cancelled, and immediate Lisp."
+  (multiple-value-bind (application root)
+      (lisp-machine-tests--application)
+    (let* ((ui (application-ui application))
+           (terminal (terminal-ui-terminal ui))
+           (controller (lisp-machine-tests--controller application)))
+      (labels ((marker (payload)
+                 (format nil "~C]133;~A~C~C"
+                         *terminal-escape-character*
+                         payload
+                         *terminal-escape-character*
+                         #\\))
+
+               (markers-in-order-p (output payloads)
+                 (block nil
+                   (let ((start 0))
+                     (dolist (payload payloads t)
+                       (let* ((control (marker payload))
+                              (position (search control output :start2 start)))
+                         (unless position
+                           (return nil))
+                         (setf start (+ position (length control))))))))
+
+               (run-lisp-work (source &key cancel-p)
+                 (setf (application-input-controller-active-p controller) t
+                       (application-input-controller-active-work-interactive-p
+                        controller)
+                       t)
+                 (application-input-controller--run-work
+                  controller (list ':lisp source))
+                 (when cancel-p
+                   (setf (application-input-controller-turn-cancellation-p
+                          controller)
+                         t))
+                 (application-input-controller--finish-work controller)))
+        (unwind-protect
+             (progn
+               (terminal-ui-start ui)
+               (recording-terminal-reset terminal)
+               (terminal-ui-open-prompt-block ui)
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-input-controller-call-with-reader-paused
+                       (lambda (ignored function)
+                         (declare (ignore ignored))
+                         (funcall function))))
+                (lambda ()
+                  (run-lisp-work "(values :ok)")
+                  (run-lisp-work "(error \"marker failure\")")
+                  (run-lisp-work "(values :cancelled)" :cancel-p t)))
+               (let ((output (recording-terminal-output terminal)))
+                 (test-assert
+                  (and
+                   (markers-in-order-p
+                    output
+                    '("A" "B" "C" "D;0"
+                      "A" "B" "C" "D;1"
+                      "A" "B" "C" "D;1"
+                      "A" "B"))
+                   (= (terminal-tests--substring-count (marker "A") output) 4)
+                   (= (terminal-tests--substring-count (marker "B") output) 4)
+                   (= (terminal-tests--substring-count (marker "C") output) 3)
+                   (= (terminal-tests--substring-count (marker "D;0") output) 1)
+                   (= (terminal-tests--substring-count (marker "D;1") output) 2))
+                  "foreground Lisp emits ordered success, failure, and cancellation blocks"))
+               (let ((execution-count
+                       (terminal-tests--substring-count
+                        (marker "C") (recording-terminal-output terminal)))
+                     (completion-count
+                       (+
+                        (terminal-tests--substring-count
+                         (marker "D;0") (recording-terminal-output terminal))
+                        (terminal-tests--substring-count
+                         (marker "D;1") (recording-terminal-output terminal)))))
+                 (setf (application-input-controller-active-p controller) t
+                       (application-input-controller-active-work-interactive-p
+                        controller)
+                       nil)
+                 (application-input-controller--begin-prompt-work
+                  controller '(:recovery-diagnosis "internal"))
+                 (application-input-controller--finish-work controller)
+                 (test-assert
+                  (and
+                   (= execution-count
+                      (terminal-tests--substring-count
+                       (marker "C") (recording-terminal-output terminal)))
+                   (= completion-count
+                      (+
+                       (terminal-tests--substring-count
+                        (marker "D;0") (recording-terminal-output terminal))
+                       (terminal-tests--substring-count
+                        (marker "D;1") (recording-terminal-output terminal)))))
+                  "startup and internal work add no command marker block"))
+               (terminal-ui-start-prompt-execution ui)
+               (recording-terminal-reset terminal)
+               (test-assert
+                (eq
+                 (application-input-controller--run-responsive-lisp
+                  controller "(values :nested)")
+                 ':continue)
+                "immediate local Lisp still runs inside active prompt work")
+               (let ((output (recording-terminal-output terminal)))
+                 (test-assert
+                  (and
+                   (zerop
+                    (terminal-tests--substring-count (marker "A") output))
+                   (zerop
+                    (terminal-tests--substring-count (marker "B") output))
+                   (zerop
+                    (terminal-tests--substring-count (marker "C") output))
+                   (zerop
+                    (terminal-tests--substring-count (marker "D;0") output)))
+                  "immediate active-turn Lisp does not nest another marker block"))
+               (terminal-ui-finish-prompt-block ui 0)
+               (terminal-ui-open-prompt-block ui)
+               (recording-terminal-reset terminal)
+               (test-call-with-function-replacements
+                (list
+                 (list 'application-input-controller-call-with-reader-paused
+                       (lambda (ignored function)
+                         (declare (ignore ignored))
+                         (funcall function))))
+                (lambda ()
+                  (run-lisp-work "(quit)")))
+               (let ((output (recording-terminal-output terminal)))
+                 (test-assert
+                  (and (application-input-controller-stopping-p controller)
+                       (markers-in-order-p output '("C" "D;0"))
+                       (zerop
+                        (terminal-tests--substring-count (marker "A") output))
+                       (zerop
+                        (terminal-tests--substring-count (marker "B") output))
+                       (eq (terminal-ui-prompt-marker-state ui) ':closed))
+                  "quit completes its block without opening another prompt")))
+          (ignore-errors (application-input-controller-stop controller))
+          (ignore-errors (terminal-ui-stop ui))
+          (ignore-errors
+            (tool-registry-close-runtime-state
+             (application-tool-registry application)))
+          (uiop:delete-directory-tree root
+                                      :validate t
+                                      :if-does-not-exist :ignore)))))
+  nil)
+
 (-> run-lisp-machine-tests () null)
 (defun run-lisp-machine-tests ()
   "Run direct local Lisp evaluation and responsive routing tests."
   (test-application-lisp-evaluation)
   (test-application-lisp-activity)
   (test-application-lisp-input-routing)
+  (test-application-prompt-marker-reader-order)
+  (test-application-prompt-marker-lifecycle)
   nil)

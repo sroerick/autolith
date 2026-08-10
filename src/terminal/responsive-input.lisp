@@ -116,6 +116,26 @@
     :accessor application-input-controller-active-work-identifier
     :type (option string)
     :documentation "The durable identifier of ACTIVE-WORK, when present.")
+   (active-work-interactive-p
+    :initform nil
+    :accessor application-input-controller-active-work-interactive-p
+    :type boolean
+    :documentation "Whether ACTIVE-WORK came from the interactive prompt queue.")
+   (prompt-marker-work-p
+    :initform nil
+    :accessor application-input-controller-prompt-marker-work-p
+    :type boolean
+    :documentation "Whether current work emitted an OSC 133 execution-start marker.")
+   (prompt-marker-status
+    :initform 0
+    :accessor application-input-controller-prompt-marker-status
+    :type (integer 0)
+    :documentation "The completion status for current marked prompt work.")
+   (prompt-marker-reopen-p
+    :initform nil
+    :accessor application-input-controller-prompt-marker-reopen-p
+    :type boolean
+    :documentation "Whether current work may open the next semantic prompt block.")
    (pending-snapshot-identifier
     :initform nil
     :accessor application-input-controller-pending-snapshot-identifier
@@ -1437,13 +1457,69 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
        (application-input-controller-application controller) source)
       ':hold))
 
+(-> application-input-controller--prompt-result-failure-p (t) boolean)
+(defun application-input-controller--prompt-result-failure-p (result)
+  "Return true when RESULT denotes a failed user interaction."
+  (not (null (member result '(:aborted :failed :rate-limited) :test #'eq))))
+
+(-> application-input-controller--open-prompt-if-ready
+    (application-input-controller)
+    boolean)
+(defun application-input-controller--open-prompt-if-ready (controller)
+  "Open CONTROLLER's prompt block whenever it still accepts terminal input."
+  (let ((ready-p
+          (with-lock-held ((application-input-controller-lock controller))
+            (not (application-input-controller-stopping-p controller)))))
+    (and ready-p
+         (terminal-ui-open-prompt-block
+          (application-ui
+           (application-input-controller-application controller))))))
+
+(-> application-input-controller--call-with-responsive-prompt-block
+    (application-input-controller function)
+    t)
+(defun application-input-controller--call-with-responsive-prompt-block
+    (controller function)
+  "Call FUNCTION in one prompt block unless another interaction already executes."
+  (let* ((ui
+           (application-ui
+            (application-input-controller-application controller)))
+         (marker-p nil)
+         (status 0)
+         (reopen-p t)
+         (result nil)
+         (result-p nil))
+    (application-input-controller--open-prompt-if-ready controller)
+    (setf marker-p (terminal-ui-start-prompt-execution ui))
+    (unwind-protect
+         (handler-case
+             (progn
+               (setf result (funcall function)
+                     result-p t)
+               (when (application-input-controller--prompt-result-failure-p
+                      result)
+                 (setf status 1))
+               result)
+           (serious-condition (condition)
+             (setf status 1
+                   reopen-p (typep condition 'application-turn-cancelled))
+             (error condition)))
+      (when marker-p
+        (terminal-ui-finish-prompt-block ui status)
+        (when (and reopen-p
+                   (not (and result-p (eq result ':quit))))
+          (application-input-controller--open-prompt-if-ready controller))))))
+
 (-> application-input-controller--run-responsive-lisp
     (application-input-controller string)
     keyword)
 (defun application-input-controller--run-responsive-lisp (controller source)
   "Execute immediate local Lisp SOURCE on CONTROLLER's terminal reader."
-  (application-run-lisp-input
-   (application-input-controller-application controller) source))
+  (application-input-controller--call-with-responsive-prompt-block
+   controller
+   (lambda ()
+     (application-run-lisp-input
+      (application-input-controller-application controller) source))))
 
 (-> application-input-controller--run-responsive-command
     (application-input-controller application-command
@@ -1452,18 +1528,21 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
 (defun application-input-controller--run-responsive-command
     (controller command invocation)
   "Execute an immediate COMMAND without converting its errors on the reader."
-  (let ((application
-          (application-input-controller-application controller)))
-    (application-command--call-with-presentation
-     invocation
-     (lambda ()
-       (handler-case
-           (application-command-execute command application invocation)
-         (autolith-error (condition)
-           (application-present
-            application
-            (application--expected-error-entry application condition))
-           ':failed))))))
+  (application-input-controller--call-with-responsive-prompt-block
+   controller
+   (lambda ()
+     (let ((application
+             (application-input-controller-application controller)))
+       (application-command--call-with-presentation
+        invocation
+        (lambda ()
+          (handler-case
+              (application-command-execute command application invocation)
+            (autolith-error (condition)
+              (application-present
+               application
+               (application--expected-error-entry application condition))
+              ':failed))))))))
 
 (-> application-input-controller--handle-recalled-submission
     (application-input-controller (or string user-message-input))
@@ -2288,13 +2367,14 @@ boundary."
     (application
      &key (:initial-work-items list)
           (:load-pending-p boolean)
-          (:pending-persistence-enabled-p boolean))
+          (:pending-persistence-enabled-p boolean)
+          (:start-reader-p boolean))
     application-input-controller)
 (defun application-input-controller-create
     (application
      &key initial-work-items (load-pending-p t)
-          (pending-persistence-enabled-p t))
-  "Create CONTROLLER for APPLICATION and start its terminal reader."
+          (pending-persistence-enabled-p t) (start-reader-p t))
+  "Create CONTROLLER for APPLICATION and optionally start its terminal reader."
   (let* ((configuration
            (and (slot-boundp application 'configuration)
                 (application-configuration application)))
@@ -2316,7 +2396,9 @@ boundary."
     (when load-pending-p
       (application-input-controller--load-pending controller))
     (application-input-controller--publish-counts controller)
-    (application-input-controller--start-reader controller)
+    (when start-reader-p
+      (application-input-controller--open-prompt-if-ready controller)
+      (application-input-controller--start-reader controller))
     controller))
 
 (-> application-input-controller--next-work
@@ -2327,6 +2409,7 @@ boundary."
   (let ((application (application-input-controller-application controller))
         (work nil))
     (with-lock-held ((application-input-controller-lock controller))
+      (setf (application-input-controller-active-work-interactive-p controller) nil)
       (loop
         (application-input-controller--promote-due-later
          controller (get-universal-time))
@@ -2363,8 +2446,12 @@ boundary."
                  (eql
                   (application-input-controller-follow-up-edit-index controller)
                   0)))
-           (setf work (pop (application-input-controller-work-items controller))
-                 (application-input-controller-active-p controller) t)
+           (setf work
+                 (pop (application-input-controller-work-items controller))
+                 (application-input-controller-active-p controller) t
+                 (application-input-controller-active-work-interactive-p
+                  controller)
+                 t)
            (if (eq (first work) ':message)
                (setf (application-input-controller-active-work controller) work
                      (application-input-controller-active-work-identifier controller)
@@ -2418,7 +2505,10 @@ boundary."
 (defun application-input-controller--finish-work (controller)
   "Finish current work and promote unconsumed steering at its ordered position."
   (let ((clear-notice-p nil)
-        (pause-notice nil))
+        (pause-notice nil)
+        (marker-work-p nil)
+        (marker-status 0)
+        (reopen-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
         (let* ((work-items
@@ -2453,12 +2543,26 @@ boundary."
                 (application-input-controller-steering-promotion-prefix-count
                  controller)
                 0)))
+      (when (and (application-input-controller-turn-cancellation-p controller)
+                 (not (eq (application-input-controller-exit-reason controller)
+                          ':quit)))
+        (setf (application-input-controller-prompt-marker-status controller) 1))
       (setf clear-notice-p
             (or (application-input-controller-turn-cancellation-p controller)
                 (application-input-controller-interrupt-deadline controller))
+            marker-work-p
+            (application-input-controller-prompt-marker-work-p controller)
+            marker-status
+            (application-input-controller-prompt-marker-status controller)
+            reopen-p
+            (application-input-controller-prompt-marker-reopen-p controller)
             (application-input-controller-active-p controller) nil
             (application-input-controller-active-work controller) nil
             (application-input-controller-active-work-identifier controller) nil
+            (application-input-controller-active-work-interactive-p controller) nil
+            (application-input-controller-prompt-marker-work-p controller) nil
+            (application-input-controller-prompt-marker-status controller) 0
+            (application-input-controller-prompt-marker-reopen-p controller) nil
             (application-input-controller-turn-cancellation-p controller) nil
             (application-input-controller-turn-cancellation-delivery-pending-p
              controller)
@@ -2484,7 +2588,14 @@ boundary."
            (terminal-ui-set-notice
             (application-ui (application-input-controller-application controller))
             nil)))
-    (application-input-controller--publish-counts controller))
+    (application-input-controller--publish-counts controller)
+    (let ((ui
+            (application-ui
+             (application-input-controller-application controller))))
+      (when marker-work-p
+        (terminal-ui-finish-prompt-block ui marker-status))
+      (when reopen-p
+        (application-input-controller--open-prompt-if-ready controller))))
   nil)
 
 (-> application-input-controller-stop (application-input-controller) null)
@@ -2502,6 +2613,10 @@ boundary."
             (application-input-controller-active-p controller) nil
             (application-input-controller-active-work controller) nil
             (application-input-controller-active-work-identifier controller) nil
+            (application-input-controller-active-work-interactive-p controller) nil
+            (application-input-controller-prompt-marker-work-p controller) nil
+            (application-input-controller-prompt-marker-status controller) 0
+            (application-input-controller-prompt-marker-reopen-p controller) nil
             (application-input-controller-pending-snapshot-identifier controller) nil
             (application-input-controller-vault-capture-identifiers controller) nil
             (application-input-controller-steering-promotion-prefix-count controller) 0
@@ -2780,6 +2895,49 @@ the next application boundary because it does not depend on the provider."
                    window-label))))))
   nil)
 
+(-> application-input-controller--interactive-prompt-work-p (list) boolean)
+(defun application-input-controller--interactive-prompt-work-p (work)
+  "Return true when WORK represents one foreground user interaction."
+  (not (null (member (first work) '(:command :lisp :message) :test #'eq))))
+
+(-> application-input-controller--begin-prompt-work
+    (application-input-controller list)
+    null)
+(defun application-input-controller--begin-prompt-work (controller work)
+  "Initialize prompt-marker state and begin execution for interactive WORK."
+  (setf (application-input-controller-prompt-marker-work-p controller) nil
+        (application-input-controller-prompt-marker-status controller) 0
+        (application-input-controller-prompt-marker-reopen-p controller) t)
+  (when (and
+         (application-input-controller-active-work-interactive-p controller)
+         (application-input-controller--interactive-prompt-work-p work))
+    (application-input-controller--open-prompt-if-ready controller)
+    (setf (application-input-controller-prompt-marker-work-p controller)
+          (terminal-ui-start-prompt-execution
+           (application-ui
+            (application-input-controller-application controller)))))
+  nil)
+
+(-> application-input-controller--record-prompt-result
+    (application-input-controller t)
+    null)
+(defun application-input-controller--record-prompt-result (controller result)
+  "Record RESULT's completion status for CONTROLLER's current prompt block."
+  (when (application-input-controller--prompt-result-failure-p result)
+    (setf (application-input-controller-prompt-marker-status controller) 1))
+  nil)
+
+(-> application-input-controller--record-prompt-condition
+    (application-input-controller serious-condition)
+    null)
+(defun application-input-controller--record-prompt-condition
+    (controller condition)
+  "Record escaping CONDITION and whether cancellation may reopen the next prompt."
+  (setf (application-input-controller-prompt-marker-status controller) 1
+        (application-input-controller-prompt-marker-reopen-p controller)
+        (typep condition 'application-turn-cancelled))
+  nil)
+
 (-> application-input-controller--run-work
     (application-input-controller list)
     null)
@@ -2789,67 +2947,85 @@ the next application boundary because it does not depend on the provider."
         (pending-input-identifier
           (with-lock-held ((application-input-controller-lock controller))
             (application-input-controller-active-work-identifier controller))))
-    (case (first work)
-      (:message
-       (let ((result
-               (application--run-message-input
-                application
-                (second work)
-                :steering-function
-                (lambda ()
-                  (application-input-controller--take-steering controller))
-                :steering-persisted-function
-                (lambda (identifier)
-                  (application-input-controller--acknowledge-steering
-                   controller identifier))
-                :user-message-persisted-function
-                (lambda (identifier)
-                  (application-input-controller--acknowledge-active-work
-                   controller identifier))
-                :pending-input-identifier pending-input-identifier)))
-         (when (eq result ':rate-limited)
-           (application-input-controller--defer-after-rate-limit controller))))
-      (:recovery-diagnosis
-       (application--run-message-input
-        application
-        (second work)
-        :tools-p t
-        :tool-allowlist *application-recovery-diagnostic-tool-names*
-        :tool-restriction-p t
-        :goal-continuations-p nil
-        :fatal-agent-loop-errors-p nil))
-      (:lisp
-       (let ((result
-               (application-input-controller-call-with-reader-paused
-                controller
-                (lambda ()
-                  (application-run-lisp-input application (second work))))))
-         (when (eq result ':quit)
-           (application-input-controller--request-exit controller ':quit))))
-      (:command
-       (let* ((input (second work))
-              (invocation (application-command-invocation-parse input))
-              (command
-                (application-command-invocation-command invocation))
-              (result
-                (if (and command
-                         (application-command-terminal-owner-p
-                          command invocation))
-                    (application-input-controller-call-with-reader-paused
-                     controller
-                     (lambda ()
-                       (application--run-command-input application input)))
-                    (application--run-command-input application input))))
-         (when (eq result ':quit)
-           (application-input-controller--request-exit controller ':quit))))
-      (:project-adaptation-offer
-       (application-maybe-offer-project-adaptation application))
-      (:localgroup-handoff
-       (handler-case
-           (application-localgroup-run-handoff
-            application (second work) controller)
-         (localgroup-error (condition)
-           (application-handle-expected-error application condition))))
-      (:later
-       (application-input-controller--run-later controller (second work)))))
+    (handler-case
+        (progn
+          (application-input-controller--begin-prompt-work controller work)
+          (case (first work)
+            (:message
+             (let ((result
+                     (application--run-message-input
+                      application
+                      (second work)
+                      :steering-function
+                      (lambda ()
+                        (application-input-controller--take-steering controller))
+                      :steering-persisted-function
+                      (lambda (identifier)
+                        (application-input-controller--acknowledge-steering
+                         controller identifier))
+                      :user-message-persisted-function
+                      (lambda (identifier)
+                        (application-input-controller--acknowledge-active-work
+                         controller identifier))
+                      :pending-input-identifier pending-input-identifier)))
+               (application-input-controller--record-prompt-result
+                controller result)
+               (when (eq result ':rate-limited)
+                 (application-input-controller--defer-after-rate-limit
+                  controller))))
+            (:recovery-diagnosis
+             (application--run-message-input
+              application
+              (second work)
+              :tools-p t
+              :tool-allowlist *application-recovery-diagnostic-tool-names*
+              :tool-restriction-p t
+              :goal-continuations-p nil
+              :fatal-agent-loop-errors-p nil))
+            (:lisp
+             (let ((result
+                     (application-input-controller-call-with-reader-paused
+                      controller
+                      (lambda ()
+                        (application-run-lisp-input
+                         application (second work))))))
+               (application-input-controller--record-prompt-result
+                controller result)
+               (when (eq result ':quit)
+                 (application-input-controller--request-exit
+                  controller ':quit))))
+            (:command
+             (let* ((input (second work))
+                    (invocation (application-command-invocation-parse input))
+                    (command
+                      (application-command-invocation-command invocation))
+                    (result
+                      (if (and command
+                               (application-command-terminal-owner-p
+                                command invocation))
+                          (application-input-controller-call-with-reader-paused
+                           controller
+                           (lambda ()
+                             (application--run-command-input application input)))
+                          (application--run-command-input application input))))
+               (application-input-controller--record-prompt-result
+                controller result)
+               (when (eq result ':quit)
+                 (application-input-controller--request-exit
+                  controller ':quit))))
+            (:project-adaptation-offer
+             (application-maybe-offer-project-adaptation application))
+            (:localgroup-handoff
+             (handler-case
+                 (application-localgroup-run-handoff
+                  application (second work) controller)
+               (localgroup-error (condition)
+                 (application-handle-expected-error application condition))))
+            (:later
+             (application-input-controller--run-later
+              controller (second work)))))
+      (serious-condition (condition)
+        (application-input-controller--record-prompt-condition
+         controller condition)
+        (error condition))))
   nil)

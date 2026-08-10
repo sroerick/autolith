@@ -2709,10 +2709,150 @@ sources keeps the tests deterministic under an interactive terminal."
         (ignore-errors (sb-ext:process-wait process)))))
   nil)
 
+(-> test-terminal-prompt-markers () null)
+(defun test-terminal-prompt-markers ()
+  "Test exact OSC 133 controls and their semantic UI lifecycle."
+  (flet ((expected-marker (payload)
+           (format nil "~C]133;~A~C~C"
+                   *terminal-escape-character*
+                   payload
+                   *terminal-escape-character*
+                   #\\)))
+    (let ((prompt-start (expected-marker "A"))
+          (input-start (expected-marker "B"))
+          (execution-start (expected-marker "C"))
+          (success (expected-marker "D;0"))
+          (failure (expected-marker "D;7")))
+      (test-assert
+       (and (string= (terminal-prompt-marker-sequence ':prompt-start)
+                     prompt-start)
+            (string= (terminal-prompt-marker-sequence ':input-start)
+                     input-start)
+            (string= (terminal-prompt-marker-sequence ':execution-start)
+                     execution-start)
+            (string= (terminal-prompt-marker-sequence ':command-finished)
+                     success)
+            (string= (terminal-prompt-marker-sequence
+                      ':command-finished 7)
+                     failure)
+            (not
+             (terminal-tests--forbidden-control-p
+              (concatenate 'string
+                           prompt-start input-start execution-start failure))))
+       "prompt markers use exact OSC 133 ST controls without fullscreen state")
+      (let ((terminal
+              (make-instance 'protocol-recording-stream-terminal
+                             :input-stream (make-string-input-stream "")
+                             :output-stream (make-string-output-stream)
+                             :input-file-descriptor 0
+                             :interactive-p t)))
+        (test-assert
+         (and (terminal-write-prompt-marker terminal ':prompt-start)
+              (equal (reverse
+                      (protocol-recording-stream-terminal-chunks terminal))
+                     (list prompt-start))
+              (= (protocol-recording-stream-terminal-write-count terminal) 1)
+              (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+         "an interactive prompt marker writes exactly once and flushes once")
+        (setf (terminal-interactive-p terminal) nil)
+        (test-assert
+         (and (not (terminal-write-prompt-marker terminal ':input-start))
+              (= (protocol-recording-stream-terminal-write-count terminal) 1)
+              (= (protocol-recording-stream-terminal-flush-count terminal) 1))
+         "a noninteractive terminal emits and flushes no prompt marker"))
+      (let* ((terminal
+               (make-instance 'recording-terminal
+                              :columns 72
+                              :rows 24
+                              :styled-p t))
+             (ui (terminal-ui-create :terminal terminal)))
+        (with-terminal-ui (active-ui ui)
+          (recording-terminal-reset terminal)
+          (test-assert
+           (and (terminal-ui-open-prompt-block active-ui)
+                (not (terminal-ui-open-prompt-block active-ui)))
+           "one idle prompt emits its boundaries only once")
+          (terminal-ui--paint-live active-ui)
+          (terminal-ui-set-status active-ui "working")
+          (terminal-ui-refresh-status active-ui)
+          (terminal-ui-stream-update active-ui :tail "unfinished")
+          (terminal-ui-resize active-ui 64 :rows 20)
+          (test-assert
+           (and (terminal-ui-start-prompt-execution active-ui)
+                (not (terminal-ui-start-prompt-execution active-ui)))
+           "one submitted prompt starts execution only once")
+          (terminal-ui--paint-live active-ui)
+          (terminal-ui-set-status active-ui nil)
+          (terminal-ui-stream-update active-ui :tail nil)
+          (test-assert
+           (and (terminal-ui-finish-prompt-block active-ui 7)
+                (not (terminal-ui-finish-prompt-block active-ui 7))
+                (terminal-ui-open-prompt-block active-ui))
+           "one execution completes once before the next prompt opens")
+          (let* ((output (recording-terminal-output terminal))
+                 (first-prompt (search prompt-start output))
+                 (first-input (search input-start output))
+                 (execution (search execution-start output))
+                 (completion (search failure output))
+                 (second-prompt
+                   (and first-prompt
+                        (search prompt-start output
+                                :start2 (+ first-prompt
+                                           (length prompt-start)))))
+                 (second-input
+                   (and first-input
+                        (search input-start output
+                                :start2 (+ first-input
+                                           (length input-start))))))
+            (test-assert
+             (and first-prompt first-input execution completion
+                  second-prompt second-input
+                  (< first-prompt first-input execution completion
+                     second-prompt second-input)
+                  (= (terminal-tests--substring-count prompt-start output) 2)
+                  (= (terminal-tests--substring-count input-start output) 2)
+                  (= (terminal-tests--substring-count execution-start output) 1)
+                  (= (terminal-tests--substring-count failure output) 1))
+             "repaints, ticks, streams, and resize preserve one ordered marker block"))))
+      (let* ((terminal
+               (make-instance 'recording-terminal :columns 40))
+             (ui (terminal-ui-create :terminal terminal)))
+        (terminal-ui-start ui)
+        (unwind-protect
+             (progn
+               (setf (terminal-interactive-p terminal) nil)
+               (recording-terminal-reset terminal)
+               (test-assert
+                (and (not (terminal-ui-open-prompt-block ui))
+                     (not (terminal-ui-start-prompt-execution ui))
+                     (not (terminal-ui-finish-prompt-block ui 1))
+                     (zerop (length (recording-terminal-output terminal)))
+                     (eq (terminal-ui-prompt-marker-state ui) ':closed))
+                "a noninteractive UI has no prompt-marker state transitions"))
+          (terminal-ui-stop ui)))
+      (let* ((terminal
+               (make-instance 'recording-terminal :columns 40))
+             (ui (terminal-ui-create :terminal terminal))
+             (stop-failure (expected-marker "D;1")))
+        (terminal-ui-start ui)
+        (recording-terminal-reset terminal)
+        (terminal-ui-open-prompt-block ui)
+        (terminal-ui-start-prompt-execution ui)
+        (terminal-ui-stop ui)
+        (terminal-ui-stop ui)
+        (test-assert
+         (and (= (terminal-tests--substring-count
+                  stop-failure (recording-terminal-output terminal))
+                 1)
+              (eq (terminal-ui-prompt-marker-state ui) ':closed))
+         "UI shutdown closes one unfinished execution with failure status"))))
+  nil)
+
 (-> run-terminal-tests () boolean)
 (defun run-terminal-tests ()
   "Run focused terminal seam tests and return true when every assertion succeeds."
   (test-terminal-primary-screen-controls)
+  (test-terminal-prompt-markers)
   (test-terminal-finalized-batch)
   (test-terminal-untrusted-text)
   (test-terminal-finalized-scrollback)

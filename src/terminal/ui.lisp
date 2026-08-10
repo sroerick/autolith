@@ -1869,6 +1869,49 @@ when no resize needs to be applied."
             (terminal-ui--repaint-live ui)))))))
 
 
+;;; Semantic prompt blocks
+
+(-> terminal-ui-open-prompt-block (terminal-ui) boolean)
+(defun terminal-ui-open-prompt-block (ui)
+  "Emit prompt-start and input-start boundaries around one semantic prompt paint."
+  (with-terminal-ui-locked (ui)
+    (let ((terminal (terminal-ui-terminal ui)))
+      (when (and (terminal-ui-started-p ui)
+                 (terminal-interactive-p terminal)
+                 (eq (terminal-ui-prompt-marker-state ui) ':closed))
+        (terminal-write-prompt-marker terminal ':prompt-start)
+        (setf (terminal-ui-prompt-marker-state ui) ':prompt)
+        (terminal-ui--paint-live ui)
+        (terminal-write-prompt-marker terminal ':input-start)
+        (setf (terminal-ui-prompt-marker-state ui) ':input)
+        t))))
+
+(-> terminal-ui-start-prompt-execution (terminal-ui) boolean)
+(defun terminal-ui-start-prompt-execution (ui)
+  "Emit one execution-start boundary for UI's current input block."
+  (with-terminal-ui-locked (ui)
+    (let ((terminal (terminal-ui-terminal ui)))
+      (when (and (terminal-ui-started-p ui)
+                 (terminal-interactive-p terminal)
+                 (eq (terminal-ui-prompt-marker-state ui) ':input))
+        (terminal-write-prompt-marker terminal ':execution-start)
+        (setf (terminal-ui-prompt-marker-state ui) ':executing)
+        t))))
+
+(-> terminal-ui-finish-prompt-block
+    (terminal-ui &optional (integer 0))
+    boolean)
+(defun terminal-ui-finish-prompt-block (ui &optional (status 0))
+  "Emit one completion boundary with STATUS for UI's executing prompt block."
+  (with-terminal-ui-locked (ui)
+    (let ((terminal (terminal-ui-terminal ui)))
+      (when (and (terminal-ui-started-p ui)
+                 (terminal-interactive-p terminal)
+                 (eq (terminal-ui-prompt-marker-state ui) ':executing))
+        (terminal-write-prompt-marker terminal ':command-finished status)
+        (setf (terminal-ui-prompt-marker-state ui) ':closed)
+        t))))
+
 ;;;; -- Public UI Lifecycle and Events --
 
 (-> terminal-ui-start (terminal-ui) terminal-ui)
@@ -1887,8 +1930,12 @@ when no resize needs to be applied."
   (with-terminal-ui-locked (ui)
     (unwind-protect
          (when (terminal-ui-started-p ui)
+           (when (eq (terminal-ui-prompt-marker-state ui) ':executing)
+             (terminal-write-prompt-marker
+              (terminal-ui-terminal ui) ':command-finished 1))
            (live-region-dismiss (terminal-ui-live-region ui)))
       (setf (terminal-ui-started-p ui) nil
+            (terminal-ui-prompt-marker-state ui) ':closed
             (terminal-ui-notice ui) nil
             (terminal-ui-notice-deadline ui) nil)
       (terminal-stop (terminal-ui-terminal ui))))
