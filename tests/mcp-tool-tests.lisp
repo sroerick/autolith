@@ -902,10 +902,11 @@
                         (make-thread
                          (lambda ()
                            (let ((snapshot
-                                   (list
-                                    (mcp--registry-snapshot)
-                                    (context--registry-snapshot)
-                                    (application-command--registry-snapshot))))
+                                   (with-extension-registry-transaction
+                                     (list
+                                      (mcp--registry-snapshot)
+                                      (context--registry-snapshot)
+                                      (application-command--registry-snapshot)))))
                              (with-lock-held (state-lock)
                                (setf reader-result snapshot
                                      reader-finished-p t))))
