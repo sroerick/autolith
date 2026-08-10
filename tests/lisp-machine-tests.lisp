@@ -8,6 +8,9 @@
 (defvar *lisp-machine-test-activity* nil
   "Local activity captured from inside one explicit active-image evaluation.")
 
+(defvar *lisp-machine-test-interactive-p* nil
+  "Whether explicit terminal Lisp observed interactive command context.")
+
 (-> lisp-machine-tests--application () (values application pathname))
 (defun lisp-machine-tests--application ()
   "Return a temporary application with a recording terminal and its data root."
@@ -115,19 +118,21 @@
            (progn
              (terminal-ui-start ui)
              (terminal-ui-set-status ui "provider active")
-             (setf *lisp-machine-test-activity* nil)
+             (setf *lisp-machine-test-activity* nil
+                   *lisp-machine-test-interactive-p* nil)
              (test-assert
               (eq (application-run-lisp-input
                    application
-                   "(setf *lisp-machine-test-activity* (terminal-ui-local-activity (application-ui *application-operation-application*)))")
+                   "(progn (setf *lisp-machine-test-activity* (terminal-ui-local-activity (application-ui *application-operation-application*))) (setf *lisp-machine-test-interactive-p* *application-command-interactive-p*))")
                   ':continue)
               "explicit local Lisp completes beside provider activity")
              (test-assert
               (and (string= *lisp-machine-test-activity*
                             "evaluating local Lisp")
+                   *lisp-machine-test-interactive-p*
                    (string= (terminal-ui-status ui) "provider active")
                    (null (terminal-ui-local-activity ui)))
-              "local activity is visible during evaluation and clears without clobbering status"))
+              "local Lisp receives interactive context without clobbering status"))
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors
           (tool-registry-close-runtime-state

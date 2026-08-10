@@ -1532,7 +1532,8 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
    controller
    (lambda ()
      (let ((application
-             (application-input-controller-application controller)))
+             (application-input-controller-application controller))
+           (*application-command-interactive-p* t))
        (application-command--call-with-presentation
         invocation
         (lambda ()

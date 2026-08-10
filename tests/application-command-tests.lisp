@@ -28,6 +28,9 @@
 (defvar *application-command-tests-semantic-call* nil
   "The arguments observed by the semantic command protocol fixture.")
 
+(defvar *application-command-tests-interactive-p* nil
+  "Whether the semantic command fixture observed interactive command context.")
+
 (-> application-command-tests--macroexpand-error-p (list) boolean)
 (defun application-command-tests--macroexpand-error-p (form)
   "Return true when macroexpanding FORM signals an error."
@@ -143,7 +146,9 @@
                   (application required &optional (optional "default"))
                 (declare (ignore application))
                 (setf *application-command-tests-semantic-call*
-                      (list required optional))
+                      (list required optional)
+                      *application-command-tests-interactive-p*
+                      *application-command-interactive-p*)
                 :continue))
             (let ((command (application-command-find "/semantic")))
               (test-assert
@@ -188,6 +193,16 @@
                 (equal *application-command-tests-semantic-call*
                        '("alpha" "default"))
                 "omitted optional arguments receive their Common Lisp defaults"))
+             (test-assert
+              (not *application-command-tests-interactive-p*)
+              "direct command execution remains noninteractive by default")
+             (setf *application-command-tests-interactive-p* nil)
+             (application-command (make-instance 'application) "/semantic slash")
+             (test-assert
+              (and *application-command-tests-interactive-p*
+                   (equal *application-command-tests-semantic-call*
+                          '("slash" "default")))
+              "slash dispatch dynamically enables interactive command context")
              (let ((invocation
                      (make-instance
                       'application-command-invocation
@@ -207,19 +222,29 @@
                   (progn
                     (application-command-execute
                      command nil
-                     (make-instance
-                      'application-command-invocation
-                      :input "(semantic)"
-                      :name "/semantic"
-                      :remainder ""
-                      :argument nil
-                      :arguments nil
-                      :supplied-argument-count 0
-                      :command command))
+                     (application-operation--command-invocation command nil))
                     nil)
-                (program-error ()
-                  t))
-              "missing required arguments signal the ordinary program error")))
+                (program-error (condition)
+                  (null (find-restart 'supply-arguments condition))))
+              "noninteractive omission signals PROGRAM-ERROR without prompting")
+             (let ((restart-seen-p nil)
+                   (*application-command-interactive-p* t))
+               (handler-bind
+                   ((program-error
+                      (lambda (condition)
+                        (let ((restart
+                                (find-restart 'supply-arguments condition)))
+                          (setf restart-seen-p (not (null restart)))
+                          (when restart
+                            (invoke-restart restart "recovered" nil))))))
+                 (application-command-execute
+                  command nil
+                  (application-operation--command-invocation command nil)))
+               (test-assert
+                (and restart-seen-p
+                     (equal *application-command-tests-semantic-call*
+                            '("recovered" nil)))
+                "interactive arity recovery retries with replacement arguments"))))
       (application-command--registry-restore snapshot)))
   nil)
 

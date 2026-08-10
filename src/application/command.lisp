@@ -765,14 +765,27 @@ without changing the registry."
      application
      (invocation application-command-invocation))
   "Invoke COMMAND's captured handler and validate its loop action."
-  (labels ((invoke ()
+  (labels ((invoke-semantic-handler (arguments)
+             "Invoke COMMAND's semantic handler with replaceable ARGUMENTS."
+             (if *application-command-interactive-p*
+                 (restart-case
+                     (apply (application-command-handler command)
+                            application arguments)
+                   (supply-arguments (&rest replacement-arguments)
+                     :report
+                     (lambda (stream)
+                       (format stream "Supply replacement arguments for ~A."
+                               (application-command-name command)))
+                     (invoke-semantic-handler replacement-arguments)))
+                 (apply (application-command-handler command)
+                        application arguments)))
+
+           (invoke ()
              "Invoke COMMAND's handler and validate its result."
              (let ((result
                      (if (application-command-semantic-handler-p command)
-                         (apply (application-command-handler command)
-                                application
-                                (application-command-invocation-arguments
-                                 invocation))
+                         (invoke-semantic-handler
+                          (application-command-invocation-arguments invocation))
                          (funcall (application-command-handler command)
                                   application invocation))))
                (unless (member result '(:continue :quit) :test #'eq)

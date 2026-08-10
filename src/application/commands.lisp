@@ -1965,7 +1965,8 @@ to TERMINAL-UI-SELECT."
 (-> application-command (application string) keyword)
 (defun application-command (application input)
   "Execute slash command INPUT for APPLICATION and return its loop action."
-  (let* ((invocation (application-command-invocation-parse input))
+  (let* ((*application-command-interactive-p* t)
+         (invocation (application-command-invocation-parse input))
          (command (application-command-invocation-command invocation)))
     (application-command--call-with-presentation
      invocation

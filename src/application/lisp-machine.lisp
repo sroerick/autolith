@@ -18,8 +18,8 @@
   (loop-action nil :type (option (member :quit))))
 
 (defparameter *application-lisp-value-restart-names*
-  '(use-value store-value)
-  "Restart names whose ordinary interactive use expects a Lisp value.")
+  '(supply-arguments use-value store-value)
+  "Restart names whose ordinary interactive use expects Lisp arguments.")
 
 (-> application-lisp-input-incomplete-p (string) boolean)
 (defun application-lisp-input-incomplete-p (source)
@@ -308,7 +308,8 @@ journaling or provider conversation projection."
   (application-set-local-activity application "evaluating local Lisp")
   (let ((evaluation
           (unwind-protect
-               (let ((*application-local-user-evaluation-p* t))
+               (let ((*application-local-user-evaluation-p* t)
+                     (*application-command-interactive-p* t))
                  (application-lisp-evaluate
                   source
                   :application application
