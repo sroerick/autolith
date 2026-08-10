@@ -480,8 +480,15 @@
                 (tip-command-span (first tip-command-spans))
                 (tip-entry
                   (and tip-command-span
-                       (application-command-find
-                        (terminal-span-text tip-command-span))))
+                       (find
+                        (terminal-span-text tip-command-span)
+                        (application-command-list)
+                        :test #'string=
+                        :key
+                        (lambda (entry)
+                          (format nil
+                                  "(~A)"
+                                  (application-operation--command-name entry))))))
                 (gradient-styles
                   (loop for span in spans
                         for style = (terminal-span-style span)
