@@ -672,6 +672,37 @@
                   (null (directory (merge-pathnames ".*.autolith-resource-*.tmp"
                                                     workspace)))
                   "failed atomic publication cleans its same-directory temporary file")))
+             (let ((path (merge-pathnames "publish-mismatch.txt" workspace)))
+               (workspace-resource-tests--write-text path (format nil "before~%"))
+               (multiple-value-bind (read-result uri revision)
+                   (read-resource first-context "workspace:publish-mismatch.txt")
+                 (declare (ignore read-result))
+                 (let ((*workspace-file-resource-publish-function*
+                         (lambda (source target)
+                           (declare (ignore source target))
+                           nil)))
+                   (let ((result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "replace-lines"
+                              "start-line" 1
+                              "end-line" 1
+                              "content" "after")))))
+                     (test-assert
+                      (and (not (tool-result-success-p result))
+                           (search "exact requested content"
+                                   (tool-result-content result)))
+                      "resource.edit rejects a publish that leaves stale content")))
+                 (test-assert
+                  (string= (workspace-file--read-content path)
+                           (format nil "before~%"))
+                  "publication mismatch preserves the original content")
+                 (test-assert
+                  (null (directory (merge-pathnames ".*.autolith-resource-*.tmp"
+                                                    workspace)))
+                  "publication mismatch cleans its same-directory temporary file")))
              (let* ((path (merge-pathnames "serialized.txt" workspace))
                     (gate (make-lock "workspace resource serialization test"))
                     (condition (make-condition-variable))

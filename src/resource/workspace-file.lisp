@@ -827,8 +827,15 @@
                         :actual-revision
                         (resource-observation-revision current))))
              (funcall *workspace-file-resource-publish-function* temporary path)
-             (setf temporary nil)
-             (workspace-file--observe-path resource context))
+             (let ((published (workspace-file--observe-path resource context)))
+               (unless (string= content
+                                (resource-observation-content published))
+                 (error 'tool-error
+                        :message
+                        "Atomic workspace resource publication did not produce the exact requested content."
+                        :tool-name "resource.edit"))
+               (setf temporary nil)
+               published))
         (when (and temporary (probe-file temporary))
           (delete-file temporary))))))
 

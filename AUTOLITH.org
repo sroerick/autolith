@@ -111,7 +111,10 @@ a user-local init.lisp change, or a private image commit.
   shown to the model; =resource.edit= applies validated original-line operations,
   rejects unseen or stale content, serializes native filesystem mutations,
   preserves uniform line endings and final-newline state, and atomically replaces
-  the file. For =agenda:current= it returns the complete readable current agenda,
+  the file. It then re-observes the destination and reports success only when the
+  published content is exactly the requested content, while keeping the temporary
+  file eligible for cleanup until that postcondition passes. For =agenda:current=
+  it returns the complete readable current agenda,
   retains an exact snapshot including empty state, and applies exactly one
   revision-gated add, update, or remove under the same recursive lock as legacy
   agenda tools. Agenda revisions address exact snapshots, so an alias is stale
@@ -144,7 +147,8 @@ a user-local init.lisp change, or a private image commit.
 - Verification: workspace URI confinement, observation isolation and expiry,
   visible-range gating, original-snapshot multi-operation edits, stale and
   protected paths, bounded UTF-8 snapshots, empty files, atomic publish failures,
-  line endings, plus agenda empty and complete reads, revisions, confinement,
+  exact post-publication mismatch rejection and temporary cleanup, line endings,
+  plus agenda empty and complete reads, revisions, confinement,
   add/update/remove, memory links, shared locking, and legacy compatibility pass.
   Memory collection scopes, exact IDs, empty and missing states, child denial,
   typed mixed observation retention, schemas, and existing memory tools also pass
