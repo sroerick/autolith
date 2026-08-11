@@ -2696,13 +2696,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                                            (subseq stream-pending 0 newline)))
                                   stream-pending
                                   (subseq stream-pending (1+ newline))))
-                   (multiple-value-bind (overflow-rows tail retained)
+                   (multiple-value-bind (overflow-rows tail-rows retained)
                        (markdown-render-partial stream-renderer stream-pending)
                      (setf stream-pending retained)
                      (terminal-ui-stream-update
                       ui
                       :rows (append rows overflow-rows)
-                      :tail tail)))))
+                      :tail tail-rows)))))
 
              (stream-flush ()
                "Finish the streamed block with its remaining text and separator."

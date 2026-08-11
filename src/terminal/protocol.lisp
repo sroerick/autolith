@@ -304,7 +304,7 @@
     :initform nil
     :accessor terminal-ui-stream-tail
     :type (or null string list)
-    :documentation "The unfinished streamed row, as text or styled spans, continuing the transcript block above.")
+    :documentation "Unfinished streamed text, styled spans, or styled rows continuing the transcript block above.")
    (finalized-identifiers
     :initform (make-hash-table :test #'equal)
     :reader terminal-ui-finalized-identifiers

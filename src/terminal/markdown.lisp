@@ -565,11 +565,14 @@ inline Markdown styling."
     (markdown-renderer string)
     (values list list string))
 (defun markdown-render-partial (renderer partial)
-  "Return no committed rows, PARTIAL's live tail, and all retained source.
+  "Return no committed rows, PARTIAL's live rows, and all retained source.
 
 An unfinished logical line remains speculative even after it visually wraps.
-Later chunks may close inline delimiters and change every wrapped row, so only
-newline-terminated lines may become immutable transcript output."
+Later chunks may close inline delimiters and change every wrapped row, so all
+preview rows remain live until a newline makes the logical line immutable."
   (let* ((preview-renderer (markdown--copy-renderer renderer))
          (preview-rows (markdown-render-line preview-renderer partial)))
-    (values nil (first (last preview-rows)) partial)))
+    (values nil
+            (unless (equal preview-rows '(nil))
+              preview-rows)
+            partial)))

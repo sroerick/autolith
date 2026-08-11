@@ -1347,6 +1347,29 @@ content; a narrow row drops it before any activity detail."
                                                           row-width)
           collect (terminal--make-rendered-row row-text row-display))))
 
+(-> terminal-ui--stream-tail-rows (terminal (or string list) integer) list)
+(defun terminal-ui--stream-tail-rows (terminal tail row-width)
+  "Return TAIL as wrapped live rows for TERMINAL.
+
+TAIL may be plain text, one styled row, or a list of styled rows. The multi-row
+form keeps every speculative Markdown wrap live until the logical line commits."
+  (let ((rows
+          (cond
+            ((stringp tail)
+             (list (list (terminal-span ':plain tail))))
+            ((terminal-styled-text-p tail)
+             (list tail))
+            ((and (listp tail)
+                  (every #'terminal-styled-text-p tail))
+             tail)
+            (t
+             (error 'terminal-error
+                    :message "A stream tail must be text, styled spans, or styled rows."
+                    :operation ':render
+                    :cause nil)))))
+    (loop for row in rows
+          append (terminal-ui--word-wrap-spans terminal row row-width))))
+
 (-> terminal-ui--row-content (terminal t) (values string string))
 (defun terminal-ui--row-content (terminal row)
   "Return ROW's plain and styled content for TERMINAL."
@@ -1437,12 +1460,8 @@ content; a narrow row drops it before any activity detail."
       (when tail
         (setf rows
               (append rows
-                      (terminal-ui--word-wrap-spans
-                       terminal
-                       (if (stringp tail)
-                           (list (terminal-span ':plain tail))
-                           tail)
-                       row-width)))))
+                      (terminal-ui--stream-tail-rows
+                       terminal tail row-width)))))
     (when (terminal-ui-notice ui)
       (setf rows
             (append rows
@@ -1548,8 +1567,9 @@ content; a narrow row drops it before any activity detail."
   "Append streamed single-line ROWS to the transcript and show TAIL as unfinished.
 
 Each row is a styled span list appended once without a separating blank row, so
-consecutive updates build one continuous transcript block. TAIL replaces the
-live unfinished line continuing that block, or removes it when NIL."
+consecutive updates build one continuous transcript block. TAIL may be text, one
+styled row, or styled rows; it replaces the live unfinished content, or NIL
+removes it."
   (with-terminal-ui-locked (ui)
     (let ((terminal (terminal-ui-terminal ui)))
       (multiple-value-bind (plain-output display-output)

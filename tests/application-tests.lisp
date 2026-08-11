@@ -4376,7 +4376,7 @@
                 (reasoning-second-part
                   "**<thought>** Confirming the durable summary matches.")
                 (streamed-text (format nil
-                                       "The quick brown fox jumps over~%the lazy dog")))
+                                       "The quick brown fox jumps over the lazy dog~%final tail")))
            (terminal-ui-start (application-ui application))
            (funcall send-status :provider-request-started nil)
            (funcall send-reasoning reasoning-prefix)
@@ -4412,8 +4412,7 @@
            (funcall send-reasoning
                     (format nil "~2%~A" reasoning-second-part))
            (recording-terminal-reset terminal)
-           (funcall send-text (format nil
-                                      "The quick brown fox jumps over~%"))
+           (funcall send-text "The quick brown fox jumps over the lazy")
            (test-assert (null (terminal-ui-preview-rows
                               (application-ui application)))
                         "assistant output replaces the live reasoning preview")
@@ -4421,11 +4420,20 @@
             (string= (terminal-ui-status (application-ui application))
                      "receiving response")
             "assistant streaming keeps a timed activity phase visible")
+           (let* ((live-output (recording-terminal-output terminal))
+                  (first-row (search "The quick brown fox" live-output))
+                  (last-row (search "over the lazy" live-output)))
+             (test-assert (and first-row last-row (< first-row last-row))
+                          "an unfinished response paints every speculative wrapped row"))
            (funcall send-reasoning " late event")
            (test-assert (null (terminal-ui-preview-rows
                               (application-ui application)))
                         "late reasoning deltas cannot resurrect a finalized preview")
-           (funcall send-text "the lazy dog")
+           (funcall send-text (format nil " dog~%"))
+           (test-assert (null (terminal-ui-stream-tail
+                               (application-ui application)))
+                        "a newline with no following text leaves no blank live tail")
+           (funcall send-text "final tail")
            (let* ((streamed (recording-terminal-output terminal))
                   (reasoning-position (search "◇ reasoning summary" streamed))
                   (assistant-position (search "● autolith" streamed)))
@@ -4458,7 +4466,7 @@
            (recording-terminal-reset terminal)
            (funcall send-status :provider-request-completed nil)
            (let ((completion (recording-terminal-output terminal)))
-             (test-assert (search "the lazy dog" completion)
+             (test-assert (search "final tail" completion)
                           "completing a request commits the fluid tail")
              (test-assert (not (search "● autolith" completion))
                           "streamed message records do not render again")

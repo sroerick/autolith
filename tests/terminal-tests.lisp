@@ -1928,6 +1928,16 @@
          "streaming leaves cursor motion hidden")
         (test-assert (not (terminal-tests--forbidden-control-p output))
                      "streamed rows never erase the display"))
+      (recording-terminal-reset terminal)
+      (terminal-ui-stream-update
+       active-ui
+       :tail (list (list (terminal-span ':plain "  alpha beta gamma"))
+                   (list (terminal-span ':plain "  delta epsilon"))))
+      (let* ((output (recording-terminal-output terminal))
+             (first-row (search "  alpha beta gamma" output))
+             (second-row (search "  delta epsilon" output)))
+        (test-assert (and first-row second-row (< first-row second-row))
+                     "a fluid update paints every speculative wrapped row"))
       (terminal-ui-set-cursor-visible active-ui t)
       (recording-terminal-reset terminal)
       (terminal-ui-stream-update active-ui :tail "  partial response")
