@@ -130,6 +130,31 @@ remain expressible."
 
 ;;;; -- Grok Transport --
 
+(-> grok--request-headers
+    (grok-subscription-provider oauth-credentials conversation
+     &key (:accept string))
+    list)
+(defun grok--request-headers (provider credentials conversation &key accept)
+  "Return authenticated Grok headers for one request to CONVERSATION."
+  (let ((configuration (provider-configuration provider)))
+    (list
+     (cons "Authorization"
+           (format nil "Bearer ~A"
+                   (oauth-credentials-access-token credentials)))
+     (cons "X-XAI-Token-Auth" "xai-grok-cli")
+     (cons "x-authenticateresponse" "authenticate-response")
+     (cons "Content-Type" "application/json")
+     (cons "Accept" accept)
+     (cons "User-Agent" (provider-user-agent))
+     (cons "x-grok-client-version" *grok-client-protocol-version*)
+     (cons "x-grok-client-mode" "interactive")
+     (cons "x-grok-client-identifier" "autolith")
+     (cons "x-grok-session-id" (provider-session-id provider))
+     (cons "x-grok-conv-id" (conversation-identifier conversation))
+     (cons "x-grok-req-id" (make-identifier))
+     (cons "x-grok-model-override"
+           (configuration-model configuration)))))
+
 (defmethod provider-open-response-stream
     ((provider grok-subscription-provider)
      (request hash-table)
@@ -137,28 +162,11 @@ remain expressible."
   "Open a direct authenticated SSE request to the Grok CLI chat proxy."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (let* ((configuration (provider-configuration provider))
-         (headers
-           (list
-            (cons "Authorization"
-                  (format nil "Bearer ~A"
-                          (oauth-credentials-access-token credentials)))
-            (cons "X-XAI-Token-Auth" "xai-grok-cli")
-            (cons "x-authenticateresponse" "authenticate-response")
-            (cons "Content-Type" "application/json")
-            (cons "Accept" "text/event-stream")
-            (cons "User-Agent" (provider-user-agent))
-            (cons "x-grok-client-version" *grok-client-protocol-version*)
-            (cons "x-grok-client-mode" "interactive")
-            (cons "x-grok-client-identifier" "autolith")
-            (cons "x-grok-session-id" (provider-session-id provider))
-            (cons "x-grok-conv-id" (conversation-identifier conversation))
-            (cons "x-grok-req-id" (make-identifier))
-            (cons "x-grok-model-override"
-                  (configuration-model configuration)))))
+  (let ((configuration (provider-configuration provider)))
     (dexador:post
      (configuration-provider-endpoint configuration)
-     :headers headers
+     :headers (grok--request-headers
+               provider credentials conversation :accept "text/event-stream")
      :content (json-encode-utf8 request)
      :want-stream t
      :force-string t

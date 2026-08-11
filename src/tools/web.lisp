@@ -358,6 +358,29 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
     (t
      false)))
 
+(-> provider-web-search-request-headers
+    (subscription-provider oauth-credentials conversation)
+    list)
+(defgeneric provider-web-search-request-headers (provider credentials conversation)
+  (:documentation
+   "Return authenticated standalone web search headers for PROVIDER."))
+
+(defmethod provider-web-search-request-headers
+    ((provider codex-subscription-provider)
+     (credentials oauth-credentials)
+     (conversation conversation))
+  "Return ChatGPT standalone web search headers."
+  (provider--codex-request-headers
+   provider credentials conversation :accept "application/json"))
+
+(defmethod provider-web-search-request-headers
+    ((provider grok-subscription-provider)
+     (credentials oauth-credentials)
+     (conversation conversation))
+  "Return Grok standalone web search headers."
+  (grok--request-headers
+   provider credentials conversation :accept "application/json"))
+
 (-> web--search-request (tool-context model-provider json-object) json-object)
 (defun web--search-request (context provider commands)
   "Return the Codex standalone search request represented by COMMANDS."
@@ -387,9 +410,8 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
     (with-credentials (credentials (provider-credential-manager provider))
       (multiple-value-bind (body status headers)
           (dexador:post (web--search-endpoint configuration)
-                        :headers (provider--codex-request-headers
-                                  provider credentials conversation
-                                  :accept "application/json")
+                        :headers (provider-web-search-request-headers
+                                  provider credentials conversation)
                         :content (json-encode
                                   (web--search-request context provider arguments)))
         (declare (ignore headers))

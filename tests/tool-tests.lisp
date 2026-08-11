@@ -59,6 +59,84 @@
 
 ;;;; -- Subsystem Tests --
 
+(-> tool-test--grok-web-run () null)
+(defun tool-test--grok-web-run ()
+  "Test standalone Grok web search dispatch and authentication without network access."
+  (let* ((configuration (configuration-with-model (test-configuration) "grok-4.5"))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "grok-web-run"))
+                (context
+                  (make-instance 'tool-context
+                                 :configuration configuration
+                                 :worker nil
+                                 :conversation conversation))
+                (tool
+                  (make-instance 'web-run-tool
+                                 :namespace "web"
+                                 :name "run"
+                                 :description "Test web search."
+                                 :parameters (web-run-parameters)))
+                (credentials
+                  (make-instance 'oauth-credentials
+                                 :access-token "grok-web-token"
+                                 :refresh-token nil
+                                 :id-token nil
+                                 :account-id "grok-user"
+                                 :expires-at nil
+                                 :source-path
+                                 (configuration-grok-auth-path configuration)))
+                (arguments
+                  (json-object
+                   "open"
+                   (json-array (json-object "ref_id" "https://example.com"))))
+                (captured-url nil)
+                (captured-headers nil))
+           (test-call-with-function-replacements
+            (list
+             (list
+              'call-with-credentials
+              (lambda (manager function &key force-refresh)
+                (declare (ignore manager force-refresh))
+                (funcall function credentials)))
+             (list
+              'dexador:post
+              (lambda (url &key headers content &allow-other-keys)
+                (declare (ignore content))
+                (setf captured-url url
+                      captured-headers headers)
+                (values "{\"output\":\"search result\"}" 200 nil))))
+            (lambda ()
+              (let ((result (tool-execute tool context arguments)))
+                (flet ((header (name)
+                         (rest (assoc name captured-headers :test #'string-equal))))
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (string= (tool-result-content result) "search result"))
+                   "web.run returns Grok standalone search output")
+                  (test-assert
+                   (string= captured-url
+                            "https://cli-chat-proxy.grok.com/v1/alpha/search")
+                   "web.run derives Grok's standalone search endpoint")
+                  (test-assert
+                   (string= (header "Authorization") "Bearer grok-web-token")
+                   "web.run sends Grok's bearer token")
+                  (test-assert
+                   (string= (header "X-XAI-Token-Auth") "xai-grok-cli")
+                   "web.run sends Grok's proxy authentication marker")
+                  (test-assert
+                   (string= (header "x-grok-model-override") "grok-4.5")
+                   "web.run sends Grok's selected model")
+                  (test-assert
+                   (string= (header "Accept") "application/json")
+                   "web.run requests a Grok JSON response")
+                  (test-assert
+                   (null (header "ChatGPT-Account-ID"))
+                   "web.run does not send Codex-only headers to Grok"))))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-tool-registry () null)
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."
@@ -507,4 +585,5 @@
                                                                 repo-root)))))
                   "launcher artifacts stay read-only even while developing")))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  (tool-test--grok-web-run)
   nil)
