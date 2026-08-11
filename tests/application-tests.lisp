@@ -243,19 +243,25 @@
   (:documentation
    "A terminal that types more input only while its provider request is active."))
 
+(-> application-tests--conversation-records (conversation) list)
+(defun application-tests--conversation-records (conversation)
+  "Return every durable non-header record in CONVERSATION."
+  (let ((records nil))
+    (conversation-map-records
+     conversation
+     (lambda (record)
+       (push record records)))
+    (nreverse records)))
+
 (-> responsive-scripted-terminal--answer-count
     (responsive-scripted-terminal)
     (integer 0))
 (defun responsive-scripted-terminal--answer-count (terminal)
   "Return the number of durable provider items visible to TERMINAL."
-  (let ((conversation
-          (responsive-scripted-terminal-conversation terminal)))
-    (if (probe-file (conversation-pathname conversation))
-        (count ':provider-item
-               (rest (conversation--read-records
-                      (conversation-pathname conversation)))
-               :key #'first)
-        0)))
+  (count ':provider-item
+         (application-tests--conversation-records
+          (responsive-scripted-terminal-conversation terminal))
+         :key #'first))
 
 (defmethod terminal-input-ready-p ((terminal responsive-scripted-terminal))
   "Pace TERMINAL input around its first active request and durable answers."
@@ -1150,8 +1156,10 @@
              (let ((output (interrupt-application empty)))
                (test-assert (not (search "autolith resume" output))
                             "Ctrl-C gives no resume command for an empty conversation")
-               (test-assert (not (probe-file (conversation-pathname empty)))
-                            "Ctrl-C does not persist an empty conversation")))
+               (test-assert
+                (not (conversation-storage-occupied-p
+                      (conversation-pathname empty)))
+                "Ctrl-C does not persist an empty conversation")))
         (uiop:delete-directory-tree root
                                     :validate t
                                     :if-does-not-exist :ignore))))
@@ -4109,7 +4117,7 @@
 
 (-> test-bounded-transcript-replay () null)
 (defun test-bounded-transcript-replay ()
-  "Test startup replays exactly the newest five hundred visible entries."
+  "Test startup replays exactly the newest two hundred fifty visible entries."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation
@@ -4122,27 +4130,29 @@
                           :ui (terminal-ui-create :terminal terminal))))
     (unwind-protect
          (progn
-           (loop for index below 501
+           (test-assert (= *application-history-page-size* 250)
+                        "the reloadable transcript display default is 250")
+           (loop for index below 251
                  do (conversation-append-user-message
                      conversation
                      (format nil "visible-entry-~3,'0D" index)))
            (application-render-records application)
            (let ((output (recording-terminal-output terminal)))
              (test-assert
-              (= (terminal-tests--substring-count "❯ you" output) 500)
-              "startup emits no more than five hundred visible entries")
+              (= (terminal-tests--substring-count "❯ you" output) 250)
+              "startup emits no more than two hundred fifty visible entries")
              (test-assert
               (and (not (search "visible-entry-000" output))
                    (search "visible-entry-001" output)
-                   (search "visible-entry-500" output))
-              "startup retains exactly the newest five hundred visible entries")
+                   (search "visible-entry-250" output))
+              "startup retains exactly the newest two hundred fifty visible entries")
              (test-assert
               (search
-               "showing the newest 500 of 501 transcript entries"
+               "showing 250 newest transcript entries; /history loads an earlier page"
                output)
-              "bounded startup replay explains its omitted older entry"))
+              "bounded startup replay explains how to load omitted history"))
            (test-assert
-            (= (application-rendered-sequence application) 501)
+            (= (application-rendered-sequence application) 251)
             "bounded startup replay advances the live cursor through omitted entries")
            (recording-terminal-reset terminal)
            (conversation-append-user-message conversation "one-live-append")
@@ -4170,14 +4180,240 @@
              (let ((output
                      (recording-terminal-output recovery-terminal)))
                (test-assert
-                (= (terminal-tests--substring-count "❯ you" output) 500)
+                (= (terminal-tests--substring-count "❯ you" output) 250)
                 "recovery also bounds output after a stale durable cursor")
                (test-assert
                 (and (not (search "visible-entry-001" output))
                      (search "visible-entry-002" output)
                      (search "one-live-append" output)
-                     (search "entries added after recovery" output))
+                     (search "showing 250 newest entries added after recovery"
+                             output))
                 "recovery retains only the newest unread transcript page"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+
+(-> test-chunked-transcript-replay () null)
+(defun test-chunked-transcript-replay ()
+  "Test newest-first replay, one-segment fallback, history, and cursor rotation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (progn
+           (let* ((conversation
+                    (conversation-create configuration
+                                         :identifier "chunk-empty"))
+                  (terminal (make-instance 'recording-terminal :columns 80))
+                  (application
+                    (make-instance
+                     'application
+                     :configuration configuration
+                     :conversation conversation
+                     :ui (terminal-ui-create :terminal terminal))))
+             (application-render-records application)
+             (test-assert
+              (and (application-transcript-synchronized-p application)
+                   (zerop (application-render-position application))
+                   (zerop (application-rendered-sequence application))
+                   (= (application-render-generation application)
+                      (conversation-log-generation conversation))
+                   (not
+                    (conversation-storage-occupied-p
+                     (conversation-pathname conversation))))
+              "an unpersisted empty conversation synchronizes at the zero cursor")
+             (conversation-append-user-message conversation "first durable record")
+             (application-render-records application)
+             (application-render-records application)
+             (test-assert
+              (and (= (terminal-tests--substring-count
+                       "first durable record"
+                       (recording-terminal-output terminal))
+                      1)
+                   (= (application-rendered-sequence application) 1)
+                   (plusp (application-render-position application)))
+              "the first later durable record renders exactly once"))
+           (let ((conversation
+                   (conversation-create configuration
+                                        :identifier "chunk-page-full")))
+             (conversation-append-user-message conversation "older-full-chunk")
+             (conversation-append-summary conversation "full checkpoint")
+             (conversation-append-user-message conversation "active-full-one")
+             (conversation-append-user-message conversation "active-full-two")
+             (let* ((loaded
+                      (conversation-load (conversation-pathname conversation)))
+                    (terminal (make-instance 'recording-terminal :columns 80))
+                    (application
+                      (make-instance
+                       'application
+                       :configuration configuration
+                       :conversation loaded
+                       :ui (terminal-ui-create :terminal terminal)))
+                    (mapped-pathnames nil)
+                    (map-records-function
+                      (symbol-function 'conversation--map-records)))
+               (let ((*application-history-page-size* 3))
+                 (test-call-with-function-replacements
+                  (list
+                   (list
+                    'conversation--map-records
+                    (lambda (pathname function &key (start-position 0))
+                      (push pathname mapped-pathnames)
+                      (funcall map-records-function
+                               pathname
+                               function
+                               :start-position start-position))))
+                  (lambda ()
+                    (application-render-records application))))
+               (let ((output (recording-terminal-output terminal)))
+                 (test-assert
+                  (and (equal (nreverse mapped-pathnames)
+                              (list (conversation-log-pathname loaded)))
+                       (not (search "older-full-chunk" output))
+                       (search "active-full-one" output)
+                       (search "active-full-two" output)
+                       (= (terminal-tests--substring-count
+                           "context compacted through sequence"
+                           output)
+                          1))
+                  "a full active chunk is the only segment scanned at startup"))
+               (recording-terminal-reset terminal)
+               (conversation-append-summary loaded "rotated checkpoint")
+               (conversation-append-user-message loaded "after-runtime-rotation")
+               (application-render-records application)
+               (application-render-records application)
+               (let ((output (recording-terminal-output terminal)))
+                 (test-assert
+                  (and (= (terminal-tests--substring-count
+                           "after-runtime-rotation" output)
+                          1)
+                       (= (terminal-tests--substring-count
+                           "context compacted through sequence" output)
+                          1)
+                       (= (application-render-generation application)
+                          (conversation-log-generation loaded))
+                       (plusp (application-render-position application)))
+                  "chunk rotation resets the active cursor and renders each new record once"))))
+           (let ((conversation
+                   (conversation-create configuration
+                                        :identifier "chunk-page-short")))
+             (conversation-append-user-message conversation "oldest-third-chunk")
+             (conversation-append-summary conversation "middle checkpoint")
+             (conversation-append-user-message conversation "middle-chunk-message")
+             (conversation-append-summary conversation "active checkpoint")
+             (let* ((loaded
+                      (conversation-load (conversation-pathname conversation)))
+                    (pathnames
+                      (conversation-storage-pathnames
+                       (conversation-pathname conversation)))
+                    (active (third pathnames))
+                    (previous (second pathnames))
+                    (terminal (make-instance 'recording-terminal :columns 80))
+                    (application
+                      (make-instance
+                       'application
+                       :configuration configuration
+                       :conversation loaded
+                       :ui (terminal-ui-create :terminal terminal)))
+                    (mapped-pathnames nil)
+                    (map-records-function
+                      (symbol-function 'conversation--map-records)))
+               (let ((*application-history-page-size* 3))
+                 (test-call-with-function-replacements
+                  (list
+                   (list
+                    'conversation--map-records
+                    (lambda (pathname function &key (start-position 0))
+                      (push pathname mapped-pathnames)
+                      (funcall map-records-function
+                               pathname
+                               function
+                               :start-position start-position))))
+                  (lambda ()
+                    (application-render-records application)))
+                 (let ((output (recording-terminal-output terminal)))
+                   (test-assert
+                    (and (equal (nreverse mapped-pathnames)
+                                (list active previous))
+                         (not (search "oldest-third-chunk" output))
+                         (search "middle-chunk-message" output)
+                         (= (terminal-tests--substring-count
+                             "context compacted through sequence" output)
+                            2)
+                         (not (search "/history loads an earlier page" output)))
+                    "a short active chunk scans exactly one preceding segment"))
+                 (let* ((recovery-terminal
+                          (make-instance 'recording-terminal :columns 80))
+                        (recovery-application
+                          (make-instance
+                           'application
+                           :configuration configuration
+                           :conversation loaded
+                           :recovery-startup-p t
+                           :ui
+                           (terminal-ui-create :terminal recovery-terminal)))
+                        (recovery-pathnames nil))
+                   (let ((*application-history-page-size* 3))
+                     (test-call-with-function-replacements
+                      (list
+                       (list
+                        'conversation--map-records
+                        (lambda (pathname function &key (start-position 0))
+                          (push pathname recovery-pathnames)
+                          (funcall map-records-function
+                                   pathname
+                                   function
+                                   :start-position start-position))))
+                      (lambda ()
+                        (application-render-records recovery-application))))
+                   (let ((output
+                           (recording-terminal-output recovery-terminal)))
+                     (test-assert
+                      (and (equal (nreverse recovery-pathnames) (list active))
+                           (not (search "middle-chunk-message" output))
+                           (= (terminal-tests--substring-count
+                               "context compacted through sequence" output)
+                              1))
+                      "zero-cursor recovery scans only the active chunk")))
+                 (recording-terminal-reset terminal)
+                 (application-render-history application)
+                 (let ((output (recording-terminal-output terminal)))
+                   (test-assert
+                    (and (search "oldest-third-chunk" output)
+                         (not (search "middle-chunk-message" output))
+                         (= (terminal-tests--substring-count
+                             "oldest-third-chunk" output)
+                            1))
+                    "explicit history crosses older chunk boundaries without duplicates")))))
+           (let* ((conversation
+                    (conversation-create
+                     configuration
+                     :identifier "chunk-invalid-previous"))
+                  (terminal (make-instance 'recording-terminal :columns 80)))
+             (conversation-append-user-message conversation "malformed older record")
+             (conversation-append-summary conversation "active checkpoint")
+             (let* ((pathnames
+                      (conversation-storage-pathnames
+                       (conversation-pathname conversation)))
+                    (previous (first pathnames))
+                    (forms (copy-tree (conversation--read-records previous)))
+                    (application
+                      (make-instance
+                       'application
+                       :configuration configuration
+                       :conversation
+                       (conversation-load (conversation-pathname conversation))
+                       :ui (terminal-ui-create :terminal terminal))))
+               (setf (getf (rest (second forms)) :seq) 2)
+               (conversation-identifier-migration--write-forms previous forms)
+               (let ((*application-history-page-size* 3))
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (application-render-records application)
+                        nil)
+                    (conversation-invariant-error ()
+                      t))
+                  "startup fallback validates the exact preceding segment")))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -4819,9 +5055,8 @@
             (string= (line-editor-text (terminal-ui-editor ui))
                      "draft survives")
             "draft input survives steering and a queued follow-up turn")
-           (let* ((records
-                    (rest (conversation--read-records
-                           (conversation-pathname conversation))))
+            (let* ((records
+                     (application-tests--conversation-records conversation))
                   (user-messages
                     (loop for record in records
                           when (and (eq (first record) ':message)
@@ -5934,10 +6169,10 @@
                          *unix-epoch-universal-time*)))
              (flet ((set-activity (conversation seconds-ago)
                       (let ((time (- now seconds-ago)))
-                        (sb-posix:utime
-                         (namestring (conversation-pathname conversation))
-                         time
-                         time))))
+                         (sb-posix:utime
+                          (namestring (conversation-log-pathname conversation))
+                          time
+                          time))))
                (set-activity active 10)
                (set-activity other-newer 20)
                (set-activity current-older 30)
@@ -6013,7 +6248,8 @@
              (test-assert (null (application--pick-conversation application))
                           "escape cancels after refusing active deletion")
              (test-assert
-              (and (probe-file (conversation-pathname active))
+               (and (conversation-storage-occupied-p
+                     (conversation-pathname active))
                    (search "Cannot delete the active conversation."
                            (recording-terminal-output terminal)))
               "the resume picker refuses to delete its active conversation")
@@ -6029,10 +6265,10 @@
                       (- (get-universal-time)
                          *unix-epoch-universal-time*)))
                (conversation-append-user-message failed "temporary")
-               (sb-posix:utime
-                (namestring (conversation-pathname failed))
-                (- unix-time 25)
-                (- unix-time 25))
+                (sb-posix:utime
+                 (namestring (conversation-log-pathname failed))
+                 (- unix-time 25)
+                 (- unix-time 25))
                (snapshot-write
                 (merge-pathnames "image.sexp" failed-image-root)
                 '(:image))
@@ -6047,7 +6283,8 @@
                   (null (application--pick-conversation application))
                   "cleanup failure returns to browsing until escape"))
                (test-assert
-                (and (not (probe-file (conversation-pathname failed)))
+                 (and (not (conversation-storage-occupied-p
+                            (conversation-pathname failed)))
                      (probe-file failed-image-root)
                      (search "was deleted, but private artifacts remain"
                              (recording-terminal-output terminal)))
@@ -6060,8 +6297,10 @@
                          :escape))
              (test-assert (null (application--pick-conversation application))
                           "keeping a conversation returns to the browse picker")
-             (test-assert (probe-file (conversation-pathname current-older))
-                          "the keep confirmation preserves the conversation")
+              (test-assert
+               (conversation-storage-occupied-p
+                (conversation-pathname current-older))
+               "the keep confirmation preserves the conversation")
              (let ((image-root
                      (merge-pathnames "conversation-images/current-older/"
                                       (configuration-data-root configuration)))
@@ -6078,7 +6317,8 @@
                (test-assert (null (application--pick-conversation application))
                             "deletion returns to browsing until escape")
                (test-assert
-                (and (not (probe-file (conversation-pathname current-older)))
+                 (and (not (conversation-storage-occupied-p
+                            (conversation-pathname current-older)))
                      (not (probe-file image-root))
                      (not (probe-file task-root)))
                 "confirmed picker deletion removes the conversation and artifacts")
@@ -6327,29 +6567,27 @@
                   :configuration configuration
                   :conversation current
                   :conversation-lease current-lease))
-           (let ((before
-                   (uiop:read-file-string
-                    (conversation-pathname target))))
-             (test-conversation--call-with-child-lease
-              configuration
-              (conversation-identifier target)
-              (lambda ()
-                (test-assert
-                 (handler-case
-                     (progn
-                       (application-resume-conversation
-                        application
-                        (conversation-identifier target))
-                       nil)
-                   (conversation-in-use ()
-                     t))
-                 "resume refuses a conversation owned by another process")
-                (test-assert
-                 (string=
-                  before
-                  (uiop:read-file-string
-                   (conversation-pathname target)))
-                 "busy resume does not append interrupted-call repair")))))
+            (let ((before
+                    (application-tests--conversation-records target)))
+              (test-conversation--call-with-child-lease
+               configuration
+               (conversation-identifier target)
+               (lambda ()
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (application-resume-conversation
+                         application
+                         (conversation-identifier target))
+                        nil)
+                    (conversation-in-use ()
+                      t))
+                  "resume refuses a conversation owned by another process")
+                 (test-assert
+                  (equal
+                   before
+                   (application-tests--conversation-records target))
+                  "busy resume does not append interrupted-call repair")))))
       (when application
         (application-release-conversation-lease application))
       (when (and current-lease
@@ -6383,18 +6621,18 @@
                     (application--conversation-create-owned
                      nil configuration :timestamp timestamp)
                   (unwind-protect
-                       (test-assert
-                        (and
-                         acquired-p
-                         (string=
-                          (conversation-identifier conversation)
-                          second-identifier)
-                         (conversation-lease-matches-p
-                          lease second-identifier)
-                         (not
-                          (probe-file
-                           (conversation-pathname conversation))))
-                        "fresh ownership skips a leased empty identifier")
+                        (test-assert
+                         (and
+                          acquired-p
+                          (string=
+                           (conversation-identifier conversation)
+                           second-identifier)
+                          (conversation-lease-matches-p
+                           lease second-identifier)
+                          (not
+                           (conversation-storage-occupied-p
+                            (conversation-pathname conversation))))
+                         "fresh ownership skips a leased empty identifier")
                     (conversation-lease-release lease)))))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
@@ -7651,11 +7889,9 @@
                           :time timestamp))
                   (entry
                     (application--child-response-entry application payload))
-                  (conversation-path (conversation-pathname conversation))
-                  (records-before
-                    (and (probe-file conversation-path)
-                         (copy-tree
-                          (conversation--read-records conversation-path))))
+                   (records-before
+                     (copy-tree
+                      (application-tests--conversation-records conversation)))
                   (stale-listener
                     (application-task-presentation-listener application)))
              (test-assert
@@ -7707,9 +7943,8 @@
                 "one child response is presented once with color 78 or green fallback"))
              (test-assert
               (and
-               (equal records-before
-                      (and (probe-file conversation-path)
-                           (conversation--read-records conversation-path)))
+                (equal records-before
+                       (application-tests--conversation-records conversation))
                (null (conversation-input-items conversation)))
               "promoted child presentation does not mutate primary conversation state")
              (application-disconnect-task-presentation application)
@@ -8852,6 +9087,7 @@
   (test-recovery-diagnosis-prompt)
   (test-recovery-application-construction)
   (test-bounded-transcript-replay)
+  (test-chunked-transcript-replay)
   (test-hidden-reasoning-does-not-crowd-replay)
   (test-paged-transcript-history)
   (test-compaction-presentation-lifecycle)

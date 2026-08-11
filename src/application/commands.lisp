@@ -188,8 +188,8 @@
                  (if (integerp value)
                      value
                      0))))
-      (conversation--map-records
-       (conversation-pathname (application-conversation application))
+      (conversation-map-records
+       (application-conversation application)
        (lambda (record)
          (when (eq (first record) :provider)
            (let ((usage (getf (getf (rest record) :metadata) :usage)))
@@ -467,7 +467,7 @@
                     (application--conversation-preview-from-metadata metadata))))
         (multiple-value-bind (description description-spans)
             (application--conversation-description
-             (or (file-write-date pathname) 0)
+             (conversation-storage-write-date pathname)
              :directory (and (not current-directory-p)
                              (application--abbreviated-directory directory))
              :current-p (string= identifier current-identifier)
@@ -1603,7 +1603,7 @@ to TERMINAL-UI-SELECT."
     (:name "/history"
      :argument nil
      :description "load earlier transcript history"
-     :tip "loads the previous 500 transcript entries on demand."
+     :tip "loads one configured page of earlier transcript entries."
      :busy-behavior :hold
      :terminal-behavior :shared
      :call-lambda-list ()

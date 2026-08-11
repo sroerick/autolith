@@ -2028,7 +2028,7 @@ newly acquired lease."
           (and (json-object-p item)
                (response-item-reasoning-summary item)))))))
 
-(defparameter *application-history-page-size* 500
+(defparameter *application-history-page-size* 250
   "The maximum transcript candidates replayed automatically or per history page.")
 
 (-> application--history-page-size () (integer 1))
@@ -2149,7 +2149,7 @@ newly acquired lease."
 
 (-> application--render-position-invalidate (application) null)
 (defun application--render-position-invalidate (application)
-  "Invalidate APPLICATION's append-log position after whole-log replacement."
+  "Invalidate APPLICATION's append-log position after active-segment replacement."
   (setf (application-render-position application) 0
         (application-render-generation application)
         (conversation-log-generation
@@ -2159,7 +2159,7 @@ newly acquired lease."
 
 (-> application--render-position-reset-if-needed (application) null)
 (defun application--render-position-reset-if-needed (application)
-  "Reset APPLICATION's file cursor after its conversation log was replaced."
+  "Reset APPLICATION's active-segment cursor after chunk rotation."
   (let ((generation
           (conversation-log-generation
            (application-conversation application))))
@@ -2187,68 +2187,125 @@ newly acquired lease."
           (application--render-position-invalidate application)
           nil))))
 
+(-> application--history-segment-records
+    (application pathname (integer 0) (integer 1))
+    (values list (integer 0) (integer 0) (integer 0)))
+(defun application--history-segment-records
+    (application pathname after-sequence limit)
+  "Return one validated segment's newest visible records and scan metadata.
+
+The values are the newest LIMIT visible records after AFTER-SEQUENCE, the
+unbounded visible candidate count, the newest durable sequence, and the next
+readable byte position."
+  (let ((ring (make-array limit))
+        (candidate-count 0)
+        (latest-sequence 0)
+        (conversation (application-conversation application)))
+    (multiple-value-bind
+        (position incomplete-tail-p record-count start-sequence next-sequence)
+        (conversation--map-segment-records
+         (conversation-pathname conversation)
+         pathname
+         (lambda (record)
+           (let ((sequence (application--record-sequence record)))
+             (when sequence
+               (setf latest-sequence (max latest-sequence sequence))
+               (when (and (> sequence after-sequence)
+                          (application--record-visible-p application record))
+                 (setf (aref ring (mod candidate-count limit)) record)
+                 (incf candidate-count))))))
+      (declare (ignore incomplete-tail-p record-count
+                       start-sequence next-sequence))
+      (values (application--ring-records ring candidate-count limit)
+              candidate-count
+              latest-sequence
+              position))))
+
 (-> application--render-startup-history
     (application (integer 0))
     null)
 (defun application--render-startup-history (application after-sequence)
-  "Replay a bounded newest page after durable sequence AFTER-SEQUENCE."
+  "Replay a bounded newest page after durable sequence AFTER-SEQUENCE.
+
+A normal resume scans the active chunk first. When that chunk contains fewer
+visible entries than the configured page size, exactly one preceding segment
+may fill the remainder."
   (let* ((conversation (application-conversation application))
-         (pathname (conversation-pathname conversation))
+         (identity (conversation-pathname conversation))
          (limit (application--history-page-size)))
     (loop
-      (let ((generation (conversation-log-generation conversation))
-            (ring (make-array limit))
-            (candidate-count 0)
-            (latest-sequence 0))
-        (multiple-value-bind (position incomplete-tail-p record-count)
-            (conversation--map-records
-             pathname
-             (lambda (record)
-               (let ((sequence (application--record-sequence record)))
-                 (when sequence
-                   (setf latest-sequence (max latest-sequence sequence))
-                   (when (and (> sequence after-sequence)
-                              (application--record-visible-p
-                               application record))
-                     (setf (aref ring (mod candidate-count limit)) record)
-                     (incf candidate-count))))))
-          (declare (ignore incomplete-tail-p record-count))
-          (if (/= generation (conversation-log-generation conversation))
-              (application--render-position-invalidate application)
-              (let ((records
-                      (application--ring-records
-                       ring candidate-count limit)))
-                (when (> candidate-count limit)
-                  (application-present
-                   application
-                   (list
-                    (terminal-span
-                     :hint
-                     (format nil
-                             "∙ showing the newest ~D of ~D ~:[transcript entries~;entries added after recovery~]; /history loads ~D earlier entries"
-                             limit
-                             candidate-count
-                             (plusp after-sequence)
-                             limit)))))
-                (application--present-conversation-records application records)
-                (setf (application-history-floor-sequence application)
-                      (cond
-                        ((or (zerop after-sequence)
-                             (> candidate-count limit)
-                             (null
-                              (application-history-floor-sequence
-                               application)))
-                         (or
-                          (and records
-                               (application--record-sequence (first records)))
-                          (1+ latest-sequence)))
-                        (t
-                         (application-history-floor-sequence application)))
-                      (application-rendered-sequence application)
-                      latest-sequence)
-                (when (application--finish-render-scan
-                       application position generation)
-                  (return))))))))
+      (let* ((generation (conversation-log-generation conversation))
+             (pathnames (conversation-storage-pathnames identity))
+             (active (first (last pathnames)))
+             (previous (and (rest pathnames)
+                            (first (last (butlast pathnames))))))
+        (if (null active)
+            (if (conversation-persisted-p conversation)
+                (error 'conversation-invariant-error
+                       :message "The active conversation segment is missing."
+                       :pathname identity
+                       :sequence nil)
+                (progn
+                  (setf (application-history-floor-sequence application) nil
+                        (application-rendered-sequence application) 0)
+                  (when (application--finish-render-scan
+                         application 0 generation)
+                    (return))))
+            (multiple-value-bind
+                (active-records active-count latest-sequence position)
+                (application--history-segment-records
+                 application active after-sequence limit)
+              (if (/= generation (conversation-log-generation conversation))
+                  (application--render-position-invalidate application)
+                  (let ((records active-records)
+                        (older-history-p (> active-count limit)))
+                    (when (and (not (application-recovery-startup-p application))
+                               (zerop after-sequence)
+                               (< active-count limit)
+                               previous)
+                      (let ((remaining (- limit active-count)))
+                        (multiple-value-bind
+                            (previous-records previous-count
+                             previous-latest-sequence previous-position)
+                            (application--history-segment-records
+                             application previous 0 remaining)
+                          (declare (ignore previous-latest-sequence
+                                           previous-position))
+                          (setf records (append previous-records active-records)
+                                older-history-p
+                                (> previous-count remaining)))))
+                    (when (and records older-history-p)
+                      (application-present
+                       application
+                       (list
+                        (terminal-span
+                         :hint
+                         (format nil
+                                 "∙ showing ~D newest ~A; /history loads an earlier page"
+                                 (length records)
+                                 (if (plusp after-sequence)
+                                     "entries added after recovery"
+                                     (if (= (length records) 1)
+                                         "transcript entry"
+                                         "transcript entries")))))))
+                    (application--present-conversation-records application records)
+                    (setf (application-history-floor-sequence application)
+                          (cond
+                            ((or (zerop after-sequence)
+                                 older-history-p
+                                 (null
+                                  (application-history-floor-sequence application)))
+                             (or
+                              (and records
+                                   (application--record-sequence (first records)))
+                              (1+ latest-sequence)))
+                            (t
+                             (application-history-floor-sequence application)))
+                          (application-rendered-sequence application)
+                          latest-sequence)
+                    (when (application--finish-render-scan
+                           application position generation)
+                      (return)))))))))
   nil)
 
 (-> application--render-unread-records (application) null)
@@ -2261,7 +2318,7 @@ newly acquired lease."
             (records nil))
         (multiple-value-bind (position incomplete-tail-p record-count)
             (conversation--map-records
-             (conversation-pathname conversation)
+             (conversation-log-pathname conversation)
              (lambda (record)
                (let ((sequence (application--record-sequence record)))
                  (when (and sequence
@@ -2295,7 +2352,7 @@ newly acquired lease."
             (records nil))
         (multiple-value-bind (position incomplete-tail-p record-count)
             (conversation--map-records
-             (conversation-pathname conversation)
+             (conversation-log-pathname conversation)
              (lambda (record)
                (let ((sequence (application--record-sequence record)))
                  (when (and sequence
@@ -2387,14 +2444,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   "Return the newest LIMIT replay candidates before sequence FLOOR."
   (let ((ring (make-array limit))
         (candidate-count 0))
-    (conversation--map-records
-     (conversation-pathname (application-conversation application))
+    (conversation-map-records
+     (application-conversation application)
      (lambda (record)
        (let ((sequence (application--record-sequence record)))
          (when (and sequence
                     (< sequence floor)
-                    (application--record-visible-p
-                     application record))
+                    (application--record-visible-p application record))
            (setf (aref ring (mod candidate-count limit)) record)
            (incf candidate-count)))))
     (values (application--ring-records ring candidate-count limit)
