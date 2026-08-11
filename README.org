@@ -1,212 +1,150 @@
 #+TITLE: Autolith
-#+SUBTITLE: A live, self-modifying Common Lisp agent
+#+SUBTITLE: A terminal agent you can inspect and change in Common Lisp
 #+STARTUP: content
 
-#+BEGIN_SRC text
-┌[RAM 35%] ~/c/frob [master]
-└ 00:50 lho-thinkpad mag took λ ./bin/autolith
+Autolith, or AL, is a terminal agent inside a live Common Lisp image. It owns
+its model loop, tools, conversations, local state, checkpoints, and recovery.
+It talks directly to configured model services instead of launching a vendor
+agent CLI. Use prose for open-ended work. Start an input with an opening
+parenthesis for an exact local Lisp action.
 
-  :::.      :::        AUTOLITH v0.31.1
-  ;;`;;     ;;;        ────────────────────────────────────────
- ,[[ '[[,   [[[        model         gpt-5.6-sol (effort ultra)
-c$$$cc$$$c  $$'        workspace     /root/common-lisp/frob/
- 888   888,o88oo,.__
- YMM   ""` """"YUMMM
+Autolith is not a security sandbox. Code it runs has your user privileges.
 
-Autolith executes model-generated code with your user privileges.
-Sandboxing is no substitute for human oversight
+* Read next
 
-❯ Ask Autolith anything. Type /help for commands.
-#+END_SRC
+- [[file:docs/guide.org][Guide]]: install, authenticate, choose a provider, use the terminal,
+  manage state, and recover.
+- [[file:docs/architecture.org][Architecture]]: understand the active image, workers, launcher,
+  durable mutation, and recovery boundaries.
+- [[file:docs/skills.org][Skills]]: load request-local instructions from native Skill
+  directories.
+- [[file:docs/mcp.org][MCP]]: connect tools, resources, and prompts over standard I/O or
+  HTTP.
+- [[file:docs/release-service.org][Release service]]: build, publish, and deploy packaged
+  releases.
+- [[file:docs/autolith-minimal-technical-spec.org][Technical specification]]:
+  define product behavior and runtime boundaries.
+- [[file:AGENTS.md][Contributor rules]]: change the repository safely.
 
-Autolith, or AL, is a small terminal agent that runs inside a Common Lisp
-image. It owns its model loop, tools, conversations, authentication, live
-mutation, checkpoints, and recovery. It talks directly to the ChatGPT Codex
-and Grok subscription services, plus the Anthropic and Fireworks APIs, and does
-not launch or bundle the Codex CLI or Grok Build.
+* Start
 
-Autolith supports Linux x86-64 and native macOS arm64 source checkouts and Nix
-packages on SBCL. Binary releases remain Linux x86-64. Autolith is dogfoodable,
-but it is not a security sandbox: model-generated Lisp runs with the user's
-privileges, and the user can grant commands full access for a session.
+Nix and source checkouts support Linux x86-64 and native macOS arm64. Packaged
+binary releases support Linux x86-64.
 
-* Highlights
-
-- A responsive primary-screen terminal interface with ordinary scrollback.
-- Multiline editing and reusable completion widgets from Clinedi, with shared
-  terminal styling from cl-colorist.
-- Input remains editable while model responses and tools are running.
-- Local PNG, JPEG, GIF, and WebP input with numbered composer labels.
-- Persistent, opt-in provider-visible reasoning summaries with =/trace on=.
-- Opt-in Simple Technical English replies with =/ste on=.
-- Append-only portable conversation files with exact resume commands.
-- Authenticated local multi-session status, messaging, attach, detach, pause, and kill.
-- Optional root =AUTOLITH.org= notes for documented project adaptations.
-- Native Skills with explicit, request-local instruction loading.
-- MCP 2025-11-25 and 2025-06-18 over standard I/O or Streamable HTTP,
-  including tools, resources, and prompts.
-- Workspace and global persistent memories with ranked request-local recall.
-- Short workspace agendas with memory links and repository transport.
-- Warm in-process fff path, glob, plain, regex, fuzzy, and multi-pattern search.
-- Everyday filesystem and shell tools plus named, isolated Lisp REPLs.
-- Immutable modified worker images with notes and pristine side-by-side comparison.
-- Hash-verified matching SBCL source and Lisp-level implementation instrumentation.
-- Live =self.*= mutation with private commits and complete replay scripts.
-- Optional =--immutable= startup with inspection-only =self.*= tools.
-- Forked checkpoints with per-generation reconstruction artifacts.
-- A validated preloaded active image for fast startup and source fallback.
-
-* Install and start
-
-On Linux x86-64 and macOS arm64, Nix is the recommended installation path. It
-pins the complete runtime and keeps it separate from the host system.
+Nix supplies the complete runtime:
 
 #+BEGIN_SRC sh
 nix run github:luciusmagn/autolith
 #+END_SRC
 
-The first launch builds machine-specific recovery and active images from the
-packaged closure without requiring user-installed Quicklisp, a compiler, or a
-source checkout. Nix keeps each package identity's image pair beneath
-=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=, so upgrades never reuse
-a stale base image. Private image commits remain in Autolith's normal data and
-state roots and survive package upgrades.
-
-The conventional Linux x86-64 installer is shorter, but piping network input
-into a shell deserves suspicion. Inspect [[https://sh.lambda-symbolics.com/autolith][the script]] first if you use it.
+The conventional Linux installer is shorter. Inspect the
+[[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell.
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
-The binary release contains its own pinned SBCL, matching SBCL source, locked
-Lisp dependencies, search library, and private sandbox helper. It needs Git,
-OpenSSL, and Bubblewrap from the host. The first launch builds machine-specific
-recovery and active images without requiring Quicklisp, a compiler, or a source
-checkout. Autolith checks published releases periodically and asks before
-installing a newer release. The check runs in the background and never installs
-anything unattended. A prior cached result may place an update notice below the
-next startup banner. Run =autolith --update= to check and update explicitly.
-
-Native macOS arm64 can run through Nix or from a source checkout. Autolith accepts an
-official SBCL release at least the version in =sbcl.version= (currently 2.6.6)
-when its source archive identity is tracked. Install the host toolchain and
-Quicklisp, then let bootstrap install the hash-verified matching SBCL source,
-native libraries, recovery core, and active core:
-
-#+BEGIN_SRC sh
-brew install sbcl rust cmake pkg-config openssl@3
-curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
-  --eval '(quicklisp-quickstart:install)' --quit
-./script/bootstrap
-./script/check
-./bin/autolith
-#+END_SRC
-
-The macOS command sandbox uses the system Seatbelt launcher. See
-[[file:docs/guide.org][the guide]] for the platform boundary and source setup details.
-
-Authenticate and start a conversation:
+Then authenticate and start:
 
 #+BEGIN_SRC sh
 autolith --auth
 autolith
 #+END_SRC
 
-=autolith --auth= signs into the provider serving the configured model, and
-=autolith --auth grok=, =autolith --auth chatgpt=, or another registered provider
-selects one explicitly. Inside a session, =/models= lists registered providers
-and models, =/model= selects one, and =/auth [PROVIDER]= authenticates the active
-or named provider. See [[file:docs/guide.org][the guide]] for registering an
-OpenAI-compatible API-key provider from =init.lisp=. API keys are stored in
-Autolith's private state credential store. Providers may fetch their model list
-from an OpenAI-compatible =GET /models= endpoint when =/models= is requested;
-startup uses static or cached metadata, with static model metadata available when
-a provider needs overrides or a fallback.
+The [[file:docs/guide.org][guide]] covers source setup, providers, permissions, updates, and the
+first machine-local image build.
 
-List and control local Autolith processes with =autolith localgroup status=,
-=tell=, =attach=, =detach=, =pause=, and =kill=. Attach supports =--read-only=
-and =--take-over=. Foreground detach and take-over preserve the conversation and
-composer draft through a safe detached-process handoff. See the guide for the
-strict idle definition and lifecycle details.
+* See it work
 
-If a development checkout has no current fast startup image, the launcher asks
-whether to run its bootstrap. Use =autolith --from-source= to deliberately load
-the checkout without validating or rebuilding that image.
+** One prompt, prose and Lisp
 
-Enter submits. Shift-Enter, Ctrl-Enter, or Alt-Enter inserts a newline. While
-idle, Ctrl-C clears a draft or exits an empty prompt without confirmation.
-During an active turn, Escape cancels that turn and permits queued work to
-continue. Ctrl-C cancels the turn and holds queued follow-ups and unconsumed
-steering until explicit new input resumes them. Only active Ctrl-C opens a
-2.5-second force-exit window while cancellation is pending; pressing Ctrl-C
-again in that window forces exit and prints the resume command. A turn that
-cancels promptly never announces that window. Escape never forces exit. Up and
-Down move across visual input rows before falling back to history. Tab and
-Shift-Tab cycle command suggestions. Messages can be drafted and queued while
-AL is responding. Empty Tab recalls the newest queued follow-up; Shift-Tab then
-cycles older follow-ups for editing. Type =/help= for commands.
+Ask in prose when interpretation helps. Enter a form when you need an exact
+local action or a computed prompt.
 
-After an active-image crash, recovery moves accepted but unprocessed input into
-a conversation-scoped vault and never submits it automatically. Startup warns
-while vaulted input or a storage problem remains. Use =/vault= for bounded
-chronological previews, =/vault-restore= to place recovered work before newer
-queued work in its original order, or =/vault-discard= to remove only that
-conversation's attributed recovery state. Corrupt recovery state is preserved
-unchanged and blocks ordinary submissions until it is safely resolved or
-discarded.
+#+BEGIN_SRC lisp
+(describe 'application)
+(fs.list :path ".")
+(prompt (read-file "review-notes.org"))
+#+END_SRC
 
-* Repository map
+The form runs in the active image without a model rewriting it. Registered
+operations still keep their normal authority and approval rules.
 
-- =src/= contains the active agent in the single =autolith= package.
-- =bin/= contains the stable launcher and pinned-runtime adapter.
-- =recovery/= contains the minimal source recovery runtime.
-- =script/= contains setup, image builders, and repository checks.
-- =server/= contains the Common Lisp release server, host builder, and deployment files.
-- =tests/= contains the complete regression suite.
-- [[file:docs/guide.org][docs/guide.org]] covers setup, operation, tools, persistence, and recovery.
-- [[file:docs/architecture.org][docs/architecture.org]] maps the runtime components and invariants.
-- [[file:docs/skills.org][docs/skills.org]] documents native Skill discovery and request-local loading.
-- [[file:docs/mcp.org][docs/mcp.org]] documents native MCP configuration and operation.
-- [[file:docs/release-service.org][docs/release-service.org]] documents the host-built release service.
-- [[file:docs/autolith-minimal-technical-spec.org][docs/autolith-minimal-technical-spec.org]] is the product specification.
-- [[file:AGENTS.md][AGENTS.md]] defines repository, Lisp, testing, and commit policy.
+** Inspect the machine at the right boundary
 
-* Persistent paths
+#+BEGIN_SRC lisp
+(lisp.eval :form "(+ 20 22)" :repl "scratch")
+(self.inspect :symbol "APPLICATION")
+(self.status)
+#+END_SRC
 
-Autolith keeps user-authored Lisp, native MCP configuration, user Skills, and
-child-agent definitions under =${XDG_CONFIG_HOME:-~/.config}/autolith/=.
-Project Skills live below the project root's =.autolith/skills/=, and Autolith
-may provide lower-precedence bundled Skills. Credentials, preferences, exact
-command approvals, deferred and pending inputs, conversation-scoped recovery
-input vaults, live-mutation journals, and atomic selections belong under
-=${XDG_STATE_HOME:-~/.local/state}/autolith/=, together with the readable cached
-release availability and a private Git history of durable mutation snapshots.
-Conversations, canonical image commits, memories, generations, runtimes,
-matching implementation source, and worker images live under
-=${XDG_DATA_HOME:-~/.local/share}/autolith/=. Credentials never belong in Git,
-conversation files, memories, journals, manifests, or saved cores.
+=lisp.*= uses named, heap-isolated SBCL workers. =self.*= inspects or changes
+the active Autolith image. Durable live changes have private replay history.
+A separate pristine image remains available for recovery.
 
-Source remains authoritative for clean rebuilds. Saved cores retain exact live
-states; private image commits and each generation's =reconstruct.lisp= retain
-durable user-specific changes without patching the tracked repository. Missing
-canonical replay artifacts are restored from the separate private Git history.
+** Steer a running child
+
+Ask Autolith to delegate work, then keep working while the children run. If one
+visible child is named =test-review=, this form adds exact FIFO guidance:
+
+#+BEGIN_SRC lisp
+(prompt :to 'test-review
+        "Run the focused tests and report only failures.")
+#+END_SRC
+
+The child must already be running. Its next useful verbal response returns to
+the primary terminal.
+
+** Update the running packaged release
+
+#+BEGIN_SRC lisp
+(update)
+#+END_SRC
+
+For a selected binary release, this performs a fresh check and requests
+an attended, verified launcher update when a newer release exists. Source and
+Nix starts only explain their external update path.
+
+* What makes Autolith different
+
+** Lisp-first control
+
+- Prose, callable commands, tools, and explicit Common Lisp share one input
+  surface.
+- Exact local forms can compute prompts or return results without model
+  interpretation.
+- Matching SBCL source and live image state are available for inspection.
+
+** Responsive terminal work
+
+- Keep editing and queue more work while a response or tool is running.
+- Use multiline input, completion, image attachments, readable transcripts,
+  and ordinary scrollback.
+- Steer bounded child jobs and collect their results without blocking the
+  primary session.
+
+** Durable state and recovery
+
+- Conversations use append-only readable files. Memories and workspace
+  agendas remain explicit.
+- Accepted input survives active-image crashes in a conversation-scoped vault.
+  It is never submitted automatically.
+- Checkpoints, private mutation commits, generations, and a pristine recovery
+  image keep live work reconstructible.
+
+** Extensions with visible authority
+
+- Search, file, shell, resource, Lisp-worker, and self operations have distinct
+  boundaries.
+- Native Skills and MCP add request-local instructions and external
+  capabilities.
+- Command approval modes and =--immutable= startup make authority choices
+  explicit.
 
 * Development
 
-Source development additionally needs Quicklisp, Rust with Cargo, a C compiler,
-CMake, =pkg-config=, and a host SBCL when the pinned runtime must be built from
-source. Materialize the locked environment and baseline images with
-=./script/bootstrap=.
+Read [[file:AGENTS.md][AGENTS.md]] before editing. Product behavior is defined in the
+[[file:docs/autolith-minimal-technical-spec.org][technical specification]]. The
+[[file:docs/architecture.org][architecture note]] maps source files to runtime responsibilities.
 
-Run the complete check after every change:
-
-#+BEGIN_SRC sh
-./script/check
-#+END_SRC
-
-Refresh dependencies and both installed baseline images with
-=./script/bootstrap=. Rebuild only the pristine recovery image with
-=./script/build-recovery=. See [[file:AGENTS.md][AGENTS.md]] before editing and the
-[[file:docs/autolith-minimal-technical-spec.org][technical specification]] before changing architecture.
+Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].
