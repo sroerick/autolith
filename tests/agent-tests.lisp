@@ -510,6 +510,100 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+
+(-> test-agent-restricted-resource-schemes () null)
+(defun test-agent-restricted-resource-schemes ()
+  "Test restricted turns confine generic resource reads to workspace URIs."
+  (let* ((base-configuration (test-configuration))
+         (root               (test-configuration-root base-configuration))
+         (workspace          (merge-pathnames "restricted-workspace/" root))
+         (configuration
+           (configuration--clone base-configuration
+                                 :working-directory workspace))
+         (conversation
+           (conversation-create configuration
+                                :identifier "agent-restricted-resources"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "restricted-workspace-read"
+              (list
+               (agent-test-call
+                :call-id "restricted-workspace-read"
+                :namespace "resource"
+                :name "read"
+                :arguments
+                (json-encode (json-object "uri" "workspace:allowed.txt")))))
+             (agent-test-result
+              "restricted-agenda-read"
+              (list
+               (agent-test-call
+                :call-id "restricted-agenda-read"
+                :namespace "resource"
+                :name "read"
+                :arguments
+                (json-encode (json-object "uri" "agenda:current")))))
+             (agent-test-result
+              "restricted-memory-read"
+              (list
+               (agent-test-call
+                :call-id "restricted-memory-read"
+                :namespace "resource"
+                :name "read"
+                :arguments
+                (json-encode (json-object "uri" "memory:relevant")))))
+             (agent-test-result
+              "restricted-resource-answer"
+              (list (agent-test-message "diagnosed"))
+              :turn-completion :end))))
+         (registry (make-default-tool-registry))
+         (agent
+           (agent-create :configuration configuration
+                         :provider provider
+                         :conversation conversation
+                         :tool-registry registry
+                         :worker ':unused)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist workspace)
+           (with-open-file (stream (merge-pathnames "allowed.txt" workspace)
+                                   :direction :output
+                                   :if-exists :supersede
+                                   :if-does-not-exist :create
+                                   :external-format :utf-8)
+             (write-string "restricted workspace content" stream))
+           (let ((*agent-restricted-maximum-tool-rounds* 3))
+             (agent-run-user-turn
+              agent
+              "diagnose within the workspace"
+              :tool-allowlist '("resource.read")
+              :tool-restriction-p t))
+           (let ((outputs
+                   (loop for item in (conversation-input-items conversation)
+                         when (string= (or (json-get item "type") "")
+                                       "function_call_output")
+                           collect (json-get item "output"))))
+             (test-assert
+              (and (= (length outputs) 3)
+                   (search "restricted workspace content" (first outputs)))
+              "a restricted turn may read workspace resources")
+             (test-assert
+              (and (search "agenda:current" (second outputs))
+                   (search "unavailable under this authority context"
+                           (second outputs)))
+              "a restricted turn rejects agenda resources")
+             (test-assert
+              (and (search "memory:relevant" (third outputs))
+                   (search "unavailable under this authority context"
+                           (third outputs)))
+              "a restricted turn rejects memory resources")))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-agent-restricted-tool-round-limit () null)
 (defun test-agent-restricted-tool-round-limit ()
   "Test restricted turns reject calls returned after their bounded tool rounds."
@@ -1529,6 +1623,7 @@
   (test-agent-tool-loop)
   (test-agent-tool-free-turn)
   (test-agent-read-only-tool-allowlist)
+  (test-agent-restricted-resource-schemes)
   (test-agent-restricted-tool-round-limit)
   (test-agent-empty-tool-allowlist)
   (test-agent-steering)

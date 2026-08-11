@@ -139,7 +139,7 @@
                      :name "local-grant"
                      :description "Use one available local tool."
                      :instructions "Read one file."
-                     :tools '("fs.read")
+                     :tools '("resource.read")
                      :source :test))
                   (hosted-definition
                     (task-agent-definition-create

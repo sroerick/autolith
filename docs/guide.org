@@ -631,7 +631,7 @@ nonempty strings. For example:
 (:name "reviewer"
  :description "Review a change for correctness and regressions."
  :instructions "Report concrete, evidence-backed findings."
- :tools ("fs.read" "search.*")
+ :tools ("resource.read" "search.*")
  :spawns ("scout")
  :models ("@parent")
  :reasoning-effort :high
@@ -1059,7 +1059,7 @@ or more non-overlapping =replace-lines=, =insert-before=, =insert-after=, or
 unseen lines and stale or expired revisions before atomically replacing the file.
 Use =replace-empty= to populate an observed empty file. Exact snapshots are
 bounded, transient, and never written into conversation history. Mixed LF and
-CRLF files require deliberate normalization or exact =fs.edit= use.
+CRLF files require deliberate complete-file normalization before structured edits.
 
 For =agenda:current=, =resource.read= returns the complete current workspace
 agenda and a transient content-addressed snapshot revision. =resource.edit=
@@ -1078,17 +1078,16 @@ for the supplied URI and revision. Invalid multi-operation calls, missing
 snapshots, and other nonexact cases stay in the structured semantic presentation
 instead of showing a speculative diff.
 
-The =fs.*= and =shell.*= tools cover remaining everyday workspace work:
-=fs.read= returns numbered file lines from an optional window, =fs.list= lists
-one directory with entry kinds and sizes, =fs.write= creates or replaces a file,
-=fs.edit= remains an exact-text compatibility editor with a uniqueness check and
-can conservatively normalize a unique multiline line-ending or
-uniform-indentation mismatch, and =shell.run= executes one external command with
-combined bounded output. It defaults to a 60-second timeout but accepts any
-positive requested duration without a product maximum. Invalid encoded output
-bytes are shown as replacement characters rather than failing the result.
+The remaining =fs.*= and =shell.*= tools cover workspace operations outside the
+resource protocol: =fs.list= lists one directory with entry kinds and sizes,
+=fs.view-image= attaches one local image for visual inspection, =fs.write=
+creates or completely replaces a file, and =shell.run= executes one external
+command with combined bounded output. It defaults to a 60-second timeout but
+accepts any positive requested duration without a product maximum. Invalid
+encoded output bytes are shown as replacement characters rather than failing
+the result.
 
-After successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
+After successful =fs.write=, workspace-file =resource.edit=,
 =lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations, Autolith checks
 the complete resulting text when its extension identifies Common Lisp
 (=.asd=, =.cl=, =.lisp=, =.lsp=, =.ros=), Scheme (=.sch=, =.scheme=,
@@ -1275,8 +1274,8 @@ ${XDG_DATA_HOME:-~/.local/share}/autolith/
 #+END_SRC
 
 Running Autolith with its own repository as the workspace turns it into an
-ordinary development agent for Autolith: =fs.write= and =fs.edit= then work on
-the tracked source like on any project, with only the stable launcher and
+ordinary development agent for Autolith: =resource.edit= and =fs.write= then
+work on tracked source like on any project, with only the stable launcher and
 recovery artifacts read-only. From any other workspace those tools refuse
 Autolith's own source entirely. =self.commit= has no workspace Git behavior and
 works identically from any workspace because every file it writes belongs to

@@ -18,7 +18,7 @@
                       pathname
                       (task-tests--role-form
                        "native" "Native role" "Use native Lisp data."
-                       :tools '("fs.read")
+                       :tools '("resource.read")
                        :blocking-p t))
                      :project)))
              (test-assert
@@ -26,7 +26,7 @@
                    (string= (task-agent-definition-instructions definition)
                             "Use native Lisp data.")
                    (equal (task-agent-definition-tools definition)
-                          '("fs.read"))
+                          '("resource.read"))
                    (task-agent-definition-blocking-p definition)
                    (eq (task-agent-definition-source definition) :project)
                    (equal (task-agent-definition-pathname definition)
@@ -172,7 +172,7 @@
                    "(:name \"shared\" :description #1=\"Shared\" :instructions #1#)"
                    nil nil)
                   ("circular"
-                   "(:name \"circular\" :description \"Circular\" :instructions \"Reject cycles.\" :tools #1=(\"fs.read\" . #1#))"
+                   "(:name \"circular\" :description \"Circular\" :instructions \"Reject cycles.\" :tools #1=(\"resource.read\" . #1#))"
                    nil nil)
                   ("dotted"
                    "(:name \"dotted\" :description \"Dotted\" :instructions \"Reject tails.\" . :tail)"
@@ -1370,7 +1370,7 @@
                              (list :request-number 1))
                             (task-job-note-agent-status
                              job ':tool-call-completed
-                             (list :tool "fs.read"))
+                             (list :tool "resource.read"))
                             (task-job-note-agent-status
                              job ':assistant-response-persisted
                              (list :text "   " :time first-time))

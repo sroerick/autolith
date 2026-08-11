@@ -177,30 +177,32 @@
                             "uri" uri
                             "base-revision" revision
                             "operations" (coerce operations 'vector))))
-              (let ((path (merge-pathnames "descriptor-growth.txt" workspace))
-                    (descriptor nil))
-                (unwind-protect
+              (let ((path (merge-pathnames "descriptor-growth.txt" workspace)))
+                (workspace-resource-tests--write-text path "before")
+                (test-assert
+                 (handler-case
                      (progn
-                       (workspace-resource-tests--write-text path "before")
-                       (setf descriptor
-                             (sb-posix:open (namestring path) sb-posix:o-rdonly))
-                       (let ((before (sb-posix:fstat descriptor)))
-                         (with-open-file (stream path
-                                                 :direction :output
-                                                 :if-exists :append
-                                                 :element-type '(unsigned-byte 8))
-                           (write-sequence
-                            (sb-ext:string-to-octets
-                             "after"
-                             :external-format :utf-8)
-                            stream))
-                         (test-assert
-                          (not (workspace-file--stable-file-stat-p
-                                before
-                                (sb-posix:fstat descriptor)))
-                          "descriptor observations reject files that grow during a read")))
-                  (when descriptor
-                    (sb-posix:close descriptor))))
+                       (file--read-bounded-utf-8
+                        path
+                        :maximum-bytes 64
+                        :tool-name "test.read"
+                        :description "Test file"
+                        :validation-function
+                        (lambda ()
+                          (with-open-file
+                              (stream path
+                                      :direction :output
+                                      :if-exists :append
+                                      :element-type '(unsigned-byte 8))
+                            (write-sequence
+                             (sb-ext:string-to-octets
+                              "after"
+                              :external-format :utf-8)
+                             stream))))
+                       nil)
+                   (tool-error ()
+                     t))
+                 "bounded descriptor reads reject files that grow during validation"))
              (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
                     (other-observation
                       (make-instance 'resource-observation
@@ -983,15 +985,8 @@
                                 (eq (json-get variant "additionalProperties") false)))
                          variants)
                   "every resource edit operation schema requires its fields and rejects extras")))
-             (let ((path (merge-pathnames "fs-compatible.txt" workspace)))
+             (let ((path (merge-pathnames "complete-write.txt" workspace)))
                (workspace-resource-tests--write-text path "old")
-               (test-assert
-                (tool-result-success-p
-                 (call first-context "fs" "edit"
-                       "path" (namestring path)
-                       "old-text" "old"
-                       "new-text" "new"))
-                "existing fs.edit remains available as a compatibility fallback")
                (test-assert
                 (tool-result-success-p
                  (call first-context "fs" "write"

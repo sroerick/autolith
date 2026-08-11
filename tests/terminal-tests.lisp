@@ -1234,7 +1234,7 @@
               :index 1
               :agent "reviewer"
               :state ':running
-              :current-tool "fs.read"
+              :current-tool "resource.read"
               :current-tool-duration-ms 1000
               :recent-tools nil
               :request-count 1
@@ -1657,7 +1657,7 @@
                   :state ':running
                   :current-tool "lisp.eval"
                   :current-tool-duration-ms 60000
-                  :recent-tools '("search.content" "fs.read")
+                  :recent-tools '("search.content" "resource.read")
                   :request-count 1
                   :duration-ms 65000
                   :assignment "Review the finished patch."
@@ -1669,7 +1669,7 @@
                   :current-tool "lisp.eval"
                   :current-tool-duration-ms 60000
                   :recent-tools
-                  '("search.files" "fs.read" "resource.read" "lisp.compile")
+                  '("search.files" "search.glob" "resource.read" "lisp.compile")
                   :request-count 2
                   :duration-ms 65000
                   :assignment "Locate the scheduler."
@@ -1760,10 +1760,10 @@
                  text)
                 (search "reviewer · blocking · lisp.eval 01:00" text)
                 (search
-                 "↳ search.content › fs.read › lisp.eval 01:00 · Review the finished patch."
+                 "↳ search.content › resource.read › lisp.eval 01:00 · Review the finished patch."
                  text)
                 (not (search "search.files ›" search-line))
-                (not (search "fs.read ›" search-line)))
+                (not (search "search.glob ›" search-line)))
            "child rows show bounded aligned traces below the modeline")
           (test-assert (not (search "async" text))
                        "detached state does not add a redundant row label"))
@@ -1878,7 +1878,7 @@
                        :state ':running
                        :current-tool "lisp.eval"
                        :current-tool-duration-ms 60000
-                       :recent-tools '("fs.read")
+                       :recent-tools '("resource.read")
                        :request-count 1
                        :duration-ms 65000
                        :assignment "Review the implementation."

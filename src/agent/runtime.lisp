@@ -730,6 +730,8 @@
                             (agent-configuration agent))
                            (configuration-source-root
                             (agent-configuration agent)))))
+                   (*resource-readable-schemes*
+                     (and tool-restriction-p '("workspace")))
                    (real-start (get-internal-real-time))
                    (cpu-start  (get-internal-run-time))
                    (result

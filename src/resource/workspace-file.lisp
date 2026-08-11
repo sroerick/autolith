@@ -139,106 +139,20 @@
       (loop for octet across (produce-mac mac)
             do (format stream "~2,'0X" octet)))))
 
-(-> workspace-file--validate-file-stat (pathname t) null)
-(defun workspace-file--validate-file-stat (path stat)
-  "Reject a non-regular or oversized PATH described by STAT."
-  (unless (sb-posix:s-isreg (sb-posix:stat-mode stat))
-    (error 'tool-error
-           :message (format nil "Workspace resource ~A is not a regular file."
-                            (namestring path))
-           :tool-name "resource.read"))
-  (when (> (sb-posix:stat-size stat) *workspace-file-resource-maximum-bytes*)
-    (error 'tool-error
-           :message
-           (format nil "Workspace resource ~A is ~:D bytes; resource.read retains exact snapshots only up to ~:D bytes. Use fs.read for bounded inspection."
-                   (namestring path)
-                   (sb-posix:stat-size stat)
-                   *workspace-file-resource-maximum-bytes*)
-           :tool-name "resource.read"))
-  nil)
-
-(-> workspace-file--same-file-stat-p (t t) boolean)
-(defun workspace-file--same-file-stat-p (left right)
-  "Return true when LEFT and RIGHT identify the same opened filesystem object."
-  (and (= (sb-posix:stat-dev left) (sb-posix:stat-dev right))
-       (= (sb-posix:stat-ino left) (sb-posix:stat-ino right))))
-
-(-> workspace-file--stable-file-stat-p (t t) boolean)
-(defun workspace-file--stable-file-stat-p (before after)
-  "Return true when an opened file stayed unchanged between two observations."
-  (and (workspace-file--same-file-stat-p before after)
-       (= (sb-posix:stat-size before) (sb-posix:stat-size after))
-       (= (sb-posix:stat-mtime before) (sb-posix:stat-mtime after))
-       (= (sb-posix:stat-ctime before) (sb-posix:stat-ctime after))))
-
 (-> workspace-file--read-content
     (pathname &optional (option tool-context))
     string)
 (defun workspace-file--read-content (path &optional context)
-  "Read a bounded regular PATH descriptor as exact UTF-8 text."
-  (let ((file-descriptor nil)
-        (stream nil))
-    (unwind-protect
-         (handler-case
-             (progn
-               (setf file-descriptor
-                     (sb-posix:open (namestring path)
-                                    (logior sb-posix:o-rdonly
-                                            sb-posix:o-nonblock
-                                            sb-posix:o-nofollow)))
-               (let ((stat (sb-posix:fstat file-descriptor)))
-                 (workspace-file--validate-file-stat path stat)
-                 (when context
-                   (workspace-tool-path context (namestring path))
-                   (let ((current-stat (sb-posix:stat (namestring path))))
-                     (unless (workspace-file--same-file-stat-p stat current-stat)
-                       (error 'tool-error
-                              :message
-                              (format nil "Workspace resource ~A changed while its authority boundary was being checked. Reread it and retry."
-                                      (namestring path))
-                              :tool-name "resource.read"))))
-                 (let* ((length (sb-posix:stat-size stat))
-                        (octets (make-array length
-                                            :element-type '(unsigned-byte 8))))
-                   (setf stream
-                         (sb-sys:make-fd-stream
-                          file-descriptor
-                          :input t
-                          :element-type '(unsigned-byte 8)
-                          :buffering :none
-                          :auto-close nil))
-                   (unless (= (read-sequence octets stream) length)
-                     (error 'tool-error
-                            :message
-                            (format nil "Workspace resource ~A changed while it was being observed. Reread it and retry."
-                                    (namestring path))
-                            :tool-name "resource.read"))
-                    (unless (workspace-file--stable-file-stat-p
-                             stat
-                             (sb-posix:fstat file-descriptor))
-                      (error 'tool-error
-                             :message
-                             (format nil "Workspace resource ~A changed while it was being observed. Reread it and retry."
-                                     (namestring path))
-                             :tool-name "resource.read"))
-                   (handler-case
-                       (sb-ext:octets-to-string octets :external-format :utf-8)
-                     (error ()
-                       (error 'tool-error
-                              :message
-                              (format nil "Workspace resource ~A is not valid UTF-8 text. Use fs.read or another binary-aware tool."
-                                      (namestring path))
-                              :tool-name "resource.read"))))))
-           (sb-posix:syscall-error (condition)
-             (error 'tool-error
-                    :message
-                    (format nil "Could not open workspace resource ~A as an exact regular file: ~A"
-                            (namestring path) condition)
-                    :tool-name "resource.read")))
-      (when stream
-        (close stream))
-      (when file-descriptor
-        (ignore-errors (sb-posix:close file-descriptor))))))
+  "Read PATH as a bounded, stable UTF-8 workspace resource."
+  (file--read-bounded-utf-8
+   path
+   :maximum-bytes *workspace-file-resource-maximum-bytes*
+   :tool-name "resource.read"
+   :description "Workspace resource snapshot"
+   :validation-function
+   (and context
+        (lambda ()
+          (workspace-tool-path context (namestring path))))))
 
 (-> workspace-file--line-ending (string) string)
 (defun workspace-file--line-ending (content)
@@ -260,30 +174,6 @@
                  (setf crlf-p t)
                  (setf lf-p t)))
     (and crlf-p lf-p)))
-
-(-> workspace-file--split-lines (string) vector)
-(defun workspace-file--split-lines (content)
-  "Return CONTENT's logical lines without their LF or CRLF delimiters."
-  (if (zerop (length content))
-      #()
-      (let ((lines nil)
-            (start 0)
-            (length (length content)))
-        (loop
-          for newline = (position #\Newline content :start start)
-          for end = (or newline length)
-          for logical-end = (if (and (> end start)
-                                     (char= (char content (1- end)) #\Return))
-                                (1- end)
-                                end)
-          do (push (subseq content start logical-end) lines)
-          if newline
-            do (setf start (1+ newline))
-          else
-            do (return)
-          when (= start length)
-            do (return))
-        (coerce (nreverse lines) 'vector))))
 
 (-> workspace-file--final-newline-p (string) boolean)
 (defun workspace-file--final-newline-p (content)
@@ -313,7 +203,7 @@
                      :revision        (workspace-file--digest content)
                      :content         content
                      :metadata        (list ':pathname path)
-                     :lines           (workspace-file--split-lines content)
+                     :lines           (text--split-lines content)
                      :line-ending     (workspace-file--line-ending content)
                      :final-newline-p (workspace-file--final-newline-p content)))))
 
@@ -450,45 +340,6 @@
 
 ;;;; -- Bounded Observation Rendering --
 
-(-> workspace-file--window-ranges
-    (workspace-file-observation (integer 1) (integer 1))
-    (values string list (integer 0) boolean))
-(defun workspace-file--window-ranges (observation start-line line-count)
-  "Render a bounded numbered window and return body, visible ranges, last line, truncation."
-  (let* ((lines (workspace-file-observation-lines observation))
-         (total-lines (length lines))
-         (last-requested (min total-lines (+ start-line line-count -1)))
-         (body (make-array *workspace-file-resource-maximum-result-characters*
-                           :element-type 'character
-                           :fill-pointer 0))
-         (visible-start nil)
-         (visible-end nil)
-         (truncated-p nil))
-    (loop for line from start-line to last-requested
-          for text = (aref lines (1- line))
-          for rendered = (format nil "~6D  ~A" line text)
-          for separator-length = (if visible-start 1 0)
-          do
-             (if (> (+ (fill-pointer body)
-                       separator-length
-                       (length rendered))
-                    (array-total-size body))
-                 (progn
-                   (setf truncated-p t)
-                   (return))
-                 (progn
-                   (when visible-start
-                     (vector-push #\Newline body))
-                   (loop for character across rendered
-                         do (vector-push character body))
-                   (unless visible-start
-                     (setf visible-start line))
-                   (setf visible-end line))))
-    (values (coerce body 'string)
-            (if visible-start (list (list visible-start visible-end)) nil)
-            (or visible-end 0)
-            truncated-p)))
-
 (-> workspace-file--format-ranges (list) string)
 (defun workspace-file--format-ranges (ranges)
   "Return RANGES in concise model-visible inclusive form."
@@ -606,7 +457,7 @@
          (list :kind ':replace-empty
                :start 0
                :end 0
-               :lines (coerce (workspace-file--split-lines content) 'list)
+               :lines (coerce (text--split-lines content) 'list)
                :line-ending (workspace-file--line-ending content)
                :final-newline-p (workspace-file--final-newline-p content)
                :summary "replace-empty")))
@@ -637,7 +488,7 @@
                :end end-line
                :lines (if replace-p
                           (coerce
-                           (workspace-file--split-lines
+                           (text--split-lines
                             (workspace-file--operation-content
                              operation "content" nil))
                            'list)
@@ -659,7 +510,7 @@
          (list :kind (if (string= name "insert-before") ':insert-before ':insert-after)
                :start line
                :end line
-               :lines (coerce (workspace-file--split-lines content) 'list)
+               :lines (coerce (text--split-lines content) 'list)
                :summary (format nil "~A ~D" name line)))))))
 
 (-> workspace-file--validate-operation-overlaps (list) null)
@@ -870,7 +721,7 @@
           (when (workspace-file--mixed-line-endings-p
                  (resource-observation-content base-observation))
             (error 'tool-error
-                   :message "resource.edit does not rewrite files with mixed LF and CRLF line endings because doing so could change untouched lines. Normalize the file deliberately or use fs.edit for an exact replacement."
+                   :message "resource.edit does not rewrite files with mixed LF and CRLF line endings because doing so could change untouched lines. Normalize the complete file deliberately before applying structured edits."
                    :tool-name "resource.edit"))
           (unless (uiop:file-exists-p (workspace-file-resource-pathname resource))
             (error 'resource-revision-stale
@@ -938,11 +789,15 @@
                                   start-line total-lines)
                  :tool-name "resource.read"))
         (multiple-value-bind (body visible-ranges last-line truncated-p)
-            (workspace-file--window-ranges observation start-line line-count)
+            (text--numbered-line-window
+             (workspace-file-observation-lines observation)
+             start-line
+             line-count
+             *workspace-file-resource-maximum-result-characters*)
           (declare (ignore last-line))
           (when (and (plusp total-lines) (null visible-ranges))
             (error 'tool-error
-                   :message (format nil "Line ~D exceeds the resource.read result limit and was not observed. Use fs.read or another bounded inspection method."
+                   :message (format nil "Line ~D exceeds the resource.read result limit and was not observed. Use search.content or shell.run for bounded inspection."
                                     start-line)
                    :tool-name "resource.read"))
           (let ((state
@@ -977,7 +832,11 @@
               (workspace-file--operation-window
                normalized (length (workspace-file-observation-lines observation)))
             (multiple-value-bind (body visible-ranges last-line truncated-p)
-                (workspace-file--window-ranges observation start-line line-count)
+                (text--numbered-line-window
+                 (workspace-file-observation-lines observation)
+                 start-line
+                 line-count
+                 *workspace-file-resource-maximum-result-characters*)
               (declare (ignore last-line))
               (let* ((state
                        (workspace-file--observation-state-for-snapshot

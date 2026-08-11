@@ -119,8 +119,8 @@
            (json-array
             (json-object
              "type" "namespace"
-             "name" "fs"
-             "description" "Files."
+             "name" "resource"
+             "description" "Resources."
              "tools" (json-array
                       (json-object
                        "type" "function"
@@ -129,7 +129,7 @@
                        "strict" false
                        "parameters" (json-object "type" "object"))))))
          (tools (grok-wire-tools namespaces)))
-    (test-assert (string= (json-get (aref tools 0) "name") "fs.read")
+    (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
                  "Fireworks wire tool names join the namespace with a dot"))
   (let ((provider (fireworks-provider-create
                    (fireworks-provider-test--configuration))))
@@ -141,12 +141,12 @@
                  "type" "function_call"
                  "id" "fc_test"
                  "call_id" "call-1"
-                 "name" "fs.read"
+                 "name" "resource.read"
                  "arguments" "{}")))
       (provider-normalize-output-item provider call)
       (test-assert (null (gethash "id" call))
                    "normalized Fireworks items discard transient identifiers")
-      (test-assert (and (string= (json-get call "namespace") "fs")
+      (test-assert (and (string= (json-get call "namespace") "resource")
                         (string= (json-get call "name") "read"))
                    "flat wire names split into Autolith namespace and name"))
     (let ((dotless (json-object
@@ -182,8 +182,8 @@
                 (schemas (json-array
                           (json-object
                            "type" "namespace"
-                           "name" "fs"
-                           "description" "Files."
+                           "name" "resource"
+                           "description" "Resources."
                            "tools" (json-array
                                     (json-object
                                      "type" "function"
@@ -222,7 +222,7 @@
                       input)
               "the Responses Lite additional_tools item never rides to Fireworks"))
            (let ((tools (json-get request "tools")))
-             (test-assert (string= (json-get (aref tools 0) "name") "fs.read")
+             (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
                           "Fireworks tools carry dotted wire names"))
            (let* ((compaction-request
                     (provider-request-object

@@ -13,8 +13,8 @@
   (json-array
    (json-object
     "type" "namespace"
-    "name" "fs"
-    "description" "Files."
+    "name" "resource"
+    "description" "Resources."
     "tools" (json-array
              (json-object
               "type" "function"
@@ -33,7 +33,7 @@
     (let ((flattened (aref tools 0)))
       (test-assert (string= (json-get flattened "type") "function")
                    "namespaced tools become standard function tools")
-      (test-assert (string= (json-get flattened "name") "fs.read")
+      (test-assert (string= (json-get flattened "name") "resource.read")
                    "wire tool names join the namespace with a dot")
       (test-assert (string= (json-get flattened "description")
                             "Read one file.")
@@ -54,12 +54,12 @@
                  "type" "function_call"
                  "id" "server-item-1"
                  "call_id" "call-1"
-                 "name" "fs.read"
+                 "name" "resource.read"
                  "arguments" "{}")))
       (provider-normalize-output-item provider call)
       (test-assert (null (gethash "id" call))
                    "normalized Grok items discard transient identifiers")
-      (test-assert (and (string= (json-get call "namespace") "fs")
+      (test-assert (and (string= (json-get call "namespace") "resource")
                         (string= (json-get call "name") "read"))
                    "flat wire names split into Autolith namespace and name"))
     (let ((mcp-call (json-object
@@ -93,11 +93,11 @@
   (let* ((namespaced (json-object
                       "type" "function_call"
                       "call_id" "call-1"
-                      "namespace" "fs"
+                      "namespace" "resource"
                       "name" "read"
                       "arguments" "{}"))
          (flattened (grok-wire-input-item namespaced)))
-    (test-assert (string= (json-get flattened "name") "fs.read")
+    (test-assert (string= (json-get flattened "name") "resource.read")
                  "replayed function calls flatten to the dotted wire name")
     (test-assert (null (gethash "namespace" flattened))
                  "replayed function calls drop the namespace field")
@@ -152,7 +152,7 @@
            (let ((tools (json-get request "tools")))
              (test-assert (= (length tools) 1)
                           "Grok tools ride in the flat request tools array")
-             (test-assert (string= (json-get (aref tools 0) "name") "fs.read")
+             (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
                           "Grok tools carry dotted wire names"))
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "high")

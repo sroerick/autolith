@@ -620,6 +620,37 @@
                    (search "*scratchpad-value* 41"
                            (tool-result-content result)))
               "scratchpad.read returns the edited session file"))
+            (tool-execute
+             write-tool
+             context
+             (json-object "path" "utf8.txt"
+                          "content" "λ café"))
+            (let ((result
+                    (tool-execute
+                     read-tool
+                     context
+                     (json-object "path" "utf8.txt"))))
+              (test-assert
+               (and (tool-result-success-p result)
+                    (search "λ café" (tool-result-content result)))
+               "scratchpad.read decodes exact UTF-8 content"))
+            (tool-execute
+             write-tool
+             context
+             (json-object "path" "oversized.txt"
+                          "content" "123456789"))
+            (let ((*workspace-file-resource-maximum-bytes* 8))
+              (test-assert
+               (handler-case
+                   (progn
+                     (tool-execute
+                      read-tool
+                      context
+                      (json-object "path" "oversized.txt"))
+                     nil)
+                 (tool-error ()
+                   t))
+               "scratchpad.read rejects files above its exact byte limit"))
            (let ((result
                    (tool-execute
                     run-tool

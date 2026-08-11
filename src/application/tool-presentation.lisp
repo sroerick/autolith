@@ -9,9 +9,6 @@
 (defparameter *application-tool-inspection-lines* 24
   "The maximum introspection lines shown in the terminal transcript.")
 
-(defparameter *application-tool-diff-hunks* 3
-  "The maximum replacement locations shown for one fs.edit call.")
-
 (defparameter *application-common-lisp-language*
   (language-find "common-lisp" :errorp nil)
   "The ColorLisp language used for pathless Common Lisp source previews.")
@@ -1359,7 +1356,7 @@ model."
                       (content (json-get operation "content"))
                       (added-count
                         (and (stringp content)
-                             (length (workspace-file--split-lines content)))))
+                             (length (text--split-lines content)))))
                  (cond
                    ((string= name "replace-lines")
                     (push (list index
@@ -1567,30 +1564,6 @@ model."
        (when (integerp count)
          (list (list :label "line count" :value (princ-to-string count)))))))))
 
-
-(defmethod application-tool-call-entry
-    ((tool fs-read-tool) (application application) (call hash-table))
-  "Present an fs.read request without exposing the file contents."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (path (or (and arguments (json-get arguments "path")) ""))
-         (start (let ((value (and arguments
-                                  (json-get arguments "start-line"))))
-                  (if (integerp value) (max 1 value) 1)))
-         (count (let ((value (and arguments
-                                  (json-get arguments "line-count"))))
-                  (if (integerp value)
-                      (max 1 value)
-                      *fs-read-default-line-count*))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ fs.read"
-     :rows (list (list (terminal-span
-                        ':code
-                        (format nil "~A  lines ~D-~D"
-                                path start (+ start count -1))))))))
-
 (defmethod application-tool-call-entry
     ((tool fs-list-tool) (application application) (call hash-table))
   "Present an fs.list path without raw JSON."
@@ -1621,111 +1594,6 @@ model."
                 :source-path path)
                (list (list (terminal-span ':dim "(empty content)")))))
           (list (application--tool-section-row "content unavailable")))))))
-
-
-(-> application--edit-file-hunks
-    (application string string &key (:new-text string) (:replace-all boolean))
-    list)
-(defun application--edit-file-hunks
-    (application path old-text &key (new-text "") replace-all)
-  "Return old and resulting start lines for OLD-TEXT occurrences in PATH."
-  (block nil
-    (unless (and (non-empty-string-p old-text)
-                 (slot-boundp application 'configuration))
-      (return nil))
-    (let ((configuration (application-configuration application)))
-      (unless (typep configuration 'configuration)
-        (return nil))
-      (handler-case
-          (let* ((pathname (merge-pathnames
-                            (pathname path)
-                            (configuration-working-directory configuration)))
-                 (content (and (probe-file pathname)
-                               (not (uiop:directory-exists-p pathname))
-                               (uiop:read-file-string pathname)))
-                 (newline-delta (- (count #\Newline new-text)
-                                   (count #\Newline old-text))))
-            (unless content
-              (return nil))
-            (loop with search-start = 0
-                  with cumulative-delta = 0
-                  for position = (search old-text content :start2 search-start)
-                  while position
-                  for old-start-line = (1+ (count #\Newline content
-                                                  :end position))
-                  for new-start-line = (+ old-start-line cumulative-delta)
-                  collect (cons old-start-line new-start-line)
-                  do (incf cumulative-delta newline-delta)
-                     (setf search-start (+ position (length old-text)))
-                  unless replace-all
-                    do (loop-finish)))
-        (error ()
-          nil)))))
-
-(-> application--edit-hunk-rows
-    (application string string &key (:new-text string) (:replace-all boolean))
-    list)
-(defun application--edit-hunk-rows
-    (application path old-text &key (new-text "") replace-all)
-  "Return bounded numbered diff hunks for an fs.edit call."
-  (let ((hunks (application--edit-file-hunks
-                application
-                path
-                old-text
-                :new-text new-text
-                :replace-all replace-all)))
-    (if (null hunks)
-        (change-viewer-render
-         :removed-content old-text
-         :added-content new-text
-         :source-path path)
-        (let* ((visible-count (min *application-tool-diff-hunks*
-                                   (length hunks)))
-               (omitted (- (length hunks) visible-count)))
-          (append
-           (loop for (old-start-line . new-start-line)
-                   in (subseq hunks 0 visible-count)
-                 for first-p = t then nil
-                 append (append
-                         (unless first-p (list nil))
-                         (change-viewer-render
-                          :removed-content old-text
-                          :added-content new-text
-                          :removed-start-line old-start-line
-                          :added-start-line new-start-line
-                          :source-path path)))
-           (when (plusp omitted)
-             (list nil
-                   (list (terminal-span
-                          ':dim
-                          (format nil "… +~D more replacement~:P" omitted))))))))))
-
-(defmethod application-tool-call-entry
-    ((tool fs-edit-tool) (application application) (call hash-table))
-  "Present an fs.edit destination and numbered colored replacement diff."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (path (or (and arguments (json-get arguments "path")) ""))
-         (old-text (or (and arguments (json-get arguments "old-text")) ""))
-         (new-text (or (and arguments (json-get arguments "new-text")) ""))
-         (replace-all (and arguments (json-get arguments "replace-all"))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ fs.edit"
-     :rows (append
-            (list (list (terminal-span ':code path)))
-            (when replace-all
-              (application--tool-field-rows
-               application
-               (list (list :label "scope" :value "all occurrences"))))
-            (list nil)
-            (application--edit-hunk-rows
-             application
-             path
-             old-text
-             :new-text new-text
-             :replace-all (and replace-all t))))))
 
 (defmethod application-tool-call-entry
     ((tool lisp-scratchpad-write-tool)
@@ -2273,19 +2141,6 @@ re-emitting untrusted serialized JSON."
                       (format nil "id ~A"
                               (papercut-short-identifier papercut)))
          :rows rows))
-      (call-next-method)))
-
-(defmethod application-tool-result-entry
-    ((tool fs-read-tool) (application application) record)
-  "Present only fs.read's path and line window, never the returned file lines."
-  (if (application--tool-result-success-p record)
-      (let ((summary (first (application--display-lines
-                             (or (getf (rest record) :output) "")))))
-        (application--tool-result-entry
-         application
-         record
-         :rows (when summary
-                 (list (list (terminal-span ':code summary))))))
       (call-next-method)))
 
 (defmethod application-tool-result-entry

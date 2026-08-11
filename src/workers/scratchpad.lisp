@@ -112,6 +112,16 @@
     (error ()
       0)))
 
+
+(-> lisp-scratchpad--read-file (pathname non-empty-string) string)
+(defun lisp-scratchpad--read-file (path tool-name)
+  "Read PATH as bounded, stable UTF-8 text for TOOL-NAME."
+  (file--read-bounded-utf-8
+   path
+   :maximum-bytes *workspace-file-resource-maximum-bytes*
+   :tool-name tool-name
+   :description "Scratchpad file"))
+
 (-> lisp-scratchpad--list-entries (pathname pathname) list)
 (defun lisp-scratchpad--list-entries (root directory)
   "Return recursive, sorted entry descriptions beneath DIRECTORY relative to ROOT."
@@ -130,6 +140,31 @@
            collect (format nil "f ~9D  ~A"
                            (lisp-scratchpad--file-size file)
                            (enough-namestring file root))))))
+
+(-> lisp-scratchpad--count-occurrences (string string) (integer 0))
+(defun lisp-scratchpad--count-occurrences (needle haystack)
+  "Return the number of non-overlapping NEEDLE occurrences in HAYSTACK."
+  (loop with start = 0
+        for position = (search needle haystack :start2 start)
+        while position
+        count t
+        do (setf start (+ position (length needle)))))
+
+(-> lisp-scratchpad--replace-occurrences
+    (string string string &key (:all boolean))
+    string)
+(defun lisp-scratchpad--replace-occurrences (needle replacement haystack &key all)
+  "Return HAYSTACK with NEEDLE replaced by REPLACEMENT, once or everywhere."
+  (with-output-to-string (stream)
+    (loop with start = 0
+          for position = (search needle haystack :start2 start)
+          while position
+          do (write-string haystack stream :start start :end position)
+             (write-string replacement stream)
+             (setf start (+ position (length needle)))
+          unless all
+            do (loop-finish)
+          finally (write-string haystack stream :start start))))
 
 
 ;;;; -- Tool Executions --
@@ -162,30 +197,40 @@
            (lisp-scratchpad-path
             context
             (tool-argument arguments "path" :required t)))
-         (start-line (max 1 (or (workspace-tool-integer-argument
-                                 arguments "start-line")
-                                1)))
-         (line-count (max 1 (or (workspace-tool-integer-argument
-                                 arguments "line-count")
-                                *fs-read-default-line-count*))))
+         (start-line
+           (max 1 (or (workspace-tool-integer-argument
+                       arguments "start-line")
+                      1)))
+         (line-count
+           (min *workspace-file-resource-maximum-line-count*
+                (max 1 (or (workspace-tool-integer-argument
+                            arguments "line-count")
+                           *workspace-file-resource-default-line-count*)))))
     (cond
       ((uiop:directory-exists-p path)
        (tool-failure (format nil "~A is a directory." path)))
       ((not (probe-file path))
        (tool-failure (format nil "~A does not exist." path)))
       (t
-       (multiple-value-bind (body total body-truncated-p)
-           (workspace--read-file-window path start-line line-count)
-         (let* ((window-start (min (1- start-line) total))
-                (window-end (min (+ window-start line-count) total)))
-           (tool-success
-            (workspace--fs-read-result-content
-             path
-             body
-             :first-line (1+ window-start)
-             :last-line window-end
-             :total-lines total
-             :body-truncated-p body-truncated-p))))))))
+       (let* ((content (lisp-scratchpad--read-file
+                        path "lisp.scratchpad-read"))
+              (lines (text--split-lines content))
+              (total-lines (length lines)))
+         (if (and (plusp total-lines) (> start-line total-lines))
+             (tool-failure
+              (format nil "Start line ~D is beyond the scratchpad file's ~D lines."
+                      start-line total-lines))
+             (multiple-value-bind (body visible-ranges last-line truncated-p)
+                 (text--numbered-line-window
+                  lines start-line line-count
+                  *workspace-file-resource-maximum-result-characters*)
+               (if (and (plusp total-lines) (null visible-ranges))
+                   (tool-failure
+                    (format nil "Line ~D exceeds the scratchpad.read result limit."
+                            start-line))
+                   (tool-success
+                    (format nil "~A lines ~D-~D of ~D~%~A~:[~;~%... scratchpad output truncated; request a smaller line window.~]"
+                            path start-line last-line total-lines body truncated-p))))))))))
 
 (defmethod tool-execute ((tool lisp-scratchpad-write-tool)
                          (context tool-context)
@@ -244,8 +289,9 @@
       ((or (uiop:directory-exists-p path) (not (probe-file path)))
        (tool-failure (format nil "~A is not an existing scratchpad file." path)))
       (t
-       (let* ((text (uiop:read-file-string path))
-              (occurrences (workspace--count-occurrences old-text text)))
+       (let* ((text (lisp-scratchpad--read-file
+                     path "lisp.scratchpad-edit"))
+              (occurrences (lisp-scratchpad--count-occurrences old-text text)))
          (cond
            ((zerop occurrences)
             (tool-failure
@@ -257,7 +303,7 @@
                      path)))
            (t
             (let* ((replacement
-                     (workspace--replace-occurrences
+                     (lisp-scratchpad--replace-occurrences
                       old-text
                       new-text
                       text

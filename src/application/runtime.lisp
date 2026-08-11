@@ -1788,10 +1788,6 @@ newly acquired lease."
   "Keep successful file creations visible in compact presentation."
   t)
 
-(defmethod tool-compact-result-visible-p ((tool fs-edit-tool))
-  "Keep successful file edits visible in compact presentation."
-  t)
-
 (defmethod tool-compact-result-visible-p ((tool shell-run-tool))
   "Keep successful external commands visible in compact presentation."
   t)

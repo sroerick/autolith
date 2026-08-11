@@ -234,19 +234,6 @@
             '("uri" "base-revision" "operations"))
            :resource-registry resource-registry)
           (list
-           'fs-read-tool
-           "fs" "read"
-           "Read one workspace file, returning numbered lines from an optional window."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The file path, absolute or workspace-relative.")
-             "start-line" (tool-integer-property
-                           "The first line to return, starting at 1.")
-             "line-count" (tool-integer-property
-                           "How many lines to return; default 400."))
-            '("path")))
-          (list
            'fs-view-image-tool
            "fs" "view-image"
            "View a local image file when visual inspection is needed. The image is returned directly to the model."
@@ -274,22 +261,7 @@
                      "The file path, absolute or workspace-relative.")
              "content" (tool-string-property
                         "The complete new file content."))
-            '("path" "content")))
-          (list
-           'fs-edit-tool
-           "fs" "edit"
-           "Replace text inside a workspace file. Exact matches are preferred; one unique multiline near match may safely normalize line endings or uniform leading-space indentation. Do not copy line numbers from fs.read. Successful edits to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The file path, absolute or workspace-relative.")
-             "old-text" (tool-string-property
-                         "The existing text to replace. Preserve exact indentation and newlines when possible, include enough context to be unique, and never include fs.read line-number prefixes.")
-             "new-text" (tool-string-property
-                         "The replacement text, using the file's exact indentation style.")
-             "replace-all" (tool-boolean-property
-                            "Replace every exact occurrence. Relaxed multiline matching always requires one unique candidate."))
-            '("path" "old-text" "new-text")))))
+             '("path" "content")))))
       (default-tools--register registry specification)))
   registry)
 

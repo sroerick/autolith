@@ -91,7 +91,6 @@
                              (:file "tools/papercut")
                              (:file "tools/agenda")
                              (:file "tools/plan")
-                             (:file "tools/workspace-edit")
                              (:file "tools/workspace")
                              (:file "tools/lisp-paren-check")
                              (:file "resource/workspace-file")

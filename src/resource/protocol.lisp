@@ -95,6 +95,9 @@
 
 ;;;; -- Resource Protocol --
 
+(defparameter *resource-readable-schemes* nil
+  "Optional exact URI schemes permitted during one restricted tool call.")
+
 (defclass resource ()
   ((uri
     :initarg :uri
@@ -344,6 +347,9 @@
   "Resolve URI through REGISTRY while passing explicit authority CONTEXT."
   (multiple-value-bind (scheme identifier)
       (resource-uri-parse uri)
+    (when (and *resource-readable-schemes*
+               (not (member scheme *resource-readable-schemes* :test #'string=)))
+      (error 'resource-access-denied :uri uri))
     (let ((resolver (gethash scheme (resource-registry-resolvers registry))))
       (unless resolver
         (error 'resource-scheme-unknown

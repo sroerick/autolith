@@ -893,10 +893,10 @@
     (unwind-protect
          (let ((successful-read
                  '(:tool-result :seq 1 :time 0 :call-id 1
-                   :tool "fs.read" :status :ok :output "read output"))
+                   :tool "resource.read" :status :ok :output "read output"))
                (failed-read
                  '(:tool-result :seq 2 :time 0 :call-id 2
-                   :tool "fs.read" :status :error :output "read failed")))
+                   :tool "resource.read" :status :error :output "read failed")))
            (test-assert (application-compact-view-p application)
                         "compact tool presentation defaults to enabled")
            (test-assert
@@ -905,8 +905,8 @@
            (test-assert
             (conversation-record-entry application failed-read)
             "compact presentation retains failed routine results")
-           (dolist (tool-name '("fs.write" "fs.edit" "shell.run"
-                                "lisp.eval" "self.eval"))
+           (dolist (tool-name '("fs.write" "shell.run" "lisp.eval"
+                                "self.eval"))
              (test-assert
               (conversation-record-entry
                application
@@ -2279,9 +2279,9 @@
     (let* ((call
              (json-object
               "type" "function_call"
-              "namespace" "fs"
+              "namespace" "resource"
               "name" "read"
-              "arguments" "{\"path\":\"x\"} trailing"))
+              "arguments" "{\"uri\":\"workspace:x\"} trailing"))
            (wide-application
              (application-tests--ui-application
               :columns 80
@@ -2291,9 +2291,9 @@
       (test-assert (null (application--provider-call-equivalent-form call))
                    "trailing JSON data cannot be presented as a Lisp form")
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ fs.read"))
+       (and (equal (first entry) (terminal-span :tool "▸ resource.read"))
             (not (search "equivalent Lisp" text))
-            (not (search "(fs.read" text)))
+            (not (search "(resource.read" text)))
        "malformed provider calls keep their tool name without fabricated Lisp"))
     (let* ((narrow-application
              (application-tests--ui-application
@@ -2436,106 +2436,6 @@
                    application
                    (json-object
                     "type" "function_call"
-                    "namespace" "fs"
-                    "name" "read"
-                    "arguments" (json-encode
-                                 (json-object
-                                  "path" "src/application/runtime.lisp"
-                                  "start-line" 5
-                                  "line-count" 3)))))
-           (text (markdown-tests--row-text entry)))
-      (test-assert (and (search "src/application/runtime.lisp" text)
-                        (search "lines …" text))
-                   "fs.read calls fit the moved path within the transcript width"))
-    (let* ((root (uiop:ensure-directory-pathname
-                  (merge-pathnames
-                   (format nil "autolith-edit-presentation-~A/"
-                           (make-identifier))
-                   (uiop:temporary-directory))))
-           (pathname (merge-pathnames "example.lisp" root))
-           (configuration
-             (configuration-create
-              :source-root (asdf:system-source-directory :autolith)
-              :working-directory root))
-           (edit-application
-             (make-instance 'application
-                            :configuration configuration
-                            :tool-registry (make-default-tool-registry)
-                            :ui (terminal-ui-create
-                                 :terminal (make-instance 'recording-terminal
-                                                          :columns 80)))))
-      (unwind-protect
-           (progn
-             (uiop:ensure-all-directories-exist (list root))
-             (with-open-file (stream pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
-               (format stream
-                       "line 1~%line 2~%line 3~%line 4~%line 5~%~
-                        line 6~%line 7~%line 8~%line 9~%before~%~
-                        old value~%after~%"))
-             (let* ((entry (response-item-entry
-                            edit-application
-                            (json-object
-                             "type" "function_call"
-                             "namespace" "fs"
-                             "name" "edit"
-                             "arguments" (json-encode
-                                          (json-object
-                                           "path" "example.lisp"
-                                           "old-text" (format nil
-                                                              "before~%~
-                                                               old value~%after")
-                                           "new-text" (format nil
-                                                              "before~%~
-                                                               new value~%after")
-                                           "replace-all" t)))))
-                    (text (markdown-tests--row-text entry)))
-               (test-assert (and (search "example.lisp" text)
-                                 (search "all occurrences" text)
-                                 (not (search "changes" text)))
-                            "fs.edit identifies its path and scope without a redundant label")
-               (test-assert
-                (and (find (terminal-span :dim "  10 │ ")
-                           entry
-                           :test #'equal)
-                     (find (terminal-span :failure "- 11 │ ")
-                           entry
-                           :test #'equal)
-                     (find (terminal-span :success "+ 11 │ ")
-                           entry
-                           :test #'equal)
-                     (find (terminal-span :dim "  12 │ ")
-                           entry
-                           :test #'equal))
-                "fs.edit uses one numbered gutter for all diff lines")))
-        (uiop:delete-directory-tree root
-                                    :validate t
-                                    :if-does-not-exist :ignore)))
-    (let ((entry (response-item-entry
-                  application
-                  (json-object
-                   "type" "function_call"
-                   "namespace" "fs"
-                   "name" "edit"
-                   "arguments" (json-encode
-                                (json-object
-                                 "path" "src/main.rs"
-                                 "old-text" "fn old() { 1 }"
-                                 "new-text" "fn new() { 2 }"))))))
-      (test-assert
-       (and (find (terminal-span :syntax-keyword "fn") entry :test #'equal)
-            (find (terminal-span :syntax-function "old") entry :test #'equal)
-            (find (terminal-span :syntax-function "new") entry :test #'equal)
-            (find (terminal-span :syntax-number "1") entry :test #'equal)
-            (find (terminal-span :syntax-number "2") entry :test #'equal))
-       "fs.edit syntax-highlights removed and added source with ColorLisp"))
-    (let* ((entry (response-item-entry
-                   application
-                   (json-object
-                    "type" "function_call"
                     "namespace" "shell"
                     "name" "run"
                     "arguments" (json-encode
@@ -2565,23 +2465,14 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 2 :time 0 :call-id 1
-                         :tool "fs.read" :status :ok
+                         :tool "fs.write" :status :ok
                          :cpu-microseconds 1234
                          :real-microseconds 567890
-                         :output (format nil
-                                         "src/application/runtime.lisp lines 5-7 of 100~%~
-                                          5  hidden source~%~
-                                          6  more hidden source~%~
-                                          7  final hidden source"))))
+                         :output "wrote file")))
            (text (markdown-tests--row-text entry)))
-      (test-assert (and (search "src/application/runtime.lisp" text)
-                        (search "lines 5…" text))
-                   "fs.read results fit the moved path within the transcript width")
       (test-assert (and (search "cpu 0.001s" text)
                         (search "real 0.568s" text))
-                   "tool results show CPU and real elapsed time")
-      (test-assert (not (search "hidden source" text))
-                   "fs.read results omit returned file contents"))
+                   "tool results show CPU and real elapsed time"))
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 3 :time 0 :call-id 2
@@ -2769,17 +2660,6 @@
                   (not (search "content unavailable" text)))
              (format nil "~A.~A numbers available syntax-highlighted added content"
                      namespace name)))))
-      (let ((entry
-              (call-entry
-               application "fs" "edit"
-               :arguments
-               (json-object "path" "missing.unknown"
-                            "old-text" "old plain"
-                            "new-text" "new plain"))))
-        (test-assert
-         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
-              (find (terminal-span :success "+ │ ") entry :test #'equal))
-         "fs.edit keeps both gutters unnumbered when file coordinates are unknown"))
       (let ((entry
               (call-entry
                application "lisp" "scratchpad-edit"
@@ -5315,7 +5195,7 @@
           (string= (second observed) "diagnose")
           (third observed)
           (equal (fourth observed)
-                 '("fs.list" "fs.read"
+                 '("fs.list" "resource.read"
                    "search.files" "search.glob" "search.content"
                    "search.multi-content"
                    "self.inspect" "self.source" "self.status" "self.diff"

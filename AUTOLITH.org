@@ -88,25 +88,6 @@ a user-local init.lisp change, or a private image commit.
   local process/session protocol and atomic foreground handoff with the same
   state, ownership, and rollback guarantees.
 
-** Conservative line-aware fs.edit fallback
-
-- Problem: 4,552 historical =fs.edit= calls included 773 exact old-text misses.
-  In the longest current session, multiline edits failed at 30-41 percent by
-  size band, and 122 misses were followed by retries whose lines differed only
-  at their leading indentation.
-- Behavior: =fs.edit= still prefers exact replacement. On an exact miss it may
-  normalize one unique multiline LF/CRLF match or rebase one unique uniform
-  leading-space shift when =new-text= retains an unchanged boundary line.
-  Ambiguous, mixed-EOL, tabbed, nonuniform, or unanchored cases remain unchanged
-  and return an exact bounded near match for retry.
-- Scope and location: tracked project work in =src/tools/workspace-edit.lisp=,
-  =src/tools/workspace.lisp=, and the =fs.edit= schema and guide.
-- Verification: focused workspace-tool tests pass, the repository check passes
-  3,010 tests, active and recovery images rebuild successfully, and replay
-  analysis found that 66 of 125 line-trim-equivalent retry pairs passed the
-  uniform-shift, boundary-anchor, and rendering gates.
-- Removal condition: the provider supplies a native structured patch protocol
-  with equal or stronger uniqueness, line-ending, and indentation safeguards.
 
 ** Revision-gated workspace, agenda, and memory resources
 
@@ -144,24 +125,22 @@ a user-local init.lisp change, or a private image commit.
   replacement or tombstone. Every memory operation validates before persistence,
   rechecks the exact snapshot, attributes writes to the source conversation, and
   appends under the recursive process-local memory lock. This lock does not
-  provide interprocess CAS. Existing
-  =fs.edit=, =agenda.*=, and =memory.*= tools stay available as compatibility
-  paths.
+  provide interprocess CAS. Existing =agenda.*= and =memory.*= tools stay
+  available as convenience paths.
 - Scope and location: tracked project work in =src/resource/=,
   =src/state/agendas.lisp=, =src/state/memories.lisp=,
   =src/conversation/store.lisp=, =src/tools/defaults.lisp=, and the resource
-  schemas, prompt, specification,
-  guide, and regressions.
+  schemas, prompt, guide, and regressions.
 - Verification: workspace URI confinement, observation isolation and expiry,
   visible-range gating, original-snapshot multi-operation edits, stale and
   protected paths, bounded UTF-8 snapshots, empty files, atomic publish failures,
   exact extensionless target publication without inherited temporary types,
   post-publication mismatch rejection and temporary cleanup, line endings, plus
   agenda empty and complete reads, revisions, confinement, add/update/remove,
-  memory links, shared locking, and legacy compatibility pass.
-  Memory collection scopes, exact IDs, empty and missing states, child denial,
-  typed mixed observation retention, schemas, and existing memory tools also pass
-  within the complete 3,559-test repository check.
+  memory links, shared locking, and convenience tools pass. Memory collection
+  scopes, exact IDs, empty and missing states, child denial, typed mixed
+  observation retention, schemas, and existing memory tools also pass within
+  the complete 3,559-test repository check.
 - Removal condition: a provider-native editing protocol supplies the same exact
   revision, visibility, authority, atomicity, and recovery guarantees with lower
   harness complexity.
@@ -349,8 +328,8 @@ a user-local init.lisp change, or a private image commit.
 - Scope and location: tracked project work in =src/task/=,
   =src/tools/registry.lisp=, =src/tools/workspace.lisp=,
   =src/workers/lisp.lisp=, =src/workers/scratchpad.lisp=,
-  =src/tools/defaults.lisp=, the prompt, specification, guide, dependency locks,
-  Nix pins, and task, shell, and Lisp regressions. The pinned command sandbox fix
+  =src/tools/defaults.lisp=, the prompt, guide, dependency locks, Nix pins, and
+  task, shell, and Lisp regressions. The pinned command sandbox fix
   is =cl-exec-sandbox= revision =0a5c7a2=.
 - Verification: default and explicit blocking delegation, compatibility argument
   conflicts, mixed batches, exact job identities, session visibility, retention,
@@ -371,7 +350,7 @@ a user-local init.lisp change, or a private image commit.
   received only a success result. The repository's separate copied Rust checker
   duplicated a weaker parenthesis-only implementation and was unavailable through
   the normal tool and canonical Lisp operation surfaces.
-- Behavior: successful =fs.write=, =fs.edit=, workspace-file =resource.edit=,
+- Behavior: successful =fs.write=, workspace-file =resource.edit=,
   =lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations classify the
   resulting file by extension and run a language-aware lexical delimiter scan.
   Strings, supported comments, escaped symbols, character literals, script
@@ -385,17 +364,17 @@ a user-local init.lisp change, or a private image commit.
   results for issues, changes, or incomplete checks.
 - Scope and location: the generic scanner, bounded edit-warning composition, safe
   recursive checker, and 72 regression assertions now live in the COLL-Attribution
-  Parenchek library pinned at revision =a7dc0a7=. Autolith retains the six editing
-  call sites, imports two public functions, and provides a 36-line tool adapter in
-  =src/tools/lisp-paren-check.lisp= with exact ASDF, Qlot, and Nix pins. The local
+  Parenchek library pinned at revision =a7dc0a7=. Autolith retains the five
+  editing call sites, imports two public functions, and provides a 36-line tool
+  adapter in =src/tools/lisp-paren-check.lisp= with exact ASDF, Qlot, and Nix pins.
   451-line scanner, 854-line checker implementation, 647-line specialized test
   file, three test-entry calls, and the remaining dedicated registry assertion
   were removed.
 - Verification: Parenchek's complete check passes 72 assertions. A fresh forced
   Autolith test-system load passes, and registry smoke covers balanced and broken
-  explicit checks, Common Lisp, Scheme, and Clojure =fs.write= warnings, balanced
-  =fs.edit= repair, and a Clojure scratchpad warning. Workspace tools,
-  workspace-file resources, and scratchpad tools pass 143 focused assertions.
+  explicit checks, Common Lisp, Scheme, and Clojure =fs.write= warnings, and a
+  Clojure scratchpad warning. Workspace tools, workspace-file resources, and
+  scratchpad tools pass focused checks.
   The exact Nix Autolith package builds with Parenchek. Autolith source falls by
   1,266 lines, tests fall by 653 lines, and 48 local =test-assert= forms disappear.
   The complete repository check was intentionally not run under the release-only

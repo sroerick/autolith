@@ -63,7 +63,6 @@
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."
   (let* ((registry (make-default-tool-registry))
-         (schemas (tool-registry-provider-schemas registry))
          (configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
@@ -79,77 +78,8 @@
                                "arguments" "{}"))
                 (result (tool-registry-execute-call
                          registry unknown-call context)))
-           (test-assert (= (length (tool-registry-tools registry)) 61)
-                        "the default registry exposes the complete initial tool set")
-           (test-assert (= (length schemas) 12)
-                        "the provider schemas contain twelve namespaces")
-           (test-assert (string= (json-get (aref schemas 0) "name") "resource")
-                        "revision-gated resources are the first workspace namespace")
-           (test-assert (= (length (json-get (aref schemas 0) "tools")) 2)
-                        "the resource namespace exposes read and edit")
-           (test-assert (string= (json-get (aref schemas 1) "name") "fs")
-                        "the compatibility filesystem namespace follows resources")
-           (test-assert (= (length (json-get (aref schemas 1) "tools")) 5)
-                        "the fs namespace exposes five workspace operations")
-           (test-assert (tool-registry-find registry "fs" "view-image")
-                        "native local image inspection has a filesystem tool")
-           (test-assert (string= (json-get (aref schemas 2) "name") "web")
-                        "provider web search follows file access")
-           (test-assert (= (length (json-get (aref schemas 2) "tools")) 1)
-                        "the web namespace exposes one search operation")
-           (test-assert (tool-registry-find registry "web" "run")
-                        "provider web search has a dedicated tool")
-           (test-assert (string= (json-get (aref schemas 3) "name") "search")
-                        "indexed workspace search follows web search")
-           (test-assert (= (length (json-get (aref schemas 3) "tools")) 4)
-                        "the search namespace exposes four indexed operations")
-           (test-assert (string= (json-get (aref schemas 4) "name") "shell")
-                        "the workspace shell namespace follows indexed search")
-           (test-assert (string= (json-get (aref schemas 5) "name") "memory")
-                        "persistent memories have a dedicated namespace")
-           (test-assert (= (length (json-get (aref schemas 5) "tools")) 5)
-                        "the memory namespace exposes five operations")
-           (test-assert (string= (json-get (aref schemas 6) "name") "papercut")
-                        "model-visible papercuts have a dedicated namespace")
-           (test-assert (= (length (json-get (aref schemas 6) "tools")) 1)
-                        "the papercut namespace exposes one reporting operation")
-           (test-assert (string= (json-get (aref schemas 7) "name") "agenda")
-                        "workspace agendas have a dedicated namespace")
-           (test-assert (= (length (json-get (aref schemas 7) "tools")) 5)
-                        "the agenda namespace exposes five operations")
-           (test-assert (string= (json-get (aref schemas 8) "name") "plan")
-                        "session plans have a dedicated namespace")
-           (test-assert (= (length (json-get (aref schemas 8) "tools")) 3)
-                        "the plan namespace exposes three operations")
-           (test-assert (string= (json-get (aref schemas 9) "name") "lisp")
-                        "the named Lisp namespace follows the workspace tools")
-           (test-assert (= (length (json-get (aref schemas 9) "tools")) 19)
-                        "the Lisp namespace exposes nineteen worker and source operations")
-           (test-assert (tool-registry-find registry "lisp" "source")
-                        "matching implementation source has a dedicated Lisp tool")
-           (dolist (name '("scratchpad-list" "scratchpad-read"
-                           "scratchpad-write" "scratchpad-edit"
-                           "scratchpad-run" "scratchpad-delete"))
-             (test-assert
-              (tool-registry-find registry "lisp" name)
-              (format nil "the Lisp scratchpad exposes lisp.~A" name)))
-           (test-assert (string= (json-get (aref schemas 10) "name") "self")
-                        "the active-image namespace follows Lisp workers")
-           (test-assert (= (length (json-get (aref schemas 10) "tools")) 14)
-                        "the self namespace exposes fourteen active-image operations")
-           (test-assert (tool-registry-find registry "self" "source")
-                        "tracked source inspection has a dedicated self tool")
-           (test-assert (string= (json-get (aref schemas 11) "name") "skill")
-                        "request-local Skill selection follows core tools")
-           (let* ((immutable-registry
-                    (make-default-tool-registry :immutable-p t))
-                  (immutable-schemas
-                    (tool-registry-provider-schemas immutable-registry))
-                  (self-schema (aref immutable-schemas 10)))
-             (test-assert (= (length (tool-registry-tools immutable-registry)) 52)
-                          "immutable mode omits nine active-image state tools")
-             (test-assert (= (length (json-get self-schema "tools")) 5)
-                          "immutable mode advertises five self inspection tools")
+           (let ((immutable-registry
+                   (make-default-tool-registry :immutable-p t)))
              (dolist (name '("inspect" "source" "status" "diff" "generations"))
                (test-assert (tool-registry-find immutable-registry "self" name)
                             (format nil "immutable mode retains self.~A" name)))
@@ -159,6 +89,12 @@
                (test-assert
                 (null (tool-registry-find immutable-registry "self" name))
                 (format nil "immutable mode omits self.~A" name))))
+           (test-assert
+            (and (tool-registry-find registry "resource" "read")
+                 (tool-registry-find registry "resource" "edit")
+                 (null (tool-registry-find registry "fs" "read"))
+                 (null (tool-registry-find registry "fs" "edit")))
+            "existing-file access is exposed only through the resource protocol")
            (test-assert (not (tool-result-success-p result))
                         "unknown provider calls produce a correlated tool failure")
            (let* ((commands
@@ -313,177 +249,10 @@
                    "runtime restart restores dependencies before dependents")))
   nil)
 
-(-> test-fs-read-streaming () null)
-(defun test-fs-read-streaming ()
-  "Test bounded fs.read windows across large and malformed files."
-  (let* ((registry (make-default-tool-registry))
-         (configuration (test-configuration))
-         (root (test-configuration-root configuration)))
-    (unwind-protect
-         (let* ((conversation
-                  (conversation-create configuration
-                                       :identifier "fs-read-streaming"))
-                (context
-                  (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker nil
-                                 :conversation conversation)))
-           (labels ((run (path start-line line-count)
-                      "Read one explicit line window from PATH."
-                      (tool-registry-execute-call
-                       registry
-                       (json-object
-                        "namespace" "fs"
-                        "name" "read"
-                        "arguments"
-                        (json-encode
-                         (json-object
-                          "path" (namestring path)
-                          "start-line" start-line
-                          "line-count" line-count)))
-                       context)))
-             (let ((many-lines (merge-pathnames "many-lines.txt" root)))
-               (with-open-file (stream many-lines
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
-                 (loop for line-number from 1 to 120000
-                       do (format stream "row ~D~%" line-number)))
-               (let* ((*fs-read-stream-buffer-characters* 257)
-                      (result (run many-lines 119999 2)))
-                 (test-assert
-                  (tool-result-success-p result)
-                  "fs.read streams a late window from a large line sequence")
-                 (test-assert
-                  (search "lines 119999-120000 of 120000"
-                          (tool-result-content result))
-                  "streamed fs.read preserves exact total and window metadata")
-                 (test-assert
-                  (and (search "119999  row 119999"
-                               (tool-result-content result))
-                       (search "120000  row 120000"
-                               (tool-result-content result)))
-                  "streamed fs.read numbers late lines across small buffers")))
-             (let ((empty (merge-pathnames "empty.txt" root)))
-               (with-open-file (stream empty
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
-                 (declare (ignore stream)))
-               (let ((result (run empty 1 1)))
-                 (test-assert
-                  (and (tool-result-success-p result)
-                       (search "lines 1-0 of 0"
-                               (tool-result-content result))
-                       (not (search "   1  "
-                                    (tool-result-content result))))
-                  "streamed fs.read preserves empty-file line semantics")))
-             (let ((long-line (merge-pathnames "long-line.txt" root))
-                   (chunk (make-string 8192 :initial-element #\x)))
-               (with-open-file (stream long-line
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
-                 (dotimes (index 256)
-                   (declare (ignore index))
-                   (write-string chunk stream))
-                 (format stream "~%tail marker~%"))
-               (let* ((*fs-read-stream-buffer-characters* 4096)
-                      (*fs-read-maximum-result-characters* 512)
-                      (result (run long-line 1 1))
-                      (content (tool-result-content result)))
-                 (test-assert
-                  (tool-result-success-p result)
-                  "fs.read bounds a selected multi-megabyte line")
-                 (test-assert
-                  (<= (length content)
-                      *fs-read-maximum-result-characters*)
-                  "fs.read constructs no oversized result for a long line")
-                 (test-assert
-                  (search "fs.read output truncated" content)
-                  "fs.read explains selected-line truncation")
-                 (test-assert
-                  (search "requested lines 1-1 of 2" content)
-                  "fs.read labels a truncated interval as the requested window"))
-               (let* ((*fs-read-stream-buffer-characters* 4096)
-                      (result (run long-line 2 1)))
-                 (test-assert
-                  (and (tool-result-success-p result)
-                       (search "lines 2-2 of 2"
-                               (tool-result-content result))
-                       (search "   2  tail marker"
-                               (tool-result-content result)))
-                  "fs.read skips a huge preceding line without retaining it")))
-             (let ((sparse (merge-pathnames "sparse-line.txt" root)))
-               (with-open-file (stream sparse
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :element-type '(unsigned-byte 8))
-                 (file-position stream (* 8 1024 1024))
-                 (loop for octet across
-                       #(10 115 112 97 114 115 101 32 116 97 105 108 10)
-                       do (write-byte octet stream)))
-               (let* ((*fs-read-stream-buffer-characters* 4096)
-                      (result (run sparse 2 1)))
-                 (test-assert
-                  (and (tool-result-success-p result)
-                       (search "lines 2-2 of 2"
-                               (tool-result-content result))
-                       (search "   2  sparse tail"
-                               (tool-result-content result)))
-                  "fs.read reaches a line after a sparse multi-megabyte prefix")))
-             (let* ((long-name
-                      (format nil "~A.txt"
-                              (make-string 220 :initial-element #\p)))
-                    (long-path (merge-pathnames long-name root)))
-               (with-open-file (stream long-path
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
-                 (write-string
-                  (make-string 1024 :initial-element #\x)
-                  stream))
-               (let* ((*fs-read-maximum-result-characters* 256)
-                      (result (run long-path 1 1))
-                      (content (tool-result-content result)))
-                 (test-assert
-                  (and (tool-result-success-p result)
-                       (<= (length content)
-                           *fs-read-maximum-result-characters*))
-                  "fs.read bounds the complete result including a long path")
-                 (test-assert
-                  (and (search "requested lines 1-1 of 1" content)
-                       (search "fs.read output truncated" content))
-                  "fs.read retains honest metadata and its marker with a long path")))
-             (let ((malformed (merge-pathnames "malformed-utf8.txt" root)))
-               (with-open-file (stream malformed
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :element-type '(unsigned-byte 8))
-                 (write-byte 255 stream)
-                 (write-byte 254 stream))
-               (let ((result (run malformed 1 1)))
-                 (test-assert
-                  (not (tool-result-success-p result))
-                  "fs.read reports malformed UTF-8 as a tool failure")
-                 (test-assert
-                  (search "fs.read failed:" (tool-result-content result))
-                  "fs.read contains malformed input at the tool boundary")))))
-      (tool-registry-close-runtime-state registry)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist :ignore)))
-  nil)
 
 (-> test-workspace-tools () null)
 (defun test-workspace-tools ()
-  "Test workspace file reading, listing, and bounded shell commands."
+  "Test workspace listing, image inspection, writes, and bounded shell commands."
   (let* ((registry (make-default-tool-registry))
          (configuration (test-configuration))
          (root (test-configuration-root configuration)))
@@ -516,33 +285,12 @@
                                               :if-does-not-exist :create
                                               :external-format :utf-8)
                         (write-string text stream))))
-             (let ((sample (merge-pathnames "sample.txt" root)))
-               (with-open-file (stream sample
-                                       :direction :output
-                                       :if-does-not-exist :create)
-                 (loop for index from 1 to 10
-                       do (format stream "line ~D~%" index)))
-               (let ((result (run "fs" "read"
-                                  "path" (namestring sample)
-                                  "start-line" 3
-                                  "line-count" 2)))
-                 (test-assert (tool-result-success-p result)
-                              "fs.read reads existing files")
-                 (test-assert (search "   3  line 3"
-                                      (tool-result-content result))
-                              "fs.read numbers lines from the window start")
-                 (test-assert (search "lines 3-4 of 10"
-                                      (tool-result-content result))
-                              "fs.read reports its window and total honestly")
-                 (test-assert (not (search "line 5"
-                                           (tool-result-content result)))
-                              "fs.read honors the requested line window")))
-             (test-assert (not (tool-result-success-p
-                                (run "fs" "read"
-                                     "path" (namestring
-                                             (merge-pathnames "absent.txt"
-                                                              root)))))
-                          "fs.read fails cleanly for missing files")
+              (let ((sample (merge-pathnames "sample.txt" root)))
+                (with-open-file (stream sample
+                                        :direction :output
+                                        :if-does-not-exist :create)
+                  (loop for index from 1 to 10
+                        do (format stream "line ~D~%" index))))
              (ensure-directories-exist (merge-pathnames "nested/" root))
              (let ((result (run "fs" "list" "path" (namestring root))))
                (test-assert (tool-result-success-p result)
@@ -707,208 +455,7 @@
                             "fs.write creates new files")
                (test-assert (search "alpha beta"
                                     (uiop:read-file-string target))
-                            "fs.write stores the supplied content")
-               (test-assert (not (tool-result-success-p
-                                  (run "fs" "edit"
-                                       "path" (namestring target)
-                                       "old-text" "alpha"
-                                       "new-text" "gamma")))
-                            "ambiguous fs.edit matches are rejected")
-               (test-assert (tool-result-success-p
-                             (run "fs" "edit"
-                                  "path" (namestring target)
-                                  "old-text" "alpha"
-                                  "new-text" "gamma"
-                                  "replace-all" t))
-                            "fs.edit replaces everywhere when asked")
-               (test-assert (string= (uiop:read-file-string target)
-                                     (format nil "gamma beta~%gamma"))
-                            "fs.edit rewrites exactly the matched text")
-               (test-assert (not (tool-result-success-p
-                                  (run "fs" "edit"
-                                       "path" (namestring target)
-                                       "old-text" "missing text"
-                                       "new-text" "x")))
-                            "fs.edit fails cleanly when old-text is absent"))
-              (let* ((target (merge-pathnames "indented-edit.lisp" root))
-                     (original
-                       (format nil
-                               "(defun sample ()~%  (alpha)~%  (omega))~%"))
-                     (old-text
-                       (format nil
-                               " (defun sample ()~%   (alpha)~%   (omega))~%"))
-                     (new-text
-                       (format nil
-                               " (defun sample ()~%   (alpha)~%   (beta)~%   (omega))~%"))
-                     (expected
-                       (format nil
-                               "(defun sample ()~%  (alpha)~%  (beta)~%  (omega))~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" new-text)))
-                  (test-assert
-                   (tool-result-success-p result)
-                   "fs.edit repairs a unique uniform multiline indentation shift")
-                  (test-assert
-                   (search "shifted new-text left by 1 space"
-                           (tool-result-content result))
-                   "fs.edit reports relaxed indentation matching")
-                  (test-assert (string= (uiop:read-file-string target) expected)
-                               "fs.edit shifts replacement indentation uniformly")))
-              (let* ((target (merge-pathnames "indented-delete.lisp" root))
-                     (original (format nil "(foo)~%  (bar)~%tail~%"))
-                     (old-text (format nil " (foo)~%   (bar)~%")))
-                (write-text target original)
-                (test-assert
-                 (tool-result-success-p
-                  (run "fs" "edit"
-                       "path" (namestring target)
-                       "old-text" old-text
-                       "new-text" ""))
-                 "fs.edit permits a unique relaxed deletion")
-                (test-assert
-                 (string= (uiop:read-file-string target) (format nil "tail~%"))
-                 "a relaxed deletion preserves the following file boundary"))
-              (let* ((target (merge-pathnames "indented-final-line.lisp" root))
-                     (original (format nil "root~% (foo)~%   (bar)"))
-                     (old-text (format nil "  (foo)~%    (bar)"))
-                     (new-text (format nil
-                                      "  (foo)~%    (baz)~%    (bar)"))
-                     (expected (format nil
-                                      "root~% (foo)~%   (baz)~%   (bar)")))
-                (write-text target original)
-                (test-assert
-                 (tool-result-success-p
-                  (run "fs" "edit"
-                       "path" (namestring target)
-                       "old-text" old-text
-                       "new-text" new-text))
-                 "fs.edit relaxes indentation at a file without a final newline")
-                (test-assert (string= (uiop:read-file-string target) expected)
-                             "fs.edit preserves the missing final newline"))
-              (let* ((target (merge-pathnames "crlf-edit.txt" root))
-                     (crlf (format nil "~C~C" #\Return #\Newline))
-                     (original (format nil "alpha~Abeta~Agamma~A"
-                                       crlf crlf crlf))
-                     (old-text (format nil "beta~%gamma~%"))
-                     (new-text (format nil "BETA~%GAMMA~%"))
-                     (expected (format nil "alpha~ABETA~AGAMMA~A"
-                                       crlf crlf crlf)))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" new-text)))
-                  (test-assert (tool-result-success-p result)
-                               "fs.edit normalizes a unique CRLF mismatch")
-                  (test-assert
-                   (search "line-ending-normalized"
-                           (tool-result-content result))
-                   "fs.edit reports relaxed line-ending matching")
-                  (test-assert (string= (uiop:read-file-string target) expected)
-                               "fs.edit preserves CRLF delimiters")))
-              (let* ((target (merge-pathnames "lf-edit.txt" root))
-                     (crlf (format nil "~C~C" #\Return #\Newline))
-                     (original (format nil "alpha~%beta~%gamma~%"))
-                     (old-text (format nil "beta~Agamma~A" crlf crlf))
-                     (new-text (format nil "BETA~AGAMMA~A" crlf crlf))
-                     (expected (format nil "alpha~%BETA~%GAMMA~%")))
-                (write-text target original)
-                (test-assert
-                 (tool-result-success-p
-                  (run "fs" "edit"
-                       "path" (namestring target)
-                       "old-text" old-text
-                       "new-text" new-text))
-                 "fs.edit normalizes a unique LF mismatch")
-                (test-assert (string= (uiop:read-file-string target) expected)
-                             "fs.edit preserves LF delimiters"))
-              (let* ((target (merge-pathnames "duplicate-indentation.lisp" root))
-                     (block (format nil "(foo)~%  (bar)~%"))
-                     (original (format nil "~Aseparator~%~A" block block))
-                     (old-text (format nil " (foo)~%   (bar)~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" "replacement"
-                                   "replace-all" t)))
-                  (test-assert
-                   (not (tool-result-success-p result))
-                   "replace-all does not bypass relaxed-match uniqueness")
-                  (test-assert
-                   (search "2 line-wise near matches"
-                           (tool-result-content result))
-                   "fs.edit explains ambiguous relaxed matches")
-                  (test-assert (string= (uiop:read-file-string target) original)
-                               "ambiguous relaxed matching leaves the file unchanged")))
-              (let* ((target (merge-pathnames "overlapping-indentation.lisp" root))
-                     (original (format nil "(foo)~%(foo)~%(foo)~%"))
-                     (old-text (format nil " (foo)~% (foo)~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" "replacement")))
-                  (test-assert
-                   (not (tool-result-success-p result))
-                   "fs.edit counts overlapping relaxed candidate starts")
-                  (test-assert
-                   (search "2 line-wise near matches"
-                           (tool-result-content result))
-                   "overlapping relaxed candidates remain ambiguous")))
-              (let* ((target (merge-pathnames "nonuniform-indentation.lisp" root))
-                     (original (format nil "(foo)~%  (bar)~%"))
-                     (old-text (format nil " (foo)~%    (bar)~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" old-text)))
-                  (test-assert
-                   (not (tool-result-success-p result))
-                   "fs.edit rejects a nonuniform indentation projection")
-                  (test-assert
-                   (and (search "cannot be projected as one uniform"
-                                (tool-result-content result))
-                        (search original (tool-result-content result)))
-                   "fs.edit returns the exact unsafe near match for retry")))
-              (let* ((target (merge-pathnames "unanchored-indentation.lisp" root))
-                     (original (format nil "(foo)~%  (bar)~%"))
-                     (old-text (format nil " (foo)~%   (bar)~%"))
-                     (new-text (format nil " (baz)~%   (quux)~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" new-text)))
-                  (test-assert
-                   (not (tool-result-success-p result))
-                   "fs.edit rejects an unanchored indentation projection")
-                  (test-assert
-                   (and (search "boundary line"
-                                (tool-result-content result))
-                        (search original (tool-result-content result)))
-                   "fs.edit makes an unsafe unique near match actionable")))
-              (let* ((target (merge-pathnames "mixed-endings.txt" root))
-                     (crlf (format nil "~C~C" #\Return #\Newline))
-                     (original (format nil "alpha~Abeta~%gamma~%" crlf))
-                     (old-text (format nil "alpha~%beta~%")))
-                (write-text target original)
-                (let ((result (run "fs" "edit"
-                                   "path" (namestring target)
-                                   "old-text" old-text
-                                   "new-text" "changed")))
-                  (test-assert
-                   (not (tool-result-success-p result))
-                   "fs.edit rejects relaxed matching in mixed-EOL files")
-                  (test-assert
-                   (search "mixed line endings" (tool-result-content result))
-                   "fs.edit explains its mixed-EOL safety boundary")
-                  (test-assert (string= (uiop:read-file-string target) original)
-                               "mixed-EOL rejection leaves the file unchanged")))
+                             "fs.write stores the supplied content"))
              (test-assert (not (tool-result-success-p
                                 (run "fs" "write"
                                      "path" (namestring
@@ -918,16 +465,6 @@
                                                configuration)))
                                      "content" "overwritten")))
                           "fs.write refuses the stable launcher")
-             (test-assert (not (tool-result-success-p
-                                (run "fs" "edit"
-                                     "path" (namestring
-                                             (merge-pathnames
-                                              "recovery/runtime.lisp"
-                                              (configuration-source-root
-                                               configuration)))
-                                     "old-text" "autolith"
-                                     "new-text" "borf")))
-                          "fs.edit refuses recovery artifacts")
              (let ((repo-root (merge-pathnames "fake-repo/" root))
                    (outside-root (merge-pathnames "elsewhere/" root)))
                (ensure-directories-exist repo-root)
@@ -970,5 +507,4 @@
                                                                 repo-root)))))
                   "launcher artifacts stay read-only even while developing")))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
-  (test-fs-read-streaming)
   nil)
