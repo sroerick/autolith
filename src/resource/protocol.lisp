@@ -192,6 +192,29 @@
                (decf excess)))
   nil)
 
+(-> resource-snapshot-digest
+    ((simple-array (unsigned-byte 8) (*)) string)
+    non-empty-string)
+(defun resource-snapshot-digest (key content)
+  "Return a keyed full SipHash digest for exact UTF-8 CONTENT."
+  (let ((mac (make-mac ':siphash key :digest-length 16)))
+    (update-mac mac
+                (sb-ext:string-to-octets content :external-format ':utf-8))
+    (with-output-to-string (stream)
+      (loop for octet across (produce-mac mac)
+            do (format stream "~2,'0X" octet)))))
+
+(-> resource-readable-snapshot-digest
+    ((simple-array (unsigned-byte 8) (*)) list)
+    non-empty-string)
+(defun resource-readable-snapshot-digest (key snapshot)
+  "Return a keyed digest for readable exact SNAPSHOT structure."
+  (resource-snapshot-digest
+   key
+   (with-standard-io-syntax
+     (let ((*print-readably* t))
+       (prin1-to-string snapshot)))))
+
 (-> resource-capabilities (resource t) list)
 (defgeneric resource-capabilities (resource context)
   (:documentation

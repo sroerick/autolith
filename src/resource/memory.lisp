@@ -213,22 +213,6 @@
 
 ;;;; -- Exact Memory Observations --
 
-(-> memory-resource--digest (list) non-empty-string)
-(defun memory-resource--digest (snapshot)
-  "Return a full process-local digest for exact memory SNAPSHOT."
-  (let ((mac (make-mac ':siphash
-                       *memory-resource-digest-key*
-                       :digest-length 16))
-        (content
-          (with-standard-io-syntax
-            (let ((*print-readably* t))
-              (prin1-to-string snapshot)))))
-    (update-mac mac
-                (sb-ext:string-to-octets content :external-format :utf-8))
-    (with-output-to-string (stream)
-      (loop for octet across (produce-mac mac)
-            do (format stream "~2,'0X" octet)))))
-
 (-> memory-resource--collection-entry (memory) string)
 (defun memory-resource--collection-entry (memory)
   "Return one complete metadata and bounded excerpt entry for MEMORY."
@@ -295,7 +279,9 @@
                  :records (mapcar #'memory--record memories))))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
-                   :revision   (memory-resource--digest snapshot)
+                   :revision   (resource-readable-snapshot-digest
+                                *memory-resource-digest-key*
+                                snapshot)
                    :content    (memory-resource--render-collection
                                 (memory-resource-identifier resource)
                                 memories)
@@ -322,7 +308,9 @@
                   :record (memory--record memory))))
       (make-instance 'memory-observation
                      :uri        (resource-uri resource)
-                     :revision   (memory-resource--digest snapshot)
+                     :revision   (resource-readable-snapshot-digest
+                                  *memory-resource-digest-key*
+                                  snapshot)
                      :content    (memory-tool--render-memory memory)
                      :metadata   (list :scope (memory-scope memory))
                      :identifier identifier
@@ -549,7 +537,9 @@
          (snapshot (list :kind ':forgotten :identifier identifier)))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
-                   :revision   (memory-resource--digest snapshot)
+                   :revision   (resource-readable-snapshot-digest
+                                *memory-resource-digest-key*
+                                snapshot)
                    :content    (format nil "Memory ~A was forgotten." identifier)
                    :metadata   (list :forgotten t)
                    :identifier identifier

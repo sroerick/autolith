@@ -97,22 +97,6 @@
   (list :directory directory
         :record (and record (agenda--record->form record))))
 
-(-> agenda-resource--digest (list) non-empty-string)
-(defun agenda-resource--digest (snapshot)
-  "Return a full process-local digest for exact agenda SNAPSHOT."
-  (let ((mac (make-mac ':siphash
-                       *agenda-resource-digest-key*
-                       :digest-length 16))
-        (content
-          (with-standard-io-syntax
-            (let ((*print-readably* t))
-              (prin1-to-string snapshot)))))
-    (update-mac mac
-                (sb-ext:string-to-octets content :external-format :utf-8))
-    (with-output-to-string (stream)
-      (loop for octet across (produce-mac mac)
-            do (format stream "~2,'0X" octet)))))
-
 (-> agenda-resource--observation-from-state
     (agenda-resource agenda-state)
     agenda-observation)
@@ -123,7 +107,9 @@
          (snapshot (agenda-resource--snapshot configuration-directory record)))
     (make-instance 'agenda-observation
                    :uri       (resource-uri resource)
-                   :revision  (agenda-resource--digest snapshot)
+                   :revision  (resource-readable-snapshot-digest
+                               *agenda-resource-digest-key*
+                               snapshot)
                    :content   (agenda-tool--render-record record)
                    :directory configuration-directory
                    :snapshot  snapshot)))

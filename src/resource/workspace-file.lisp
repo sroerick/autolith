@@ -133,18 +133,6 @@
 
 ;;;; -- Snapshot Observation --
 
-(-> workspace-file--digest (string) string)
-(defun workspace-file--digest (content)
-  "Return a full process-local digest for exact UTF-8 CONTENT."
-  (let ((mac (make-mac ':siphash
-                       *workspace-file-resource-digest-key*
-                       :digest-length 16)))
-    (update-mac mac
-                (sb-ext:string-to-octets content :external-format :utf-8))
-    (with-output-to-string (stream)
-      (loop for octet across (produce-mac mac)
-            do (format stream "~2,'0X" octet)))))
-
 (-> workspace-file--read-content
     (pathname &optional (option tool-context))
     string)
@@ -206,7 +194,9 @@
     (let ((content (workspace-file--read-content path context)))
       (make-instance 'workspace-file-observation
                      :uri             (resource-uri resource)
-                     :revision        (workspace-file--digest content)
+                     :revision        (resource-snapshot-digest
+                                       *workspace-file-resource-digest-key*
+                                       content)
                      :content         content
                      :metadata        (list ':pathname path)
                      :lines           (text--split-lines content)
