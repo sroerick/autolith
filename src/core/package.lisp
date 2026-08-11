@@ -69,6 +69,7 @@
                 #:job-pool-refresh
                 #:job-pool-remove-listener
                 #:job-pool-submit-batch
+                #:job-pool-update-limits
                 #:job-result
                 #:job-root-identifier
                 #:job-run-inline

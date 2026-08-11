@@ -206,8 +206,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "cl-jobpond";
-      rev = "4f7679be1b760450b8d497b0ec3119ee0f716995";
-      hash = "sha256-ifXzyzK6Ue4ZkZuwAr65wakE0Wh2rFlJexGWMpxFJUQ=";
+      rev = "ee2e2eb0bd5080c52db55036f853c00671962178";
+      hash = "sha256-2brHuyCb2dxzDqtLZa7upi9EZuEQKOximh/RwYjjb6U=";
     };
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };

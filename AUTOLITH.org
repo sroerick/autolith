@@ -268,20 +268,20 @@ a user-local init.lisp change, or a private image commit.
   retains its product-specific migration, validation, provenance, atomic state,
   authority, cancellation, and output policies. Pinned =sexp-config= =408fa90=
   handles standard keyword-to-string reader boundaries directly;
-  =sbcl-workers= =3cda0db= owns the shared worker-name predicate; and
-  =sbcl-generations= =e65e27e= owns the live-thread snapshot preflight. Hosts
-  still hold their exclusion across that check and fork. One narrow compatibility
-  adapter still publishes task pool limits under the library's worker lock.
+  =sbcl-workers= =3cda0db= owns the shared worker-name predicate;
+  =sbcl-generations= =e65e27e= owns the live-thread snapshot preflight, with hosts
+  retaining exclusion across that check and fork; and =cl-jobpond= =ee2e2eb= owns
+  atomic four-limit pool policy publication, immediate worker and monitor capacity
+  refresh, and the locked default-runtime admission boundary. No pool-policy
+  compatibility adapter remains in Autolith.
 - Scope and location: tracked project work in =src/conversation/=, =src/mcp/=,
   =src/skills/=, =src/state/generations.lisp=, =src/task/=,
   =src/tools/workspace.lisp=, =src/workers/lisp.lisp=, dependency locks, Nix
   packaging, architecture documentation, and regressions.
-- Verification: parser adjacency, worker-name validation, exact single- and
-  multi-thread checkpoint preflights, checkpoint fork detachment, concurrent
-  hurry-up admission and policy updates, invalid UTF-8 shell output, dependency
-  builds, and the complete 3,582-test repository check pass.
-- Removal condition: =cl-jobpond= exposes one public atomic pool-policy update
-  operation; remove the remaining Autolith adapter when that condition is met.
+- Verification: =cl-jobpond= passes 408 assertions. Focused hurry-up admission,
+  delayed-close refresh, asynchronous execution, and task scheduler tests pass;
+  the exact Nix package builds; bootstrap rebuilds both installed images; version
+  and recovery probes pass; and the final integration review reports no findings.
 
 ** Crash-safe recovery input vaults
 

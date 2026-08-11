@@ -26,65 +26,74 @@
   "Apply environment or hurry-up admission bounds while ORCHESTRATOR is locked.
 
 Hurry-up mode replaces every admission bound with one small number, because an
-urgent session should not be spending its remaining budget on child agents. The
-orchestrator-to-pool lock order serializes a complete policy update with task
-submission and cl-jobpond workers."
-  (let ((pool       (task-orchestrator-pool orchestrator))
-        (hurry-up-p (task-orchestrator-hurry-up-p orchestrator)))
-    (with-lock-held ((cl-jobpond::job-pool--lock pool))
-      (setf (job-pool-maximum-concurrency pool)
-            (if hurry-up-p
-                *task-hurry-up-maximum-agents*
-                (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
-                                           *task-default-maximum-concurrency*
-                                           :minimum 1
-                                           :maximum *task-maximum-concurrency*))
-            (job-pool-maximum-batch-size pool)
-            (if hurry-up-p
-                *task-hurry-up-maximum-agents*
-                *task-maximum-batch-size*)
-            (job-pool-maximum-live-jobs pool)
-            (if hurry-up-p
-                *task-hurry-up-maximum-agents*
-                *task-maximum-live-jobs*))
-      (when refresh-runtime-p
-        (setf (job-pool-maximum-runtime-milliseconds pool)
-              (task--environment-integer
-               "AUTOLITH_TASK_MAX_RUNTIME_MS"
-               *task-default-maximum-runtime-milliseconds*
-               :minimum 0)))))
+urgent session should not be spending its remaining budget on child agents.
+Cl-jobpond serializes the complete policy update with task submission and worker
+claims."
+  (let* ((pool       (task-orchestrator-pool orchestrator))
+         (hurry-up-p (task-orchestrator-hurry-up-p orchestrator))
+         (maximum-concurrency
+           (if hurry-up-p
+               *task-hurry-up-maximum-agents*
+               (task--environment-integer "AUTOLITH_TASK_MAX_CONCURRENCY"
+                                          *task-default-maximum-concurrency*
+                                          :minimum 1
+                                          :maximum *task-maximum-concurrency*)))
+         (maximum-batch-size
+           (if hurry-up-p
+               *task-hurry-up-maximum-agents*
+               *task-maximum-batch-size*))
+         (maximum-live-jobs
+           (if hurry-up-p
+               *task-hurry-up-maximum-agents*
+               *task-maximum-live-jobs*))
+         (maximum-runtime-milliseconds
+           (if refresh-runtime-p
+               (task--environment-integer
+                "AUTOLITH_TASK_MAX_RUNTIME_MS"
+                *task-default-maximum-runtime-milliseconds*
+                :minimum 0)
+               (job-pool-maximum-runtime-milliseconds pool))))
+    (job-pool-update-limits
+     pool
+     :maximum-concurrency maximum-concurrency
+     :maximum-batch-size maximum-batch-size
+     :maximum-live-jobs maximum-live-jobs
+     :maximum-runtime-milliseconds maximum-runtime-milliseconds))
   nil)
 
 (-> task-orchestrator--apply-execution-limits-locked (task-orchestrator) null)
 (defun task-orchestrator--apply-execution-limits-locked (orchestrator)
   "Apply asynchronous tool execution bounds while ORCHESTRATOR is locked."
   (let ((pool (task-orchestrator-execution-pool orchestrator)))
-    (with-lock-held ((cl-jobpond::job-pool--lock pool))
-      (setf (job-pool-maximum-concurrency pool)
-            (task--environment-integer
-             "AUTOLITH_EXECUTION_MAX_CONCURRENCY"
-             *tool-execution-default-maximum-concurrency*
-             :minimum 1
-             :maximum *tool-execution-maximum-concurrency*)
-            (job-pool-maximum-batch-size pool) 1
-            (job-pool-maximum-live-jobs pool)
-            *tool-execution-maximum-live-jobs*)))
+    (job-pool-update-limits
+     pool
+     :maximum-concurrency
+     (task--environment-integer
+      "AUTOLITH_EXECUTION_MAX_CONCURRENCY"
+      *tool-execution-default-maximum-concurrency*
+      :minimum 1
+      :maximum *tool-execution-maximum-concurrency*)
+     :maximum-batch-size 1
+     :maximum-live-jobs *tool-execution-maximum-live-jobs*
+     :maximum-runtime-milliseconds
+     (job-pool-maximum-runtime-milliseconds pool)))
   nil)
 
 (-> task-orchestrator-set-hurry-up (task-orchestrator boolean) task-orchestrator)
 (defun task-orchestrator-set-hurry-up (orchestrator enabled-p)
   "Apply ENABLED-P and its hard admission limits to ORCHESTRATOR.
 
-This only moves the bounds. Admission starts whatever workers the current bounds
-call for, so changing a limit never costs a session threads it may never use."
+A state change atomically updates the pool policy and starts or wakes the worker
+capacity required by the new concurrency bound. Reapplying the current state is
+a no-op, preserving lazy pools before their first job."
   (with-lock-held ((task-orchestrator-lock orchestrator))
     (unless (eq (task-orchestrator-hurry-up-p orchestrator) enabled-p)
       (setf (task-orchestrator-hurry-up-p orchestrator) enabled-p
             (task-orchestrator-hurry-up-admission-count orchestrator)
             (if enabled-p
                 (job-pool-live-count (task-orchestrator-pool orchestrator))
-                0)))
-    (task-orchestrator--apply-limits-locked orchestrator))
+                0))
+      (task-orchestrator--apply-limits-locked orchestrator)))
   orchestrator)
 
 

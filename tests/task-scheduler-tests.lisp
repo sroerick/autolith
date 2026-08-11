@@ -661,6 +661,13 @@ exactly that race."
       (unwind-protect
            (progn
              (let* ((orchestrator (task-tests--orchestrator))
+                    (pool (task-orchestrator-pool orchestrator)))
+               (task-orchestrator-set-hurry-up orchestrator nil)
+               (test-assert
+                (and (null (cl-jobpond::job-pool--worker-threads pool))
+                     (null (cl-jobpond::job-pool--monitor-thread pool)))
+                "reapplying inactive hurry-up keeps an unused task pool lazy"))
+             (let* ((orchestrator (task-tests--orchestrator))
                     (viewer (make-viewer orchestrator "rollback-parent"))
                     (pool (task-orchestrator-pool orchestrator))
                     (refused-p nil))
@@ -848,58 +855,6 @@ exactly that race."
                      (= (task-orchestrator-hurry-up-admission-count orchestrator)
                         3))
                 "a limit change takes effect after the atomic submission boundary")))
-              (let* ((orchestrator (task-tests--orchestrator))
-                     (pool (task-orchestrator-pool orchestrator))
-                     (state-lock (make-lock "Autolith pool policy state"))
-                     (reconfiguration-started-p nil)
-                     (reconfiguration-finished-p nil)
-                     (thread nil)
-                     (pool-lock-held-p nil))
-                (unwind-protect
-                     (progn
-                       (bordeaux-threads:acquire-lock
-                        (cl-jobpond::job-pool--lock pool))
-                       (setf pool-lock-held-p t
-                             thread
-                             (make-thread
-                              (lambda ()
-                                (with-lock-held (state-lock)
-                                  (setf reconfiguration-started-p t))
-                                (task-orchestrator-set-hurry-up orchestrator t)
-                                (with-lock-held (state-lock)
-                                  (setf reconfiguration-finished-p t)))
-                              :name "Autolith pool policy reconfiguration"))
-                       (test-assert
-                        (task-tests--wait-until
-                         (lambda ()
-                           (with-lock-held (state-lock)
-                             reconfiguration-started-p))
-                         2)
-                        "pool policy reconfiguration reaches the cl-jobpond lock")
-                       (sleep 0.1)
-                       (test-assert
-                        (with-lock-held (state-lock)
-                          (not reconfiguration-finished-p))
-                        "pool policy reconfiguration waits for the worker-pool lock")
-                       (bordeaux-threads:release-lock
-                        (cl-jobpond::job-pool--lock pool))
-                       (setf pool-lock-held-p nil)
-                       (join-thread thread)
-                       (setf thread nil)
-                       (test-assert
-                        (and (task-orchestrator-hurry-up-p orchestrator)
-                             (= (job-pool-maximum-concurrency pool)
-                                *task-hurry-up-maximum-agents*)
-                             (= (job-pool-maximum-batch-size pool)
-                                *task-hurry-up-maximum-agents*)
-                             (= (job-pool-maximum-live-jobs pool)
-                                *task-hurry-up-maximum-agents*))
-                        "one worker-pool critical section publishes every hurry-up limit"))
-                  (when pool-lock-held-p
-                    (bordeaux-threads:release-lock
-                     (cl-jobpond::job-pool--lock pool)))
-                  (when thread
-                    (join-thread thread))))
         (uiop:delete-directory-tree root :validate t
                                          :if-does-not-exist :ignore))))
   nil)
