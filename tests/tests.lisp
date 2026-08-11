@@ -92,6 +92,14 @@
       (test-assert
        (subtypep (array-element-type octets) '(unsigned-byte 8))
        "direct UTF-8 JSON encoding returns octets without a wide string body"))
+    (let ((*print-readably* t))
+      (test-assert
+       (search "Condition text."
+               (bounded-string
+                (make-condition 'simple-error
+                                :format-control "Condition text."
+                                :format-arguments nil)))
+       "bounded presentation renders unreadable conditions safely"))
     (test-memory-persistence)
     (test-papercuts)
     (test-update-state-and-installation-provenance)

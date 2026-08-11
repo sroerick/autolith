@@ -85,7 +85,8 @@
                   (write-to-string value
                                    :circle t
                                    :level 8
-                                   :length 80))))
+                                   :length 80
+                                   :readably nil))))
     (if (<= (length text) limit)
         text
         (format nil "~A~%... ~:D characters omitted"
