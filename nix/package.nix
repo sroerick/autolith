@@ -27,8 +27,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "clinedi";
-      rev = "b50c30d4e91b3959709d0659977d1d2abd425318";
-      hash = "sha256-lRhny2C6jJvqRV5MPvx1Sx9c2guEHY1EG6jLxrLCLLM=";
+      rev = "de133d8467ed211369923285078cbfa456e1d92b";
+      hash = "sha256-2R6YLxOLx20VKstHdkPWKlLZPlqEjqipH1Nh6i3UfDU=";
     };
     lispLibs = [ clColorist ];
   };

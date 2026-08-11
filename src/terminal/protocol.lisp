@@ -19,13 +19,15 @@
 
 (-> terminal-bracketed-paste-enable-sequence () string)
 (defun terminal-bracketed-paste-enable-sequence ()
-  "Return the trusted control that enables bracketed paste mode."
-  (format nil "~C[?2004h" *terminal-escape-character*))
+  "Return Clinedi's trusted bracketed-paste enable control."
+  (with-output-to-string (stream)
+    (enable-bracketed-paste :stream stream)))
 
 (-> terminal-bracketed-paste-disable-sequence () string)
 (defun terminal-bracketed-paste-disable-sequence ()
-  "Return the trusted control that disables bracketed paste mode."
-  (format nil "~C[?2004l" *terminal-escape-character*))
+  "Return Clinedi's trusted bracketed-paste disable control."
+  (with-output-to-string (stream)
+    (disable-bracketed-paste :stream stream)))
 
 (-> terminal-keyboard-enhancement-enable-sequence () string)
 (defun terminal-keyboard-enhancement-enable-sequence ()

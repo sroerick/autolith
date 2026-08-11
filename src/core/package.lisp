@@ -115,6 +115,8 @@
                 #:selector-handle-event
                 #:enable-keyboard-enhancement
                 #:disable-keyboard-enhancement
+                #:enable-bracketed-paste
+                #:disable-bracketed-paste
                 #:semantic-prompt-marker-sequence
                 #:read-event
                 #:sanitize-text
