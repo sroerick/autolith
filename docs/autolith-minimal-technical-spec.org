@@ -1112,7 +1112,7 @@ with a distinguished recovery status.
 Autolith persists eleven kinds of state:
 
 - Source in Git.
-- Conversations as S-expression files.
+- Conversations as deterministic chunked S-expression logs.
 - Memories as an append-only S-expression log.
 - Mutations in an append-only journal.
 - Private image commits as manifests and complete Lisp replay scripts.
@@ -1127,7 +1127,18 @@ Autolith persists eleven kinds of state:
 
 ** 8.1 Conversation Files
 
-Each conversation is stored in a separate =.sexp= file.
+Each conversation has a stable compatibility identity at
+=conversations/<id>.sexp=. New durable logs store their physical segments under
+a per-conversation directory:
+
+#+BEGIN_EXAMPLE
+conversations/K8vQ2mp/00000000000000000001.sexp
+conversations/K8vQ2mp/00000000000000000040.sexp
+#+END_EXAMPLE
+
+A segment filename is the zero-padded decimal sequence of its first durable
+record, with a minimum width of 20 digits. A legacy top-level
+=conversations/<id>.sexp= file remains readable as the optional oldest segment.
 
 A conversation identifier is stored as seven case-sensitive Bitcoin Base58
 characters and displayed with a visual hyphen after the first character. For
@@ -1149,27 +1160,49 @@ right 16, multiply by =0x85ebca6b=, xor with the value shifted right 13,
 multiply by =0xc2b2ae35=, then xor with the value shifted right 16. Every
 intermediate value is reduced modulo =2^32=. The forced odd multiplier makes
 each seed's affine mapping invertible modulo =2^32=. Generation begins at one
-random seed and probes the remaining Base58 seeds cyclically when its pathname
-is occupied. Exhausting all 58 seeds for one second is a structured failure.
+random seed and probes the remaining Base58 seeds cyclically when its stable
+identity is occupied by a legacy file or chunk directory. Exhausting all 58
+seeds for one second is a structured failure.
 
 On the first startup that sees legacy resumable identifiers, Autolith writes a
 complete old-to-new mapping before changing data. It then atomically replaces
-conversation and typed reference files, moves identifier-keyed image and task
-artifacts, and removes legacy conversation files only after their replacements
-are durable. Durable phase records make an interrupted migration idempotent.
-The completed mapping remains available so old resume commands, crash capsules,
-and retained generations continue to resolve.
+all conversation segments and typed reference files, moves identifier-keyed
+image and task artifacts, and removes legacy conversation storage only after
+its replacements are durable. Durable phase records make an interrupted
+migration idempotent. The completed mapping remains available so old resume
+commands, crash capsules, and retained generations continue to resolve.
 
-A fresh conversation remains in memory until it has a durable record. The
-header and first record are published together atomically, so starting and
-leaving an empty conversation does not create a conversation file.
+A fresh conversation remains in memory until it has a durable record. Its
+version-two header and first record are published together atomically in the
+sequence-one chunk, so starting and leaving an empty conversation creates no
+conversation storage.
 
 Interactive conversation selection groups sessions from the current working
-directory above sessions from other directories. Each group is ordered from
-newest to oldest file activity, and group headings are not selectable.
+directory above sessions from other directories. Each group is ordered by the
+write time of its newest durable segment, newest first, and group headings are
+not selectable.
 
-A conversation file is an append-only sequence of top-level
-S-expressions. It is not wrapped in one enclosing list.
+Each segment is an append-only sequence of top-level S-expressions. It is not
+wrapped in one enclosing list. A version-two chunk header records the stable
+conversation identity, original creation metadata, model and effort selection,
+prompt cache key, declared chunk-start sequence, cumulative activity and picker
+state, pending-input identifiers, bounded user-operation records, and the
+latest goal before the chunk's first record.
+
+Compaction rotates storage before appending its checkpoint. The new chunk is
+published atomically with a self-contained header followed by the =:summary= or
+=:native-compaction= record whose sequence names the chunk. Older segments are
+never appended after rotation.
+
+A newest version-two chunk is sufficient to restore the resumable conversation
+projection, so normal loading reads only that chunk. When the newest segment is
+a version-one legacy file, loading replays all available segments. A mixed
+legacy file plus later version-two chunks remains valid, with the legacy file
+ordered first.
+
+Normal transcript presentation scans the active chunk and may scan exactly one
+preceding segment when the active chunk cannot fill the configured display page.
+Recovery startup scans only the active chunk.
 
 The primary application holds an exclusive, nonblocking kernel lease for the
 lifetime of its active conversation. Startup and resume claim the lease before
@@ -1202,39 +1235,60 @@ one stale result for the same earlier call. It keeps the interrupted projection
 and rejects every other repeated output. This fallback preserves transcripts
 written before primary-conversation leases were introduced.
 
-Example:
+For example, the first chunk can begin:
 
 #+BEGIN_SRC lisp
 (:conversation
- :version 1
+ :version 2
  :id "K8vQ2mp"
- :created-at 3992846378)
+ :created-at 3992846378
+ :directory "/workspace/"
+ :prompt-cache-key nil
+ :model "gpt-5.6-luna"
+ :reasoning-effort "high"
+ :chunk-start-sequence 1
+ :working-seconds 0
+ :user-turn-count 0
+ :last-activity-at nil
+ :picker-search-message-count 0
+ :picker-preview nil
+ :pending-input-identifiers nil
+ :user-operation-records nil
+ :latest-goal-record nil)
 
 (:message
  :seq 1
  :time 3992846378
  :role :user
  :content "Inspect the current provider implementation.")
+#+END_SRC
 
-(:tool-call
- :seq 2
- :time 3992846380
- :id 1
- :tool self.inspect
- :arguments (:symbol run-provider))
+A later compaction rotates to
+=conversations/K8vQ2mp/00000000000000000040.sexp= and begins:
 
-(:tool-result
- :seq 3
- :time 3992846381
- :call-id 1
- :status :ok
- :value (:lambda-list (request)
-         :source "src/provider/client.lisp"))
+#+BEGIN_SRC lisp
+(:conversation
+ :version 2
+ :id "K8vQ2mp"
+ :created-at 3992846378
+ :directory "/workspace/"
+ :prompt-cache-key nil
+ :model "gpt-5.6-luna"
+ :reasoning-effort "high"
+ :chunk-start-sequence 40
+ :working-seconds 630
+ :user-turn-count 4
+ :last-activity-at 3992846990
+ :picker-search-message-count 4
+ :picker-preview "Simplify the provider transport."
+ :pending-input-identifiers nil
+ :user-operation-records nil
+ :latest-goal-record nil)
 
 (:summary
  :seq 40
  :time 3992847000
- :through-seq 32
+ :through-seq 39
  :content "The provider transport was inspected and simplified.")
 #+END_SRC
 
@@ -1269,11 +1323,12 @@ objects are not serialized directly.
 
 Reading is performed with =*read-eval*= bound to =nil=.
 
-An incomplete final form caused by a crash is ignored or truncated.
-All complete preceding forms remain valid.
+An incomplete final form caused by a crash is ignored or truncated within its
+segment. All complete preceding forms and every other complete segment remain
+valid.
 
 Large or binary artifacts are stored separately and referenced from the
-conversation file.
+conversation log.
 
 Every executed tool result records nonnegative CPU and real durations. Terminal
 presentation shows both durations. Calls rejected before execution and repaired
@@ -1302,14 +1357,18 @@ URI and revision. Missing exact state, an invalid operation shape, or a change
 that cannot be validated exactly falls back to structured semantic operation
 fields rather than inventing a diff.
 
-Initial startup and conversation resume replay at most the newest 500 transcript
-entries visible under the current presentation settings. This is only a
-terminal presentation bound. =/history= appends the immediately preceding page
-of at most 500 visible entries in chronological order, and repeated calls page
-backward without duplicating entries already printed. Primary-screen terminal
-scrollback cannot be prepended portably, so each older page is labeled and
-appears below the newer transcript. Bounded replay never truncates the durable
-conversation file, provider request projection, or compaction input.
+Normal conversation resume scans the newest segment first and replays at most
+=*application-history-page-size*= transcript entries visible under the current
+presentation settings. The reloadable default is 250. When the newest segment
+contains fewer visible entries than the limit, exactly one preceding segment
+may fill the remainder; automatic replay does not scan any older segment.
+
+=/history= appends the immediately preceding configured page across segment
+boundaries in chronological order, and repeated calls page backward without
+duplicating entries already printed. Primary-screen terminal scrollback cannot
+be prepended portably, so each older page is labeled and appears below the
+newer transcript. Bounded replay never truncates durable conversation storage,
+provider request projection, or compaction input.
 
 ** 8.2 User Configuration
 

@@ -437,15 +437,29 @@ toward forced exit.
 
 A fresh conversation stays in memory until its first durable record. Starting
 Autolith and leaving without a message or other saved state creates no
-conversation file and adds nothing to =/resume= or =/conversations=.
+conversation storage and adds nothing to =/resume= or =/conversations=.
 
-Startup and resume print at most the newest 500 transcript entries visible under
-the current presentation settings. =/history= appends the preceding page of at
-most 500 entries in chronological order. Repeated calls continue paging
-backward. Older pages are labeled because terminal scrollback is append-only
-and they therefore appear below the newer transcript. This display bound does
-not remove anything from durable conversation storage, provider context, or
-compaction input.
+New conversations use deterministic segments such as
+=conversations/K8vQ2mp/00000000000000000001.sexp=. The 20-digit filename is the
+sequence of the segment's first durable record. Context compaction starts a new
+segment whose first record is its checkpoint. Existing legacy
+=conversations/K8vQ2mp.sexp= files remain readable and become the oldest segment
+if that conversation is later compacted.
+
+Normal resume restores conversation state from the newest self-contained chunk.
+It prints at most 250 transcript entries by default. If the newest segment has
+fewer visible entries, Autolith reads exactly one preceding segment to fill the
+remaining display space. Recovery startup reads only the active segment.
+=/history= appends the preceding configured page across segment boundaries in
+chronological order, and repeated calls continue paging backward. Older pages
+are labeled because terminal scrollback is append-only and they therefore appear
+below the newer transcript. This display bound does not remove anything from
+durable conversation storage, provider context, or compaction input. Set a
+different positive page size in =init.lisp=, for example:
+
+#+BEGIN_SRC lisp
+(setf *application-history-page-size* 400)
+#+END_SRC
 
 =Ctrl-C= clears a nonempty input draft while idle. At an empty prompt it exits
 Autolith without a confirmation notice. During an active turn, Escape cancels only
@@ -485,7 +499,7 @@ prefix from before selection. The commands are:
 /new            start a new conversation
 /resume         pick a saved conversation to resume
 /conversations  list saved conversations
-/history        load the preceding 500 transcript entries
+/history        load the preceding configured transcript page
 /vault          inspect input preserved after an active-image crash
 /vault-restore  restore vaulted input before newer queued work
 /vault-discard  discard this conversation's vaulted input
@@ -752,9 +766,10 @@ With no argument, =/compact= still forces context compaction.
 
 Context compaction keeps long conversations going. When the newest provider
 step reports total token usage at or beyond the compaction limit, Autolith asks
-the model for a context checkpoint summary, appends it as a durable
-=(:summary ...)= record, and replaces the request projection with one bridge
-message carrying that summary; the durable conversation file keeps everything.
+the model for a context checkpoint summary, atomically starts a deterministic
+chunk with that durable =(:summary ...)= record, and replaces the request
+projection with one bridge message carrying that summary. Older chunks retain
+every earlier durable record.
 The 5.6 family models have a 272000 token context window (read from the live
 model catalog), and compaction triggers at 80 percent of the window by
 default. Set =AUTOLITH_COMPACTION_THRESHOLD= to a percentage between 1 and 95 to
