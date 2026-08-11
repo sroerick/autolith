@@ -22,8 +22,6 @@ Autolith is not a security sandbox. Code it runs has your user privileges.
   HTTP.
 - [[file:docs/release-service.org][Release service]]: build, publish, and deploy packaged
   releases.
-- [[file:docs/autolith-minimal-technical-spec.org][Technical specification]]:
-  define product behavior and runtime boundaries.
 - [[file:AGENTS.md][Contributor rules]]: change the repository safely.
 
 * Start
@@ -143,8 +141,8 @@ Nix starts only explain their external update path.
 
 * Development
 
-Read [[file:AGENTS.md][AGENTS.md]] before editing. Product behavior is defined in the
-[[file:docs/autolith-minimal-technical-spec.org][technical specification]]. The
-[[file:docs/architecture.org][architecture note]] maps source files to runtime responsibilities.
+Read [[file:AGENTS.md][AGENTS.md]] before editing. The [[file:docs/guide.org][guide]] documents user-visible
+behavior, and the [[file:docs/architecture.org][architecture note]] maps source files to runtime
+responsibilities.
 
 Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].

@@ -2,14 +2,32 @@
 
 ## Purpose and Sources of Truth
 
-Autolith is a small, live, self-modifying Common Lisp agent. Read
-`docs/autolith-minimal-technical-spec.org` before making architectural changes. The
-specification defines product behavior and runtime boundaries; this file
-defines repository, Common Lisp, testing, and commit policy.
+Autolith is a small, live, self-modifying Common Lisp agent. This file contains
+its enduring architectural and repository policy. `docs/guide.org` documents
+user-visible behavior, `docs/architecture.org` maps runtime and source
+boundaries, and tracked source plus behavioral tests are executable truth. Do
+not create another omnibus product specification.
 
-Do not silently simplify the specification. Do not leave TODOs, FIXMEs,
-stubs, placeholders, or knowingly partial implementations. If a requirement
-is genuinely too broad or conflicts with another requirement, stop and ask.
+Core principles:
+
+- Treat the live Lisp image as the primary runtime while keeping source
+  sufficient for a clean rebuild.
+- Prefer Common Lisp and focused CLOS protocols over generated scripts,
+  parallel type dispatch, duplicated data structures, or overlapping public
+  interfaces.
+- Keep self-modification explicit, auditable, reconstructible, and confined to
+  a small operation set.
+- Preserve durable conversations, user state, working generations, and a
+  pristine recovery path.
+- Use process boundaries for reliability and accidental-damage containment,
+  never as a hostile-code security claim.
+- Keep platform-specific behavior behind narrow adapters.
+- Treat migrations and compatibility readers as temporary release machinery.
+  Give them an explicit removal boundary instead of accumulating them forever.
+
+Do not leave TODOs, FIXMEs, stubs, placeholders, or knowingly partial
+implementations. If a requirement is genuinely too broad or conflicts with
+another requirement, stop and ask.
 
 Supported source-development targets are Linux x86-64 and macOS arm64 on SBCL
 with a terminal interface, one primary agent, and no claim of hostile-code
@@ -80,8 +98,8 @@ must remain possible without loading a damaged active core.
 Use one project package, `#:autolith`. Do not create scoped, subsystem, feature,
 file-local, or test packages unless the user explicitly changes this policy.
 Split the implementation into focused files while keeping those files in the
-single project package. The runtime component boundaries in the specification
-are not package boundaries.
+single project package. Runtime component boundaries are not package
+boundaries.
 
 - Define the package once and use `(in-package #:autolith)` in project source.
 - `:use` only `#:cl`.

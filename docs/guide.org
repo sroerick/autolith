@@ -24,8 +24,8 @@ on SBCL. It:
 - starts from a validated preloaded active image when available; and
 - can boot a retained generation against its exact Git revision with fallback.
 
-The implementation follows [[file:autolith-minimal-technical-spec.org][the technical specification]]. The object and
-file boundaries are summarized in [[file:architecture.org][the architecture note]].
+User-visible behavior is documented here. The object and file boundaries are
+summarized in [[file:architecture.org][the architecture note]].
 
 * Requirements and setup
 
