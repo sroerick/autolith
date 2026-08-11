@@ -2848,9 +2848,9 @@
               :output (tool-result-content result)
               :success-p (tool-result-success-p result))
              (let ((status (mcp-manager-render-status manager))
-                   (conversation-text
-                     (uiop:read-file-string
-                      (conversation-pathname conversation))))
+                    (conversation-text
+                      (uiop:read-file-string
+                       (conversation-log-pathname conversation))))
                (test-assert
                 (and
                  (tool-result-success-p result)
