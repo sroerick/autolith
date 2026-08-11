@@ -10,21 +10,10 @@
   "A named collection of isolated processes managed by sbcl-workers."
   'sbcl-worker-pool)
 
-(-> lisp-repl-name-p (t) boolean)
-(defun lisp-repl-name-p (value)
-  "Return true when VALUE is safe as one named worker REPL."
-  (and (non-empty-string-p value)
-       (<= (length value) 80)
-       (every (lambda (character)
-                (or (alphanumericp character)
-                    (find character "-_")))
-              value)
-       t))
-
 (-> lisp-repl--validate-name (string) string)
 (defun lisp-repl--validate-name (name)
   "Return valid REPL NAME or signal WORKER-ERROR."
-  (unless (lisp-repl-name-p name)
+  (unless (sbcl-worker-name-p name)
     (error 'worker-error
            :message
            (format nil

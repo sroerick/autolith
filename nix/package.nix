@@ -156,8 +156,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "sbcl-workers";
-      rev = "fff2bc4bbeb8eec93a963c5ad1f7af85bbf7a6a3";
-      hash = "sha256-lfL8HsQI7ZOMo5nqEghYZyVVEtCmSy8UPzyzBRS7Wd8=";
+      rev = "3cda0dbfa5570ce1d4f917131d69c2f976be289d";
+      hash = "sha256-PoMRixMZJ4gJz5CRx+ov4crMkKC5sXFgTV3hN6Jklp0=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads

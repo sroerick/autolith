@@ -96,5 +96,5 @@
   :version "git-0a586df98c295ca6d2fcd47e33bc5f478075f470"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-workers.git" :ref "e43fc87daaca01183606c2e0b4150605d01677e7")
-  :version "git-e43fc87daaca01183606c2e0b4150605d01677e7"))
+  :initargs (:remote-url "https://github.com/luciusmagn/sbcl-workers.git" :ref "3cda0dbfa5570ce1d4f917131d69c2f976be289d")
+  :version "git-3cda0dbfa5570ce1d4f917131d69c2f976be289d"))

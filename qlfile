@@ -22,4 +22,4 @@ git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b
 git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref 95ea9d28244fce21a2d7e34580f86d5e2c21a1bf
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref 408fa906e2d16aa515b39c943d3affcab3811ffc
 git sexp-store https://github.com/luciusmagn/sexp-store.git :ref 0a586df98c295ca6d2fcd47e33bc5f478075f470
-git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref e43fc87daaca01183606c2e0b4150605d01677e7
+git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref 3cda0dbfa5570ce1d4f917131d69c2f976be289d
