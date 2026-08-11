@@ -26,17 +26,18 @@ a user-local init.lisp change, or a private image commit.
   without bracketed-paste markers or a literal Ctrl-V byte, so embedded newlines
   were interpreted as submission. Enhanced Ctrl-D reports were ignored, while
   physical stream EOF was incorrectly collapsed into the Ctrl-D event.
-- Behavior: terminal startup again enables Kitty CSI-u and xterm
-  modifyOtherKeys. A narrow Autolith decoder handles supported enhanced reports
-  for Escape, Enter, Tab, Shift-Tab, Backspace, and Ctrl-D before delegating all
-  other input to Clinedi. Literal and enhanced Ctrl-D produce =:end-of-input=;
-  physical stream EOF remains =:stream-end= so modal and responsive readers cancel
-  or exit without entering Ctrl-D-specific actions. The reader collects bounded
-  literal Ctrl-V and raw multiline byte bursts as paste events, while buffering
-  ordinary multi-key bursts for normal decoding. Partial protocol activation
-  performs balanced best-effort cleanup. Terminal mode detection checks the input
-  file descriptor's POSIX TTY status before inspecting termios, so stopping and
-  restarting the UI for line-oriented secret prompts remains interactive even
+- Behavior: terminal startup enables Kitty CSI-u and xterm modifyOtherKeys.
+  Pinned Clinedi =b50c30d= decodes enhanced reports for Escape, Enter, Tab,
+  Shift-Tab, Backspace, and Ctrl-D directly. Autolith retains product-specific
+  physical EOF, literal Ctrl-V, and raw multiline burst policy. Literal and
+  enhanced Ctrl-D produce =:end-of-input=; physical stream EOF remains
+  =:stream-end= so modal and responsive readers cancel or exit without entering
+  Ctrl-D-specific actions. The reader collects bounded literal Ctrl-V and raw
+  multiline byte bursts as paste events, while buffering ordinary multi-key
+  bursts for normal decoding. Partial protocol activation performs balanced
+  best-effort cleanup. Terminal mode detection checks the input file descriptor's
+  POSIX TTY status before inspecting termios, so stopping and restarting the UI
+  for line-oriented secret prompts remains interactive even
   when the Lisp stream wrapper reports noninteractive. During an active turn,
   Escape cancels and permits queued work to continue; Ctrl-C cancels and holds
   queued follow-ups plus unconsumed steering until explicit input resumes them,
@@ -45,15 +46,16 @@ a user-local init.lisp change, or a private image commit.
   =src/terminal/protocol.lisp=, =src/terminal/stream.lisp=,
   =src/terminal/ui.lisp=, =src/terminal/responsive-input.lisp=,
   =src/localgroup/terminal.lisp=, and =src/localgroup/client.lisp=.
-- Verification: modified Enter, enhanced Tab, Shift-Tab, Ctrl-D, physical EOF,
-  legacy input, bracketed, literal Ctrl-V, raw string-stream, OS-pipe multiline
-  paste, ordinary buffered keys, protocol ordering, follow-up cycling,
-  active-interrupt queue holding and resumption, descriptor-backed terminal
-  restart, and cleanup regressions pass in focused checks. The complete repository
-  check passes 3,734 tests.
-- Removal condition: Clinedi natively decodes the bare Kitty control reports and
-  terminals reliably bracket every paste path, so Autolith can remove its
-  compatibility reader without losing Escape or multiline paste semantics.
+- Verification: Clinedi's exhaustive enhanced Enter, Tab, Shift-Tab, Escape,
+  Backspace, and Ctrl-D mapping suite passes. Autolith's representative Clinedi
+  delegation, physical EOF, bracketed and literal Ctrl-V paste, raw string-stream
+  and OS-pipe multiline paste, ordinary buffered keys, protocol ordering,
+  follow-up cycling, active-interrupt queue holding and resumption,
+  descriptor-backed terminal restart, and cleanup regressions pass in focused
+  checks. The complete repository check previously passed 3,734 tests.
+- Removal condition: terminals reliably bracket every paste path, so Autolith can
+  remove its unbracketed Ctrl-V and raw-burst compatibility without losing
+  multiline paste semantics.
 
 ** Authenticated local session control
 
