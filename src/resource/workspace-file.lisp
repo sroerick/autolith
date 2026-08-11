@@ -17,10 +17,6 @@
 (defparameter *workspace-file-resource-maximum-result-characters* 7600
   "The maximum characters constructed for one resource tool result.")
 
-(defparameter *workspace-file-resource-publish-function*
-  #'uiop:rename-file-overwriting-target
-  "The function atomically publishing a prepared workspace-file replacement.")
-
 (defvar *workspace-file-resource-digest-key* (random-data 16)
   "The process-local key used to identify exact workspace-file snapshots.")
 
@@ -773,6 +769,16 @@
                      *workspace-file-resource-maximum-bytes*)
              :tool-name "resource.edit"))
     octets))
+
+(-> workspace-file--rename-overwriting-target (pathname pathname) null)
+(defun workspace-file--rename-overwriting-target (source target)
+  "Atomically replace exact TARGET with SOURCE without pathname defaulting."
+  (sb-posix:rename (namestring source) (namestring target))
+  nil)
+
+(defparameter *workspace-file-resource-publish-function*
+  #'workspace-file--rename-overwriting-target
+  "The function atomically publishing a prepared workspace-file replacement.")
 
 (-> workspace-file--write-temporary
     (pathname pathname (simple-array (unsigned-byte 8) (*)))

@@ -614,7 +614,7 @@
                (multiple-value-bind (read-result uri revision)
                    (read-resource first-context "workspace:oversized-edit.txt")
                  (declare (ignore read-result))
-                 (let ((publish-called-p nil)
+                 (let* ((publish-called-p nil)
                        (*workspace-file-resource-maximum-bytes* 6)
                        (*workspace-file-resource-publish-function*
                          (lambda (source target)
@@ -703,6 +703,34 @@
                   (null (directory (merge-pathnames ".*.autolith-resource-*.tmp"
                                                     workspace)))
                   "publication mismatch cleans its same-directory temporary file")))
+             (let ((path (merge-pathnames "extensionless" workspace)))
+               (workspace-resource-tests--write-text path (format nil "before~%"))
+               (multiple-value-bind (read-result uri revision)
+                   (read-resource first-context "workspace:extensionless")
+                 (declare (ignore read-result))
+                 (let ((result
+                         (edit-resource
+                          first-context uri revision
+                          (list
+                           (workspace-resource-tests--operation
+                            "replace-lines"
+                            "start-line" 1
+                            "end-line" 1
+                            "content" "after")))))
+                   (test-assert
+                    (tool-result-success-p result)
+                    "resource.edit publishes an extensionless target"))
+                 (test-assert
+                  (string= (workspace-file--read-content path)
+                           (format nil "after~%"))
+                  "extensionless publication replaces the exact target")
+                 (test-assert
+                  (null (probe-file (merge-pathnames "extensionless.tmp" workspace)))
+                  "extensionless publication does not default the target type")
+                 (test-assert
+                  (null (directory (merge-pathnames ".*.autolith-resource-*.tmp"
+                                                    workspace)))
+                  "extensionless publication leaves no temporary file")))
              (let* ((path (merge-pathnames "serialized.txt" workspace))
                     (gate (make-lock "workspace resource serialization test"))
                     (condition (make-condition-variable))
