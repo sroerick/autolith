@@ -34,8 +34,11 @@ a user-local init.lisp change, or a private image commit.
   and enhanced Ctrl-D produce =:end-of-input=; physical stream EOF remains
   =:stream-end= so modal and responsive readers cancel or exit without entering
   Ctrl-D-specific actions. The reader collects bounded literal Ctrl-V and raw
-  multiline byte bursts as paste events, while buffering ordinary multi-key
-  bursts for normal decoding. Partial protocol activation performs balanced
+  multiline byte bursts as paste events. It coalesces each multi-character
+  plain-text single-line burst into one insert event. Single-line bursts containing
+  terminal controls remain buffered for normal decoding. Multiline paste
+  classification keeps precedence over later controls so pasted text cannot submit
+  or invoke editing commands. Partial protocol activation performs balanced
   best-effort cleanup. Terminal mode detection checks the input file descriptor's
   POSIX TTY status before inspecting termios, so stopping and restarting the UI
   for line-oriented secret prompts remains interactive even
@@ -50,10 +53,11 @@ a user-local init.lisp change, or a private image commit.
 - Verification: Clinedi's exhaustive enhanced key mapping and exact
   bracketed-paste control suites pass. Autolith's representative Clinedi
   delegation, physical EOF, bracketed and literal Ctrl-V paste, raw string-stream
-  and OS-pipe multiline paste, ordinary buffered keys, protocol ordering and
-  rollback, follow-up cycling, active-interrupt queue holding and resumption,
-  descriptor-backed terminal restart, and cleanup regressions pass in focused
-  checks. The complete repository check previously passed 3,734 tests.
+  and OS-pipe multiline paste, multiline control precedence, single-line paste
+  batching, mixed buffered keys, protocol ordering and rollback, follow-up cycling,
+  active-interrupt queue holding and resumption, descriptor-backed terminal restart,
+  and cleanup regressions pass in focused checks. The complete repository check
+  previously passed 3,734 tests.
 - Removal condition: terminals reliably bracket every paste path, so Autolith can
   remove its unbracketed Ctrl-V and raw-burst compatibility without losing
   multiline paste semantics.

@@ -33,12 +33,26 @@
 
 (-> terminal--multiline-paste-burst-p (string) boolean)
 (defun terminal--multiline-paste-burst-p (text)
-  "Return true when TEXT is one unbracketed burst containing a line break."
+  "Return true when TEXT is one unbracketed burst containing a line break.
+
+This classification takes precedence over controls later in the burst so pasted
+text cannot invoke editing commands."
   (and (> (length text) 1)
        (not (char= (char text 0) *terminal-escape-character*))
        (not (char= (char text 0) (code-char 22)))
        (or (find #\Newline text)
            (find #\Return text))
+       t))
+
+(-> terminal--plain-text-burst-p (string) boolean)
+(defun terminal--plain-text-burst-p (text)
+  "Return true when TEXT is one multi-character burst without terminal controls."
+  (and (> (length text) 1)
+       (every (lambda (character)
+                (let ((code (char-code character)))
+                  (not (or (< code 32)
+                           (<= 127 code 159)))))
+              text)
        t))
 
 (-> terminal--read-control-v-paste (stream) t)
@@ -96,7 +110,7 @@
     t)
 (defun terminal-read-editing-event
     (terminal &key (escape-delay *terminal-escape-delay-seconds*))
-  "Read one semantic event, preserving unbracketed multiline paste bursts."
+  "Read one event, batching plain input and preserving multiline paste bursts."
   (let ((pending (stream-terminal-pending-input-stream terminal)))
     (when (and pending (not (listen pending)))
       (setf (stream-terminal-pending-input-stream terminal) nil
@@ -112,6 +126,8 @@
              ':stream-end)
             ((terminal--multiline-paste-burst-p burst)
              (list ':paste (sanitize-text burst)))
+            ((terminal--plain-text-burst-p burst)
+             (list ':insert burst))
             (t
              (terminal--decode-buffered-editing-event
               terminal

@@ -748,6 +748,33 @@
             (null submitted)
             (string= (line-editor-text editor) payload))
        "an unbracketed multiline terminal paste never submits input")))
+  (let* ((payload
+           (format nil "first~%second~Cthird~C[A~C"
+                   #\Tab *terminal-escape-character* (code-char 3)))
+         (sanitized (sanitize-text payload))
+         (terminal
+           (make-instance
+            'stream-terminal
+            :input-stream (make-string-input-stream payload)
+            :output-stream (make-string-output-stream)
+            :input-file-descriptor 0
+            :interactive-p t
+            :columns 40))
+         (event (terminal-read-event terminal))
+         (editor (line-editor-create)))
+    (test-assert
+     (and (eq (first event) :paste)
+          (string= (second event) sanitized))
+     "multiline paste precedence neutralizes later editing controls")
+    (multiple-value-bind (action submitted)
+        (line-editor-handle-event editor event)
+      (test-assert
+       (and (eq action :continue)
+            (null submitted)
+            (string= (line-editor-text editor) sanitized))
+       "multiline controls cannot submit or invoke Clinedi editing commands"))
+    (test-assert (eq (terminal-read-event terminal) :stream-end)
+                 "a multiline control paste remains one event"))
   (multiple-value-bind (read-descriptor write-descriptor)
       (sb-posix:pipe)
     (let ((input nil)
@@ -784,27 +811,57 @@
                (test-assert
                 (and (eq (first event) :paste)
                      (string= (second event) payload))
-                "one OS-level multiline input write never becomes submission")))
+                "one OS-level multiline input write never becomes submission")
+               (let ((single-line "pipe single-line paste"))
+                 (write-string single-line output)
+                 (finish-output output)
+                 (test-assert
+                  (equal (terminal-read-event terminal)
+                         (list ':insert single-line))
+                  "one OS-level single-line input write becomes one insert event"))))
         (when input
           (close input))
         (when output
           (close output))
         (ignore-errors (sb-posix:close read-descriptor))
         (ignore-errors (sb-posix:close write-descriptor)))))
+  (let* ((payload "single-line paste")
+         (terminal
+           (make-instance
+            'stream-terminal
+            :input-stream (make-string-input-stream payload)
+            :output-stream (make-string-output-stream)
+            :input-file-descriptor 0
+            :interactive-p t
+            :columns 40))
+         (event (terminal-read-event terminal))
+         (editor (line-editor-create)))
+    (test-assert
+     (equal event (list ':insert payload))
+     "a buffered plain-text burst becomes one insert event")
+    (multiple-value-bind (action submitted)
+        (line-editor-handle-event editor event)
+      (test-assert
+       (and (eq action :continue)
+            (null submitted)
+            (string= (line-editor-text editor) payload))
+       "a coalesced plain-text burst reaches Clinedi atomically"))
+    (test-assert (eq (terminal-read-event terminal) :stream-end)
+                 "a coalesced plain-text burst leaves no per-character events"))
   (let ((terminal
           (make-instance
            'stream-terminal
-           :input-stream (make-string-input-stream "ab")
+           :input-stream
+           (make-string-input-stream (format nil "a~C" #\Tab))
            :output-stream (make-string-output-stream)
            :input-file-descriptor 0
            :interactive-p t
            :columns 40)))
     (test-assert
      (equal (terminal-read-event terminal) '(:insert "a"))
-     "a buffered ordinary burst retains its first editing event")
-    (test-assert
-     (equal (terminal-read-event terminal) '(:insert "b"))
-     "a buffered ordinary burst retains its remaining editing events"))
+     "a mixed buffered burst retains text before a control event")
+    (test-assert (eq (terminal-read-event terminal) :complete)
+                 "a mixed buffered burst retains its control event"))
   (dolist (case
            (list
             (list (string *terminal-escape-character*) ':escape)
