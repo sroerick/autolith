@@ -183,8 +183,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "sexp-config";
-      rev = "f3697d1e97b6b6e7ad1430d236e3706b377277cc";
-      hash = "sha256-fIsWY/YVOtyrsD+GE/OTmMfH2GdB7L8ND1oEoWp/RFI=";
+      rev = "408fa906e2d16aa515b39c943d3affcab3811ffc";
+      hash = "sha256-r4bCQHHVOC8peLofhzh0m8Y2vuu/uaaT/oOwAB8TaXQ=";
     };
   };
 

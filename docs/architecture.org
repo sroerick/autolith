@@ -339,12 +339,10 @@ endpoint identity without carrying runtime threads into a generation.
 ** =sexp-config= and native configuration adapters
 
 The pinned =sexp-config= dependency owns restricted lexical preflight, bounded
-one-form reading, isolated reader packages, and structural grammar validation
-for =SKILL.sexp=, native MCP configuration, and child-agent role files.
-=configuration/native-source.lisp= supplies one narrow compatibility adapter for
-standard keyword-to-string token boundaries until the dependency accepts them
-directly. Each consumer retains its own field vocabulary, semantic validation,
-file confinement, and diagnostics.
+one-form reading, isolated reader packages, structural grammar validation, and
+standard keyword-to-string token boundaries for =SKILL.sexp=, native MCP
+configuration, and child-agent role files. Each consumer retains its own field
+vocabulary, semantic validation, file confinement, and diagnostics.
 
 ** =cl-jobpond= and =task/=
 

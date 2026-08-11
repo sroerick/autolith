@@ -1092,8 +1092,7 @@ bound policy takes effect without reloading this file."
   "Read exactly one bounded native MCP form from PATHNAME."
   (let ((source (mcp-configuration--read-source pathname)))
     (handler-case
-        (read-source (native-source-normalize-reader-boundaries source)
-                     (mcp-configuration--source-grammar))
+        (read-source source (mcp-configuration--source-grammar))
       (sexp-config-error (condition)
         (mcp-configuration--error (sexp-config-error-message condition)
                                   :pathname pathname)))))
