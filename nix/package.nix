@@ -95,6 +95,21 @@ let
     ];
   };
 
+  colordiff = pkgs.sbcl.buildASDFSystem {
+    pname = "colordiff";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "colordiff";
+      rev = "929457427d42dc0eebe847b49889c60c5259490f";
+      hash = "sha256-/ui9KeMtE3CcpqgPH9p3cE/3cYjLq20aaqlDdYJ+L8c=";
+    };
+    lispLibs = [
+      clColorist
+      colorlisp
+    ];
+  };
+
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
     version = "0.1.0";
@@ -251,6 +266,7 @@ let
       cffi
       closer-mop
       colorlisp
+      colordiff
       dexador
       ironclad
       opticl

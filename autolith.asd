@@ -12,6 +12,7 @@
                #:clifff
                #:clinedi
                #:colorlisp
+               #:colordiff
                #:closer-mop
                #:dexador
                #:flexi-streams

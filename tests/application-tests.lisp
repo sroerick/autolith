@@ -2648,27 +2648,6 @@
               :columns 100
               :compact-view-p nil))
            (source (format nil "(defun highlighted-source ()~%  42)")))
-       (let ((rows
-               (change-viewer-render
-                :removed-content "(defun old-view () 1)"
-                :added-content "(defun new-view () 2)"
-                :removed-start-line 41
-                :added-start-line 41
-                :source-path "missing/library-seam.lisp"
-                :syntax-highlight-p nil)))
-          (test-assert
-           (and (find (terminal-span ':failure "- 41 │ ")
-                      (first rows) :test #'equal)
-                (find (terminal-span ':success "+ 41 │ ")
-                      (second rows) :test #'equal)
-                (find (terminal-span ':code "(defun old-view () 1)")
-                      (first rows) :test #'equal)
-                (find (terminal-span ':code "(defun new-view () 2)")
-                      (second rows) :test #'equal)
-                (not (loop for row in rows
-                           thereis (find (terminal-span ':syntax-keyword "defun")
-                                         row :test #'equal))))
-           "the shared viewer has one keyword API and never reads source metadata"))
       (dolist (specification
                '(("lisp" "eval" "form")
                  ("lisp" "compile" "form")
@@ -2721,42 +2700,6 @@
                   (not (search "content unavailable" text)))
              (format nil "~A.~A numbers available syntax-highlighted added content"
                      namespace name)))))
-      (let* ((entry
-               (call-entry
-                application "fs" "write"
-                :arguments
-                (json-object "path" "src/highlighted.unknown"
-                             "content" "plain source")))
-             (text (markdown-tests--row-text entry)))
-        (test-assert
-         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
-              (find (terminal-span :code "plain source") entry :test #'equal)
-              (search "+ 1 │ plain source" text))
-         "writes number the green added ruler without a known syntax"))
-      (let* ((entry
-               (call-entry
-                application "fs" "write"
-                :arguments
-                (json-object "path" "src/trailing.unknown"
-                             "content" (format nil "first~%~%"))))
-             (text (markdown-tests--row-text entry)))
-        (test-assert
-         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
-              (find (terminal-span :success "+ 2 │ ") entry :test #'equal)
-              (search "+ 2 │" text)
-              (not (search "(empty content)" text)))
-         "writes preserve and number trailing blank logical lines"))
-      (let* ((entry
-               (call-entry
-                application "fs" "write"
-                :arguments
-                (json-object "path" "src/blank.unknown"
-                             "content" (string #\Newline))))
-             (text (markdown-tests--row-text entry)))
-        (test-assert
-         (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
-              (not (search "(empty content)" text)))
-         "writes render a newline-only file as one numbered blank line"))
       (let ((entry
               (call-entry
                application "fs" "edit"
@@ -2768,23 +2711,6 @@
          (and (find (terminal-span :failure "- │ ") entry :test #'equal)
               (find (terminal-span :success "+ │ ") entry :test #'equal))
          "fs.edit keeps both gutters unnumbered when file coordinates are unknown"))
-      (let* ((entry
-               (call-entry
-                application "lisp" "scratchpad-edit"
-                :arguments
-                (json-object
-                 "path" "highlighted.unknown"
-                 "old-text" "old plain"
-                 "new-text" "new plain")))
-             (text (markdown-tests--row-text entry)))
-        (test-assert
-         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
-              (find (terminal-span :success "+ │ ") entry :test #'equal)
-              (find (terminal-span :code "old plain") entry :test #'equal)
-              (find (terminal-span :code "new plain") entry :test #'equal)
-              (search "- │ old plain" text)
-              (search "+ │ new plain" text))
-         "edits preserve semantic rulers without a known syntax"))
       (let ((entry
               (call-entry
                application "lisp" "scratchpad-edit"

@@ -469,22 +469,26 @@ a user-local init.lisp change, or a private image commit.
   only the retained observation matching both URI and revision. Invalid operation
   shapes, missing snapshots, and unavailable exact state fall back to structured
   semantic fields rather than displaying a speculative diff.
-- Scope and location: tracked project work in
+- Scope and location: generic endpoint comparison, bounded numbered rows, semantic
+  highlighting, and terminal-safe ANSI output live in pinned Colordiff revision
+  =9294574=. Autolith keeps only its terminal-span adapter, source preview,
+  mutation-domain projection, exact-preimage lookup, and fallback policy in
+  =src/terminal/syntax-highlighting.lisp=,
   =src/application/change-viewer.lisp=,
-  =src/application/change-presentation.lisp=,
-  =src/application/tool-presentation.lisp=, ASDF wiring, focused application
-  regressions, the guide, and the minimal technical specification. Implementation
-  commits are =448d355=, =3a3c596=, =63ae1fb=, and =1d8dcb6=.
-- Verification: fresh-SBCL focused tests cover numbered and syntax-highlighted
-  file changes, native and revision-gated agenda and memory creation, replacement,
-  removal, global scope, canonical tags, exact observed preimages, and structured
-  fallback for invalid multi-operation calls. Source and test delimiter checks
-  and =git diff --check= pass. The complete repository check was intentionally not
-  run because this is not a release.
-- Removal condition: a replacement mutation-presentation protocol provides the
+  =src/application/change-presentation.lisp=, and
+  =src/application/tool-presentation.lisp=.
+- Verification: Colordiff's 23 tests pass. Fresh-SBCL focused Autolith tests pass
+  43 assertions covering numbered and syntax-highlighted file changes, live Lisp
+  highlighting, native and revision-gated agenda and memory changes, exact
+  observed preimages, and structured fallback. The Nix Autolith package builds
+  with the pinned library, =git diff --check= passes, and independent review found
+  no defects. The extraction removes 247 Autolith source lines, 74 test lines,
+  and five =test-assert= forms. The complete repository check was intentionally
+  not run because this is not a release.
+- Removal condition: a replacement mutation-presentation dependency provides the
   same exact preimage discipline, stable semantic documents, numbered colored
-  context, applicable syntax highlighting, bounded output, and honest structured
-  fallback with less project-specific code.
+  context, applicable syntax highlighting, bounded output, terminal safety, and
+  honest structured fallback with less project-specific code.
 
 ** Callable PROMPT and child response promotion
 

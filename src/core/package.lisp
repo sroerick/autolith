@@ -137,15 +137,14 @@
                 #:live-region-suspend
                 #:live-region-dismiss
                 #:live-region-resize)
+  (:import-from #:colordiff
+                #:highlight-lines
+                #:highlight-spans
+                #:render-diff)
   (:import-from #:colorlisp
-                #:colorlisp-error
-                #:highlight-segments
                 #:language
-                #:language-detect
                 #:language-find
-                #:native-library-path
-                #:segment-category
-                #:segment-text)
+                #:native-library-path)
   (:import-from #:closer-mop
                 #:class-slots
                 #:slot-definition-name)
