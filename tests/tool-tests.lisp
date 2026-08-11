@@ -127,9 +127,6 @@
                         "the Lisp namespace exposes nineteen worker and source operations")
            (test-assert (tool-registry-find registry "lisp" "source")
                         "matching implementation source has a dedicated Lisp tool")
-           (test-assert (typep (tool-registry-find registry "lisp" "paren-check")
-                               'lisp-paren-check-tool)
-                        "Lisp-family delimiter checking has a dedicated workspace tool")
            (dolist (name '("scratchpad-list" "scratchpad-read"
                            "scratchpad-write" "scratchpad-edit"
                            "scratchpad-run" "scratchpad-delete"))

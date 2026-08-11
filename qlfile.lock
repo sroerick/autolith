@@ -70,6 +70,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/colordiff.git" :ref "929457427d42dc0eebe847b49889c60c5259490f")
   :version "git-929457427d42dc0eebe847b49889c60c5259490f"))
+("parenchek" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/luciusmagn/parenchek.git" :ref "a7dc0a7e2c6250056c294ab39d5d2872dba71592")
+  :version "git-a7dc0a7e2c6250056c294ab39d5d2872dba71592"))
 ("idsmall" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/idsmall.git" :ref "3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9")

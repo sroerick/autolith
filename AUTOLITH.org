@@ -366,22 +366,27 @@ a user-local init.lisp change, or a private image commit.
   authority, descriptor-bound repeated directory classification, repeated file
   snapshots, input and traversal budgets, bounded diagnostics, and failed
   results for issues, changes, or incomplete checks.
-- Scope and location: tracked project work in
-  =src/tools/lisp-source-balance.lisp=, =src/tools/lisp-paren-check.lisp=, the
-  workspace, resource, and scratchpad editing tools, tool registry and defaults,
-  ASDF wiring, focused regressions, guide, specification, and repository agent
-  instructions. The copied =tools/paren-check.rs= utility and ignored binary were
-  removed.
-- Verification: extension coverage, lexical exclusions, typed mismatch locations,
-  direct and recursive checks, deterministic language filtering, fixed read
-  authority, file and directory replacement races, same-size in-place changes,
-  symbolic-link escapes, malformed UTF-8, discovery and input limits including a
-  zero result bound, complete output bounds, successful warning propagation
-  through all five edit seams, balanced repair, and canonical operation discovery
-  pass focused regressions.
-- Removal condition: a replacement source-validation protocol provides equivalent
-  language-aware post-edit advice and explicit bounded tree checking with exact
-  diagnostics, workspace authority, and honest incomplete-scan failures.
+- Scope and location: the generic scanner, bounded edit-warning composition, safe
+  recursive checker, and 72 regression assertions now live in the COLL-Attribution
+  Parenchek library pinned at revision =a7dc0a7=. Autolith retains the six editing
+  call sites, imports two public functions, and provides a 36-line tool adapter in
+  =src/tools/lisp-paren-check.lisp= with exact ASDF, Qlot, and Nix pins. The local
+  451-line scanner, 854-line checker implementation, 647-line specialized test
+  file, three test-entry calls, and the remaining dedicated registry assertion
+  were removed.
+- Verification: Parenchek's complete check passes 72 assertions. A fresh forced
+  Autolith test-system load passes, and registry smoke covers balanced and broken
+  explicit checks, Common Lisp, Scheme, and Clojure =fs.write= warnings, balanced
+  =fs.edit= repair, and a Clojure scratchpad warning. Workspace tools,
+  workspace-file resources, and scratchpad tools pass 143 focused assertions.
+  The exact Nix Autolith package builds with Parenchek. Autolith source falls by
+  1,266 lines, tests fall by 653 lines, and 48 local =test-assert= forms disappear.
+  The complete repository check was intentionally not run under the release-only
+  full-check policy.
+- Removal condition: a replacement dependency provides equivalent language-aware
+  post-edit advice and explicit bounded tree checking with exact diagnostics,
+  workspace authority, and honest incomplete-scan failures using less integration
+  code.
 
 ** Lisp-first unified interaction
 

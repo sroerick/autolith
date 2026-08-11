@@ -110,6 +110,20 @@ let
     ];
   };
 
+  parenchek = pkgs.sbcl.buildASDFSystem {
+    pname = "parenchek";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "parenchek";
+      rev = "a7dc0a7e2c6250056c294ab39d5d2872dba71592";
+      hash = "sha256-3qBzFYCreWV12EZ3WnzQ3wZM7449O2fR2km1TEeOvtY=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      serapeum
+    ];
+  };
+
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
     version = "0.1.0";
@@ -270,6 +284,7 @@ let
       dexador
       ironclad
       opticl
+      parenchek
       quri
       serapeum
       yason

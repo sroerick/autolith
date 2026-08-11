@@ -141,6 +141,9 @@
                 #:highlight-lines
                 #:highlight-spans
                 #:render-diff)
+  (:import-from #:parenchek
+                #:lisp-paren-check-path
+                #:lisp-source-edit-result-content)
   (:import-from #:colorlisp
                 #:language
                 #:language-find

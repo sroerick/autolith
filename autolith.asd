@@ -21,6 +21,7 @@
                #:bordeaux-threads
                #:mcparen
                #:opticl
+               #:parenchek
                #:quri
                #:serapeum
                #:sb-posix
@@ -92,7 +93,6 @@
                              (:file "tools/agenda")
                              (:file "tools/plan")
                              (:file "tools/workspace-edit")
-                             (:file "tools/lisp-source-balance")
                              (:file "tools/workspace")
                              (:file "tools/lisp-paren-check")
                              (:file "resource/workspace-file")
@@ -199,7 +199,6 @@
                              (:file "anthropic-provider-tests")
                              (:file "fireworks-provider-tests")
                              (:file "resource-tests")
-                             (:file "lisp-source-balance-tests")
                              (:file "workspace-resource-tests")
                              (:file "agenda-resource-tests")
                              (:file "memory-resource-tests")
