@@ -80,12 +80,14 @@ For a durable live mutation, preserve the specified order:
 1. Journal the intended mutation.
 2. Compile and install it in the active image.
 3. Run relevant checks.
-4. Persist the complete definition to an overlay file under the data root.
-5. Mark the journal entry durable.
+4. Publish the complete reconstructible state as an immutable private image
+   commit, clean-process probe its replay script, and retain it in private Git
+   history.
+5. Atomically select the private commit and mark the journal entry durable.
 
-Autolith's runtime never patches its own tracked repository; overlays load at
-startup after the tracked system, and repository changes remain with the
-user and their development tools.
+Autolith's runtime never patches its own tracked repository; selected private
+replay scripts load after the tracked system, and repository changes remain
+with the user and their development tools.
 
 Conversation files and mutation journals are append-only sequences of
 top-level readable forms. Bind `*read-eval*` to `nil` when reading persisted
