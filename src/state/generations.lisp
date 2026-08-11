@@ -377,14 +377,6 @@ so its own stage and message survive the round trip."
              :pathname (configuration-source-root configuration))))
   nil)
 
-(-> checkpoint--single-threaded-p () boolean)
-(defun checkpoint--single-threaded-p ()
-  "Return true when SBCL's current thread is the only live Lisp thread."
-  (notany (lambda (thread)
-            (and (not (eq thread sb-thread:*current-thread*))
-                 (sb-thread:thread-alive-p thread)))
-          (sb-thread:list-all-threads)))
-
 (-> checkpoint--process-identifier () integer)
 (defun checkpoint--process-identifier ()
   "Return the current process identifier used to recognize a checkpoint child."

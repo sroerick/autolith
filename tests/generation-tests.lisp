@@ -146,7 +146,7 @@
                     (ignore active-configuration source-commit))
                    nil))
                 (list
-                 'sbcl-generations::checkpoint--single-threaded-p
+                 'checkpoint-single-threaded-p
                  (lambda ()
                    nil)))
                (lambda ()
@@ -597,7 +597,7 @@
                   (lambda (active-source-root)
                     (declare (ignore active-source-root))
                     '(:active-image-build-test)))
-            (list 'checkpoint--single-threaded-p (lambda () nil)))
+            (list 'checkpoint-single-threaded-p (lambda () nil)))
            (lambda ()
              (handler-case
                  (progn

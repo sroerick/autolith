@@ -305,7 +305,7 @@
     (ensure-directories-exist core-pathname)
     (when (probe-file temporary)
       (delete-file temporary))
-    (unless (checkpoint--single-threaded-p)
+    (unless (checkpoint-single-threaded-p)
       (error 'active-image-build-error
              :message "Building an active image requires one live Lisp thread."
              :stage ':fork

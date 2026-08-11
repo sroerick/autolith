@@ -264,18 +264,19 @@ a user-local init.lisp change, or a private image commit.
   =cl-jobpond=, and =cl-exec-sandbox= now own those reusable mechanics. Autolith
   retains its product-specific migration, validation, provenance, atomic state,
   authority, cancellation, and output policies. Pinned =sexp-config= =408fa90=
-  handles standard keyword-to-string reader boundaries directly, while pinned
-  =sbcl-workers= =3cda0db= owns the shared worker-name predicate. One narrow
-  compatibility adapter still publishes task pool limits under the library's
-  worker lock.
+  handles standard keyword-to-string reader boundaries directly;
+  =sbcl-workers= =3cda0db= owns the shared worker-name predicate; and
+  =sbcl-generations= =e65e27e= owns the live-thread snapshot preflight. Hosts
+  still hold their exclusion across that check and fork. One narrow compatibility
+  adapter still publishes task pool limits under the library's worker lock.
 - Scope and location: tracked project work in =src/conversation/=, =src/mcp/=,
   =src/skills/=, =src/state/generations.lisp=, =src/task/=,
   =src/tools/workspace.lisp=, =src/workers/lisp.lisp=, dependency locks, Nix
   packaging, architecture documentation, and regressions.
-- Verification: parser adjacency, worker-name validation, checkpoint fork
-  detachment, concurrent hurry-up admission and policy updates, invalid UTF-8
-  shell output, dependency builds, and the complete 3,582-test repository check
-  pass.
+- Verification: parser adjacency, worker-name validation, exact single- and
+  multi-thread checkpoint preflights, checkpoint fork detachment, concurrent
+  hurry-up admission and policy updates, invalid UTF-8 shell output, dependency
+  builds, and the complete 3,582-test repository check pass.
 - Removal condition: =cl-jobpond= exposes one public atomic pool-policy update
   operation; remove the remaining Autolith adapter when that condition is met.
 

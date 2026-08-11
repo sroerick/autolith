@@ -168,6 +168,7 @@
   (:import-from #:sbcl-generations
                 #:*checkpoint-in-progress-p*
                 #:checkpoint-backend
+                #:checkpoint-single-threaded-p
                 #:generation
                 #:generation-compatible-p
                 #:generation-coordinator-pid
