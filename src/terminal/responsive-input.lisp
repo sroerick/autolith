@@ -1816,7 +1816,8 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
         ((or application-operation-loop-action
              application-turn-cancelled
              application-input-failed
-             rollback-requested)
+             rollback-requested
+             update-requested)
          (condition)
           (error condition))
         ((or agent-loop-error

@@ -1475,6 +1475,52 @@ to TERMINAL-UI-SELECT."
               :message "Usage: /hurry-up on or /hurry-up off."))))
   nil)
 
+;;;; -- Installed Release Update --
+
+(-> application-update (application) null)
+(defun application-update (application)
+  "Check for and request an attended packaged release update for APPLICATION."
+  (let* ((configuration (application-configuration application))
+         (provenance
+           (or (application-installation-provenance application)
+               (installation-provenance-detect configuration)))
+         (method (installation-provenance-method provenance)))
+    (ecase method
+      (:source
+       (application-present
+        application
+        "Autolith is running from source. Update the checkout and run ./script/bootstrap."))
+      (:nix
+       (application-present
+        application
+        "Autolith is installed through Nix. Update the flake or profile that provides it."))
+      (:release
+       (if (update-state-refresh configuration :force-p t)
+           (let* ((state (update-state-load configuration))
+                  (latest-tag (update-state-latest-tag state))
+                  (current-tag
+                    (installation-provenance-current-tag provenance)))
+             (if (and current-tag
+                      latest-tag
+                      (release-tag< current-tag latest-tag))
+                 (error 'update-requested
+                        :message
+                        (format nil "Update to Autolith ~A."
+                                (subseq latest-tag 1))
+                        :tag latest-tag)
+                 (progn
+                   (setf (application-update-availability application) nil)
+                   (application-present
+                    application
+                    (format nil
+                            "Autolith ~A is already the newest published release."
+                            *autolith-version*)))))
+           (application-present
+            application
+            "Autolith could not check the release service. The installed release is unchanged.")))))
+  nil)
+
+
 ;;;; -- Built-in Interactive Commands --
 
 (define-application-command application--builtin-help-command
@@ -1941,6 +1987,19 @@ to TERMINAL-UI-SELECT."
      :slash-argument-mode :none)
     (application)
   (application-present application (application-status-entry application))
+  ':continue)
+
+(define-application-command application--builtin-update-command
+    (:name "/update"
+     :argument nil
+     :description "check and install a newer packaged release"
+     :tip "updates curl-installed Autolith and explains source or Nix updates."
+     :busy-behavior :hold
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
+  (application-update application)
   ':continue)
 
 (define-application-command application--builtin-context-command

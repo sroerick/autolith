@@ -128,8 +128,11 @@
                    (null (update-state-last-attempt-at state)))
               "malformed cached state degrades to safe empty state"))
 
-           (let ((*update-check-fetch-function*
-                   (lambda () "v101.2.3")))
+           (let* ((fetches 0)
+                  (*update-check-fetch-function*
+                    (lambda ()
+                      (incf fetches)
+                      "v101.2.3")))
              (test-assert (update-state-refresh configuration :now 200)
                           "a due successful refresh reports success")
              (let ((state (update-state-load configuration)))
@@ -137,17 +140,30 @@
                 (and (= (update-state-last-attempt-at state) 200)
                      (= (update-state-last-success-at state) 200)
                      (string= (update-state-latest-tag state) "v101.2.3"))
-                "successful refresh atomically caches timing and release data")))
+                "successful refresh atomically caches timing and release data"))
+             (test-assert
+              (not (update-state-refresh configuration :now 201))
+              "an ordinary refresh respects a fresh cache")
+             (test-assert
+              (update-state-refresh configuration :now 201 :force-p t)
+              "an explicit refresh bypasses a fresh cache")
+             (let ((state (update-state-load configuration)))
+               (test-assert
+                (and (= fetches 2)
+                     (= (update-state-last-attempt-at state) 201)
+                     (= (update-state-last-success-at state) 201)
+                     (string= (update-state-latest-tag state) "v101.2.3"))
+                "an explicit refresh records its fresh release result")))
            (let ((*update-check-fetch-function*
                    (lambda () (error "offline"))))
-             (let ((failed-at (+ 200 *update-check-interval*)))
+             (let ((failed-at (+ 201 *update-check-interval*)))
                (test-assert
                 (not (update-state-refresh configuration :now failed-at))
-                          "a network failure is nonfatal")
+                "a network failure is nonfatal")
                (let ((state (update-state-load configuration)))
                  (test-assert
                   (and (= (update-state-last-attempt-at state) failed-at)
-                       (= (update-state-last-success-at state) 200)
+                       (= (update-state-last-success-at state) 201)
                        (string= (update-state-latest-tag state) "v101.2.3"))
                   "failed refresh retains the last valid release cache")))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))

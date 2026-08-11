@@ -420,6 +420,8 @@
                 (names (mapcar #'application-operation-name operations)))
            (test-assert (member "help" names :test #'string=)
                         "interactive commands appear as canonical Lisp operations")
+           (test-assert (member "update" names :test #'string=)
+                        "the attended release update is a canonical Lisp operation")
            (test-assert (member "fs.list" names :test #'string=)
                         "model tools appear in the same user operation registry")
            (test-assert (member "lisp.paren-check" names :test #'string=)
@@ -474,6 +476,8 @@
                           "slash compatibility completion retains canonical commands")
              (test-assert (member "(help)" entry-names :test #'string=)
                           "completion offers a canonical no-argument Lisp command")
+             (test-assert (member "(update)" entry-names :test #'string=)
+                          "completion offers the explicit release update operation")
              (test-assert (member "(eval-now" entry-names :test #'string=)
                           "completion offers the explicit immediate local form")
              (test-assert (member "(prompt" entry-names :test #'string=)
@@ -514,6 +518,7 @@
                        ("(prompt (read-file \"/tmp/example\"))" :execute)
                        ("(goal \"pause\")" :hold)
                        ("(quit)" :cancel)
+                       ("(update)" :hold)
                        ("(fs.list :path \".\")" :execute)
                        ("(lisp.paren-check :path \".\")" :execute)
                        ("(shell.run :command \"true\")" :hold)
@@ -663,6 +668,29 @@
                    (eq (application-lisp-evaluation-loop-action evaluation) ':quit)
                    (null (application-lisp-evaluation-values evaluation)))
               "a canonical quit operation transfers control to the application loop"))
+           (let ((*update-check-fetch-function* (lambda () "v99.0.0")))
+             (setf (application-installation-provenance application)
+                   (make-instance
+                    'installation-provenance
+                    :method ':release
+                    :current-tag (format nil "v~A" *autolith-version*)))
+             (test-assert
+              (handler-case
+                  (progn
+                    (application-lisp-evaluate
+                     "(update)" :application application)
+                    nil)
+                (update-requested (condition)
+                  (string= (update-requested-tag condition) "v99.0.0")))
+              "a canonical update operation requests the packaged launcher handoff")
+             (test-assert
+              (handler-case
+                  (progn
+                    (application--run-command-input application "/update")
+                    nil)
+                (update-requested (condition)
+                  (string= (update-requested-tag condition) "v99.0.0")))
+              "the slash update spelling requests the same launcher handoff"))
            (let ((evaluation
                    (application-lisp-evaluate
                     "(test-operation.echo :text)"

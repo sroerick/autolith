@@ -713,6 +713,67 @@
                                     :if-does-not-exist :ignore))))
   nil)
 
+
+(-> test-explicit-update-operation () null)
+(defun test-explicit-update-operation ()
+  "Test fresh installed-release updates and nonmutating external update advice."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (make-instance 'application :configuration configuration))
+         (presented nil)
+         (fetches 0))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'application-present
+                 (lambda (observed text)
+                   (test-assert (eq observed application)
+                                "explicit update output belongs to its application")
+                   (push text presented)
+                   nil)))
+          (lambda ()
+            (let ((*update-check-fetch-function*
+                    (lambda ()
+                      (incf fetches)
+                      (format nil "v~A" *autolith-version*))))
+              (dolist (case '((:source "running from source")
+                              (:nix "installed through Nix")))
+                (destructuring-bind (method expected) case
+                  (setf (application-installation-provenance application)
+                        (make-instance 'installation-provenance :method method)
+                        presented nil)
+                  (application-update application)
+                  (test-assert (search expected (first presented))
+                               "external installations receive their update advice")
+                  (test-assert (zerop fetches)
+                               "external installations never query the release service")))
+              (setf (application-installation-provenance application)
+                    (make-instance
+                     'installation-provenance
+                     :method ':release
+                     :current-tag (format nil "v~A" *autolith-version*))
+                    (application-update-availability application)
+                    (make-instance 'update-availability
+                                   :tag "v99.0.0"
+                                   :method ':release)
+                    presented nil)
+              (application-update application)
+              (test-assert (= fetches 1)
+                           "an explicit packaged update performs one fresh check")
+              (test-assert
+               (and (search "already the newest" (first presented))
+                    (null (application-update-availability application)))
+               "a current packaged release reports success and clears stale notice state"))
+            (setf presented nil)
+            (let ((*update-check-fetch-function*
+                    (lambda () (error "offline"))))
+              (application-update application)
+              (test-assert
+               (search "could not check the release service" (first presented))
+               "a failed explicit check is nonfatal and reports no installation change"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-application-status-details () null)
 (defun test-application-status-details ()
   "Test model, effort, and enclosing Git branch activity metadata."
@@ -8757,6 +8818,7 @@
   (test-application-command-presentations)
   (test-application-banner-version)
   (test-startup-update-choice)
+  (test-explicit-update-operation)
   (test-thinking-label-selection)
   (test-application-status-details)
   (test-reasoning-trace-command)

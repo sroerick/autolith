@@ -1661,6 +1661,11 @@ no durable effect. Skip this version suppresses only that exact tag, and any
 newer tag remains eligible. Initial command or prefilled-input paths do not open
 the modal picker.
 
+The canonical =(update)= local operation and =/update= compatibility command
+perform a fresh bounded check. A selected packaged release requests the same
+attended launcher handoff when a newer release exists. Source and Nix
+installations only explain their external update path and do not mutate themselves.
+
 Update now requests a distinct normal process status. The active application
 must quiesce its runtime resources and restore terminal state before returning
 that status. The stable source launcher must pass it through without crash

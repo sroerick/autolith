@@ -89,7 +89,10 @@ the newest tag again, invokes the installer bundled in the trusted selected
 release, verifies the downloaded archive against its SHA-256 record, atomically
 selects it, and restarts with the original arguments. The updater derives and
 preserves a custom installation root and does not replace the user's command
-link. =autolith --update= requests the same verified launcher path explicitly.
+link. Inside a running Autolith, =(update)= is canonical and =/update= is its
+compatibility spelling. Both perform a fresh check. A selected binary release
+uses the verified launcher path; source and Nix installations only report how
+to update externally. =autolith --update= requests the same path from the shell.
 Running the installer again is also an update and keeps older versioned releases
 available under the installation root.
 

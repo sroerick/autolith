@@ -475,11 +475,16 @@
       (funcall *update-check-fetch-function*)
       (update-check--fetch-latest-tag)))
 
-(-> update-state-refresh (configuration &key (:now integer)) boolean)
-(defun update-state-refresh (configuration &key (now (get-universal-time)))
-  "Refresh CONFIGURATION's due cache once, returning true only on success."
+(-> update-state-refresh
+    (configuration &key (:now integer) (:force-p boolean))
+    boolean)
+(defun update-state-refresh
+    (configuration &key (now (get-universal-time)) force-p)
+  "Refresh CONFIGURATION's cache once, bypassing freshness when FORCE-P."
   (block nil
-    (unless (update-state-check-due-p (update-state-load configuration) :now now)
+    (unless (or force-p
+                (update-state-check-due-p
+                 (update-state-load configuration) :now now))
       (return nil))
     (handler-case
         (progn

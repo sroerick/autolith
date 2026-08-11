@@ -62,6 +62,7 @@ are presented by the evaluator."
               application-turn-cancelled
               application-input-failed
               rollback-requested
+               update-requested
               agent-loop-error
               conversation-invariant-error
               active-image-corruption)))
@@ -212,6 +213,7 @@ journaling or provider conversation projection."
       ((or application-turn-cancelled
            application-input-failed
            rollback-requested
+            update-requested
            agent-loop-error
            conversation-invariant-error
            active-image-corruption)
