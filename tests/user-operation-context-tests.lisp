@@ -344,7 +344,7 @@
              (unwind-protect
                   (progn
                     (with-open-file
-                        (stream (conversation-pathname conversation)
+                        (stream (conversation-log-pathname conversation)
                                 :direction :output
                                 :if-exists :append
                                 :external-format ':utf-8)
@@ -381,7 +381,7 @@
                (unwind-protect
                     (progn
                       (with-open-file
-                          (stream (conversation-pathname conversation)
+                          (stream (conversation-log-pathname conversation)
                                   :direction :output
                                   :if-exists :supersede
                                   :external-format ':utf-8)
