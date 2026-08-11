@@ -2158,7 +2158,7 @@
              (test-assert
               (test-mcp--credential-redacted-p
                (uiop:read-file-string
-                (conversation-pathname conversation))
+                (conversation-log-pathname conversation))
                credential)
               "credential echoes never enter durable conversation records")
              (let* ((stdio-client
