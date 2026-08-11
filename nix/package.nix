@@ -53,8 +53,8 @@ let
   colorlispSource = pkgs.fetchFromGitHub {
     owner = "luciusmagn";
     repo = "colorlisp";
-    rev = "6e1ee575bf57628fa864acd6f0a61209af9990b1";
-    hash = "sha256-4c/yexgk8hBsBk7pvTNKS79vGLKIeK6+vUcWvcqb5No=";
+    rev = "05a3313d52e2a2c643219a750dd5045df56c1cd7";
+    hash = "sha256-P8zoiBaNyZpR9QDJOi3wF/D3BWy3GaPOlz/LPBd4Tyc=";
   };
 
   colorlispNativeLibrary = pkgs.stdenv.mkDerivation {
