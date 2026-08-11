@@ -347,6 +347,17 @@
   (:documentation "Make all pending TERMINAL output visible."))
 
 
+(-> terminal--prompt-marker-sequence (keyword integer) string)
+(defun terminal--prompt-marker-sequence (marker status)
+  "Return Autolith's OSC 133 sequence for MARKER and integer STATUS."
+  (check-type status (integer 0))
+  (if (eq marker ':prompt-start)
+      (format nil "~C]133;A;redraw=0~C~C"
+              *terminal-escape-character*
+              *terminal-escape-character*
+              #\\)
+      (semantic-prompt-marker-sequence marker status)))
+
 (-> terminal-write-prompt-marker
     (terminal keyword &optional (integer 0))
     boolean)
@@ -354,6 +365,6 @@
   "Write and flush one OSC 133 MARKER for interactive TERMINAL, if applicable."
   (when (terminal-interactive-p terminal)
     (terminal--write terminal
-                     (semantic-prompt-marker-sequence marker status))
+                     (terminal--prompt-marker-sequence marker status))
     (terminal-flush terminal)
     t))

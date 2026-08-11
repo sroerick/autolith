@@ -1904,6 +1904,7 @@ when no resize needs to be applied."
       (when (and (terminal-ui-started-p ui)
                  (terminal-interactive-p terminal)
                  (eq (terminal-ui-prompt-marker-state ui) ':closed))
+        (live-region-suspend (terminal-ui-live-region ui))
         (terminal-write-prompt-marker terminal ':prompt-start)
         (setf (terminal-ui-prompt-marker-state ui) ':prompt)
         (terminal-ui--paint-live ui)

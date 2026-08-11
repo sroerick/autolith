@@ -3538,6 +3538,51 @@
                (gethash "read/file" before)
                (gethash "read/file" after))
               "adding a colliding MCP name never renames an existing tool"))
+           (let ((minimum
+                   (gethash
+                    "boundary"
+                    (mcp-tools--identifier-map
+                     '("boundary")
+                     :limit 18))))
+             (test-assert
+              (= (length minimum) 18)
+              "the minimum MCP provider identifier limit preserves one base character"))
+           (test-assert
+            (handler-case
+                (progn
+                  (mcp-tools--identifier-map '("boundary") :limit 17)
+                  nil)
+              (configuration-error ()
+                t))
+            "an MCP provider identifier limit below the 64-bit suffix fails closed")
+           (let* ((namespace
+                    (gethash
+                     "braiins-docs"
+                     (mcp-tools--identifier-map
+                      '("braiins-docs")
+                      :prefix "mcp__")))
+                  (name
+                    (gethash
+                     "list_docs"
+                     (mcp-tools--identifier-map '("list_docs"))))
+                  (wire-name
+                    (openai-compatible--wire-tool-name namespace name)))
+             (multiple-value-bind (decoded-namespace decoded-name)
+                 (openai-compatible--decode-wire-tool-name wire-name)
+               (test-assert
+                (and (<= (length namespace)
+                         *mcp-provider-identifier-limit*)
+                     (<= (length name)
+                         *mcp-provider-identifier-limit*)
+                     (= (length (mcp-tools--identifier-hash "braiins-docs"))
+                        16)
+                     (= (length (mcp-tools--identifier-hash "list_docs"))
+                        16)
+                     (= (length wire-name)
+                        *openai-compatible-wire-tool-name-maximum-length*)
+                     (string= decoded-namespace namespace)
+                     (string= decoded-name name))
+                "MCP identifiers keep 64-bit identities in one reversible wire name")))
            (let* ((registry (make-instance 'tool-registry))
                   (conversation
                     (conversation-create

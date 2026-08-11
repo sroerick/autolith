@@ -510,8 +510,8 @@
 
 ;;;; -- Deterministic Provider Identifiers --
 
-(defparameter *mcp-provider-identifier-limit* 64
-  "The maximum provider namespace or tool identifier length.")
+(defparameter *mcp-provider-identifier-limit* 23
+  "The maximum MCP namespace or tool identifier length for Chat Completions.")
 
 (defparameter *mcp-maximum-tools-per-server* 256
   "The maximum tools accepted from one MCP server.")

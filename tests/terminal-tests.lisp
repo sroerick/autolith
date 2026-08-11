@@ -2746,7 +2746,7 @@ sources keeps the tests deterministic under an interactive terminal."
                    payload
                    *terminal-escape-character*
                    #\\)))
-    (let ((prompt-start (expected-marker "A"))
+    (let ((prompt-start (expected-marker "A;redraw=0"))
           (input-start (expected-marker "B"))
           (execution-start (expected-marker "C"))
           (success (expected-marker "D;0"))
@@ -2778,11 +2778,35 @@ sources keeps the tests deterministic under an interactive terminal."
                               :styled-p t))
              (ui (terminal-ui-create :terminal terminal)))
         (with-terminal-ui (active-ui ui)
-          (recording-terminal-reset terminal)
-          (test-assert
-           (and (terminal-ui-open-prompt-block active-ui)
-                (not (terminal-ui-open-prompt-block active-ui)))
-           "one idle prompt emits its boundaries only once")
+          (terminal-ui-stream-update
+           active-ui
+           :tail (format nil "stale first row~%stale second row"))
+          (let ((painted-row-count (terminal-ui-live-row-count active-ui)))
+            (recording-terminal-reset terminal)
+            (test-assert
+             (and (terminal-ui-open-prompt-block active-ui)
+                  (not (terminal-ui-open-prompt-block active-ui)))
+             "one idle prompt emits its boundaries only once")
+            (let* ((chunks (reverse (recording-terminal-chunks terminal)))
+                   (prompt-position (position prompt-start chunks
+                                              :test #'string=))
+                   (retraction
+                     (and prompt-position
+                          (plusp prompt-position)
+                          (elt chunks (1- prompt-position)))))
+              (test-assert
+               (and (> painted-row-count 1)
+                    retraction
+                    (= (count #\Return retraction) painted-row-count)
+                    (= (terminal-tests--substring-count
+                        (format nil "~C[K" *terminal-escape-character*)
+                        retraction)
+                       painted-row-count)
+                    (notany
+                     (lambda (chunk)
+                       (search "stale" chunk))
+                     (subseq chunks 0 prompt-position)))
+               "prompt start follows complete multi-row live-region retraction")))
           (terminal-ui--paint-live active-ui)
           (terminal-ui-set-status active-ui "working")
           (terminal-ui-refresh-status active-ui)
