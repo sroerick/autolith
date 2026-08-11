@@ -344,22 +344,24 @@ discarded or obsolete candidates.
 (defun project-adaptation--conversation-metadata (pathname)
   "Return project identity and exact recorded activity from PATHNAME."
   (handler-case
-      (let ((header nil)
+      (let ((header (conversation-peek-header pathname))
             (last-activity-at nil)
             (user-turns 0))
-        (conversation--map-records
-         pathname
-         (lambda (record)
-           (if header
-               (when (consp record)
-                 (let ((time (getf (rest record) :time)))
-                   (when (typep time 'timestamp)
-                     (setf last-activity-at
-                           (max (or last-activity-at 0) time))))
-                 (when (and (eq (first record) ':message)
-                            (eq (getf (rest record) :role) ':user))
-                   (incf user-turns)))
-               (setf header record))))
+        (dolist (segment (conversation-storage-pathnames pathname))
+          (let ((header-seen-p nil))
+            (conversation--map-records
+             segment
+             (lambda (record)
+               (if header-seen-p
+                   (when (consp record)
+                     (let ((time (getf (rest record) :time)))
+                       (when (typep time 'timestamp)
+                         (setf last-activity-at
+                               (max (or last-activity-at 0) time))))
+                     (when (and (eq (first record) ':message)
+                                (eq (getf (rest record) :role) ':user))
+                       (incf user-turns)))
+                   (setf header-seen-p t))))))
         (when (and (consp header)
                    (eq (first header) ':conversation))
           (let* ((properties (rest header))
@@ -430,24 +432,19 @@ discarded or obsolete candidates.
                  current-metadata))))
     (or current-substantial-p
         (>=
-         (loop with conversation-root =
-                 (configuration-conversation-root configuration)
-               for pathname in
-                 (if (probe-file conversation-root)
-                     (uiop:directory-files conversation-root "*.sexp")
-                     nil)
-               for metadata =
-                 (project-adaptation--conversation-metadata pathname)
-               when (and
-                     (string= project-key
-                              (or (project-adaptation--metadata-project-key
-                                   metadata)
-                                  ""))
-                     (project-adaptation--substantial-conversation-p metadata))
-                 count pathname into substantial-count
-               when (>= substantial-count 2)
-                 return substantial-count
-               finally (return substantial-count))
+          (loop for pathname in (conversation-list configuration)
+                for metadata =
+                  (project-adaptation--conversation-metadata pathname)
+                when (and
+                      (string= project-key
+                               (or (project-adaptation--metadata-project-key
+                                    metadata)
+                                   ""))
+                      (project-adaptation--substantial-conversation-p metadata))
+                  count pathname into substantial-count
+                when (>= substantial-count 2)
+                  return substantial-count
+                finally (return substantial-count))
          2))))
 
 

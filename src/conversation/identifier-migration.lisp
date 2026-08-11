@@ -142,33 +142,44 @@
 
 (-> conversation-identifier-migration--header (pathname) (option list))
 (defun conversation-identifier-migration--header (pathname)
-  "Return PATHNAME's leading conversation form, or NIL when it is not one."
-  (handler-case
-      (with-open-file (stream pathname :direction :input :external-format :utf-8)
-        (let* ((*read-eval* nil)
-               (end-marker (cons nil nil))
-               (form (read stream nil end-marker)))
-          (and (listp form)
-               (eq (first form) :conversation)
-               form)))
-    (error ()
-      nil)))
+  "Return PATHNAME's active leading conversation form, or NIL when absent."
+  (let ((source (or (conversation-storage-active-pathname pathname) pathname)))
+    (handler-case
+        (with-open-file (stream source :direction :input :external-format :utf-8)
+          (let* ((*read-eval* nil)
+                 (end-marker (cons nil nil))
+                 (form (read stream nil end-marker)))
+            (and (listp form)
+                 (eq (first form) :conversation)
+                 form)))
+      (error ()
+        nil))))
 
 (-> conversation-identifier-migration--legacy-files (configuration) list)
 (defun conversation-identifier-migration--legacy-files (configuration)
-  "Return valid resumable conversation files whose identifiers are legacy."
-  (let ((root (configuration-conversation-root configuration)))
-    (if (probe-file root)
-        (sort
-         (loop for pathname in (uiop:directory-files root "*.sexp")
-               for header = (conversation-identifier-migration--header pathname)
-               for identifier = (and header (getf (rest header) :id))
-               when (conversation-identifier-migration--legacy-identifier-p
-                     identifier)
-                 collect (list :pathname pathname :header header))
-         #'string<
-         :key (lambda (entry) (namestring (getf entry :pathname))))
-        nil)))
+  "Return stable identities for resumable conversations with legacy IDs."
+  (let ((root (configuration-conversation-root configuration))
+        (identities nil))
+    (when (uiop:directory-exists-p root)
+      (dolist (pathname (uiop:directory-files root "*.sexp"))
+        (pushnew pathname identities :test #'equal))
+      (dolist (directory (uiop:subdirectories root))
+        (let ((identifier (first (last (pathname-directory directory)))))
+          (when (stringp identifier)
+            (pushnew
+             (merge-pathnames
+              (make-pathname :name identifier :type "sexp")
+              root)
+             identities
+             :test #'equal)))))
+    (sort
+     (loop for pathname in identities
+           for header = (conversation-identifier-migration--header pathname)
+           for identifier = (and header (getf (rest header) :id))
+           when (conversation-identifier-migration--legacy-identifier-p identifier)
+             collect (list :pathname pathname :header header))
+     #'string<
+     :key (lambda (entry) (namestring (getf entry :pathname))))))
 
 (-> conversation-identifier-migration--entry-for-old (string list) (option list))
 (defun conversation-identifier-migration--entry-for-old (identifier entries)
@@ -441,16 +452,84 @@ large conversations that contain no legacy reference."
     pathname)
 (defun conversation-identifier-migration--conversation-path
     (configuration identifier)
-  "Return the resumable conversation pathname for stored IDENTIFIER."
+  "Return the stable conversation identity for stored IDENTIFIER."
   (merge-pathnames (make-pathname :name identifier :type "sexp")
                    (configuration-conversation-root configuration)))
+
+(-> conversation-identifier-migration--target-segment
+    (pathname pathname pathname)
+    pathname)
+(defun conversation-identifier-migration--target-segment
+    (source-identity target-identity source-segment)
+  "Return SOURCE-SEGMENT's corresponding pathname beneath TARGET-IDENTITY."
+  (if (equal source-segment source-identity)
+      target-identity
+      (merge-pathnames
+       (make-pathname :name (pathname-name source-segment)
+                      :type (pathname-type source-segment))
+       (conversation-storage-directory-pathname target-identity))))
+
+(-> conversation-identifier-migration--validate-target-segment
+    (configuration pathname string)
+    null)
+(defun conversation-identifier-migration--validate-target-segment
+    (configuration pathname identifier)
+  "Require exact physical PATHNAME to be one valid segment for IDENTIFIER."
+  (let ((identity (conversation-storage-identity-pathname pathname)))
+    (handler-case
+        (progn
+          (unless (string= (or (pathname-name identity) "") identifier)
+            (error "The target segment belongs to another storage identity."))
+          (conversation--map-segment-records
+           identity
+           pathname
+           (lambda (record)
+             (declare (ignore record))))
+          nil)
+      (conversation-identifier-migration-error (condition)
+        (error condition))
+      (error (cause)
+        (conversation-identifier-migration--signal
+         configuration
+         ':conversation
+         (format nil "Conversation segment ~A could not be rewritten for ~A: ~A"
+                 pathname identifier cause)
+         :pathname pathname
+         :cause cause)))))
+
+(-> conversation-identifier-migration--validate-target-storage
+    (configuration pathname string &key (:stage keyword))
+    null)
+(defun conversation-identifier-migration--validate-target-storage
+    (configuration pathname identifier &key (stage ':conversation))
+  "Require PATHNAME's complete ordered target storage to be resumable."
+  (handler-case
+      (progn
+        (unless (and (string= (or (pathname-name pathname) "") identifier)
+                     (conversation-storage-active-pathname pathname))
+          (error "The target conversation has no active storage segment."))
+        (conversation--map-storage-records
+         pathname
+         (lambda (record)
+           (declare (ignore record))))
+        nil)
+    (conversation-identifier-migration-error (condition)
+      (error condition))
+    (error (cause)
+      (conversation-identifier-migration--signal
+       configuration
+       stage
+       (format nil "Conversation target ~A is not complete resumable storage: ~A"
+               pathname cause)
+       :pathname pathname
+       :cause cause))))
 
 (-> conversation-identifier-migration--publish-conversations
     (configuration list)
     null)
 (defun conversation-identifier-migration--publish-conversations
     (configuration entries)
-  "Publish every rewritten conversation while retaining each legacy source."
+  "Publish rewritten conversation segments while retaining every legacy source."
   (dolist (entry entries)
     (let* ((old (getf entry :old))
            (new (getf entry :new))
@@ -459,33 +538,52 @@ large conversations that contain no legacy reference."
               configuration old))
            (target
              (conversation-identifier-migration--conversation-path
-              configuration new)))
+              configuration new))
+           (source-segments (conversation-storage-pathnames source)))
       (cond
-        ((probe-file source)
-         (conversation-identifier-migration--rewrite-text-file
-          source target entries :write-date (file-write-date source))
-         (let ((header (conversation-identifier-migration--header target)))
-           (unless (and (listp header)
-                        (eq (first header) :conversation)
-                        (string= (or (getf (rest header) :id) "") new))
-             (conversation-identifier-migration--signal
-              configuration
-              ':conversation
-              (format nil "Legacy conversation ~A could not be rewritten to ~A."
-                      source new)
-              :pathname source))))
-        ((not (probe-file target))
+        (source-segments
+         (dolist (source-segment source-segments)
+           (let ((target-segment
+                   (conversation-identifier-migration--target-segment
+                    source target source-segment)))
+             (conversation-identifier-migration--rewrite-text-file
+              source-segment
+              target-segment
+              entries
+              :write-date (file-write-date source-segment))
+             (conversation-identifier-migration--validate-target-segment
+              configuration target-segment new))))
+        ((conversation-storage-active-pathname target)
+         (dolist (target-segment (conversation-storage-pathnames target))
+           (conversation-identifier-migration--validate-target-segment
+            configuration target-segment new)))
+        (t
          (conversation-identifier-migration--signal
           configuration
           ':conversation
           (format nil "Conversation migration lost both ~A and ~A."
                   source target)
-          :pathname source)))))
+          :pathname source)))
+      (conversation-identifier-migration--validate-target-storage
+       configuration target new)))
   (let ((root (configuration-conversation-root configuration))
-        (old-identifiers (mapcar (lambda (entry) (getf entry :old)) entries)))
-    (dolist (pathname (uiop:directory-files root "*.sexp"))
-      (unless (member (pathname-name pathname) old-identifiers :test #'string=)
+        (source-pathnames
+          (mapcan
+           (lambda (entry)
+             (conversation-storage-pathnames
+              (conversation-identifier-migration--conversation-path
+               configuration (getf entry :old))))
+           entries)))
+    (dolist (pathname
+             (conversation-identifier-migration--sexp-files-recursively root))
+      (unless (member pathname source-pathnames :test #'equal)
         (conversation-identifier-migration--rewrite-file pathname entries))))
+  (dolist (entry entries)
+    (let ((target
+            (conversation-identifier-migration--conversation-path
+             configuration (getf entry :new))))
+      (conversation-identifier-migration--validate-target-storage
+       configuration target (getf entry :new))))
   nil)
 
 (-> conversation-identifier-migration--sexp-files-recursively (pathname) list)
@@ -570,23 +668,29 @@ large conversations that contain no legacy reference."
     null)
 (defun conversation-identifier-migration--remove-sources
     (configuration entries)
-  "Remove each legacy conversation only after its replacement is durable."
+  "Remove legacy conversations only after every replacement validates."
   (dolist (entry entries)
-    (let ((source
-            (conversation-identifier-migration--conversation-path
-             configuration (getf entry :old)))
-          (target
+    (let ((target
             (conversation-identifier-migration--conversation-path
              configuration (getf entry :new))))
-      (unless (probe-file target)
-        (conversation-identifier-migration--signal
-         configuration
-         ':cleanup
-         (format nil "Conversation migration target ~A disappeared before cleanup."
-                 target)
-         :pathname target))
+      (conversation-identifier-migration--validate-target-storage
+       configuration
+       target
+       (getf entry :new)
+       :stage ':cleanup)))
+  (dolist (entry entries)
+    (let* ((source
+             (conversation-identifier-migration--conversation-path
+              configuration (getf entry :old)))
+           (source-directory
+             (conversation-storage-directory-pathname source)))
       (when (probe-file source)
-        (delete-file source))))
+        (delete-file source))
+      (when (uiop:directory-exists-p source-directory)
+        (uiop:delete-directory-tree
+         source-directory
+         :validate t
+         :if-does-not-exist :ignore))))
   nil)
 
 (-> conversation-identifier-migration--call-with-file-lock

@@ -121,6 +121,7 @@ match a new library version is never the correct repair."
                   (test-conversation-identifier--legacy-conversation
                    configuration other "second legacy conversation"))
                 (old-path (conversation-pathname conversation))
+                (old-active (conversation-log-pathname conversation))
                 (old-image-root
                   (merge-pathnames (format nil "conversation-images/~A/" old)
                                    (configuration-data-root configuration)))
@@ -155,12 +156,12 @@ match a new library version is never the correct repair."
                             :scope ':global
                             :tags nil
                             :source-conversation old)
-           (with-open-file (stream old-path
+           (with-open-file (stream old-active
                                    :direction :output
                                    :if-exists :append
                                    :external-format :utf-8)
              (write-string "(:interrupted" stream))
-           (let* ((old-write-date (file-write-date old-path))
+           (let* ((old-write-date (file-write-date old-active))
                   (entries (conversation-identifier-migrate configuration))
                   (entry
                     (conversation-identifier-migration--entry-for-old
@@ -173,6 +174,7 @@ match a new library version is never the correct repair."
                   (new-path
                     (conversation-identifier-migration--conversation-path
                      configuration new))
+                  (new-active (conversation-storage-active-pathname new-path))
                   (new-image-root
                     (merge-pathnames
                      (format nil "conversation-images/~A/" new)
@@ -192,10 +194,11 @@ match a new library version is never the correct repair."
                                (identifier-p other-new)
                                (not (string= new other-new)))
                           "migration assigns distinct canonical identifiers")
-             (test-assert (and (not (probe-file old-path))
-                               (probe-file new-path)
-                               (= (file-write-date new-path) old-write-date))
-                          "conversation replacement is atomic and preserves activity time")
+             (test-assert
+              (and (not (conversation-storage-occupied-p old-path))
+                   new-active
+                   (= (file-write-date new-active) old-write-date))
+              "conversation replacement preserves chunk identity and activity time")
              (test-assert
               (string= (conversation-identifier
                         (conversation-load-by-id
@@ -212,9 +215,9 @@ match a new library version is never the correct repair."
               (search other-new
                       (getf (rest (second
                                    (conversation-identifier-migration--read-forms
-                                    new-path)))
+                                    new-active)))
                             :content))
-              "cross-conversation references in durable history are rewritten")
+              "cross-conversation references in durable chunks are rewritten")
              (test-assert
               (and (uiop:directory-exists-p new-image-root)
                    (not (uiop:directory-exists-p old-image-root))
@@ -241,6 +244,94 @@ match a new library version is never the correct repair."
              (test-assert
               (equal entries (conversation-identifier-migrate configuration))
               "running a completed migration again is idempotent")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-conversation-identifier-migration-validation () null)
+(defun test-conversation-identifier-migration-validation ()
+  "Test exact target validation preserves every source before cleanup."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (first-old "36ef35a6-4167-4a91-858b-83a1c9d4dd89")
+         (second-old "83b25dd1-9424-4be2-b149-f4457c5c9137")
+         (first-new (identifier-from-seed 3994000100 1))
+         (second-new (identifier-from-seed 3994000100 2))
+         (entries
+           (list (list :old first-old
+                       :new first-new
+                       :created-at 1000)
+                 (list :old second-old
+                       :new second-new
+                       :created-at 1001))))
+    (unwind-protect
+         (let* ((first-conversation
+                  (test-conversation-identifier--legacy-conversation
+                   configuration first-old "first legacy conversation"))
+                (second-conversation
+                  (test-conversation-identifier--legacy-conversation
+                   configuration second-old "second legacy conversation"))
+                (first-source (conversation-pathname first-conversation))
+                (second-source (conversation-pathname second-conversation))
+                (first-target
+                  (conversation-identifier-migration--conversation-path
+                   configuration first-new))
+                (second-target
+                  (conversation-identifier-migration--conversation-path
+                   configuration second-new)))
+           (conversation-append-summary first-conversation "migration checkpoint")
+           (conversation-identifier-migration--publish-conversations
+            configuration entries)
+           (let* ((older-target
+                    (first (conversation-storage-pathnames first-target)))
+                  (forms
+                    (copy-tree
+                     (conversation-identifier-migration--read-forms older-target)))
+                  (foreign (copy-tree forms)))
+             (setf (getf (rest (first foreign)) :id) second-new)
+             (unwind-protect
+                  (progn
+                    (conversation-identifier-migration--write-forms
+                     older-target foreign)
+                    (test-assert
+                     (handler-case
+                         (progn
+                           (conversation-identifier-migration--validate-target-segment
+                            configuration older-target first-new)
+                           nil)
+                       (conversation-identifier-migration-error ()
+                         t))
+                     "migration validates the requested older segment exactly")
+                    (test-assert
+                     (handler-case
+                         (progn
+                           (conversation-identifier-migration--validate-target-storage
+                            configuration first-target first-new)
+                           nil)
+                       (conversation-identifier-migration-error ()
+                         t))
+                     "full target validation inspects every ordered segment"))
+               (conversation-identifier-migration--write-forms
+                older-target forms)))
+           (let* ((active-target
+                    (conversation-storage-active-pathname second-target))
+                  (forms
+                    (copy-tree
+                     (conversation-identifier-migration--read-forms active-target))))
+             (conversation-identifier-migration--write-forms
+              active-target (list (first forms)))
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-identifier-migration--remove-sources
+                     configuration entries)
+                    nil)
+                (conversation-identifier-migration-error ()
+                  t))
+              "cleanup rejects a header-only version-two target")
+             (test-assert
+              (and (conversation-storage-occupied-p first-source)
+                   (conversation-storage-occupied-p second-source))
+              "one invalid target preserves every legacy source before cleanup")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -274,19 +365,21 @@ match a new library version is never the correct repair."
               configuration ':conversations entries)
              (let* ((completed (conversation-identifier-migrate configuration))
                     (new (getf (first completed) :new)))
-               (test-assert
-                (and (not (probe-file
-                           (conversation-identifier-migration--conversation-path
-                            configuration old)))
-                     (probe-file
-                      (conversation-identifier-migration--conversation-path
-                       configuration new))
-                     (eq (getf (rest
-                                (conversation-identifier-migration--read
-                                 configuration))
-                               :status)
-                         ':complete))
-                "a repeated migration safely completes every remaining phase"))))
+                (test-assert
+                 (and
+                  (not
+                   (conversation-storage-occupied-p
+                    (conversation-identifier-migration--conversation-path
+                     configuration old)))
+                  (conversation-storage-active-pathname
+                   (conversation-identifier-migration--conversation-path
+                    configuration new))
+                  (eq (getf (rest
+                             (conversation-identifier-migration--read
+                              configuration))
+                            :status)
+                      ':complete))
+                 "a repeated migration safely completes every remaining phase"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -296,5 +389,6 @@ match a new library version is never the correct repair."
   (test-conversation-identifier-format)
   (test-conversation-identifier-allocation)
   (test-conversation-identifier-migration)
+  (test-conversation-identifier-migration-validation)
   (test-conversation-identifier-migration-resumption)
   nil)

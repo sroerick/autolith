@@ -545,7 +545,7 @@ reasoning effort only when that effort is supported by the selected model."
 
 (-> configuration-conversation-root (configuration) pathname)
 (defun configuration-conversation-root (configuration)
-  "Return the directory containing append-only conversation files."
+  "Return the directory containing conversation identities and chunk logs."
   (merge-pathnames "conversations/" (configuration-data-root configuration)))
 
 (-> configuration-conversation-identifier-migration-path (configuration) pathname)

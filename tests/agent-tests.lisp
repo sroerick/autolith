@@ -1053,30 +1053,39 @@
               (provider-error ()
                 t))
             "a credential-echoing provider failure reaches the caller")
-           (let* ((pathname (conversation-pathname conversation))
-                  (records (conversation--read-records pathname))
-                  (text (uiop:read-file-string pathname))
-                  (provider-record
-                    (find-if
-                     (lambda (record)
-                       (eq (first record) ':provider))
-                     records))
-                  (failure
-                    (getf
-                     (getf (rest provider-record) :metadata)
-                     :failure)))
-             (provider-tests--assert-credential-free
-              (list records text)
-              secrets
-              "durable provider failure state contains no credential")
-             (test-assert
-              (and
-               (string= (getf failure :code) "invalid_prompt")
-               (test-object-contains-string-p
-                failure
-                *provider-credential-redaction-marker*)
-               (search *provider-credential-redaction-marker* text))
-              "durable provider failure metadata retains sanitized diagnostics")))
+            (let ((records nil))
+              (conversation-map-records
+               conversation
+               (lambda (record)
+                 (push record records)))
+              (setf records (nreverse records))
+              (let* ((text
+                       (with-output-to-string (stream)
+                         (dolist (segment
+                                  (conversation-storage-pathnames
+                                   (conversation-pathname conversation)))
+                           (write-string (uiop:read-file-string segment) stream))))
+                     (provider-record
+                       (find-if
+                        (lambda (record)
+                          (eq (first record) ':provider))
+                        records))
+                     (failure
+                       (getf
+                        (getf (rest provider-record) :metadata)
+                        :failure)))
+                (provider-tests--assert-credential-free
+                 (list records text)
+                 secrets
+                 "durable provider failure state contains no credential")
+                (test-assert
+                 (and
+                  (string= (getf failure :code) "invalid_prompt")
+                  (test-object-contains-string-p
+                   failure
+                   *provider-credential-redaction-marker*)
+                  (search *provider-credential-redaction-marker* text))
+                 "durable provider failure metadata retains sanitized diagnostics"))))
       (uiop:delete-directory-tree
        root :validate t :if-does-not-exist :ignore)))
   nil)

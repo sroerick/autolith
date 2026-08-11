@@ -15,6 +15,17 @@
      stream))
   pathname)
 
+
+(-> test-conversation--all-records (conversation) list)
+(defun test-conversation--all-records (conversation)
+  "Return every durable record across CONVERSATION's ordered storage segments."
+  (let ((records nil))
+    (conversation-map-records
+     conversation
+     (lambda (record)
+       (push record records)))
+    (nreverse records)))
+
 (-> test-conversation-image-input () null)
 (defun test-conversation-image-input ()
   "Test image validation, durable artifacts, projection, and replay."
@@ -285,6 +296,355 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+
+(-> test-conversation-chunk-storage () null)
+(defun test-conversation-chunk-storage ()
+  "Test deterministic compaction chunks and self-contained newest-chunk resume."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (identifier "7Hk2mNp"))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier identifier))
+                (identity (conversation-pathname conversation))
+                (initial-chunk (conversation-log-pathname conversation)))
+           (test-assert
+            (and (equal initial-chunk (conversation-chunk-pathname identity 1))
+                 (string=
+                  (pathname-name initial-chunk)
+                  (format nil "~V,'0D" *conversation-chunk-sequence-width* 1))
+                 (not (probe-file identity)))
+            "new conversations target a deterministic sequence-one chunk")
+           (conversation-append-user-message
+            conversation
+            "before compaction"
+            :pending-input-identifier "pending-before-compaction")
+           (test-assert
+            (equal (conversation-storage-pathnames identity) (list initial-chunk))
+            "first persistence publishes one deterministic chunk")
+           (conversation-set-model-selection conversation "gpt-5.6-luna" "high")
+           (conversation-append-user-operation
+            conversation
+            :kind ':lisp
+            :source "(values :before-compaction)"
+            :status ':ok
+            :result "⇒ :BEFORE-COMPACTION")
+           (conversation-append-record
+            conversation
+            (list :goal
+                  :objective "Finish chunk storage."
+                  :status ':active
+                  :continuations 2
+                  :created-at (get-universal-time)))
+           (setf (conversation-working-seconds conversation) 37
+                 (conversation-last-activity-at conversation) (get-universal-time))
+           (let* ((summary
+                    (conversation-append-summary conversation "Portable checkpoint."))
+                  (summary-sequence (getf (rest summary) :seq))
+                  (pathnames (conversation-storage-pathnames identity))
+                  (active (conversation-log-pathname conversation))
+                  (forms (conversation--read-records active))
+                  (expected-working-seconds
+                    (conversation-working-seconds conversation))
+                  (expected-last-activity
+                    (conversation-last-activity-at conversation)))
+             (test-assert
+              (and (= (length pathnames) 2)
+                   (equal (first pathnames) initial-chunk)
+                   (equal active (second pathnames))
+                   (= (conversation-chunk-start-sequence active) summary-sequence)
+                   (string=
+                    (pathname-name active)
+                    (format nil "~V,'0D"
+                            *conversation-chunk-sequence-width*
+                            summary-sequence))
+                   (= (conversation-log-generation conversation) 1))
+              "one compaction publishes exactly one sequence-named active chunk")
+             (test-assert
+              (and (= (length forms) 2)
+                   (eq (first (first forms)) ':conversation)
+                   (= (getf (rest (first forms)) :version) 2)
+                   (= (getf (rest (first forms)) :chunk-start-sequence)
+                      summary-sequence)
+                   (eq (first (second forms)) ':summary)
+                   (= (getf (rest (second forms)) :seq) summary-sequence))
+              "a compacted chunk atomically begins with its header and checkpoint")
+             (let ((records (test-conversation--all-records conversation)))
+               (test-assert
+                (equal (mapcar (lambda (record) (getf (rest record) :seq)) records)
+                       (loop for sequence from 1 to summary-sequence collect sequence))
+                "cross-chunk enumeration skips headers and preserves durable order"))
+             (let ((loaded (conversation-load-by-id configuration identifier)))
+               (test-assert
+                (and (equal (conversation-log-pathname loaded) active)
+                     (= (conversation-next-sequence loaded) (1+ summary-sequence))
+                     (= (length (conversation-input-items loaded)) 1)
+                     (string= (conversation-model loaded) "gpt-5.6-luna")
+                     (string= (conversation-reasoning-effort loaded) "high")
+                     (= (conversation-working-seconds loaded)
+                        expected-working-seconds)
+                     (= (conversation-user-turn-count loaded) 1)
+                     (= (conversation-last-activity-at loaded)
+                        expected-last-activity)
+                     (equal (conversation-pending-input-identifiers loaded)
+                            '("pending-before-compaction"))
+                     (= (length (conversation-user-operation-records loaded)) 1)
+                     (string=
+                      (getf (rest (conversation-latest-goal-record loaded))
+                            :objective)
+                      "Finish chunk storage.")
+                     (= (conversation-picker-search-message-count loaded) 1)
+                     (string= (conversation-picker-preview loaded)
+                              "before compaction")
+                     (null (conversation-picker-search-messages loaded))
+                     (not (conversation-picker-search-materialized-p loaded)))
+                "the newest chunk restores all cumulative resumable state alone")
+               (with-open-file (stream initial-chunk
+                                       :direction :output
+                                       :if-exists :append
+                                       :external-format :utf-8)
+                 (write-string "(:interrupted" stream))
+               (let ((search-pathname
+                       (conversation-picker-search-pathname identity)))
+                 (when (probe-file search-pathname)
+                   (delete-file search-pathname)))
+               (conversation-append-user-message loaded "after compaction")
+               (test-assert
+                (and (conversation-picker-search-materialized-p loaded)
+                     (equal (conversation-picker-search-messages loaded)
+                            '("before compaction" "after compaction"))
+                     (equal
+                      (conversation-picker-search-index-messages
+                       (conversation-picker-search-read identity))
+                      '("before compaction" "after compaction")))
+                "the next searchable append lazily rebuilds complete cross-chunk search"))
+              (let* ((loaded (conversation-load-by-id configuration identifier))
+                     (log-append-function (symbol-function 'log-append))
+                     (failure-injected-p nil)
+                     (expected-sequence
+                       (conversation-next-sequence loaded)))
+                (let ((record
+                        (test-call-with-function-replacements
+                         (list
+                          (list
+                           'log-append
+                           (lambda (&rest arguments)
+                             (multiple-value-prog1
+                                 (apply log-append-function arguments)
+                               (unless failure-injected-p
+                                 (setf failure-injected-p t)
+                                 (error "simulated failure after chunk publication"))))))
+                         (lambda ()
+                           (conversation-append-summary
+                            loaded "post-publication checkpoint")))))
+                  (test-assert
+                   (and (= (getf (rest record) :seq) expected-sequence)
+                        (= (conversation-next-sequence loaded)
+                           (1+ expected-sequence))
+                        (= (conversation-chunk-start-sequence
+                            (conversation-log-pathname loaded))
+                           expected-sequence))
+                   "a complete chunk publication survives a post-publication failure")))
+             (test-assert
+              (and (find identity (conversation-list configuration) :test #'equal)
+                   (plusp (conversation-storage-write-date identity)))
+              "chunk directories remain visible through stable picker identities")
+             (conversation-delete configuration identifier)
+             (test-assert
+              (and (not (conversation-storage-occupied-p identity))
+                   (not (find identity (conversation-list configuration)
+                              :test #'equal)))
+              "conversation deletion removes deterministic chunks behind the identity")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+
+(-> test-conversation-segment-validation () null)
+(defun test-conversation-segment-validation ()
+  "Test exact chunk paths, headers, checkpoints, and sequences are validated."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (identifier "5Vk8sQr"))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier identifier))
+                (identity (conversation-pathname conversation)))
+           (conversation-append-user-message conversation "before checkpoint")
+           (conversation-append-summary conversation "checkpoint")
+           (conversation-append-user-message conversation "after checkpoint")
+           (let* ((pathnames (conversation-storage-pathnames identity))
+                  (initial (first pathnames))
+                  (active (second pathnames))
+                  (initial-forms
+                    (copy-tree (conversation--read-records initial)))
+                  (active-forms
+                    (copy-tree (conversation--read-records active))))
+             (labels ((check-active-rejected (forms message)
+                        "Require loading malformed active FORMS to reject with MESSAGE."
+                        (unwind-protect
+                             (progn
+                               (conversation-identifier-migration--write-forms
+                                active forms)
+                               (test-assert
+                                (handler-case
+                                    (progn
+                                      (conversation-load identity)
+                                      nil)
+                                  (conversation-invariant-error ()
+                                    t))
+                                message))
+                          (conversation-identifier-migration--write-forms
+                           active active-forms))))
+               (let ((mismatched (copy-tree active-forms)))
+                 (setf (getf (rest (first mismatched)) :id) "wrong-id")
+                 (check-active-rejected
+                  mismatched
+                  "newest-chunk resume rejects a header from another identity"))
+               (dolist (case '((4 "active resume rejects a durable sequence gap")
+                               (2 "active resume rejects a duplicate sequence")))
+                 (let ((malformed (copy-tree active-forms)))
+                   (setf (getf (rest (third malformed)) :seq) (first case))
+                   (check-active-rejected malformed (second case))))
+               (let ((malformed (copy-tree active-forms)))
+                 (setf (getf (rest (second malformed)) :through-seq) 0)
+                 (check-active-rejected
+                  malformed
+                  "active resume rejects an incorrect compaction boundary"))
+               (let ((malformed (copy-tree active-forms)))
+                 (setf (getf (rest (second malformed)) :content) 42)
+                 (check-active-rejected
+                  malformed
+                  "active resume rejects non-string summary content"))
+               (let ((malformed (copy-tree active-forms)))
+                 (setf (second malformed) (list* :summary 42))
+                 (check-active-rejected
+                  malformed
+                  "malformed first records signal a conversation invariant error"))
+               (let ((malformed (copy-tree active-forms)))
+                 (setf (getf (rest (first malformed)) :version) 1)
+                 (check-active-rejected
+                  malformed
+                  "legacy headers are rejected inside deterministic chunk files")))
+             (let ((noncontiguous (copy-tree initial-forms)))
+               (setf (getf (rest (second noncontiguous)) :seq) 2)
+               (unwind-protect
+                    (progn
+                      (conversation-identifier-migration--write-forms
+                       initial noncontiguous)
+                      (test-assert
+                       (handler-case
+                           (progn
+                             (conversation--map-storage-records identity #'identity)
+                             nil)
+                         (conversation-invariant-error ()
+                           t))
+                       "cross-segment scans reject noncontiguous durable sequences")
+                      (test-assert
+                       (handler-case
+                           (progn
+                             (conversation--load-all-segments identity pathnames)
+                             nil)
+                         (conversation-invariant-error ()
+                           t))
+                       "full replay rejects cross-segment sequence discontinuity"))
+                 (conversation-identifier-migration--write-forms
+                  initial initial-forms)))
+             (let* ((directory (conversation-storage-directory-pathname identity))
+                    (alias
+                      (merge-pathnames
+                       (make-pathname
+                        :name (format nil "~V,'0D"
+                                      (1+ *conversation-chunk-sequence-width*)
+                                      1)
+                        :type "sexp")
+                       directory))
+                    (long-sequence
+                      (expt 10 *conversation-chunk-sequence-width*)))
+               (test-assert
+                (and (null (conversation-chunk-start-sequence alias))
+                     (= (conversation-chunk-start-sequence
+                         (conversation-chunk-pathname identity long-sequence))
+                        long-sequence))
+                "chunk parsing rejects zero-padded aliases but permits longer sequences"))
+             (let ((records nil))
+               (conversation--map-storage-records
+                identity
+                (lambda (record)
+                  (push record records)))
+               (test-assert
+                (equal (mapcar (lambda (record) (getf (rest record) :seq))
+                               (nreverse records))
+                       '(1 2 3))
+                "restored deterministic chunks remain fully scannable")))
+           (let* ((publication
+                    (conversation-create configuration :identifier "4Pn7wTx"))
+                  (segment (conversation-log-pathname publication))
+                  (record
+                    (list :message :seq 1 :time 1000 :role :user :content "one"))
+                  (forms
+                    (list (conversation--header-record publication)
+                          record)))
+             (conversation-identifier-migration--write-forms segment forms)
+             (test-assert
+              (conversation--published-segment-p publication segment record 1)
+              "post-publication recovery accepts the complete expected header")
+             (incf (getf (rest (first forms)) :working-seconds))
+             (conversation-identifier-migration--write-forms segment forms)
+             (test-assert
+              (not
+               (conversation--published-segment-p publication segment record 1))
+              "post-publication recovery rejects any header-state disagreement")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-conversation-legacy-storage () null)
+(defun test-conversation-legacy-storage ()
+  "Test legacy single-file replay and mixed legacy-plus-chunk rotation."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (identifier "9Jt4qRs"))
+    (unwind-protect
+         (let* ((created (conversation-create configuration :identifier identifier))
+                (identity (conversation-pathname created)))
+           (conversation-append-user-message created "legacy message")
+           (let* ((active (conversation-log-pathname created))
+                  (forms (copy-tree (conversation--read-records active))))
+             (setf (getf (rest (first forms)) :version) 1)
+             (conversation-identifier-migration--write-forms identity forms)
+             (uiop:delete-directory-tree
+              (conversation-storage-directory-pathname identity)
+              :validate t
+              :if-does-not-exist :ignore))
+           (let ((legacy (conversation-load identity)))
+             (test-assert
+              (and (equal (conversation-log-pathname legacy) identity)
+                   (= (conversation-next-sequence legacy) 2)
+                   (= (length (conversation-input-items legacy)) 1))
+              "a legacy version-one single file remains directly resumable")
+             (let* ((summary
+                      (conversation-append-summary legacy "legacy checkpoint"))
+                    (summary-sequence (getf (rest summary) :seq))
+                    (pathnames (conversation-storage-pathnames identity)))
+               (test-assert
+                (and (= summary-sequence 2)
+                     (= (length pathnames) 2)
+                     (equal (first pathnames) identity)
+                     (= (conversation-chunk-start-sequence (second pathnames)) 2))
+                "compacting a legacy file retains it as the oldest storage segment")
+               (let* ((reloaded (conversation-load identity))
+                      (records (test-conversation--all-records reloaded)))
+                 (test-assert
+                  (and (equal (conversation-log-pathname reloaded)
+                              (second pathnames))
+                       (= (length (conversation-input-items reloaded)) 1)
+                       (equal (mapcar #'first records) '(:message :summary))
+                       (equal
+                        (mapcar (lambda (record) (getf (rest record) :seq)) records)
+                        '(1 2)))
+                  "newest-chunk resume and full scans preserve mixed legacy history")))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-conversation-ephemeral-tool-projection () null)
 (defun test-conversation-ephemeral-tool-projection ()
   "Test request-local tool correlation stays out of durable history and replay."
@@ -512,8 +872,10 @@
             (string= (conversation-reasoning-effort conversation) "ultra")
             "new conversations inherit the configured effort")
            (conversation-set-model-selection conversation "gpt-5.6-luna" "high")
-           (test-assert (not (probe-file (conversation-pathname conversation)))
-                        "selecting a model does not persist an empty conversation")
+           (test-assert
+            (not (conversation-storage-occupied-p
+                  (conversation-pathname conversation)))
+            "selecting a model does not persist an empty conversation")
            (conversation-append-user-message conversation "remember this model")
            (let ((header (first (conversation--read-records
                                  (conversation-pathname conversation)))))
@@ -642,9 +1004,9 @@
             :success-p nil)
            (conversation-append-user-message conversation "continue")
            (log-append
-            (conversation-pathname conversation)
+            (conversation-log-pathname conversation)
             `(:tool-result
-              :seq 3
+              :seq 5
               :time ,(get-universal-time)
               :call-id "call-duplicate"
               :tool "shell.run"
@@ -794,11 +1156,13 @@
                  (conversation-create configuration
                                       :identifier "private-turn"
                                       :storage-root storage-root)))
-           (test-assert (not (probe-file (conversation-pathname conversation)))
-                        "an empty private conversation leaves no transcript")
-           (conversation-append-user-message conversation "private assignment")
-           (test-assert (probe-file (conversation-pathname conversation))
-                        "the first private record persists its transcript")
+            (test-assert (not (conversation-storage-occupied-p
+                               (conversation-pathname conversation)))
+                         "an empty private conversation leaves no transcript")
+            (conversation-append-user-message conversation "private assignment")
+            (test-assert (conversation-storage-active-pathname
+                          (conversation-pathname conversation))
+                         "the first private record persists its transcript")
            (let ((loaded (conversation-load
                           (conversation-pathname conversation))))
              (test-assert
@@ -1153,15 +1517,15 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                 (conversation-peek-header
                  (conversation-pathname conversation)))
                "conversation picker enumeration remains read-only while leased")
-              (let ((records-seen 0))
-                (conversation--map-records
-                 (conversation-pathname conversation)
-                 (lambda (record)
-                   (declare (ignore record))
-                   (incf records-seen)))
-                (test-assert
-                 (= records-seen 2)
-                 "history enumeration remains read-only while leased"))))
+               (let ((records-seen 0))
+                 (conversation--map-records
+                  (conversation-log-pathname conversation)
+                  (lambda (record)
+                    (declare (ignore record))
+                    (incf records-seen)))
+                 (test-assert
+                  (= records-seen 2)
+                  "history enumeration remains read-only while leased"))))
            (let ((lease
                    (conversation-lease-acquire configuration identifier)))
              (unwind-protect
@@ -1409,8 +1773,10 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                         "unknown record kinds retain common projection")
            (test-assert (not (conversation-persisted-p conversation))
                         "a new conversation begins only in memory")
-           (test-assert (not (probe-file (conversation-pathname conversation)))
-                        "an empty conversation has no file")
+           (test-assert
+            (not (conversation-storage-occupied-p
+                  (conversation-pathname conversation)))
+            "an empty conversation has no durable storage")
            (test-assert (null (conversation-list configuration))
                         "empty conversations never appear in saved listings")
            (conversation-append-user-message conversation "hi")
@@ -1433,7 +1799,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
             (eq (conversation-input-items-tail conversation)
                 (last (conversation-input-items conversation)))
             "provider projection appends retain their constant-time tail")
-           (with-open-file (stream (conversation-pathname conversation)
+           (with-open-file (stream (conversation-log-pathname conversation)
                                    :direction :output
                                    :if-exists :append
                                    :external-format :utf-8)
@@ -1583,7 +1949,55 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                    (= (conversation-picker-metadata-user-turn-count metadata) 2)
                    (string= (conversation-picker-metadata-preview metadata)
                             "second"))
-              "a later picker scan rebuilds metadata from the complete log")))
+               "a later picker scan rebuilds metadata from the complete log"))
+           (let* ((conversation
+                   (conversation-create configuration
+                                        :identifier "metadata-rotation"))
+                  (identity (conversation-pathname conversation))
+                  (map-records-function
+                   (symbol-function 'conversation--map-records))
+                  (file-identity-function
+                   (symbol-function 'conversation--file-identity))
+                  (rotated-p nil))
+             (conversation-append-user-message conversation "before rotation")
+             (test-assert
+              (null
+               (test-call-with-function-replacements
+                (list
+                 (list
+                  'conversation--file-identity
+                  (lambda (mapped-pathname)
+                    (multiple-value-bind (segment size write-date)
+                        (funcall file-identity-function mapped-pathname)
+                      (declare (ignore size write-date))
+                      (values segment 100 200))))
+                 (list
+                  'conversation-picker-revision-read
+                  (lambda (mapped-pathname)
+                    (declare (ignore mapped-pathname))
+                    0))
+                 (list
+                  'conversation--map-records
+                  (lambda (mapped-pathname function &key (start-position 0))
+                    (multiple-value-prog1
+                        (funcall map-records-function
+                                 mapped-pathname
+                                 function
+                                 :start-position start-position)
+                      (unless rotated-p
+                        (setf rotated-p t)
+                        (conversation-append-summary
+                         conversation "rotation checkpoint"))))))
+                (lambda ()
+                  (conversation-picker-metadata-scan identity))))
+              "same-size same-date chunk rotation rejects stale picker metadata")
+             (let ((metadata (conversation-picker-metadata-find identity)))
+               (test-assert
+                (and metadata
+                     (string=
+                      (conversation-picker-metadata-source-segment metadata)
+                      (namestring (conversation-log-pathname conversation))))
+                "rebuilt picker metadata records the exact active segment"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -1641,9 +2055,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                (conversation-append-record
                 conversation
                 (list :tool-result :status ':ok :output "tool secret"))
-               (conversation-append-record
-                conversation
-                (list :summary :content "summary secret"))
+               (conversation-append-summary conversation "summary secret")
                (test-assert
                 (= (conversation-picker-search-revision-read pathname)
                    message-revision)
@@ -1665,8 +2077,10 @@ assistant needle"))
                 "a valid search sidecar avoids scanning the conversation log"))
              (let ((loaded (conversation-load pathname)))
                (test-assert
-                (equal (conversation-picker-search-messages loaded) expected)
-                "conversation replay reconstructs the complete search corpus")
+                (and (= (conversation-picker-search-message-count loaded) 2)
+                     (null (conversation-picker-search-messages loaded))
+                     (not (conversation-picker-search-materialized-p loaded)))
+                "newest-chunk replay defers the complete historical search corpus")
                (conversation-append-user-message loaded "later user")
                (setf expected (append expected (list "later user")))
                (test-assert
@@ -1680,11 +2094,11 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 1)
+                       (= scan-count 2)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "a missing search sidecar rebuilds from the complete log once"))
+                  "a missing search sidecar rebuilds from both chunks once"))
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
                  (test-assert
@@ -1695,11 +2109,11 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 1)
+                       (= scan-count 2)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "a malformed search sidecar rebuilds once"))
+                  "a malformed search sidecar rebuilds both chunks once"))
                (with-open-file (stream search-pathname
                                        :direction :output
                                        :if-exists :supersede
@@ -1709,34 +2123,35 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 1)
+                       (= scan-count 2)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "a truncated search sidecar rebuilds once"))
-              (let* ((metadata (conversation-picker-metadata-read pathname))
-                     (revision
+                  "a truncated search sidecar rebuilds both chunks once"))
+               (let* ((metadata (conversation-picker-metadata-read pathname))
+                      (revision
                        (conversation-picker-search-revision-read pathname))
-                     (message-count
+                      (message-count
                        (conversation-picker-metadata-search-message-count metadata)))
-                (conversation-picker-search-write
-                 pathname
-                 (make-instance
-                  'conversation-picker-search-index
-                  :source-revision (1- revision)
-                  :message-count message-count
-                  :messages (make-list message-count :initial-element "stale"))))
+                 (conversation-picker-search-write
+                  pathname
+                  (make-instance
+                   'conversation-picker-search-index
+                   :source-revision (1- revision)
+                   :message-count message-count
+                   :messages (make-list message-count :initial-element "stale"))))
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 1)
+                       (= scan-count 2)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "a stale search revision rebuilds once"))
+                  "a stale search revision rebuilds both chunks once"))
                (let ((map-records-function
-                       (symbol-function 'conversation--map-records)))
+                      (symbol-function 'conversation--map-records))
+                     (appended-p nil))
                  (test-assert
                   (null
                    (test-call-with-function-replacements
@@ -1750,8 +2165,10 @@ assistant needle"))
                                      mapped-pathname
                                      function
                                      :start-position start-position)
-                          (conversation-append-user-message
-                           loaded "racing message")))))
+                          (unless appended-p
+                            (setf appended-p t)
+                            (conversation-append-user-message
+                             loaded "racing message"))))))
                     (lambda ()
                       (conversation-picker-search-scan pathname))))
                   "a searchable append racing a scan rejects the stale snapshot"))
@@ -1792,8 +2209,8 @@ assistant needle"))
                         expected))
                   "a pre-append scan can publish only the old searchable corpus")
                  (let ((stale-index
-                         (conversation-picker-search-index-from-record
-                          (snapshot-read search-pathname))))
+                        (conversation-picker-search-index-from-record
+                         (snapshot-read search-pathname))))
                    (test-assert
                     (and stale-index
                          (equal
@@ -1819,7 +2236,7 @@ assistant needle"))
                           expected))
                     "a later find rebuilds search after the post-append crash")))
                (delete-file search-pathname)
-               (with-open-file (stream pathname
+               (with-open-file (stream (conversation-log-pathname loaded)
                                        :direction :output
                                        :if-exists :append
                                        :external-format :utf-8)
@@ -1828,18 +2245,18 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (= scan-count 2)
+                       (= scan-count 4)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "an incomplete log tail rebuilds both stale picker projections"))
+                  "an incomplete active tail rebuilds metadata and search across both chunks"))
                (let ((reloaded (conversation-load pathname)))
                  (test-assert
                   (and (conversation-incomplete-tail-p reloaded)
-                       (equal
-                        (conversation-picker-search-messages reloaded)
-                        expected))
-                  "replay retains the complete search corpus before tail repair")
+                       (= (conversation-picker-search-message-count reloaded)
+                          (length expected))
+                       (not (conversation-picker-search-materialized-p reloaded)))
+                  "newest-chunk replay retains cumulative search state before tail repair")
                  (conversation-append-user-message reloaded "after repair")
                  (setf expected (append expected (list "after repair")))
                  (test-assert
@@ -1872,8 +2289,8 @@ assistant needle"))
     (unwind-protect
          (progn
            (conversation-append-user-message conversation "temporary")
-            (test-assert (every #'probe-file sidecars)
-                         "conversation appends publish all picker sidecars")
+           (test-assert (every #'probe-file sidecars)
+                        "conversation appends publish all picker sidecars")
            (snapshot-write (merge-pathnames "image.sexp" image-root)
                            '(:image))
            (snapshot-write (merge-pathnames "task/result.sexp" task-root)
@@ -1887,17 +2304,17 @@ assistant needle"))
               (conversation-in-use ()
                 t))
             "deletion refuses a conversation owned by another live lease")
-           (test-assert (probe-file pathname)
-                        "refused deletion preserves the conversation file")
+           (test-assert (conversation-storage-occupied-p pathname)
+                        "refused deletion preserves conversation storage")
            (conversation-lease-release lease)
            (setf lease nil)
            (test-assert (equal (conversation-delete configuration "delete-me")
                                pathname)
                         "deletion returns the removed conversation pathname")
-           (test-assert (not (probe-file pathname))
-                        "deletion removes the conversation file")
-            (test-assert (notany #'probe-file sidecars)
-                         "deletion removes all picker sidecars")
+           (test-assert (not (conversation-storage-occupied-p pathname))
+                        "deletion removes conversation storage")
+           (test-assert (notany #'probe-file sidecars)
+                        "deletion removes all picker sidecars")
            (test-assert (not (probe-file image-root))
                         "deletion removes private image artifacts")
            (test-assert (not (probe-file task-root))

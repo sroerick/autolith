@@ -871,8 +871,10 @@
              (application-publish-recovery-session application)
              (test-assert (null (getf (rest empty-record) :conversation-id))
                           "crashes do not advertise an unpersisted conversation")
-             (test-assert (not (probe-file (conversation-pathname empty)))
-                          "crash reporting does not materialize an empty conversation")
+             (test-assert
+              (not (conversation-storage-occupied-p
+                    (conversation-pathname empty)))
+              "crash reporting does not materialize an empty conversation")
              (test-assert
               (not (probe-file session-pointer))
               "an empty active conversation clears stale recovery correlation")))

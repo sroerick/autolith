@@ -27,19 +27,117 @@
   (and (identifier-p identifier) identifier))
 
 
+
+;;;; -- Chunk Storage Paths --
+
+(defparameter *conversation-chunk-sequence-width* 20
+  "The minimum decimal width of deterministic conversation chunk names.")
+
+(-> conversation-chunk-start-sequence (pathname) (option (integer 1)))
+(defun conversation-chunk-start-sequence (pathname)
+  "Return PATHNAME's canonical positive chunk start sequence, or NIL."
+  (let ((name (pathname-name pathname)))
+    (when (and (stringp name)
+               (every #'digit-char-p name))
+      (let ((sequence (parse-integer name :junk-allowed nil)))
+        (and (typep sequence '(integer 1))
+             (string= name
+                      (format nil "~V,'0D"
+                              *conversation-chunk-sequence-width*
+                              sequence))
+             sequence)))))
+
+(-> conversation-storage-identity-pathname (pathname) pathname)
+(defun conversation-storage-identity-pathname (pathname)
+  "Return PATHNAME's stable top-level conversation identity pathname.
+
+Legacy logs already use this pathname. A chunk pathname maps to the sibling
+identity named by its containing conversation directory."
+  (if (conversation-chunk-start-sequence pathname)
+      (let* ((directory (pathname-directory pathname))
+             (identifier (and directory (first (last directory)))))
+        (if (stringp identifier)
+            (make-pathname :directory (butlast directory)
+                           :name identifier
+                           :type "sexp"
+                           :defaults pathname)
+            pathname))
+      pathname))
+
+(-> conversation-storage-directory-pathname (pathname) pathname)
+(defun conversation-storage-directory-pathname (pathname)
+  "Return the chunk directory belonging to identity or chunk PATHNAME."
+  (let* ((identity (conversation-storage-identity-pathname pathname))
+         (identifier (pathname-name identity)))
+    (make-pathname :directory (append (pathname-directory identity)
+                                      (list identifier))
+                   :name nil
+                   :type nil
+                   :defaults identity)))
+
+(-> conversation-chunk-pathname (pathname (integer 1)) pathname)
+(defun conversation-chunk-pathname (pathname start-sequence)
+  "Return PATHNAME's deterministic chunk beginning at START-SEQUENCE."
+  (merge-pathnames
+   (make-pathname :name (format nil "~V,'0D"
+                                *conversation-chunk-sequence-width*
+                                start-sequence)
+                  :type "sexp")
+   (conversation-storage-directory-pathname pathname)))
+
+(-> conversation-storage-pathnames (pathname) list)
+(defun conversation-storage-pathnames (pathname)
+  "Return PATHNAME's durable log segments in chronological order.
+
+A legacy top-level file, when present, is the oldest segment. Deterministic
+chunk files follow in numeric start-sequence order."
+  (let* ((identity (conversation-storage-identity-pathname pathname))
+         (directory (conversation-storage-directory-pathname identity))
+         (chunks
+           (if (uiop:directory-exists-p directory)
+               (sort
+                (remove-if-not #'conversation-chunk-start-sequence
+                               (uiop:directory-files directory "*.sexp"))
+                #'<
+                :key #'conversation-chunk-start-sequence)
+               nil)))
+    (if (probe-file identity)
+        (cons identity chunks)
+        chunks)))
+
+(-> conversation-storage-active-pathname (pathname) (option pathname))
+(defun conversation-storage-active-pathname (pathname)
+  "Return PATHNAME's newest durable log segment, or NIL when absent."
+  (first (last (conversation-storage-pathnames pathname))))
+
+(-> conversation-storage-occupied-p (pathname) boolean)
+(defun conversation-storage-occupied-p (pathname)
+  "Return true when PATHNAME's legacy file or chunk directory exists."
+  (let ((identity (conversation-storage-identity-pathname pathname)))
+    (or (not (null (probe-file identity)))
+        (not (null
+              (uiop:directory-exists-p
+               (conversation-storage-directory-pathname identity)))))))
+
+(-> conversation-storage-write-date (pathname) (integer 0))
+(defun conversation-storage-write-date (pathname)
+  "Return PATHNAME's newest durable segment write date, or zero."
+  (let ((active (conversation-storage-active-pathname pathname)))
+    (or (and active (file-write-date active)) 0)))
+
 ;;;; -- Conversation Identifier Allocation --
 
 (-> conversation-identifier--pathname (pathname string) pathname)
 (defun conversation-identifier--pathname (storage-root identifier)
-  "Return IDENTIFIER's conversation file pathname beneath STORAGE-ROOT."
+  "Return IDENTIFIER's stable conversation identity beneath STORAGE-ROOT."
   (merge-pathnames (make-pathname :name identifier :type "sexp")
                    storage-root))
 
 (-> conversation-identifier--occupied-p (pathname string) boolean)
 (defun conversation-identifier--occupied-p (storage-root identifier)
-  "Return true when IDENTIFIER already has a conversation file beneath STORAGE-ROOT."
-  (not (null (probe-file (conversation-identifier--pathname storage-root
-                                                            identifier)))))
+  "Return true when IDENTIFIER has a legacy file or chunk directory."
+  (conversation-storage-occupied-p
+   (conversation-identifier--pathname storage-root identifier)))
 
 (-> conversation-identifier--reserved-p (pathname string) boolean)
 (defun conversation-identifier--reserved-p (storage-root identifier)
@@ -86,12 +184,14 @@ would let a second allocation in the same second choose the same identifier."
 (-> conversation-picker-metadata-pathname (pathname) pathname)
 (defun conversation-picker-metadata-pathname (conversation-pathname)
   "Return the compact picker-cache pathname for CONVERSATION-PATHNAME."
-  (let* ((conversation-root
-           (uiop:pathname-directory-pathname conversation-pathname))
+  (let* ((identity
+           (conversation-storage-identity-pathname conversation-pathname))
+         (conversation-root
+           (uiop:pathname-directory-pathname identity))
          (data-root
            (uiop:pathname-parent-directory-pathname conversation-root)))
     (merge-pathnames
-     (make-pathname :name (pathname-name conversation-pathname) :type "sexp")
+     (make-pathname :name (pathname-name identity) :type "sexp")
      (merge-pathnames "conversation-picker/" data-root))))
 
 

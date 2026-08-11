@@ -16,7 +16,7 @@
                 :time (+ (conversation-created-at conversation) seconds-after)
                 :role :user
                 :content "later project work")))
-    (log-append (conversation-pathname conversation) record)
+    (log-append (conversation-log-pathname conversation) record)
     (conversation--note-activity conversation record)
     (incf (conversation-next-sequence conversation)))
   nil)
@@ -180,7 +180,7 @@
                (conversation-append-user-message malformed "begin")
                (project-adaptation-tests--append-late-turn
                 malformed *project-adaptation-substantial-seconds*)
-               (with-open-file (stream pathname
+               (with-open-file (stream (conversation-log-pathname malformed)
                                        :direction :output
                                        :if-exists :append
                                        :external-format :utf-8)
@@ -198,7 +198,7 @@
                              *project-adaptation-substantial-seconds*)
                           *unix-epoch-universal-time*)))
                  (sb-posix:utime
-                  (namestring (conversation-pathname touched))
+                  (namestring (conversation-log-pathname touched))
                   unix-time
                   unix-time))
                (test-assert
