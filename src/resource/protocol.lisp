@@ -159,6 +159,39 @@
   (let ((state (gethash alias states)))
     (and (typep state class) state)))
 
+(-> resource-observation-state-maximum
+    (resource-observation-state)
+    (integer 0))
+(defgeneric resource-observation-state-maximum (state)
+  (:documentation
+   "Return the maximum conversation-local observations retained for STATE's family."))
+
+(-> resource-observation-state-trim
+    (conversation resource-observation-state)
+    null)
+(defun resource-observation-state-trim (conversation state)
+  "Trim STATE's observation family in CONVERSATION without disturbing others."
+  (let* ((states  (conversation-resource-observations conversation))
+         (class   (class-of state))
+         (maximum (resource-observation-state-maximum state))
+         (excess
+           (- (loop for candidate being the hash-values of states
+                    count (typep candidate class))
+              maximum)))
+    (loop for alias in (copy-list
+                        (conversation-resource-observation-order conversation))
+          while (plusp excess)
+          when (resource-observation-state-find states alias class)
+            do
+               (setf (conversation-resource-observation-order conversation)
+                     (remove alias
+                             (conversation-resource-observation-order conversation)
+                             :test #'string=
+                             :count 1))
+               (remhash alias states)
+               (decf excess)))
+  nil)
+
 (-> resource-capabilities (resource t) list)
 (defgeneric resource-capabilities (resource context)
   (:documentation

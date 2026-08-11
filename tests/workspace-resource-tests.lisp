@@ -245,12 +245,11 @@
                              'workspace-resource-tests-other-observation-state)
                             other-state)
                         "workspace observation expiry preserves other resource states")
-                       (test-assert
-                        (and (= (hash-table-count states) 2)
-                             (= (workspace-file--observation-state-count states) 1)
-                             (typep (gethash revision states)
-                                    'workspace-file-observation-state))
-                        "workspace and other resource observation states coexist")))
+                        (test-assert
+                         (and (= (hash-table-count states) 2)
+                              (typep (gethash revision states)
+                                     'workspace-file-observation-state))
+                         "workspace and other resource observation states coexist")))
                    (test-assert
                     (handler-case
                         (progn

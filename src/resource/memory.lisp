@@ -72,6 +72,11 @@
   ()
   (:documentation "One conversation-local model observation of a memory: resource."))
 
+(defmethod resource-observation-state-maximum ((state memory-observation-state))
+  "Return the configured memory observation limit."
+  (declare (ignore state))
+  *memory-resource-maximum-observations*)
+
 
 ;;;; -- URI Resolution --
 
@@ -337,30 +342,6 @@
 
 ;;;; -- Conversation Observation State --
 
-(-> memory-resource--observation-state-count (hash-table) (integer 0))
-(defun memory-resource--observation-state-count (states)
-  "Return the number of memory observation STATES."
-  (loop for state being the hash-values of states
-        count (typep state 'memory-observation-state)))
-
-(-> memory-resource--expire-oldest-observation-state
-    (conversation hash-table)
-    boolean)
-(defun memory-resource--expire-oldest-observation-state (conversation states)
-  "Expire the oldest memory state without disturbing other resource observations."
-  (loop for alias in (conversation-resource-observation-order conversation)
-        for state = (resource-observation-state-find
-                     states alias 'memory-observation-state)
-        when state
-          do
-             (setf (conversation-resource-observation-order conversation)
-                   (remove alias
-                           (conversation-resource-observation-order conversation)
-                           :test #'string=
-                           :count 1))
-             (remhash alias states)
-             (return t)
-        finally (return nil)))
 
 (-> memory-resource--observation-state-for-snapshot
     (conversation memory-observation)
@@ -395,10 +376,7 @@
               (conversation-resource-observation-order conversation)
               (append (conversation-resource-observation-order conversation)
                       (list alias)))
-        (loop while (> (memory-resource--observation-state-count states)
-                       *memory-resource-maximum-observations*)
-              while (memory-resource--expire-oldest-observation-state
-                     conversation states))
+        (resource-observation-state-trim conversation state)
         state))))
 
 (-> memory-resource--find-observation-state

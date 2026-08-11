@@ -58,6 +58,12 @@
     :documentation "Inclusive original line ranges fully shown to the model."))
   (:documentation "One conversation-local model observation of a workspace file."))
 
+(defmethod resource-observation-state-maximum
+    ((state workspace-file-observation-state))
+  "Return the configured workspace-file observation limit."
+  (declare (ignore state))
+  *workspace-file-resource-maximum-observations*)
+
 
 ;;;; -- URI Resolution --
 
@@ -228,30 +234,6 @@
             (push (copy-list range) result))))
     (nreverse result)))
 
-(-> workspace-file--observation-state-count (hash-table) (integer 0))
-(defun workspace-file--observation-state-count (states)
-  "Return the number of workspace file observation STATES."
-  (loop for state being the hash-values of states
-        count (typep state 'workspace-file-observation-state)))
-
-(-> workspace-file--expire-oldest-observation-state
-    (conversation hash-table)
-    boolean)
-(defun workspace-file--expire-oldest-observation-state (conversation states)
-  "Expire the oldest workspace file state without disturbing other resource states."
-  (loop for alias in (conversation-resource-observation-order conversation)
-        for state = (resource-observation-state-find
-                     states alias 'workspace-file-observation-state)
-        when state
-          do
-             (setf (conversation-resource-observation-order conversation)
-                   (remove alias
-                           (conversation-resource-observation-order conversation)
-                           :test #'string=
-                           :count 1))
-             (remhash alias states)
-             (return t)
-        finally (return nil)))
 
 (-> workspace-file--observation-state-for-snapshot
     (conversation workspace-file-observation list)
@@ -290,10 +272,7 @@
               (conversation-resource-observation-order conversation)
               (append (conversation-resource-observation-order conversation)
                       (list alias)))
-        (loop while (> (workspace-file--observation-state-count states)
-                       *workspace-file-resource-maximum-observations*)
-              while (workspace-file--expire-oldest-observation-state
-                     conversation states))
+        (resource-observation-state-trim conversation state)
         state))))
 
 (-> workspace-file--find-observation-state

@@ -54,6 +54,11 @@
   ()
   (:documentation "One conversation-local model observation of agenda:current."))
 
+(defmethod resource-observation-state-maximum ((state agenda-observation-state))
+  "Return the configured agenda observation limit."
+  (declare (ignore state))
+  *agenda-resource-maximum-observations*)
+
 
 ;;;; -- URI Resolution --
 
@@ -146,30 +151,6 @@
 
 ;;;; -- Conversation Observation State --
 
-(-> agenda-resource--observation-state-count (hash-table) (integer 0))
-(defun agenda-resource--observation-state-count (states)
-  "Return the number of agenda observation STATES."
-  (loop for state being the hash-values of states
-        count (typep state 'agenda-observation-state)))
-
-(-> agenda-resource--expire-oldest-observation-state
-    (conversation hash-table)
-    boolean)
-(defun agenda-resource--expire-oldest-observation-state (conversation states)
-  "Expire the oldest agenda state without disturbing other resource observations."
-  (loop for alias in (conversation-resource-observation-order conversation)
-        for state = (resource-observation-state-find
-                     states alias 'agenda-observation-state)
-        when state
-          do
-             (setf (conversation-resource-observation-order conversation)
-                   (remove alias
-                           (conversation-resource-observation-order conversation)
-                           :test #'string=
-                           :count 1))
-             (remhash alias states)
-             (return t)
-        finally (return nil)))
 
 (-> agenda-resource--observation-state-for-snapshot
     (conversation agenda-observation)
@@ -205,10 +186,7 @@
               (conversation-resource-observation-order conversation)
               (append (conversation-resource-observation-order conversation)
                       (list alias)))
-        (loop while (> (agenda-resource--observation-state-count states)
-                       *agenda-resource-maximum-observations*)
-              while (agenda-resource--expire-oldest-observation-state
-                     conversation states))
+        (resource-observation-state-trim conversation state)
         state))))
 
 (-> agenda-resource--find-observation-state
