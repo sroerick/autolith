@@ -122,6 +122,7 @@
     (test-mcp-reload-registry-isolation)
     (test-mcp-reload-transaction-boundary)
     (run-application-command-tests)
+    (test-lambda-symbolics-dependency-pins)
     (test-project-adaptations)
     (test-conversation-identifiers)
     (test-conversation-persistence)

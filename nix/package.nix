@@ -16,8 +16,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "cl-colorist";
-      rev = "91041f50af55fa82f7f099b7be222055624b20af";
-      hash = "sha256-a6ITI24TPXsy6AkRbuZlu/0NC6w2QwDBS4NJIQ4hotc=";
+      rev = "a4b65e63f40248c091d8ccf6023ad6fef5de7f0d";
+      hash = "sha256-UhQnhWYyX+VYhYbiLCMfw3vutdNyWn/CJj2xQPKYcAM=";
     };
   };
 
@@ -39,8 +39,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "mcparen";
-      rev = "a0981df8ca0910fc0676e1b34b5507fbd54ac901";
-      hash = "sha256-2Tc7m/5isu0wxo0rPJ5iL+HJhPDQbwGSL93UGlFaxA4=";
+      rev = "58ba29a8dd8d06417452b7978748c3d453bc3287";
+      hash = "sha256-VMZH7DahgtSv4cRdhrGbaCqAkzOKcmnXSVwjmsbL2Hg=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
@@ -145,8 +145,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "sexp-store";
-      rev = "a03ddb709eb43efdd2f1a98dd87aa4e7f444940c";
-      hash = "sha256-ftX6Ohcy748mzgWC9qe1/09aczXjyvAdPC9O5zEaGtg=";
+      rev = "0a586df98c295ca6d2fcd47e33bc5f478075f470";
+      hash = "sha256-Gm8ZBseLNS0M3BIgdacmT97/zWQI3rfNdTL4IFtEna4=";
     };
   };
 
