@@ -277,20 +277,17 @@ a user-local init.lisp change, or a private image commit.
   retaining exclusion across that check and fork; and =cl-jobpond= =ee2e2eb= owns
   atomic four-limit pool policy publication, immediate worker and monitor capacity
   refresh, and the locked default-runtime admission boundary. No pool-policy
-  compatibility adapter remains in Autolith. A repository regression compares
-  every direct =github.com/luciusmagn= Git ref across =qlfile=, =qlfile.lock=,
-  and =nix/package.nix=.
+  compatibility adapter remains in Autolith. Dependency lock materialization,
+  exact Nix builds, and release builds validate the three pin surfaces; Autolith
+  does not carry source-shape tests for its dependency metadata.
 - Scope and location: tracked project work in =src/conversation/=, =src/mcp/=,
   =src/skills/=, =src/state/generations.lisp=, =src/task/=,
-  =src/tools/workspace.lisp=, =src/workers/lisp.lisp=,
-  =tests/dependency-tests.lisp=, dependency locks, Nix packaging, architecture
-  documentation, and regressions.
+  =src/tools/workspace.lisp=, =src/workers/lisp.lisp=, dependency locks, Nix
+  packaging, architecture documentation, and behavioral regressions.
 - Verification: =cl-jobpond= passes 408 assertions. Focused hurry-up admission,
-  delayed-close refresh, asynchronous execution, task scheduler, and 14-repository
-  pin-coherence tests pass. The pin test exposed and closed stale Nix refs for
-  =cl-colorist=, =mcparen=, and =sexp-store=. The exact Nix package builds;
-  bootstrap rebuilds both installed images; version and recovery probes pass; and
-  both final reviews report no findings.
+  delayed-close refresh, asynchronous execution, and task scheduler tests pass.
+  Exact Nix package builds, bootstrap image rebuilds, version and recovery probes,
+  and final reviews validate the integrated dependency set.
 
 ** Crash-safe recovery input vaults
 

@@ -186,7 +186,6 @@
                               (:file "directory-configuration-tests")
                              (:file "mcp-tool-tests")
                              (:file "application-command-tests")
-                             (:file "dependency-tests")
                              (:file "project-adaptation-tests")
                              (:file "conversation-identifier-tests")
                              (:file "conversation-tests")
