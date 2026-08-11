@@ -107,9 +107,55 @@
                                   :if-does-not-exist :ignore)))
   nil)
 
+(-> release-server-tests--test-service-runtime-isolation () null)
+(defun release-server-tests--test-service-runtime-isolation ()
+  "Verify candidate setup selects its runtime independently of the updater."
+  (let* ((home
+           (merge-pathnames "autolith-release-service-home/"
+                            (uiop:temporary-directory)))
+         (configuration
+           (release-updater-configuration-create
+            :service-account "autolith-release"
+            :service-home home))
+         (captured-command nil)
+         (captured-directory nil)
+         (*release-updater-host-command-function*
+           (lambda (command &key directory input output error-output)
+             (declare (ignore input output error-output))
+             (setf captured-command command
+                   captured-directory directory)
+             nil)))
+    (release-updater--run-as-service
+     configuration
+     ':bootstrap
+     "v0.31.0"
+     '("candidate-bootstrap")
+     :directory #p"/candidate/")
+    (test-assert
+     (equal
+      captured-command
+      (list "s6-setuidgid"
+            "autolith-release"
+            "env"
+            "-u" "AUTOLITH_SBCL"
+            "-u" "AUTOLITH_SBCL_SOURCE_ROOT"
+            (format nil "HOME=~A" (namestring home))
+            (format nil "XDG_DATA_HOME=~A"
+                    (namestring (merge-pathnames ".local/share/" home)))
+            (format nil "XDG_STATE_HOME=~A"
+                    (namestring (merge-pathnames ".local/state/" home)))
+            (format nil "XDG_CACHE_HOME=~A"
+                    (namestring (merge-pathnames ".cache/" home)))
+            "candidate-bootstrap"))
+     "candidate setup clears inherited runtime bindings before bootstrap")
+    (test-assert (equal captured-directory #p"/candidate/")
+                 "candidate setup keeps its requested working directory"))
+  nil)
+
 (-> test-release-server () null)
 (defun test-release-server ()
   "Test semantic release selection and strict HTTP routing."
+  (release-server-tests--test-service-runtime-isolation)
   (test-assert (release-tag-valid-p "v0.11.1")
                "three-component release tags are valid")
   (test-assert (not (release-tag-valid-p "0.11.1"))

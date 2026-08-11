@@ -540,6 +540,8 @@ checked-out commit are rejected."
           (list "s6-setuidgid"
                 (release-updater-configuration-service-account configuration)
                 "env"
+                "-u" "AUTOLITH_SBCL"
+                "-u" "AUTOLITH_SBCL_SOURCE_ROOT"
                 (format nil "HOME=~A" (namestring home))
                 (format nil "XDG_DATA_HOME=~A"
                         (namestring (merge-pathnames ".local/share/" home)))
