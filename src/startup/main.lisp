@@ -376,7 +376,7 @@
                                (application-configuration application)
                                provenance))))
                     (dolist (failure
-                             (application-overlay-failures application))
+                             (application-mutation-replay-failures application))
                       (application-present
                        application
                        (application--transcript-entry

@@ -364,10 +364,6 @@ protocol."
              (funcall (symbol-function 'image-commit-definition-source)
                       configuration
                       target))
-        (and (fboundp 'overlay-read)
-             (funcall (symbol-function 'overlay-read)
-                      configuration
-                      target))
         (and (fboundp 'durable-mutation--fallback-source)
              (funcall (symbol-function 'durable-mutation--fallback-source)
                       configuration

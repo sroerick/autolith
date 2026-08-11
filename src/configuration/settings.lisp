@@ -580,10 +580,6 @@ reasoning effort only when that effort is supported by the selected model."
   "Return the atomic workspace-agenda pathname."
   (merge-pathnames "agendas.sexp" (configuration-data-root configuration)))
 
-(-> configuration-overlay-root (configuration) pathname)
-(defun configuration-overlay-root (configuration)
-  "Return the legacy self-modification overlay directory used for migration."
-  (merge-pathnames "overlays/" (configuration-data-root configuration)))
 
 (-> configuration-image-commit-root (configuration) pathname)
 (defun configuration-image-commit-root (configuration)

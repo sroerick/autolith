@@ -96,6 +96,14 @@ to update externally. =autolith --update= requests the same path from the shell.
 Running the installer again is also an update and keeps older versioned releases
 available under the installation root.
 
+Autolith 0.32.0 supports persisted state upgraded through 0.31.1. Version 0.31.1
+is the final bridge for legacy =overlays/*.lisp= self-modifications. Before
+installing 0.32.0 on an installation that still has those files, start 0.31.1,
+repair any replay failures, and use =self.persist-definition= or =self.commit=
+to create a selected private image commit that imports them. Version-1
+single-file conversation logs remain readable in 0.32.0 and become the oldest
+segment of the chunked conversation log.
+
 Tagged Linux archives are built and checked by the installer host, then served
 by the repository's Common Lisp release server. GitHub CI publishes only a
 metadata compatibility record after the host checksum becomes available. See
@@ -805,8 +813,8 @@ file is read in the =AUTOLITH= package and is loaded again when reconnecting a
 retained generation, so it remains the final user-controlled configuration
 layer. It is ordinary Common Lisp running with the user's full privileges.
 
-This entry point is distinct from =overlays/*.lisp=, which exist only to migrate
-old self-modifications. User configuration is never built into the pristine
+This entry point is separate from selected private image commits. User
+configuration is never copied into a private replay or built into the pristine
 recovery image.
 
 The request-local context registry is available from this file. A contributor
@@ -857,8 +865,8 @@ plaintext with mode 0600. Mode 0600 limits file access through filesystem
 permissions; it does not encrypt the keys. Run =autolith --auth my-provider=
 or =/auth my-provider= to enter or replace the key. Input is hidden. Paste the
 key and press Enter even though no characters appear. The provider name selects the stored key for model discovery and
-requests. Do not put API keys in =init.lisp=, conversations, mutation overlays,
-or saved images.
+requests. Do not put API keys in =init.lisp=, conversations, mutation journals,
+private replay scripts, or saved images.
 
 Authentication can bootstrap a provider before its model list is available.
 The explicit =--auth PROVIDER= path does not refresh remote model lists before
@@ -1240,8 +1248,7 @@ using the private commit title. The atomic selection record is
 startup loads that script after the tracked system. If the selected canonical
 manifest or replay script was deleted, startup restores it from the exact Git
 object before loading it. =self.persist-definition= performs the same complete
-transaction directly for one definition. Legacy =overlays/*.lisp= files load
-when no private commit exists and are imported by the first private commit.
+transaction directly for one definition.
 
 The relevant private layout is deliberately direct:
 

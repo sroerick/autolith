@@ -132,7 +132,6 @@ quiescing, because both touch the private history repository."
             :checker (or mutation-checker
                          (make-instance 'standard-mutation-checker)))))
     (image-commit-write-generation-script
-     configuration
      reconstruction-pathname
      :generation-identifier identifier
      :commit image-commit)

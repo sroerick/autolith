@@ -453,36 +453,50 @@
              (image-commit-load configuration identifier
                                 :history-commit history-commit)))))
 
-(-> image-commit--legacy-entries (configuration) list)
-(defun image-commit--legacy-entries (configuration)
-  "Return deterministic replay entries for pre-image-commit overlay files."
-  (let ((root (configuration-overlay-root configuration)))
-    (if (uiop:directory-exists-p root)
-        (loop for pathname in (sort (uiop:directory-files root "*.lisp")
-                                    #'string<
-                                    :key #'namestring)
-              collect (list :kind ':legacy
-                            :id (format nil "legacy-~A" (pathname-name pathname))
-                            :target (enough-namestring pathname root)
-                            :source (uiop:read-file-string pathname)))
-        nil)))
 
 (-> image-commit-base-entries (configuration) list)
 (defun image-commit-base-entries (configuration)
-  "Return current committed entries or legacy overlays at the base."
+  "Return a copy of the current private commit entries, or NIL."
   (let ((current (image-commit-current configuration)))
-    (if current
-        (copy-tree (image-commit-entries current))
-        (image-commit--legacy-entries configuration))))
+    (and current (copy-tree (image-commit-entries current)))))
+
+(-> image-commit--entry-definition-target (list) (option string))
+(defun image-commit--entry-definition-target (entry)
+  "Return the definition target represented by replay ENTRY, when any."
+  (case (getf entry :kind)
+    (:definition
+     (getf entry :target))
+    (:legacy
+     (handler-case
+         (let ((definition
+                 (self-read-form (getf entry :source) :read-eval nil)))
+           (and (definition-form-p definition)
+                (definition-key definition)))
+       (error ()
+         nil)))))
+
+(-> image-commit--entry-matches-p (list keyword string) boolean)
+(defun image-commit--entry-matches-p (entry kind target)
+  "Return true when replay ENTRY represents KIND and TARGET."
+  (and (case kind
+         (:definition
+          (let ((entry-target
+                  (image-commit--entry-definition-target entry)))
+            (and entry-target (string= entry-target target))))
+         (otherwise
+          (and (eq (getf entry :kind) kind)
+               (string= (getf entry :target) target))))
+       t))
 
 (-> image-commit-definition-source (configuration string) (option string))
 (defun image-commit-definition-source (configuration target)
   "Return TARGET's current private committed definition source, if present."
   (let ((entry
           (find-if (lambda (candidate)
-                     (and (eq (getf candidate :kind) :definition)
-                          (string= (getf candidate :target) target)))
-                   (image-commit-base-entries configuration))))
+                     (image-commit--entry-matches-p
+                      candidate :definition target))
+                   (image-commit-base-entries configuration)
+                   :from-end t)))
     (and entry (getf entry :source))))
 
 (-> image-commit--record-p (t string) boolean)
@@ -567,9 +581,11 @@
   (let ((properties (rest record)))
     (find-if
      (lambda (entry)
-       (and (eq (getf entry :kind) (getf properties :kind))
-            (string= (getf entry :target) (getf properties :target))))
-     (image-commit-base-entries configuration))))
+       (image-commit--entry-matches-p entry
+                                      (getf properties :kind)
+                                      (getf properties :target)))
+     (image-commit-base-entries configuration)
+     :from-end t)))
 
 (-> image-commit--same-target-p (list list) boolean)
 (defun image-commit--same-target-p (left right)
@@ -643,9 +659,10 @@
       (setf result
             (remove-if
              (lambda (entry)
-               (and (eq (getf entry :kind) (getf addition :kind))
-                    (string= (getf entry :target)
-                             (getf addition :target))))
+               (image-commit--entry-matches-p
+                entry
+                (getf addition :kind)
+                (getf addition :target)))
              result))
       (setf result (nconc result (list addition))))
     result))
@@ -911,17 +928,16 @@
             *active-image-history-commit* history-commit
             *active-image-lineage-identifier* (make-identifier)
             *image-state-initialized-p* t)
-      (if identifier
-          (let* ((commit (image-commit-load
-                          configuration identifier
-                          :history-commit history-commit))
-                 (pathname (image-commit-script-pathname commit)))
-            (handler-case
-                (let ((*package* (find-package '#:autolith)))
-                  (load pathname))
-              (error (condition)
-                (push (cons pathname (format nil "~A" condition)) failures))))
-          (return-from image-state-load (overlay-load-all configuration)))
+      (when identifier
+        (let* ((commit (image-commit-load
+                        configuration identifier
+                        :history-commit history-commit))
+               (pathname (image-commit-script-pathname commit)))
+          (handler-case
+              (let ((*package* (find-package '#:autolith)))
+                (load pathname))
+            (error (condition)
+              (push (cons pathname (format nil "~A" condition)) failures)))))
       (nreverse failures))))
 
 (-> image-state-reconnect () null)
@@ -1000,19 +1016,16 @@
               (error condition)))))))
 
 (-> image-commit-write-generation-script
-    (configuration pathname
-     &key (:generation-identifier string) (:commit (option image-commit)))
+    (pathname &key (:generation-identifier string) (:commit (option image-commit)))
     pathname)
 (defun image-commit-write-generation-script
-    (configuration pathname &key generation-identifier commit)
+    (pathname &key generation-identifier commit)
   "Write GENERATION-IDENTIFIER's complete base-image reconstruction script."
   (image-commit-write-script
    pathname
    :identifier generation-identifier
    :title "Retained generation reconstruction"
-   :entries (if commit
-                (image-commit-entries commit)
-                (image-commit--legacy-entries configuration))))
+   :entries (and commit (image-commit-entries commit))))
 
 
 ;;;; -- Image Commit Tools --

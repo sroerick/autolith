@@ -242,8 +242,7 @@ root. An atomic pointer binds both identities and selects normal startup state.
 Startup restores deleted canonical manifest and replay files from the exact Git
 object. Retained cores preserve their checkpointed identities and begin a new
 lineage on reconnect, so rollback cannot absorb mutations written later by
-another branch. Legacy overlays are loaded at the base and imported into the
-first private commit.
+another branch.
 
 ** =self-status.lisp=, =self-discard.lisp=, and =self-exercise.lisp=
 

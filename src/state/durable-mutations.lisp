@@ -268,8 +268,7 @@
 (defun durable-mutation-record-p (configuration record)
   "Return true when RECORD is a valid durable-definition journal state.
 
-The recorded pathname is normally a private image-commit script. Legacy
-journals may instead name a startup overlay or tracked src/ file."
+Historical journals may name tracked src/ files or retired overlay paths."
   (and (durable-mutation-journal-record-p record)
        (non-empty-string-p (getf (rest record) :id))
        (non-empty-string-p (getf (rest record) :target))
@@ -282,14 +281,13 @@ journals may instead name a startup overlay or tracked src/ file."
                              "src/"
                              (configuration-source-root configuration)))
              (uiop:subpathp pathname
-                            (configuration-overlay-root configuration))
-             (uiop:subpathp pathname
                             (configuration-image-commit-root configuration))
              ;; Journals may be replayed under a different data root, so a
              ;; foreign overlays directory is still a recognizable location.
-             (find "overlays"
-                   (pathname-directory pathname)
-                   :test #'equal)))
+             (not (null
+                   (find "overlays"
+                         (pathname-directory pathname)
+                         :test #'equal)))))
        (stringp (getf (rest record) :previous))
        (stringp (getf (rest record) :proposed))
        (or (null (getf (rest record) :base-commit))
@@ -399,7 +397,6 @@ journals may instead name a startup overlay or tracked src/ file."
                                              commit-directory))
              (previous-source (or (image-commit-definition-source
                                    configuration target)
-                                  (overlay-read configuration target)
                                   (durable-mutation--fallback-source
                                    configuration
                                    definition)

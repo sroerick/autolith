@@ -101,7 +101,6 @@
                              (:file "workers/lisp")
                              (:file "workers/scratchpad")
                              (:file "self/tools")
-                             (:file "state/overlays")
                              (:file "state/durable-mutations")
                              (:file "state/image-commits")
                              (:file "startup/user-init")

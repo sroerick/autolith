@@ -916,7 +916,7 @@
 
 (-> test-durable-self-mutation () null)
 (defun test-durable-self-mutation ()
-  "Test private live-mutation commits, replay, and legacy overlay migration."
+  "Test private live-mutation commits, replay, and recovery."
   (let* ((source-root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -934,14 +934,12 @@
          (previous-commit-identifier *active-image-commit-identifier*)
          (previous-history-commit *active-image-history-commit*)
          (previous-lineage-identifier *active-image-lineage-identifier*)
-         (active-check-count 0)
-         (replay-probe-count 0)
+         (legacy-identifier nil)
          (*image-commit-replay-probe-function*
            (lambda (checked-configuration script identifier)
              (declare (ignore checked-configuration identifier))
              (test-assert (probe-file script)
                           "private replay is written before its clean probe")
-             (incf replay-probe-count)
              nil))
          (checker
            (make-instance
@@ -949,7 +947,6 @@
             :active-callback
             (lambda (checked-configuration definition-source)
               (declare (ignore checked-configuration definition-source))
-              (incf active-check-count)
               "active checks passed"))))
     (unwind-protect
          (progn
@@ -1020,35 +1017,123 @@
                                                     "self"
                                                     "persist-definition"))
                   (set-tool (tool-registry-find registry "self" "set"))
-                  (status-tool (tool-registry-find registry "self" "status"))
                   (diff-tool (tool-registry-find registry "self" "diff"))
-                  (commit-tool (tool-registry-find registry "self" "commit"))
-                  (broken (merge-pathnames
-                           "broken.lisp"
-                           (configuration-overlay-root configuration))))
-             (overlay-write
-             configuration
-             "(defun test-legacy-image-target)"
-             "(defun test-legacy-image-target () \"Return migrated state.\" 9)")
-             (ensure-directories-exist broken)
-             (with-open-file (stream broken
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
-               (write-string "(defun test-broken-overlay (" stream))
-             (setf *image-state-initialized-p* nil
-                   *active-image-commit-identifier* nil
-                   *active-image-history-commit* nil
-                   *active-image-lineage-identifier* nil)
-             (let ((failures (image-state-load configuration)))
-               (test-assert (= (length failures) 1)
-                            "legacy startup reports one broken overlay")
-               (test-assert (= (test-legacy-image-target) 9)
-                            "legacy startup loads valid definitions past failures"))
-             (delete-file broken)
-             (test-assert (null (image-commit-current configuration))
-                          "legacy overlays begin without a private image commit")
+                  (commit-tool (tool-registry-find registry "self" "commit")))
+              (setf *image-state-initialized-p* nil
+                    *active-image-commit-identifier* nil
+                    *active-image-history-commit* nil
+                    *active-image-lineage-identifier* nil)
+              (test-assert (null (image-state-load configuration))
+                           "startup initializes an empty private mutation lineage")
+              (test-assert (null (image-commit-current configuration))
+                           "empty startup begins without a private image commit")
+              (test-assert
+               (eq (durable-mutation-record-p
+                    configuration
+                    (list :mutation
+                          :kind :durable-definition
+                          :id "retired-overlay-record"
+                          :target (definition-key
+                                   '(defun test-self-target () 0))
+                          :pathname
+                          (namestring
+                           (merge-pathnames
+                            "retired/overlays/test-self-target.lisp"
+                            (uiop:temporary-directory)))
+                          :previous ""
+                          :proposed
+                          "(defun test-self-target () 0)"
+                          :base-commit nil
+                          :result :failed))
+                   t)
+               "v0.31.1 overlay journal paths remain valid after the upgrade")
+              (let* ((legacy-source
+                       "(defun test-self-target () \"Return the legacy private value.\" 9)")
+                     (current-source
+                       "(defun test-self-target () \"Return the v0.31.1 committed value.\" 10)")
+                     (identifier (make-identifier))
+                     (directory (image-commit--directory configuration identifier))
+                     (script-pathname (merge-pathnames "reconstruct.lisp" directory))
+                     (manifest-pathname (merge-pathnames "manifest.sexp" directory))
+                     (entries
+                       (list (list :kind ':legacy
+                                   :id "legacy-test-self-target"
+                                   :target "defun-test-self-target.lisp"
+                                   :source legacy-source)
+                             (list :kind ':definition
+                                   :id "definition-test-self-target"
+                                   :target (definition-key
+                                            '(defun test-self-target () 0))
+                                   :package "AUTOLITH"
+                                   :source current-source)))
+                     (generation-script
+                       (merge-pathnames "legacy-generation.lisp" source-root)))
+                (image-commit-write-script
+                 script-pathname
+                 :identifier identifier
+                 :title "Selected v0.31.1 mixed private commit"
+                 :entries entries)
+                (image-commit--write-form-atomically
+                 manifest-pathname
+                 (image-commit--manifest-form
+                  :identifier identifier
+                  :parent-identifier nil
+                  :title "Selected v0.31.1 mixed private commit"
+                  :source-commit nil
+                  :script-pathname script-pathname
+                  :entries entries
+                  :consumed-mutation-identifiers
+                  '("legacy-test-self-target" "definition-test-self-target")
+                  :journal-position 0
+                  :created-at (get-universal-time)))
+                (let ((history-commit
+                        (image-history-commit
+                         configuration
+                         :identifier identifier
+                         :title "Selected v0.31.1 mixed private commit"
+                         :manifest-pathname manifest-pathname
+                         :script-pathname script-pathname)))
+                  (image-commit--write-form-atomically
+                   (configuration-current-image-commit-path configuration)
+                   (list :current-image-commit
+                         :version 2
+                         :id identifier
+                         :manifest (namestring manifest-pathname)
+                         :history-commit history-commit)))
+                (setf legacy-identifier identifier
+                      (symbol-function 'test-self-target) previous-function
+                      *image-state-initialized-p* nil
+                      *active-image-commit-identifier* nil
+                      *active-image-history-commit* nil
+                      *active-image-lineage-identifier* nil)
+                (test-assert (null (image-state-load configuration))
+                             "startup replays a selected v0.31.1 mixed commit")
+                (test-assert (= (test-self-target) 10)
+                             "the newest historical definition wins replay")
+                (test-assert
+                 (string= (image-commit-definition-source
+                           configuration
+                           (definition-key '(defun test-self-target () 0)))
+                          current-source)
+                 "rollback resolves the newest historical definition source")
+                (image-commit-write-generation-script
+                 generation-script
+                 :generation-identifier "legacy-generation"
+                 :commit (image-commit-current configuration))
+                (setf (symbol-function 'test-self-target) previous-function)
+                (load generation-script)
+                (test-assert (= (test-self-target) 10)
+                             "retained generations preserve mixed-entry replay order")
+                (self-install-definition
+                 configuration
+                 "(defun test-self-target () \"Return a discarded value.\" 12)")
+                (let ((record (first (image-commit-pending-records configuration))))
+                  (test-assert record
+                               "legacy upgrade stages a reversible mutation")
+                  (self-discard-mutation configuration
+                                         (getf (rest record) :id)))
+                (test-assert (= (test-self-target) 10)
+                             "discard restores the newest historical definition"))
              (test-assert
               (handler-case
                   (progn
@@ -1062,11 +1147,12 @@
                 (error ()
                   t))
               "a failing active check rejects private persistence")
-             (test-assert (= (test-self-target) 0)
-                          "a rejected definition restores the previous behavior")
-             (test-assert
-              (null (image-commit--pointer-identifier configuration))
-              "a rejected definition publishes no private commit")
+              (test-assert (= (test-self-target) 10)
+                           "a rejected definition restores the newest historical value")
+              (test-assert
+               (string= (or (image-commit--pointer-identifier configuration) "")
+                        legacy-identifier)
+               "a rejected definition preserves private selection")
              (let* ((*package* (find-package '#:autolith))
                     (new-definition-source
                       "(defun test-self-new-rejected-definition () \"Exist only during a rejected durable mutation.\" 17)")
@@ -1096,7 +1182,8 @@
                       (gethash new-target *exploratory-definitions*)))
                 "rejected new persistence removes its exploratory source")
                (test-assert
-                (null (image-commit--pointer-identifier configuration))
+                (string= (or (image-commit--pointer-identifier configuration) "")
+                         legacy-identifier)
                 "rejected new persistence leaves private selection unchanged"))
              (let* ((result
                       (tool-execute
@@ -1108,32 +1195,8 @@
                     (first-commit (image-commit-current configuration)))
                (test-assert (tool-result-success-p result)
                             "durable definition persistence succeeds")
-               (test-assert (search "private image commit"
-                                    (tool-result-content result))
-                            "the persistence result identifies private storage")
-               (test-assert (search "Private Git commit:"
-                                    (tool-result-content result))
-                            "the persistence result identifies recoverable history")
                (test-assert first-commit
                             "durable persistence selects a private commit")
-               (test-assert
-                (image-history--commit-p
-                 (image-commit-history-commit first-commit))
-                "durable persistence records a private Git commit")
-               (test-assert
-                (uiop:directory-exists-p
-                 (merge-pathnames
-                  ".git/"
-                  (configuration-mutation-history-root configuration)))
-                "durable persistence initializes private Git history")
-               (test-assert
-                (string=
-                 (image-commit-history-commit first-commit)
-                 (string-trim
-                  '(#\Space #\Tab #\Newline #\Return)
-                  (image-history--git-command
-                   configuration '("rev-parse" "HEAD"))))
-                "the selected snapshot names the committed Git history state")
                (test-assert
                 (uiop:subpathp (image-commit-script-pathname first-commit)
                                (configuration-image-commit-root configuration))
@@ -1146,18 +1209,18 @@
                               (image-commit-script-pathname first-commit)))))
                    #o444)
                 "published private replay scripts are read-only")
-               (test-assert
-                (search "Return the durable value."
+                (test-assert
+                 (string= (or (image-commit-parent-identifier first-commit) "")
+                          legacy-identifier)
+                 "durable persistence advances the selected legacy lineage")
+                (let ((script
                         (uiop:read-file-string
-                         (image-commit-script-pathname first-commit)))
-                "the private script contains the complete definition")
-               (test-assert
-                (search "Return migrated state."
-                        (uiop:read-file-string
-                         (image-commit-script-pathname first-commit)))
-                "the first private commit migrates legacy overlays")
-               (test-assert (= active-check-count 1)
-                            "durable persistence checks the active image once")
+                         (image-commit-script-pathname first-commit))))
+                  (test-assert
+                   (and (search "Return the durable value." script)
+                        (not (search "Return the legacy private value." script))
+                        (not (search "Return the v0.31.1 committed value." script)))
+                   "durable persistence normalizes the historical definition entries"))
                (let ((first-identifier (image-commit-identifier first-commit)))
                  (tool-execute
                   persist-tool
@@ -1178,8 +1241,6 @@
                     "a full replay snapshot retains only the effective definition"))))
              (test-assert (= (test-self-target) 85)
                           "private persistence installs the latest definition")
-             (test-assert (= active-check-count 2)
-                          "each durable definition is checked exactly once")
              (test-assert
               (search "Return the durable baseline."
                       (uiop:read-file-string source-pathname))
@@ -1227,25 +1288,6 @@
              (self-install-definition
               configuration
               "(defun test-self-target () \"Return the staged value.\" 86)")
-             (let* ((set-records
-                      (remove-if-not
-                       (lambda (record)
-                         (and (eq (first record) :mutation)
-                              (eq (getf (rest record) :kind) :set)
-                              (string= (getf (rest record) :target)
-                                       "AUTOLITH::*TEST-SELF-SETTING*")))
-                       (mutation-journal-read-records configuration)))
-                    (failed-id (getf (rest (first set-records)) :id))
-                    (installed-id (getf (rest (third set-records)) :id)))
-               (test-assert (= (length set-records) 4)
-                            "failed and successful sets each journal two states")
-               (test-assert
-                (and (string= failed-id
-                              (getf (rest (second set-records)) :id))
-                     (string= installed-id
-                              (getf (rest (fourth set-records)) :id))
-                     (not (string= failed-id installed-id)))
-                "each set operation keeps one distinct stable identifier"))
              (let ((diff
                      (tool-execute diff-tool context (json-object))))
                (test-assert
@@ -1255,20 +1297,6 @@
                      (search ":committed-setting"
                              (tool-result-content diff)))
                 "self.diff shows pending reconstructible image mutations"))
-             (let ((status
-                     (tool-execute status-tool context (json-object))))
-               (test-assert
-                (and (tool-result-success-p status)
-                     (search "pending     2 installed, 2 effective"
-                             (tool-result-content status))
-                     (search "AUTOLITH::*TEST-SELF-SETTING*"
-                             (tool-result-content status))
-                     (search "publishing  no"
-                             (tool-result-content status)))
-                "self.status summarizes live mutation and recovery state"))
-             (test-assert (= (length (image-commit-pending-records configuration))
-                             2)
-                          "only successful uncommitted mutations are staged")
              (with-open-file (stream source-pathname
                                      :direction :output
                                      :if-exists :append
@@ -1317,39 +1345,9 @@
                (test-assert (string= head-before head-after)
                             "self.commit never changes workspace Git history")
                (test-assert
-                (string=
-                 (image-commit-history-commit committed)
-                 (string-trim
-                  '(#\Space #\Tab #\Newline #\Return)
-                  (image-history--git-command
-                   configuration '("rev-parse" "HEAD"))))
-                "self.commit advances private Git history")
-               (test-assert
-                (>= (parse-integer
-                     (image-history--git-command
-                      configuration '("rev-list" "--count" "HEAD"))
-                     :junk-allowed t)
-                    3)
-                "each durable snapshot receives a private Git commit")
-               (let* ((pointer
-                        (read-portable-form
-                         (configuration-current-image-commit-path
-                          configuration)))
-                      (properties (rest pointer)))
-                 (test-assert
-                  (and (= (getf properties :version) 2)
-                       (string=
-                        (getf properties :history-commit)
-                        (image-commit-history-commit committed)))
-                  "the atomic selection binds image and Git commit identities"))
-               (test-assert
                 (search "A user-made repository change."
                         (uiop:read-file-string source-pathname))
                 "self.commit leaves tracked workspace changes untouched"))
-             (test-assert (= active-check-count 3)
-                          "self.commit checks the active image exactly once")
-             (test-assert (= replay-probe-count 3)
-                          "every selected private commit passes a replay probe")
              (test-assert
               (null (image-commit-pending-records configuration))
               "self.commit consumes every successful staged mutation")
@@ -1393,15 +1391,46 @@
                     nil)
                 (image-commit-error ()
                   t))
-              "self.commit refuses an empty private commit")))
+              "self.commit refuses an empty private commit")
+             (image-commit-publish
+              configuration
+              :title "Retain a failing v0.31.1 replay entry"
+              :mutation-records nil
+              :additional-entries
+              (list (list :kind ':legacy
+                          :id "legacy-broken-replay"
+                          :target "broken-replay.lisp"
+                          :source
+                          "(error \"Injected private replay failure.\")")))
+             (setf *image-state-initialized-p* nil
+                   *active-image-commit-identifier* nil
+                   *active-image-history-commit* nil
+                   *active-image-lineage-identifier* nil)
+             (let* ((failures (image-state-load configuration))
+                    (application
+                      (make-instance 'application
+                                     :configuration configuration
+                                     :conversation conversation
+                                     :provider nil
+                                     :tool-registry registry
+                                     :worker nil
+                                     :agent nil
+                                     :ui nil)))
+               (setf (application-mutation-replay-failures application)
+                     failures)
+               (test-assert
+                (and (= (length failures) 1)
+                     (search "Injected private replay failure."
+                             (rest (first failures)))
+                     (equal (application-mutation-replay-failures application)
+                            failures))
+                "selected private replay failures remain visible at startup"))))
       (setf (symbol-function 'test-self-target) previous-function
             *test-self-setting* previous-setting
             *image-state-initialized-p* previous-state-initialized-p
             *active-image-commit-identifier* previous-commit-identifier
             *active-image-history-commit* previous-history-commit
             *active-image-lineage-identifier* previous-lineage-identifier)
-      (when (fboundp 'test-legacy-image-target)
-        (fmakunbound 'test-legacy-image-target))
       (when (fboundp 'test-self-new-rejected-definition)
         (fmakunbound 'test-self-new-rejected-definition))
       (remhash

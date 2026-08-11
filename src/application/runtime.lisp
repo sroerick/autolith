@@ -149,11 +149,11 @@
     :accessor application-localgroup-session
     :type t
     :documentation "The process-local discovery and control endpoint, when running.")
-   (overlay-failures
+   (mutation-replay-failures
     :initform nil
-    :accessor application-overlay-failures
+    :accessor application-mutation-replay-failures
     :type list
-    :documentation "Overlay files that failed to load at startup, with reasons.")
+    :documentation "Private replay scripts that failed at startup, with reasons.")
    (render-lock
     :initform (make-recursive-lock "Autolith transcript rendering")
     :reader application-render-lock
@@ -848,7 +848,7 @@ newly acquired lease."
               conversation-id recovery-conversation-id))
            (recovery-rendered-sequence (second recovery-state))
            (recovery-history-floor-sequence (third recovery-state))
-           (overlay-failures (image-state-load preferred-configuration))
+           (mutation-replay-failures (image-state-load preferred-configuration))
            (extension-registry-snapshot nil)
            (registry nil)
            (worker nil)
@@ -948,8 +948,8 @@ newly acquired lease."
                                :update-availability update-availability
                                :recovery-startup-p
                                (not (null recovering-conversation-p)))
-                              (application-overlay-failures application)
-                              overlay-failures)
+                              (application-mutation-replay-failures application)
+                              mutation-replay-failures)
                         (multiple-value-bind
                               (restored-rendered-sequence
                                restored-history-floor-sequence)
@@ -1168,7 +1168,7 @@ newly acquired lease."
                 (application-transcript-synchronized-p new-application) nil
                 (application-history-floor-sequence new-application)
                 restored-history-floor-sequence
-                (application-overlay-failures new-application) nil))
+                (application-mutation-replay-failures new-application) nil))
              (application--load-goal new-application)
              (image-state-reconnect)
              (setf retirement-started-p t
