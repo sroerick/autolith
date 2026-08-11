@@ -89,7 +89,7 @@ anything unattended. A prior cached result may place an update notice below the
 next startup banner. Run =autolith --update= to check and update explicitly.
 
 Native macOS arm64 can run through Nix or from a source checkout. Autolith accepts an
-official SBCL release at least the version in =sbcl.version= (currently 2.6.4)
+official SBCL release at least the version in =sbcl.version= (currently 2.6.6)
 when its source archive identity is tracked. Install the host toolchain and
 Quicklisp, then let bootstrap install the hash-verified matching SBCL source,
 native libraries, recovery core, and active core:

@@ -5,7 +5,7 @@
   # set is generated against a matching nixpkgs. Pin that nixpkgs here so the
   # build is reproducible; bump it in lockstep whenever sbcl.version changes.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/f205b5574fd0cb7da5b702a2da51507b7f4fdd1b";
+    nixpkgs.url = "github:NixOS/nixpkgs/d482ef84049d9b7276b83a06e4e4d76983830097";
 
     flake-parts = {
       url = "github:hercules-ci/flake-parts";

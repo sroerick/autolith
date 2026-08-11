@@ -241,7 +241,7 @@ fi
           (uiop:read-file-string
            (merge-pathnames "sbcl-source-releases.sha256" source-root))))
     (test-assert
-     (search (format nil "~A  sbcl-2.6.4-source.tar.bz2"
+     (search (format nil "~A  sbcl-2.6.6-source.tar.bz2"
                      minimum-source-sha256)
              release-source-identities)
      "the source release catalog retains the minimum runtime source identity"))
@@ -273,10 +273,10 @@ fi
     (release-script-tests--write-file recovery-source "")
     (release-script-tests--write-file
      (merge-pathnames "sbcl.version" fixture-root)
-     "2.6.4\n")
+     "2.6.6\n")
     (release-script-tests--write-file
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
-     (format nil "~A  sbcl-2.6.4-source.tar.bz2~%"
+     (format nil "~A  sbcl-2.6.6-source.tar.bz2~%"
              (make-string 64 :initial-element #\0)))
     (release-script-tests--write-file
      fake-sbcl
@@ -798,10 +798,10 @@ printf '\"%s\"\n' \"$version\" > \"$destination/sbcl-$version/version.lisp-expr\
       (release-script-tests--chmod "755" pathname))
     (release-script-tests--write-file
      (merge-pathnames "sbcl.version" fixture-root)
-     (format nil "2.6.4~%"))
+     (format nil "2.6.6~%"))
     (release-script-tests--write-file
      (merge-pathnames "sbcl-source-releases.sha256" fixture-root)
-     (format nil "~A  sbcl-2.6.4-source.tar.bz2~%~A  sbcl-2.6.7-source.tar.bz2~%"
+     (format nil "~A  sbcl-2.6.6-source.tar.bz2~%~A  sbcl-2.6.7-source.tar.bz2~%"
              (make-string 64 :initial-element #\0)
              (make-string 64 :initial-element #\1)))
     (release-script-tests--write-file script (format nil "(quit)~%"))
@@ -900,13 +900,13 @@ esac
           (run-adapter (fake-runtime "2.7.0.123-gabc"))
         (test-assert (not (zerop status))
                      "the adapter rejects builds without release source archives")
-        (test-assert (search "does not satisfy SBCL 2.6.4 or newer" output)
+        (test-assert (search "does not satisfy SBCL 2.6.6 or newer" output)
                      "the adapter explains a rejected non-release build"))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.6.3"))
         (test-assert (not (zerop status))
                      "the adapter rejects a runtime older than the minimum")
-        (test-assert (search "does not satisfy SBCL 2.6.4 or newer" output)
+        (test-assert (search "does not satisfy SBCL 2.6.6 or newer" output)
                      "the adapter explains a rejected older runtime")))
     (let ((*package* (find-package "CL-USER")))
       (load (merge-pathnames "script/runtime-requirement.lisp" source-root)))
@@ -916,17 +916,17 @@ esac
           (require-runtime
             (fdefinition
              (find-symbol "AUTOLITH-REQUIRE-MINIMUM-RUNTIME" "CL-USER"))))
-      (test-assert (funcall at-least-p "2.6.4" "2.6.4")
+      (test-assert (funcall at-least-p "2.6.6" "2.6.6")
                    "the version requirement accepts the minimum itself")
-      (test-assert (funcall at-least-p "2.10.0" "2.6.4")
+      (test-assert (funcall at-least-p "2.10.0" "2.6.6")
                    "the version requirement compares fields numerically")
-      (test-assert (not (funcall at-least-p "2.7.0.123-gabc" "2.6.4"))
+      (test-assert (not (funcall at-least-p "2.7.0.123-gabc" "2.6.6"))
                    "the version requirement rejects non-release builds")
-      (test-assert (not (funcall at-least-p "2.6.3" "2.6.4"))
+      (test-assert (not (funcall at-least-p "2.6.3" "2.6.6"))
                    "the version requirement rejects older versions")
-      (test-assert (not (funcall at-least-p "1.9.9" "2.6.4"))
+      (test-assert (not (funcall at-least-p "1.9.9" "2.6.6"))
                    "the version requirement rejects older major series")
-      (dolist (minimum '("garbage" "2..4" "2.6" "2.6.4.1"))
+      (dolist (minimum '("garbage" "2..4" "2.6" "2.6.6.1"))
         (let ((pathname (merge-pathnames "malformed-sbcl.version" fixture-root)))
           (release-script-tests--write-file pathname minimum)
           (test-assert
