@@ -749,9 +749,9 @@
            (reader-state nil)
            (reader-output nil)
            (prompt-start
-             (terminal-prompt-marker-sequence ':prompt-start))
+             (semantic-prompt-marker-sequence ':prompt-start))
            (input-start
-             (terminal-prompt-marker-sequence ':input-start)))
+             (semantic-prompt-marker-sequence ':input-start)))
       (unwind-protect
            (progn
              (terminal-ui-start ui)

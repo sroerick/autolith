@@ -2730,7 +2730,7 @@ sources keeps the tests deterministic under an interactive terminal."
 
 (-> test-terminal-prompt-markers () null)
 (defun test-terminal-prompt-markers ()
-  "Test exact OSC 133 controls and their semantic UI lifecycle."
+  "Test OSC 133 terminal output and its semantic UI lifecycle."
   (flet ((expected-marker (payload)
            (format nil "~C]133;~A~C~C"
                    *terminal-escape-character*
@@ -2742,23 +2742,6 @@ sources keeps the tests deterministic under an interactive terminal."
           (execution-start (expected-marker "C"))
           (success (expected-marker "D;0"))
           (failure (expected-marker "D;7")))
-      (test-assert
-       (and (string= (terminal-prompt-marker-sequence ':prompt-start)
-                     prompt-start)
-            (string= (terminal-prompt-marker-sequence ':input-start)
-                     input-start)
-            (string= (terminal-prompt-marker-sequence ':execution-start)
-                     execution-start)
-            (string= (terminal-prompt-marker-sequence ':command-finished)
-                     success)
-            (string= (terminal-prompt-marker-sequence
-                      ':command-finished 7)
-                     failure)
-            (not
-             (terminal-tests--forbidden-control-p
-              (concatenate 'string
-                           prompt-start input-start execution-start failure))))
-       "prompt markers use exact OSC 133 ST controls without fullscreen state")
       (let ((terminal
               (make-instance 'protocol-recording-stream-terminal
                              :input-stream (make-string-input-stream "")

@@ -430,6 +430,9 @@ a user-local init.lisp change, or a private image commit.
   animated status row above local, child, provider, notice, queued, and prompt
   rows. Interactive terminals emit exactly one OSC 133 =A=/=B=/=C=/=D;STATUS=
   block per foreground interaction and none for repaint or internal work.
+  Generic marker construction and exact sequence coverage live in pinned Clinedi
+  =f7c158e=; Autolith retains interaction lifecycle, terminal gating, write,
+  flush, and ordering policy.
 - Scope and location: tracked project work in =src/application/command.lisp=,
   =src/application/commands.lisp=, =src/application/operation.lisp=,
   =src/application/lisp-machine.lisp=,
@@ -442,8 +445,9 @@ a user-local init.lisp change, or a private image commit.
 - Verification: direct evaluation, canonical startup tips, operation discovery
   and dispatch, ordinary noninteractive arity, interactive argument recovery,
   styled restart selection and abort, transcript equivalence, active-turn
-  admission, live-row ordering, exact OSC sequences, reader ordering, file-change
-  numbering, and provider call rendering pass focused tests. User-operation
+  admission, live-row ordering, Clinedi marker construction, Autolith marker
+  lifecycle and reader ordering, file-change numbering, and provider call
+  rendering pass focused tests. User-operation
   persistence, forward-compatible replay, malformed and circular rejection,
   count and character eviction, request bounds, compaction exclusion, successful,
   aborted, failed, quit, responsive, conversation-switching, nested-suppression,

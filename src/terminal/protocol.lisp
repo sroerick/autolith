@@ -39,23 +39,6 @@
   (with-output-to-string (stream)
     (disable-keyboard-enhancement :stream stream)))
 
-(-> terminal-prompt-marker-sequence
-    (keyword &optional (integer 0))
-    string)
-(defun terminal-prompt-marker-sequence (marker &optional (status 0))
-  "Return one OSC 133 control for semantic prompt MARKER and completion STATUS."
-  (let ((payload
-          (ecase marker
-            (:prompt-start "A")
-            (:input-start "B")
-            (:execution-start "C")
-            (:command-finished (format nil "D;~D" status)))))
-    (format nil "~C]133;~A~C~C"
-            *terminal-escape-character*
-            payload
-            *terminal-escape-character*
-            #\\)))
-
 
 ;;;; -- Terminal Objects --
 
@@ -369,6 +352,6 @@
   "Write and flush one OSC 133 MARKER for interactive TERMINAL, if applicable."
   (when (terminal-interactive-p terminal)
     (terminal--write terminal
-                     (terminal-prompt-marker-sequence marker status))
+                     (semantic-prompt-marker-sequence marker status))
     (terminal-flush terminal)
     t))
