@@ -8,6 +8,9 @@
 (defparameter *workspace-file-resource-maximum-bytes* (* 4 1024 1024)
   "The largest exact workspace-file snapshot retained for revision-gated editing.")
 
+(defparameter *workspace-file-resource-maximum-retained-bytes* (* 16 1024 1024)
+  "The maximum decoded string storage retained by workspace observations per conversation.")
+
 (defparameter *workspace-file-resource-default-line-count* 400
   "The lines requested by resource.read when no explicit count is supplied.")
 
@@ -33,11 +36,12 @@
   (:documentation "Resolve workspace: URIs through the ordinary workspace path boundary."))
 
 (defclass workspace-file-observation (resource-observation)
-  ((lines
+  ((stored-lines
     :initarg :lines
-    :reader workspace-file-observation-lines
-    :type vector
-    :documentation "The complete logical lines in the exact observed snapshot.")
+    :initform nil
+    :reader workspace-file-observation-stored-lines
+    :type (option vector)
+    :documentation "Optional pre-split logical lines supplied by tests or callers.")
    (line-ending
     :initarg :line-ending
     :reader workspace-file-observation-line-ending
@@ -49,6 +53,35 @@
     :type boolean
     :documentation "Whether the exact observed snapshot ended in a line ending."))
   (:documentation "A complete transient UTF-8 workspace-file snapshot."))
+
+(-> workspace-file-observation-lines (workspace-file-observation) vector)
+(defgeneric workspace-file-observation-lines (observation)
+  (:documentation "Return OBSERVATION's logical lines for the current operation."))
+
+(defmethod workspace-file-observation-lines
+    ((observation workspace-file-observation))
+  "Return supplied logical lines or split OBSERVATION's exact content lazily."
+  (or (workspace-file-observation-stored-lines observation)
+      (text--split-lines (resource-observation-content observation))))
+
+(-> workspace-file--string-storage-bytes (string) (integer 0))
+(defun workspace-file--string-storage-bytes (text)
+  "Return TEXT's SBCL backing storage bytes, excluding headers and padding."
+  (* (length text)
+     (if (typep text 'base-string) 1 4)))
+
+(-> workspace-file--observation-retained-bytes
+    (workspace-file-observation)
+    (integer 0))
+(defun workspace-file--observation-retained-bytes (observation)
+  "Return the decoded string storage retained by OBSERVATION."
+  (+ (workspace-file--string-storage-bytes
+      (resource-observation-content observation))
+     (let ((lines (workspace-file-observation-stored-lines observation)))
+       (if lines
+           (loop for line across lines
+                 sum (workspace-file--string-storage-bytes line))
+           0))))
 
 (defclass workspace-file-observation-state (resource-observation-state)
   ((visible-ranges
@@ -63,6 +96,35 @@
   "Return the configured workspace-file observation limit."
   (declare (ignore state))
   *workspace-file-resource-maximum-observations*)
+
+
+(-> workspace-file--trim-observation-storage (conversation) null)
+(defun workspace-file--trim-observation-storage (conversation)
+  "Evict oldest workspace observations until retained decoded strings fit."
+  (with-recursive-lock-held
+      ((conversation-resource-observation-lock conversation))
+    (let* ((states (conversation-resource-observations conversation))
+           (retained-bytes
+             (loop for state being the hash-values of states
+                   when (typep state 'workspace-file-observation-state)
+                     sum (workspace-file--observation-retained-bytes
+                          (resource-observation-state-observation state)))))
+      (dolist (alias (copy-list
+                      (conversation-resource-observation-order conversation)))
+        (when (> retained-bytes
+                 *workspace-file-resource-maximum-retained-bytes*)
+          (let ((state (gethash alias states)))
+            (when (typep state 'workspace-file-observation-state)
+              (decf retained-bytes
+                    (workspace-file--observation-retained-bytes
+                     (resource-observation-state-observation state)))
+              (remhash alias states)
+              (setf (conversation-resource-observation-order conversation)
+                    (remove alias
+                            (conversation-resource-observation-order conversation)
+                            :test #'string=
+                            :count 1))))))))
+  nil)
 
 
 ;;;; -- URI Resolution --
@@ -199,7 +261,6 @@
                                        content)
                      :content         content
                      :metadata        (list ':pathname path)
-                     :lines           (text--split-lines content)
                      :line-ending     (workspace-file--line-ending content)
                      :final-newline-p (workspace-file--final-newline-p content)))))
 
@@ -263,6 +324,7 @@
               (append (conversation-resource-observation-order conversation)
                       (list alias)))
         (resource-observation-state-trim conversation state)
+        (workspace-file--trim-observation-storage conversation)
         state))))
 
 (-> workspace-file--find-observation-state
@@ -750,8 +812,8 @@
                           *workspace-file-resource-default-line-count*)))))
     (with-recursive-lock-held (*workspace-file-mutation-lock*)
       (let* ((observation (resource-observe resource context))
-             (total-lines
-               (length (workspace-file-observation-lines observation))))
+             (lines       (workspace-file-observation-lines observation))
+             (total-lines (length lines)))
         (when (and (plusp total-lines) (> start-line total-lines))
           (error 'tool-error
                  :message (format nil "Start line ~D is beyond the resource's ~D lines. Request a valid window."
@@ -759,7 +821,7 @@
                  :tool-name "resource.read"))
         (multiple-value-bind (body visible-ranges last-line truncated-p)
             (text--numbered-line-window
-             (workspace-file-observation-lines observation)
+             lines
              start-line
              line-count
              *workspace-file-resource-maximum-result-characters*)
@@ -797,35 +859,32 @@
             (resource-apply-operations resource context
                                        :base-revision base-revision
                                        :operations operations)
-          (multiple-value-bind (start-line line-count)
-              (workspace-file--operation-window
-               normalized (length (workspace-file-observation-lines observation)))
-            (multiple-value-bind (body visible-ranges last-line truncated-p)
-                (text--numbered-line-window
-                 (workspace-file-observation-lines observation)
-                 start-line
-                 line-count
-                 *workspace-file-resource-maximum-result-characters*)
-              (declare (ignore last-line))
-              (let* ((state
-                       (workspace-file--observation-state-for-snapshot
-                        (tool-context-conversation context)
-                        observation visible-ranges))
-                     (result-content
-                       (format nil "Applied ~{~A~^; ~}.~%~A"
-                               (mapcar
-                                (lambda (operation) (getf operation :summary))
-                                normalized)
-                               (workspace-file--read-result
-                                state body
-                                (length
-                                 (workspace-file-observation-lines observation))
-                                truncated-p))))
-                (tool-success
-                 (lisp-source-edit-result-content
-                  result-content
-                  (workspace-file-resource-pathname resource)
-                  (resource-observation-content observation)))))))
+          (let ((lines (workspace-file-observation-lines observation)))
+            (multiple-value-bind (start-line line-count)
+                (workspace-file--operation-window normalized (length lines))
+              (multiple-value-bind (body visible-ranges last-line truncated-p)
+                  (text--numbered-line-window
+                   lines
+                   start-line
+                   line-count
+                   *workspace-file-resource-maximum-result-characters*)
+                (declare (ignore last-line))
+                (let* ((state
+                         (workspace-file--observation-state-for-snapshot
+                          (tool-context-conversation context)
+                          observation visible-ranges))
+                       (result-content
+                         (format nil "Applied ~{~A~^; ~}.~%~A"
+                                 (mapcar
+                                  (lambda (operation) (getf operation :summary))
+                                  normalized)
+                                 (workspace-file--read-result
+                                  state body (length lines) truncated-p))))
+                  (tool-success
+                   (lisp-source-edit-result-content
+                    result-content
+                    (workspace-file-resource-pathname resource)
+                    (resource-observation-content observation))))))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."

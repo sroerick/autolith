@@ -259,6 +259,69 @@
                       (resource-revision-stale ()
                         t))
                     "workspace observation lookup rejects another state class"))))
+              (let* ((retention-conversation
+                       (conversation-create configuration
+                                            :identifier "resource-retention"))
+                     (retention-context
+                       (make-instance 'tool-context
+                                      :configuration configuration
+                                      :worker nil
+                                      :conversation retention-conversation))
+                     (path (merge-pathnames "retained.txt" workspace)))
+                (let ((*workspace-file-resource-maximum-retained-bytes* 60))
+                  (workspace-resource-tests--write-text
+                   path (format nil "first~%line"))
+                  (multiple-value-bind (first-result uri first-revision)
+                      (read-resource retention-context "workspace:retained.txt")
+                    (test-assert (tool-result-success-p first-result)
+                                 "workspace observations establish a retained revision")
+                    (let* ((state
+                             (workspace-file--find-observation-state
+                              retention-conversation uri first-revision))
+                           (observation
+                             (resource-observation-state-observation state)))
+                      (test-assert
+                       (null (workspace-file-observation-stored-lines observation))
+                       "workspace observations do not retain duplicated logical lines")
+                      (test-assert
+                       (equalp (workspace-file-observation-lines observation)
+                               #("first" "line"))
+                       "workspace observation lines remain available on demand"))
+                    (workspace-resource-tests--write-text
+                     path (format nil "later~%text"))
+                    (multiple-value-bind (second-result second-uri second-revision)
+                        (read-resource retention-context "workspace:retained.txt")
+                      (test-assert (tool-result-success-p second-result)
+                                   "workspace observations accept a replacement snapshot")
+                      (test-assert
+                       (handler-case
+                           (progn
+                             (workspace-file--find-observation-state
+                              retention-conversation uri first-revision)
+                             nil)
+                         (resource-revision-stale ()
+                           t))
+                       "workspace observation storage evicts the oldest revision")
+                      (let* ((states
+                               (conversation-resource-observations
+                                retention-conversation))
+                             (second-state
+                               (workspace-file--find-observation-state
+                                retention-conversation
+                                second-uri second-revision))
+                             (retained-bytes
+                               (loop for state being the hash-values of states
+                                     when (typep state
+                                                 'workspace-file-observation-state)
+                                       sum (workspace-file--observation-retained-bytes
+                                            (resource-observation-state-observation
+                                             state)))))
+                        (test-assert
+                         (and (= (hash-table-count states) 1)
+                              second-state
+                              (<= retained-bytes
+                                  *workspace-file-resource-maximum-retained-bytes*))
+                         "workspace observations retain the newest revision within the byte budget"))))))
              (let* ((resolver
                       (gethash "workspace"
                                (resource-registry-resolvers
