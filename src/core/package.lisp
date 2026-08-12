@@ -374,8 +374,15 @@
                 #:snapshot-write
                 #:store-error)
   (:import-from #:structlisp
+                #:deque
                 #:deque->vector
+                #:deque-clear
+                #:deque-empty-p
+                #:deque-front
+                #:deque-pop-front
                 #:deque-push-back
+                #:deque-ref
+                #:deque-total-weight
                 #:make-deque)
   (:import-from #:yason
                 #:false)

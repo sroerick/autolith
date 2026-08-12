@@ -38,20 +38,10 @@
     :type t
     :documentation "The condition waking the output writer.")
    (queue
-    :initform nil
-    :accessor localgroup-attachment-queue
-    :type list
-    :documentation "FIFO serialized packets awaiting the writer.")
-    (queue-tail
-     :initform nil
-     :accessor localgroup-attachment-queue-tail
-     :type (option cons)
-     :documentation "The final cons cell of the FIFO packet queue.")
-   (queued-characters
-    :initform 0
-    :accessor localgroup-attachment-queued-characters
-    :type (integer 0)
-    :documentation "The combined size of packets awaiting the writer.")
+    :initform (make-deque :weight-function #'length)
+    :reader localgroup-attachment-queue
+    :type deque
+    :documentation "FIFO serialized packets awaiting the writer with maintained size.")
    (closed-p
     :initform nil
     :accessor localgroup-attachment-closed-p
@@ -77,31 +67,23 @@
       (loop
         for packet =
           (with-lock-held ((localgroup-attachment-lock attachment))
-            (loop while (and (null (localgroup-attachment-queue attachment))
-                             (not (localgroup-attachment-closed-p attachment)))
+            (loop while (and
+                         (deque-empty-p (localgroup-attachment-queue attachment))
+                         (not (localgroup-attachment-closed-p attachment)))
                   do (condition-wait
                       (localgroup-attachment-condition-variable attachment)
                       (localgroup-attachment-lock attachment)))
             (when (and (localgroup-attachment-closed-p attachment)
-                       (null (localgroup-attachment-queue attachment)))
+                       (deque-empty-p (localgroup-attachment-queue attachment)))
               (return-from localgroup-attachment--writer-loop nil))
-            (let* ((cell (localgroup-attachment-queue attachment))
-                   (packet (first cell)))
-              (setf (localgroup-attachment-queue attachment) (rest cell))
-              (when (null (localgroup-attachment-queue attachment))
-                (setf (localgroup-attachment-queue-tail attachment) nil))
-              (decf (localgroup-attachment-queued-characters attachment)
-                    (length packet))
-              packet))
+            (deque-pop-front (localgroup-attachment-queue attachment)))
         do (write-string packet (localgroup-attachment-stream attachment))
            (finish-output (localgroup-attachment-stream attachment)))
     (error ()
       nil))
   (with-lock-held ((localgroup-attachment-lock attachment))
-    (setf (localgroup-attachment-closed-p attachment) t
-          (localgroup-attachment-queue attachment) nil
-          (localgroup-attachment-queue-tail attachment) nil
-          (localgroup-attachment-queued-characters attachment) 0)
+    (setf (localgroup-attachment-closed-p attachment) t)
+    (deque-clear (localgroup-attachment-queue attachment))
     (condition-notify (localgroup-attachment-condition-variable attachment)))
   (localgroup-attachment--close-stream attachment)
   nil)
@@ -130,23 +112,16 @@
         (close-p nil))
     (with-lock-held ((localgroup-attachment-lock attachment))
       (unless (localgroup-attachment-closed-p attachment)
-        (if (> (+ (localgroup-attachment-queued-characters attachment)
-                  (length text))
-               *localgroup-attachment-queue-character-limit*)
-            (setf (localgroup-attachment-closed-p attachment) t
-                  (localgroup-attachment-queue attachment) nil
-                  (localgroup-attachment-queue-tail attachment) nil
-                  (localgroup-attachment-queued-characters attachment) 0
-                  close-p t)
-            (let ((cell (list text)))
-              (if (localgroup-attachment-queue attachment)
-                  (setf (rest (localgroup-attachment-queue-tail attachment)) cell
-                        (localgroup-attachment-queue-tail attachment) cell)
-                  (setf (localgroup-attachment-queue attachment) cell
-                        (localgroup-attachment-queue-tail attachment) cell))
-              (incf (localgroup-attachment-queued-characters attachment)
-                    (length text))
-              (setf accepted-p t)))
+        (let ((queue (localgroup-attachment-queue attachment)))
+          (if (> (+ (deque-total-weight queue) (length text))
+                 *localgroup-attachment-queue-character-limit*)
+              (progn
+                (setf (localgroup-attachment-closed-p attachment) t
+                      close-p t)
+                (deque-clear queue))
+              (progn
+                (deque-push-back queue text)
+                (setf accepted-p t))))
         (condition-notify
          (localgroup-attachment-condition-variable attachment))))
     (when close-p
@@ -159,10 +134,8 @@
   (let ((writer nil))
     (with-lock-held ((localgroup-attachment-lock attachment))
       (setf (localgroup-attachment-closed-p attachment) t
-            (localgroup-attachment-queue attachment) nil
-            (localgroup-attachment-queue-tail attachment) nil
-            (localgroup-attachment-queued-characters attachment) 0
             writer (localgroup-attachment-writer-thread attachment))
+      (deque-clear (localgroup-attachment-queue attachment))
       (condition-notify
        (localgroup-attachment-condition-variable attachment)))
     (localgroup-attachment--close-stream attachment)
@@ -197,20 +170,15 @@
     :type list
     :documentation "Read-only attachments receiving rendered terminal output.")
    (input-events
-    :initform nil
-    :accessor localgroup-terminal-input-events
-    :type list
+    :initform (make-deque)
+    :reader localgroup-terminal-input-events
+    :type deque
     :documentation "FIFO semantic events received from the controlling attachment.")
    (history
-    :initform nil
-    :accessor localgroup-terminal-history
-    :type list
-    :documentation "Bounded terminal output chunks ordered from oldest to newest.")
-   (history-characters
-    :initform 0
-    :accessor localgroup-terminal-history-characters
-    :type (integer 0)
-    :documentation "The combined character count of retained history chunks.")
+    :initform (make-deque :weight-function #'length)
+    :reader localgroup-terminal-history
+    :type deque
+    :documentation "Bounded terminal output chunks with maintained character size.")
    (wake-function
     :initform nil
     :accessor localgroup-terminal-wake-function
@@ -261,23 +229,16 @@
 (-> localgroup-terminal--retain-output (localgroup-terminal string) null)
 (defun localgroup-terminal--retain-output (terminal text)
   "Append TEXT to TERMINAL's exactly bounded attachment replay history while locked."
-  (setf (localgroup-terminal-history terminal)
-        (nconc (localgroup-terminal-history terminal) (list text)))
-  (incf (localgroup-terminal-history-characters terminal) (length text))
-  (loop while (> (localgroup-terminal-history-characters terminal)
-                 *localgroup-terminal-history-character-limit*)
-        for excess = (- (localgroup-terminal-history-characters terminal)
-                        *localgroup-terminal-history-character-limit*)
-        for first = (first (localgroup-terminal-history terminal))
-        do (if (<= (length first) excess)
-               (progn
-                 (pop (localgroup-terminal-history terminal))
-                 (decf (localgroup-terminal-history-characters terminal)
-                       (length first)))
-               (progn
-                 (setf (first (localgroup-terminal-history terminal))
-                       (subseq first excess))
-                 (decf (localgroup-terminal-history-characters terminal) excess))))
+  (let ((history (localgroup-terminal-history terminal)))
+    (deque-push-back history text)
+    (loop while (> (deque-total-weight history)
+                   *localgroup-terminal-history-character-limit*)
+          for excess = (- (deque-total-weight history)
+                          *localgroup-terminal-history-character-limit*)
+          for first = (deque-front history)
+          do (if (<= (length first) excess)
+                 (deque-pop-front history)
+                 (setf (deque-ref history 0) (subseq first excess)))))
   nil)
 
 (-> localgroup-terminal-history-text (localgroup-terminal) string)
@@ -285,7 +246,9 @@
   "Return a consistent copy of TERMINAL's retained rendered output."
   (with-lock-held ((localgroup-terminal-lock terminal))
     (apply #'concatenate 'string
-           (cons "" (copy-list (localgroup-terminal-history terminal))))))
+           (cons "" (coerce (deque->vector
+                              (localgroup-terminal-history terminal))
+                             'list)))))
 
 (defmethod terminal-start ((terminal localgroup-terminal))
   "Start TERMINAL's inherited direct transport when one exists."
@@ -318,10 +281,10 @@
              :test #'eq)
             (localgroup-terminal-controller terminal) nil
             (localgroup-terminal-observers terminal) nil
-            (localgroup-terminal-input-events terminal) nil
             (terminal-interactive-p terminal) nil
             (terminal-styled-p terminal) nil
-            (terminal-started-p terminal) nil))
+            (terminal-started-p terminal) nil)
+      (deque-clear (localgroup-terminal-input-events terminal)))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (dolist (attachment attachments)
@@ -359,7 +322,8 @@
   (let ((direct nil)
         (queued-p nil))
     (with-lock-held ((localgroup-terminal-lock terminal))
-      (setf queued-p (not (null (localgroup-terminal-input-events terminal)))
+      (setf queued-p (not (deque-empty-p
+                           (localgroup-terminal-input-events terminal)))
             direct (localgroup-terminal-direct-terminal terminal)))
     (or queued-p
         (and direct (terminal-input-ready-p direct)))))
@@ -369,9 +333,10 @@
   (let ((event nil)
         (direct nil))
     (with-lock-held ((localgroup-terminal-lock terminal))
-      (if (localgroup-terminal-input-events terminal)
-          (setf event (pop (localgroup-terminal-input-events terminal)))
-          (setf direct (localgroup-terminal-direct-terminal terminal))))
+      (if (deque-empty-p (localgroup-terminal-input-events terminal))
+          (setf direct (localgroup-terminal-direct-terminal terminal))
+          (setf event
+                (deque-pop-front (localgroup-terminal-input-events terminal)))))
     (cond (event event)
           (direct (terminal-read-event direct))
           (t ':end-of-input))))
@@ -385,9 +350,8 @@
     (with-lock-held ((localgroup-terminal-lock terminal))
       (unless (eq attachment (localgroup-terminal-controller terminal))
         (return-from localgroup-terminal-enqueue-event nil))
-      (setf (localgroup-terminal-input-events terminal)
-            (nconc (localgroup-terminal-input-events terminal) (list event))
-            wake-function (localgroup-terminal-wake-function terminal)))
+      (deque-push-back (localgroup-terminal-input-events terminal) event)
+      (setf wake-function (localgroup-terminal-wake-function terminal)))
     (when wake-function
       (funcall wake-function))
     t))
@@ -440,8 +404,9 @@
                :operation ':attach))
       (let* ((history
                (apply #'concatenate 'string
-                      (cons "" (copy-list
-                                (localgroup-terminal-history terminal)))))
+                      (cons "" (coerce (deque->vector
+                                         (localgroup-terminal-history terminal))
+                                        'list))))
              (next-rows
                (if (and (not (eq mode ':read-only)) (plusp rows))
                    rows
@@ -496,8 +461,8 @@
             (delete attachment (localgroup-terminal-observers terminal)))
       (when (eq attachment (localgroup-terminal-controller terminal))
         (setf (localgroup-terminal-controller terminal) nil
-              (localgroup-terminal-input-events terminal) nil
               controlled-p t)
+        (deque-clear (localgroup-terminal-input-events terminal))
         (unless (localgroup-terminal-direct-terminal terminal)
           (setf (terminal-interactive-p terminal) nil))))
     controlled-p))
@@ -512,8 +477,8 @@
             controller (localgroup-terminal-controller terminal)
             (localgroup-terminal-direct-terminal terminal) nil
             (localgroup-terminal-controller terminal) nil
-            (localgroup-terminal-input-events terminal) nil
-            (terminal-interactive-p terminal) nil))
+            (terminal-interactive-p terminal) nil)
+      (deque-clear (localgroup-terminal-input-events terminal)))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (when controller

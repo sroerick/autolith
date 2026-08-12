@@ -448,28 +448,38 @@
              :session-id "ORDER")
             "localgroup terminal accepts a read-only attachment")
            (terminal--write terminal text)
-           (let* ((frames
-                    (with-lock-held ((localgroup-attachment-lock attachment))
-                      (copy-list (localgroup-attachment-queue attachment))))
-                  (packets
-                    (mapcar (lambda (frame)
-                              (localgroup-read-packet
-                               (make-string-input-stream frame)))
-                            frames))
-                  (handshake (first packets))
-                  (output
-                    (apply #'concatenate 'string
-                           (mapcar #'second (rest packets)))))
-             (test-assert
-              (and (= (length frames) 4)
-                   (eq (first handshake) ':attached)
-                   (string= (getf (rest handshake) :session-id) "ORDER")
-                   (every (lambda (packet) (eq (first packet) ':output))
-                          (rest packets))
-                   (string= output text)
-                   (string= (localgroup-terminal-history-text terminal)
-                            (subseq text (- (length text) 5))))
-              "the handshake precedes bounded lossless output and exact replay")))
+            (let* ((frames
+                     (with-lock-held ((localgroup-attachment-lock attachment))
+                       (coerce
+                        (deque->vector (localgroup-attachment-queue attachment))
+                        'list)))
+                   (packets
+                     (mapcar (lambda (frame)
+                               (localgroup-read-packet
+                                (make-string-input-stream frame)))
+                             frames))
+                   (handshake (first packets))
+                   (output
+                     (apply #'concatenate 'string
+                            (mapcar #'second (rest packets)))))
+              (test-assert
+               (and (= (length frames) 4)
+                    (eq (first handshake) ':attached)
+                    (string= (getf (rest handshake) :session-id) "ORDER")
+                    (every (lambda (packet) (eq (first packet) ':output))
+                           (rest packets))
+                    (string= output text)
+                    (string= (localgroup-terminal-history-text terminal)
+                             (subseq text (- (length text) 5))))
+               "the handshake precedes bounded lossless output and exact replay"))
+            (let ((*localgroup-attachment-queue-character-limit* 1))
+              (test-assert
+               (and (not (localgroup-attachment-send attachment '(:oversized)))
+                    (localgroup-attachment-closed-p attachment)
+                    (deque-empty-p (localgroup-attachment-queue attachment))
+                    (zerop (deque-total-weight
+                            (localgroup-attachment-queue attachment))))
+               "attachment overflow closes the client and releases its queue")))
       (localgroup-terminal-detach terminal attachment)
       (localgroup-attachment-close attachment)
       (ignore-errors (sb-bsd-sockets:socket-close socket))))
