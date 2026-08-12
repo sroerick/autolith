@@ -1,450 +1,333 @@
 #+TITLE: Autolith Architecture
 #+STARTUP: content
 
-* Intent
+Autolith is a terminal agent running inside a live Common Lisp image. It keeps
+one simple promise: the running system can be inspected and carefully changed,
+without making the user's conversations, credentials, or recovery path fragile.
 
-Autolith is designed to understand and modify itself while it is running. The
-architecture therefore optimizes for semantic boundaries that are easy to
-inspect, document, replace, and test independently.
+All application definitions live in the single =autolith= package. Files mark
+responsibilities, not package boundaries.
 
-Every application definition lives in the single =autolith= package. Files
-separate responsibilities; packages do not.
-
-* Object graph
+* The running system
 
 #+BEGIN_SRC text
-terminal-ui
-    |
-    v
-  agent ------> conversation ------> append-only conversation .sexp file
-    |
-    +---------> provider ----------> request-scoped credentials
-    |
-    +---------> memories ----------> append-only memory .sexp file
-    |
-    +---------> tool registry
-                    |
-                    +-------------> isolated search worker
-                    |                    |
-                    |                    +-----> fff index and native watcher
-                    |
-                    +-------------> named lisp-worker pool
-                    |                    |
-                    |                    +-----> immutable worker images
-                    |
-                    +-------------> active Lisp image
+                         +--------------------+
+                         | stable launcher    |
+                         | provenance checks  |
+                         +---------+----------+
+                                   |
+                    +--------------v---------------+
+                    | active Autolith Lisp image    |
+                    | terminal, agent, tools, state |
+                    +--+-----------+-----------+----+
+                       |           |           |
+              +--------v--+   +----v----+  +---v----------------+
+              | provider  |   | durable |  | isolated workers    |
+              | HTTP/SSE  |   | records |  | search and lisp.*   |
+              +-----------+   +----+----+  +---------------------+
+                                  |
+                    +-------------v--------------+
+                    | XDG data and state roots    |
+                    | conversations, memories,    |
+                    | agendas, images, credentials|
+                    +----------------------------+
 #+END_SRC
 
-The central objects communicate through generic functions. Implementations
-may be replaced without teaching the agent loop about HTTP, terminal escape
-sequences, source editing, or subprocess protocols.
-
-* Responsibilities
-
-** =configuration.lisp=
-
-Defines immutable runtime choices and paths. Configuration contains credential
-locations, never credential values.
-
-** =updates.lisp=
-
-Owns structurally validated source, Nix, and selected-release provenance; the
-atomic readable availability cache; exact-tag dismissal; and bounded background
-refresh. Startup reads only cached state. The background thread may publish a
-later result for a future start, but it has no installation authority.
-Checkpoint quiescence joins an unfinished refresh before the single-threaded
-fork boundary.
-
-** =sexp-store= and =readable-state.lisp=
-
-The pinned =sexp-store= dependency owns strict one-form reading, atomic private
-S-expression snapshots, append-only readable logs, and incomplete-tail repair.
-Readers disable =*read-eval*=, snapshot consumers reject trailing forms, and no
-consumer sees a half-published replacement. =readable-state.lisp= retains only
-the property-list key predicate used by Autolith record validators.
-
-** =authentication.lisp=
-
-Defines credential sources and OAuth refresh. Credentials enter memory only
-inside the dynamic scope of a provider request. The Codex credential file is
-an optional one-time, access-token-only import, not a runtime dependency on
-Codex. Renewable credentials come only from Autolith's own device flow.
-
-** =device-authentication.lisp=
-
-Owns Autolith's browser-assisted device authorization, polling, PKCE exchange, and
-publication into Autolith's private credential store.
-
-** =idsmall=, =conversation/identifiers.lisp=, and identifier migration
-
-The pinned =idsmall= dependency owns short Bitcoin Base58 identifier derivation,
-display normalization, and bounded collision probing. Autolith's identifier
-adapter translates library conditions into its conversation condition protocol.
-=conversation/identifier-migration.lisp= owns the retained legacy alias map and
-the process-locked sequence of atomic file replacements and directory renames.
-Its readable phase record is published before mutation and after each boundary,
-so startup can safely repeat every operation after interruption. It rewrites
-conversation, memory, crash, and task-artifact references, preserves activity
-timestamps, and keeps old resume identifiers resolvable after completion.
-
-** =conversation.lisp=
-
-Owns append-only portable records and their projection into provider input.
-Fresh conversations remain in memory until the first durable record atomically
-publishes the header and that record together. Empty sessions therefore create
-no conversation file. It persists each user message before network work begins
-and treats completed provider output items as authoritative history. The header
-records the initial model and reasoning effort; later selection changes append
-configuration records so resuming restores the latest choices. Loading records
-whether a crash interrupted the final form, and the next append asks
-=sexp-store= to remove that tail atomically before publishing new history.
-
-** =memories.lisp= and =memory-tools.lisp=
-
-Own the append-only portable memory log, replacement replay, recall tombstones,
-workspace and global selection, deterministic lexical ranking, and the
-=memory.*= tool surface. =memory-context.lisp= contributes a bounded set of
-metadata and short excerpts when relevant memories match the latest user input.
-That request-local evidence is quoted as untrusted JSON data and never enters
-conversation history; exact bodies remain behind search and read tools. A
-damaged memory log yields a bounded contributor failure instead of breaking the
-provider path. An incomplete final form is ignored and atomically removed when
-the next complete record is appended.
-
-** =state/papercuts.lisp= and =tools/papercut.lisp=
-
-Own the append-only papercut report and closure log and the model-facing
-=papercut.report= tool. Each report is tied to the current workspace and source
-conversation, remains outside conversation files and saved cores, and is never
-silently replaced or removed by the model. Successful reports remain visible in
-compact terminal mode through a dedicated prominent result card. The read-only
-=/papercuts= and =/papercut ID= commands list active reports and show complete
-bodies; =/papercut-close ID= appends a durable closure tombstone for fixed or
-obsolete reports. Unique identifier prefixes are accepted without guessing
-ambiguous matches.
-
-The design was informed by OpenAI Codex commit
-=5bed6447998c754d154dbd796517310b8f04d4ce=. That implementation uses SQLite
-for background extraction jobs and usage ranking, then consolidates selected
-results into a Markdown tree whose bounded =memory_summary.md= enters developer
-instructions. Autolith keeps the same useful separation between small ranked
-recall evidence and deeper read tools, but its single-agent runtime does not
-need a job database, background extraction model calls, Git-backed consolidation
-workspace, or generated Markdown hierarchy.
-
-** =agendas.lisp= and =agenda-tools.lisp=
-
-Own the atomic versioned workspace agenda file, legacy migration, stable item
-identifiers, memory attachments, repository transport, and the =agenda.*= tool
-surface. An item stores only stable memory identifiers, so replacing the
-append-only memory record changes the value behind every attachment without
-rewriting agenda state. Transport preserves attachments and unions them when
-otherwise duplicate items merge.
-
-** =provider.lisp=
-
-Owns the replaceable model-provider protocol, Responses Lite request encoding,
-HTTP transport, and SSE decoding. It emits semantic stream events and has no
-terminal rendering logic.
-
-** =tools.lisp=
-
-Defines tool metadata, namespaces, validation, dispatch, and output. Every
-tool call receives a matching result, including malformed and failed calls.
-
-** =default-tools.lisp=
-
-Composes the default registry from one focused registration function per
-namespace. This keeps a schema or tool-set change local instead of requiring a
-replacement of the complete registry definition in the live image.
-
-** =application/command.lisp=, =application/operation.lisp=, and =application/lisp-machine.lisp=
-
-Own one layered user-visible operation surface. Command definitions retain
-interactive metadata and slash compatibility, while operation projection
-combines commands and model tools into canonical Lisp calls, completion
-entries, active-turn admission policy, and deterministic provider-equivalent
-transcript forms. Exact parenthesized user source remains exact; provider calls
-are labeled equivalent forms and are never represented as literal source.
-=lisp-machine.lisp= reads and evaluates one explicit top-level form in the
-active image, captures printed output and multiple values, and presents
-conditions with live restarts. Caller-specific authority remains enforced.
-=(eval-now FORM)= is a local scheduling override, not an authorization,
-terminal-ownership, or provider-authority override.
-
-** =workspace-tools.lisp=
-
-Owns the workspace filesystem and command surfaces. One workspace policy
-describes a restricted command, and =cl-exec-sandbox= selects the host backend
-for it: Bubblewrap on Linux, a translated Seatbelt profile through the system
-=sandbox-exec= launcher on macOS. Seatbelt enforces read-only host access,
-writable workspace and temporary roots, protected repository metadata, and
-network denial, but it does not add Linux process namespaces, =no_new_privs=,
-or seccomp. Autolith no longer translates policies itself. The workspace layer
-keeps a 60-second default without imposing a maximum requested timeout, bounds
-returned output, and replaces invalid encoded output bytes while preserving
-process status.
-
-** =search-tools.lisp= and =search-worker.lisp=
-
-=search-tools.lisp= owns the pinned native-library identity, tool classes, and
-argument policy. =search-worker.lisp= adapts Autolith configuration and tool
-results to =clifff=. The pinned =clifff= dependency owns the CFFI binding,
-workspace index, readable result data, bounded presentation, supervised helper
-protocol, process retry, and rebuildable database reset. One registry shares
-one worker across fuzzy path, glob, content, and multi-pattern search; the
-helper process owns the single native fff engine. The Rust library is fff
-v0.10.3, built from pinned commit
-=e2cad2f09ea617d4c024f396f21d80e557f23a17= and published privately under the
-Autolith data root. It is neither a command subprocess nor a program installed
-on the user's =PATH=. This integration was reviewed against that exact upstream
-commit's generated C header and Rust implementation.
-
-The helper owns all native watcher threads, caches, database handles, and fff
-pointers. A dead process or failed exchange closes it, discards only rebuildable
-ranking state, and retries once in a fresh process. Checkpoint entry and normal
-application exit close the helper, so the active image never saves or inherits
-a native fff pointer. A resumed application starts a fresh helper on its next
-search.
-
-** =lisp-worker.lisp=
-
-Owns named, persistent SBCL subprocesses, their readable S-expression protocol,
-matching implementation-source lookup, and forked worker-core saving. No
-=lisp.*= operation shares heap state with another REPL or the active image.
-
-** =lisp-images.lisp=
-
-Owns immutable worker-image manifests, compatibility checks, parentage, durable
-notes, atomic core publication, and the bounded inventory placed in every model
-request. The pristine image is a reserved virtual root.
-
-** =self-tools.lisp=
-
-Owns active-image inspection, exploratory mutation, definition identity, and
-form-aware source primitives. Package-aware definition installation can
-instrument Lisp-level SBCL packages while restoring package locks afterward.
-
-** =durable-mutations.lisp=
-
-Owns the checked one-definition transaction and validated durable journal replay.
-Durable mutation objects carry explicit phases and reconcile against published
-private image commits across the narrow post-publication crash window.
-
-** =image-commits.lisp=
-
-Owns stable exploratory mutation identities, branch lineages, effective
-=self.diff= state, =self.commit=, private commit manifests, complete Lisp replay
-scripts, and the clean-process replay probe. Each commit is a full effective
-snapshot under the data root. The snapshot is replay-probed before selection and
-then committed to the separate mutation-history Git repository under the state
-root. An atomic pointer binds both identities and selects normal startup state.
-Startup restores deleted canonical manifest and replay files from the exact Git
-object. Retained cores preserve their checkpointed identities and begin a new
-lineage on reconnect, so rollback cannot absorb mutations written later by
-another branch.
-
-** =self-status.lisp=, =self-discard.lisp=, and =self-exercise.lisp=
-
-Expose concise mutation and recovery state, exact reversible discard of one
-effective exploratory mutation, and focused append-only exercise evidence.
-These operations use the mutation identity, lineage, and replay primitives
-without changing the tracked source repository.
-
-** =terminal.lisp=
-
-Owns a restrained primary-screen interface. Finalized transcript output is
-written once and left in normal terminal scrollback. Autolith never enters the
-alternate screen and never clears scrollback. Only the bounded live region may
-be repainted. From top to bottom it contains the optional =COMPACTING= row and
-animated =READ / EVAL / PRINT / LOOP= modeline; local Lisp and child-agent
-activity; provider, tool, reasoning, and streaming activity; transient notices;
-steering and queued previews; and the prompt with any completion candidates.
-The modeline is an animation, not a literal execution-phase report. Reasoning
-previews enter scrollback only when finalized. Active status includes phase
-elapsed time and identifies how long no provider progress has arrived after a
-bounded idle interval.
-
-Parenthesized drafts use a red =*= prompt and ColorLisp highlighting. Autolith
-owns candidate data, operation filtering, its semantic palette, terminal mode,
-application event policy, and a small OSC 133 prompt-block state machine. On an
-interactive terminal, =A= and =B= are emitted before the reader can accept
-foreground input, =C= begins execution, and =D;STATUS= completes it exactly
-once. Repaint, resize, animation, streaming, and internal work emit no prompt
-markers. Immediate local operations running beneath an active interaction never
-open nested blocks, and terminal shutdown closes unfinished execution as a
-failure. Clinedi remains responsible for Unicode-aware editor state, input
-decoding, screen geometry, candidate navigation and arrangement, and the
-scrollback-safe live-region mechanics. cl-colorist owns ANSI color capability
-detection, basic and indexed style encoding, and ANSI control-sequence parsing
-shared with Clinedi. Kernel TTY rows and columns take precedence over
-environment hints.
-
-Long drafts use a cursor-following viewport capped below the terminal height,
-and each replacement is emitted as one hidden-cursor update. The startup
-identity uses a capability-checked xterm-256 green gradient with bold
-basic-green fallback, while a process started by recovery uses a red gradient
-with bold basic-red fallback. One leading blank row and a divider separate its
-identity from model and workspace metadata. Internal conversation identifiers
-are omitted. Other semantic styles resolve to basic terminal palette colors
-and emphasis. Untrusted text is sanitized before trusted styling controls are
-added around it. During an active turn, a neutral full-width status background
-carries the current model, effort, and enclosing Git branch. The branch is
-captured at activity transitions and never queried by the animation repaint
-loop. Ctrl-C at an empty prompt exits and leaves a paste-ready resume command in
-scrollback only when the active conversation is durable. The input reader
-remains available during graceful interruption so another Ctrl-C can restore
-the terminal and force process status 130 without waiting for the main agent
-thread.
-
-Command-line resume may open one project-adaptation picker after selecting a
-qualifying conversation. Its decisions are atomic S-expression state keyed by
-canonical project root. A five-day deferral makes cancellation non-nagging, and
-a permanent refusal remains local to that repository or workspace path.
-
-** =responsive-input.lisp=
-
-Owns the ephemeral terminal-reader thread and FIFO submitted-input queue. The
-controller opens the semantic =A=/=B= prompt before the reader starts accepting
-input, then classifies chat messages, explicit Lisp, and canonical operation
-calls. Model turns and boundary-requiring operations remain on the application
-main thread, so no concurrent model turns are possible. Nonconflicting local
-operations may run immediately while an active turn continues. If another
-interaction already owns the prompt block, responsive work reuses it rather
-than emitting nested =C=/=D= markers; startup and other internal work add no
-execution markers.
-
-The reader applies editor events through the terminal UI lock. Modal pickers and
-terminal-owning, authorization-gated, or conflicting operations wait for a safe
-boundary, temporarily join the reader, and take terminal ownership. Checkpoint
-creation uses the same nested quiescence boundary, so its process fork still
-occurs with exactly one live Lisp thread. The reader restarts after the modal or
-checkpoint operation. This controller is lexical to one application run and is
-never captured in a retained generation.
-
-** =localgroup/protocol.lisp=, =localgroup/runtime.lisp=, and =localgroup/handoff.lisp=
-
-Own the private authenticated loopback endpoint, strict idle snapshots, terminal
-relay attachments, and detached process handoff. Registry records are atomic
-private S-expressions containing a random capability. Foreground detach and
-take-over become main-thread work only after ordinary queues and live child jobs
-are empty. The handoff pauses input, transfers the conversation lease through a
-gated supervised launcher process group, and requires an authenticated
-replacement endpoint before old-process shutdown. Atomic claim and cancellation
-records plus launcher-group and replacement-PID acknowledgements prevent a late
-replacement from racing lease restoration. Checkpoint quiescence reuses the same
-endpoint identity without carrying runtime threads into a generation.
-
-** =sexp-config= and native configuration adapters
-
-The pinned =sexp-config= dependency owns restricted lexical preflight, bounded
-one-form reading, isolated reader packages, structural grammar validation, and
-standard keyword-to-string token boundaries for =SKILL.sexp=, native MCP
-configuration, and child-agent role files. Each consumer retains its own field
-vocabulary, semantic validation, file confinement, and diagnostics.
-
-** =cl-jobpond= and =task/=
-
-The pinned =cl-jobpond= dependency owns bounded atomic admission, reusable worker
-threads, deadlines, cancellation state, progress publication, retention, and
-shutdown. Autolith's task layer owns agent definitions, tool authority, ancestry,
-context snapshots, artifacts, provider execution, and parent-child cancellation.
-Its orchestrator lock serializes naming and hurry-up policy with admission; a
-narrow private pool-lock adapter publishes all mutable library limits as one
-worker-visible policy update.
-
-** =agent.lisp=
-
-Coordinates one turn at a time: persist user input, stream a response, append
-completed output items, execute tools, append their results, and continue
-until the provider completes without outstanding calls. Context pressure causes
-an inline durable compaction, after which the same active turn resumes. Provider
-steps, tool batches, and individual tool calls have no arbitrary count ceiling;
-user interruption and unrecoverable provider or agent errors remain the stopping
-boundaries.
-
-** =sbcl-generations= and =state/generations.lisp=
-
-The pinned =sbcl-generations= dependency owns retained-generation storage,
-manifest-compatible inventory, coordinator-and-saver forks, boot probes, and
-atomic core publication on Linux and macOS. Autolith retains its atomic selection
-and provenance layer, checkpoint quiescence, credential clearing, inherited
-worker detachment, exact tracked/private commit checks, and complete
-=reconstruct.lisp= publication. An unpublished core must boot and identify all
-required identities before its core, manifest, and selection become visible.
-
-** =main.lisp=
-
-Roots logical application state for checkpoints, reconnects ephemeral resources,
-projects durable records into the terminal, and wires interactive commands.
-
-** =active-image.lisp=
-
-Builds and validates the credential-free preloaded baseline image used for fast
-normal startup. The embedded build record hashes every compiled source input
-from Autolith, includes the dependency lock, and records the exact runtime. Its
-private probe refuses stale source or an incompatible runtime before the stable
-launcher can use the core.
-
-** =bin/= and =recovery/=
-
-Contain the stable launcher boundary, runtime adapter, and minimal
-recovery runtime. =script/bootstrap= locates a supported official SBCL release
-satisfying the tracked minimum version or, on Linux x86-64, installs the pinned
-SBCL beneath the data root without changing the system Lisp. It also installs
-the independently hash-verified matching SBCL source as a read-only reference.
-It builds the
-recovery runtime into a read-only pristine core and builds the separate
-preloaded active image outside the repository. Both builders record exact
-source provenance and boot-probe each temporary image. The launcher repeats the
-versioned probes before use. An interactive missing-image path offers to run the
-bootstrap in place, while declining or a non-interactive launch uses source.
-=--from-source= bypasses the image probe and prompt entirely.
-
-On Linux, the runtime adapter may install the official pinned binary. On macOS
-arm64, it builds the pin from source with a host SBCL when no matching runtime
-exists. Packaged releases and their update launcher remain Linux x86-64 only.
-
-The selected packaged-release launcher gives the active application validated
-release provenance. An accepted cached update restores the terminal and crosses
-back through a dedicated non-recovery status. Only then does that outer launcher
-fresh-check the release service, run its bundled verified installer against the
-derived installation root, and restart the newly selected launcher with the
-original arguments. Source starts cannot enter that path, and Nix starts receive
-advice only.
-
-Recovery reports
-sanitized crash and mutation context, creates private exact-commit checkouts,
-and boots retained cores without loading damaged active source. A failed
-retained core restores terminal state, refreshes crash context, and falls through
-to another compatible generation. When no retained generation can boot, recovery
-starts a clean checkout of the current committed source. Rollback selection uses
-a dedicated process status to enter this path immediately.
-
-* Durable mutation
-
-A durable change follows one visible transaction across otherwise independent
-components:
-
-1. Append the proposed mutation to the journal.
-2. Compile and install it in the active image.
-3. Run the relevant checks.
-4. Publish a complete private image-commit replay script and manifest.
-5. Commit the complete snapshot to the private mutation-history Git repository.
-6. Atomically select the image and Git commit identities for normal startup.
-7. Append the durable result to the journal.
-
-Exploratory mutation stops after installation and journal publication until
-=self.commit= consumes it. Tracked source remains authoritative for the base
-system, and the selected private script reconstructs durable user-specific
-changes without patching that source.
-
-* Credentials and saved images
-
-Provider instances retain credential-source pathnames but not access or
-refresh tokens. Checkpoint code must run outside the dynamic request scope and
-must reject attempts to save while credentials are dynamically bound. Tokens
-never enter conversations, memories, journals, logs, or manifests. Worker
-images contain only isolated REPL heaps and never participate in active-image
-startup or recovery. Their manifests and notes live under the data root; the
-pinned runtime executable and pristine recovery artifacts remain separate.
+The active image owns the interactive session. It receives input, persists the
+important parts of a turn, asks a provider for work, dispatches tools, and
+renders a bounded live terminal region. It does not need to know the details of
+HTTP, native search, editor escape sequences, or worker subprocesses. Those are
+behind focused protocols and adapters.
+
+The launcher, active image, workers, and recovery image are deliberately
+different things. A problem in one must not turn into authority to overwrite or
+silently trust another.
+
+* One turn, from input to history
+
+#+BEGIN_SRC text
+user input
+   |
+   v
+responsive reader --> application operation --> agent turn
+   |                         |                    |
+   |                         |                    +--> provider stream
+   |                         |                    +--> tool batches
+   |                         |                    +--> durable records
+   v                         v
+terminal prompt          local Lisp result       finalized scrollback
+#+END_SRC
+
+The responsive reader classifies prose, explicit Lisp, and callable operations.
+The application evaluates one explicit top-level form in the active image and
+shows returned values, output, conditions, and available restarts. The same
+operation model supplies commands, completion, slash compatibility, and
+provider-equivalent transcript forms. Parenthesized source stays exact;
+provider calls are presented as equivalents, never as user-written source.
+
+=src/agent/runtime.lisp= runs one model turn at a time. It persists user input
+before network work, streams provider output, runs requested tools, appends
+completed output and tool results, then continues until the provider finishes without calls.
+There is no arbitrary tool-step ceiling. Interruption and unrecoverable errors
+are the boundaries. Context pressure triggers an inline durable compaction and
+the active turn then continues.
+
+Local operations that do not conflict with a turn may run immediately. Modal,
+terminal-owning, authorization-gated, and boundary-requiring work waits for a
+safe point. This is why a normal prompt stays responsive without permitting
+concurrent model turns or nested terminal ownership.
+
+* Durable user state
+
+Autolith stores portable, readable S-expressions. =sexp-store= provides strict
+one-form reads, atomic snapshots, append-only logs, and incomplete-tail repair.
+Readers bind =*read-eval*= to =nil=. A reader never accepts a half-published
+replacement, and a later append can remove an incomplete final form atomically.
+
+| State | What it keeps | Important rule |
+|-------+---------------+----------------|
+| Conversations | headers, messages, provider items, model choices | no file exists until the first durable record |
+| Memories | workspace and global facts, replacement and recall tombstones | request context gets only bounded matching evidence |
+| Agendas | versioned workspace plans and memory identifiers | attachments name stable memory IDs, not copied bodies |
+| Papercuts | user-visible defect reports and closure tombstones | reports are never silently erased by the model |
+| Input vault | queued follow-ups and steering after a crash | never resubmits automatically |
+
+Conversation records are authoritative provider history. The initial header
+records the selected model and effort; later changes are durable configuration
+records, so resume restores the latest choices. Memory context is bounded,
+quoted as untrusted JSON data, and stays out of the conversation transcript.
+Damaged memory state degrades that contributor rather than the provider path.
+
+Identifiers use =idsmall= Bitcoin Base58 derivation with bounded collision
+probing. The conversation migration layer keeps legacy aliases resolvable and
+uses process-locked atomic replacements with a readable phase record. An
+interrupted migration can therefore safely repeat its next operation.
+
+* Provider and tool boundary
+
+=src/provider/client.lisp= implements the replaceable model-provider protocol,
+Responses Lite encoding, HTTP transport, and SSE decoding. It emits semantic
+stream events. It does not render terminals.
+
+Tools have metadata, namespaces, validation, dispatch, and a result for every
+call, including malformed or failed calls. =src/tools/defaults.lisp= assembles
+the registry one namespace at a time so a focused change does not replace a
+whole live registry.
+
+#+BEGIN_SRC text
+provider request --> semantic events --> agent --> validated tool calls
+                                             |
+                                             +--> matching tool results
+#+END_SRC
+
+Credentials are a separate boundary. Configuration records credential locations,
+never credential values. A provider request sees tokens only in its dynamic
+scope. The optional Codex file is a one-time access-token import, not a Codex
+runtime dependency; renewable credentials come from Autolith's own device flow.
+Tokens never belong in conversations, memories, journals, logs, manifests, or
+saved images.
+
+=src/provider/authentication.lisp= and
+=src/provider/device-authentication.lisp= own credential sources, OAuth refresh,
+browser-assisted device authorization, polling, PKCE exchange, and publication
+to Autolith's private credential store.
+
+* Workspace and worker boundary
+
+Workspace operations use one policy and =cl-exec-sandbox= selects its host
+backend: Bubblewrap on Linux and a translated Seatbelt profile through the
+system =sandbox-exec= launcher on macOS. The policy denies network access,
+keeps the host read-only, allows workspace and temporary writes, protects
+repository metadata, defaults to 60 seconds, and bounds returned output. macOS
+Seatbelt is not presented as Linux namespaces, =no_new_privs=, or seccomp.
+Invalid output bytes are replaced while process status remains visible.
+
+Search is one supervised native helper process per registry. =clifff= owns its
+CFFI binding, index, result data, bounded presentation, process protocol, and
+rebuildable database. Its one helper owns the fff engine, watcher threads,
+caches, database handles, and native pointers. A failure drops only rebuildable
+ranking state and retries once with a new process. Checkpoint and shutdown close
+it, so no native pointer enters a saved active image. The pinned fff v0.10.3
+source commit is =e2cad2f09ea617d4c024f396f21d80e557f23a17=; it is a private
+library below the data root, not a command on =PATH=.
+
+=src/workers/lisp.lisp= owns named persistent SBCL subprocesses and their
+readable S-expression protocol. No =lisp.*= operation shares heap state with
+another worker or the active image. =src/workers/images.lisp= adds immutable
+image manifests, compatibility, parentage, notes, atomic publication, and a
+reserved pristine root. Worker images never participate in active startup or
+recovery.
+
+=sexp-config= safely reads native configuration, skills, MCP configuration, and
+child roles through restricted lexical preflight, isolated reader packages, and
+structural grammar validation. Each consumer still owns its vocabulary,
+semantics, confinement, and diagnostics.
+
+The =task/= layer uses =cl-jobpond= for bounded admission, worker threads,
+deadlines, cancellation, progress, retention, and shutdown. Autolith supplies
+agent identity, authority, ancestry, context snapshots, artifacts, provider
+execution, and parent-child cancellation. Its orchestrator serializes naming
+and hurry-up policy with admission.
+
+* Terminal without a hidden screen
+
+Autolith uses the primary terminal screen and leaves finalized output in normal
+scrollback. It never clears scrollback or enters the alternate screen. Only a
+bounded live region is repainted.
+
+#+BEGIN_SRC text
+optional COMPACTING row
+animated READ / EVAL / PRINT / LOOP modeline
+local Lisp and child activity
+provider, tool, reasoning, and stream activity
+notices, queued previews, and steering
+prompt and completion candidates
+#+END_SRC
+
+The modeline is an animation, not a literal execution-phase claim. Reasoning
+previews enter scrollback only once finalized. Status shows elapsed phase time
+and, after a bounded interval, how long provider progress has been absent.
+
+Autolith owns semantic styling, candidate policy, event policy, terminal mode,
+and OSC 133 prompt blocks. Interactive =A= and =B= precede input, =C= starts
+execution, and =D;STATUS= closes it exactly once. Repaint, resize, animation,
+and internal work emit no markers. A local operation during an active prompt
+reuses the current block, and shutdown closes an unfinished block as failure.
+
+Clinedi owns Unicode editor state, input decoding, screen geometry, candidate
+navigation, and scrollback-safe live repainting. cl-colorist owns ANSI
+capability detection and control-sequence parsing. Kernel terminal dimensions
+beat environment hints. Untrusted text is sanitized before trusted styles are
+added. Long drafts use a cursor-following viewport and one hidden-cursor update
+per replacement.
+
+Ctrl-C on an empty prompt exits. If the conversation is durable, scrollback
+contains a paste-ready resume command. Graceful interruption keeps the input
+reader available so a second Ctrl-C can restore the terminal and exit with
+status 130. Resume may offer one per-project adaptation picker; cancellation
+defers it for five days, while permanent refusal stays scoped to that project.
+
+* Live mutation and generations
+
+=src/self/tools.lisp= can inspect the active image, make an exploratory change,
+and install a complete definition with package locks restored afterward. These
+tools can inspect Lisp-level SBCL definitions too. They do not patch the tracked
+source repository.
+
+#+BEGIN_SRC text
+journal proposal
+   |
+   v
+compile and install --> focused checks --> replay script and manifest
+                                              |
+                                              v
+                                  private mutation-history Git commit
+                                              |
+                                              v
+                                  atomically select normal startup state
+                                              |
+                                              v
+                                      journal durable result
+#+END_SRC
+
+Exploratory changes stop after installation and journal publication. =self.diff=
+shows their effective state, =self.exercise= records focused evidence, and
+=self.discard= reverses one effective change. =self.commit= creates a complete
+private snapshot, replay-probes it in a clean process, commits it to the
+separate mutation-history repository, and atomically selects its image and Git
+identities. The tracked source remains the base system; the selected private
+script reconstructs user-specific changes without modifying it.
+
+Checkpoints use =sbcl-generations= for retained cores, manifests,
+coordinator-and-saver forks, boot probes, and atomic core publication. Before
+the fork, Autolith quiesces work, clears credentials, detaches workers, and
+checks exact tracked and private provenance. An unpublished core must boot and
+identify every required identity before its core, manifest, and selection are
+visible. Responsive input joins this same boundary, so the fork sees one live
+Lisp thread.
+
+* Startup, update, and recovery
+
+#+BEGIN_SRC text
+stable launcher
+   |
+   +--> verify runtime and source provenance --> active image
+   |                                               |
+   |                                               +--> retained generation
+   |
+   +--> failure or rollback --> recovery --> compatible generation
+                                      |
+                                      +--> clean exact-source checkout
+#+END_SRC
+
+=active-image.lisp= builds the credential-free preloaded image for normal
+startup. Its build record hashes Autolith source and the dependency lock, and
+records the exact runtime. A private probe rejects stale source or an
+incompatible runtime before the launcher uses the core.
+
+=script/bootstrap= finds a supported official SBCL release or, on Linux x86-64,
+installs the pinned SBCL below the data root without replacing the system Lisp.
+It hash-verifies matching SBCL source as a read-only reference, builds a
+read-only pristine recovery core and a separate active image, and boot-probes
+both. On macOS arm64, the pin builds from source with a host SBCL when needed.
+Packaged releases and their update launcher are Linux x86-64 only; Nix supports
+Linux x86-64 and macOS arm64.
+
+=updates.lisp= validates source, Nix, and selected-release provenance, owns an
+atomic readable availability cache, exact-tag dismissal, and bounded background
+refresh. Startup reads cached state only. The refresh can inform a later start,
+but cannot install anything. An accepted packaged update restores the terminal,
+fresh-checks the release service, runs the bundled verified installer at the
+derived installation root, then restarts the selected launcher with its original
+arguments. Source starts cannot enter this path; Nix starts receive guidance.
+
+Recovery reports sanitized crash and mutation context and does not load damaged
+active source. It tries compatible retained cores, restoring terminal state and
+refreshing context after each failure. If none can boot, it starts a clean
+checkout of current committed source. Rollback selection uses a dedicated
+process status to take this route immediately.
+
+=localgroup/= provides a private authenticated loopback endpoint for idle
+snapshots, terminal relay attachments, and detached handoff. Registry records
+are atomic private S-expressions with a random capability. Handoff waits until
+ordinary queues and live child jobs are empty, pauses input, transfers the
+conversation lease through a supervised launcher process group, and requires an
+authenticated replacement before old-process shutdown. Claim, cancellation, and
+PID acknowledgements prevent a late replacement from racing lease restoration.
+Checkpoint quiescence keeps the endpoint identity but never captures runtime
+threads.
+
+* Safety truths
+
+- Autolith executes model-generated code with the user's privileges. Process
+  boundaries limit accidents; they are not a hostile-code security claim.
+- Credentials are dynamically scoped, excluded from durable records, and
+  rejected at checkpoint time.
+- Every durable replacement is atomic; append-only readers tolerate an
+  incomplete final form.
+- One active model turn and one terminal owner keep user-visible state ordered.
+- Search helpers and Lisp workers are disposable processes, never inherited
+  active-image state.
+- Recovery is separate from the active image and can fall back to exact source.
+- Stable launchers and pristine recovery artifacts are distinct from mutable
+  active images and private mutation history.
+
+* Source map
+
+This is a map for finding the owning boundary, not a second implementation
+manual.
+
+| Area | Primary source boundaries and dependencies |
+|------+--------------------------------------------|
+| Application loop | =src/startup/=, =src/agent/=, =src/application/=, =src/terminal/responsive-input.lisp= |
+| Terminal | =src/terminal/=, Clinedi, cl-colorist |
+| Providers and credentials | =src/provider/= |
+| Tools and workspace resources | =src/tools/=, =src/resource/=, cl-exec-sandbox, clifff |
+| Readable durable state | =src/conversation/=, =src/state/=, =src/resource/{memory,agenda}.lisp=, sexp-store |
+| Workers and tasks | =src/workers/=, =src/task/=, cl-jobpond, sbcl-workers |
+| Live mutation | =src/self/=, =src/state/{durable-mutations,image-commits}.lisp= |
+| Images and recovery | =src/startup/active-image.lisp=, =src/state/generations.lisp=, =recovery/=, =bin/=, sbcl-generations |
+| Configuration and transfer | =src/configuration/=, =src/localgroup/=, =src/state/updates.lisp=, sexp-config |
+
+Read [[file:guide.org][the guide]] for operating Autolith, and =AGENTS.md= for
+repository rules and development policy.

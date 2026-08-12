@@ -2,21 +2,17 @@
 #+STARTUP: content
 #+OPTIONS: toc:2 num:nil
 
-* Purpose
+* Skills, when a job needs a playbook
 
-A Skill is a named, reusable set of model instructions stored as native
-Autolith data. Discovery exposes only bounded metadata. The complete
-instructions enter provider context only after the model explicitly calls
-=skill.load= for that Skill.
+A Skill is a named bundle of instructions for the model. It is native Autolith
+configuration, not an MCP server, tool, resource, or prompt.
 
-Skills are independent of MCP. They are not servers, tools, resources, or
-prompts, and their instructions never enter durable conversation history,
-summaries, memories, or saved request history.
+Autolith shows the model a small catalog first. The full instructions enter only
+after the model calls =skill.load= for an exact Skill name. They are request-local:
+they never enter conversation files, summaries, memories, saved request history,
+or a later logical turn.
 
-* Native Format
-
-Each Skill is one file named exactly =SKILL.sexp=. It contains exactly one
-bounded top-level form:
+For example, put this in =.autolith/skills/release-check/SKILL.sexp=:
 
 #+begin_src lisp
 (:autolith-skill
@@ -28,100 +24,90 @@ bounded top-level form:
 Run every relevant check before reporting success.")
 #+end_src
 
-The marker, version, name, description, and instructions are required.
-Unknown or duplicate fields, extra top-level forms, malformed lists, reader
-labels, circular or shared structure, unsupported versions, and values of the
-wrong type are rejected.
+Then ask for release verification. If the catalog describes a matching Skill, the
+model selects it with =skill.load= before work that depends on those instructions.
 
-Reading binds =*read-eval*= to =nil= and uses a fresh readtable and temporary
-package. The file, readable tree, metadata fields, and instruction string are
-all bounded. A name contains 1 to 64 lowercase ASCII letters, digits, or
-hyphens. It cannot begin or end with a hyphen or contain two consecutive
-hyphens. The name must match its immediate parent directory exactly.
+* Write a Skill
 
-The =:instructions= string is the complete instruction body. Referenced files
-may be resolved relative to the directory containing =SKILL.sexp=, but Autolith
-does not execute a Skill file or automatically load adjacent files.
+A Skill directory contains one file named exactly =SKILL.sexp=. It contains one
+bounded top-level form with all five required fields shown above: the marker,
+version, name, description, and instructions.
 
-* Discovery and Precedence
+=:instructions= is the complete instruction body. It may refer to files relative
+to its own directory, but Autolith neither executes =SKILL.sexp= nor automatically
+loads neighboring files.
 
-Autolith searches these roots in order:
+Names are 1 to 64 lowercase ASCII letters, digits, and hyphens. They cannot start
+or end with a hyphen, contain =--=, or differ from their immediate parent directory
+name.
 
-1. =.autolith/skills/= at the current project root.
+Autolith rejects unsupported versions; unknown or duplicate fields; malformed data;
+extra forms; reader labels; circular or shared structure; and values of the wrong
+type. It reads with =*read-eval*= bound to =nil=, a fresh readtable, and a temporary
+package. The file, tree, metadata, and instruction text are bounded.
+
+* Where Autolith looks
+
+Autolith scans these roots in precedence order:
+
+1. =.autolith/skills/= at the project root.
 2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=.
-3. Autolith's bundled Skill roots.
+3. Bundled Skill roots.
 
-For a workspace outside Git, the workspace directory acts as the project root.
-Discovery below each root is recursive, deterministic by pathname, and accepts
-only the exact case-sensitive filename =SKILL.sexp=. Hidden directory names do
-not disable recursion. Missing roots are harmless.
-Canonical traversal never leaves the canonical discovery root. A symbolic link
-that escapes the root, a broken link, or a non-regular =SKILL.sexp= is rejected
-without opening it as skill data. Its valid lexical skill directory name remains
-reserved, so an unsafe higher-precedence candidate cannot expose a lower Skill.
+Outside Git, the workspace directory is the project root. Scans are recursive and
+deterministic by pathname. Only the case-sensitive filename =SKILL.sexp= counts;
+hidden directories are still scanned, and missing roots are fine.
 
-The first definition of a name wins. A project Skill can therefore replace a
-user or bundled Skill, and a user Skill can replace a bundled Skill. A malformed
-higher-precedence file in a validly named directory reserves that directory
-name and produces a diagnostic, so it cannot silently expose a lower-precedence
-Skill.
+The first definition of a name wins. A project Skill overrides a user or bundled
+Skill, and a user Skill overrides a bundled Skill. An invalid higher-precedence
+candidate in a validly named directory still reserves that name and produces a
+diagnostic, rather than silently falling back to a lower definition.
 
-* Selection and Request Context
+Traversal stays inside each canonical root. A broken link, an escaping symbolic
+link, or a non-regular =SKILL.sexp= is rejected before it is opened as Skill data.
+Its lexical directory name remains reserved for the same reason.
 
-Every normal provider request receives a bounded catalog when at least one
-Skill is available. It contains names, descriptions when they fit, and exact
-file locations. When the user names a Skill or its description clearly matches
-the work, the model calls =skill.load= with the exact name before taking actions
-that depend on it.
+* What loading does
 
-=skill.load= records the name and filesystem identity in the active logical
-turn and returns a short confirmation. It does not return the instructions.
-The call and its correlated result remain in the in-memory provider projection
-only until the next successful response. They never enter the conversation
-file, replay, or compaction input. At subsequent provider boundaries in the
-logical turn, Autolith rereads the selected =SKILL.sexp= and injects its
-complete current =:instructions= string as mandatory request-local context.
+Every normal provider request gets a bounded catalog when Skills exist. It contains
+names, fitting descriptions, and exact paths. =skill.load= records the selected
+name and filesystem identity for the current logical turn and returns a short
+confirmation, not the instruction text.
 
-=skill.load= is a provider round-trip barrier. Calls before it in one provider
-result run normally. Calls after it are not executed; they receive a
-request-local failure telling the model to retry after inspecting the selection
-result and refreshed instructions.
+At the next provider boundary, Autolith rereads the selected file and injects its
+current complete =:instructions= string as mandatory request-local context. This
+makes an in-place edit visible during the turn while preventing a swapped file from
+silently changing the selected definition.
 
-Multiple selected Skills stack in deterministic catalog order. Calls made
-after steering input join earlier selections in the same logical turn.
-Repeating =skill.load= for an already selected name is harmless. Selection
-ends with the logical turn and never carries into a later turn. A reloadable
-count bound limits distinct selections in one turn.
+=skill.load= is a round-trip barrier. Tool calls before it run normally. Calls after
+it in the same provider result do not run; they receive a request-local failure and
+the model retries after seeing the selection result and refreshed instructions.
 
-The tool is child-safe, so a child agent whose role permits =skill.load= may
-select a Skill in its own isolated request context.
+Selected Skills stack in deterministic catalog order. Steering input can join the
+same turn's existing selections. Loading an already selected name is harmless. A
+reloadable limit bounds distinct selections. Child agents may load Skills only when
+their role permits =skill.load=; their context is isolated from the parent.
 
-If a selected file disappears, changes identity, becomes malformed or
-unreadable, or exceeds a bound after discovery, Autolith supplies a bounded
-request-local warning instead of aborting unrelated provider work or claiming
-that the Skill was applied. Selection retains the winning lexical and canonical
-path plus its device and inode. Later requests in the same logical turn never
-substitute a newly exposed lower definition or a newly added higher definition.
-When that identity remains stable, Autolith rereads the selected file so an
-in-place content edit can still update its current instructions.
+If a selected file disappears, changes identity, becomes unreadable or malformed,
+or exceeds a bound, Autolith gives the model a bounded warning. Unrelated provider
+work continues, and Autolith never claims the Skill was applied. The turn retains
+the winning lexical and canonical paths plus device and inode, so it cannot switch
+to a newly exposed lower or higher definition.
 
-* Inspection
+* See what is active
 
-=/skills= discovers the current catalog without injecting instruction strings.
-It shows selected definitions, descriptions, paths, and bounded diagnostics for
-rejected or shadowed files. If no Skills exist, it shows the effective roots in
-which a Skill can be created.
+Use =/skills= to inspect the current catalog without injecting instructions. It
+shows selected definitions, descriptions, paths, and bounded diagnostics for
+rejected or shadowed files. With no Skills, it shows the effective roots where you
+can create one.
 
-=/context= shows the metadata catalog, selected Skill contributions, omissions,
-and contributor failures for request-local context. Side-channel compaction
-requests receive neither the catalog nor Skill instructions.
+Use =/context= to inspect the metadata catalog, selected contributions, omissions,
+and context-contributor failures. Side-channel compaction requests receive neither
+the catalog nor Skill instructions.
 
-Discovery, catalog rendering, individual files, individual instructions,
-cumulative selected instructions, status output, and diagnostic text all have
-reloadable bounds. The discovery bounds include aggregate definition
-characters read across every root; selected definitions are still reread
-fresh under their independent per-file bound. Exhausting a discovery bound
-stops the remaining applicable scan and records a typed diagnostic. Exhausting
-a request bound omits the affected instructions and supplies a bounded warning.
-Selected-skill warnings have an aggregate output bound, with excess warnings
-collapsed into one bounded mandatory warning.
+Discovery, catalog rendering, files, instructions, cumulative selected text, status,
+and diagnostics all have reloadable bounds. Discovery also bounds total definition
+characters across roots. Hitting a discovery limit stops the applicable remaining
+scan with a typed diagnostic. Hitting a request limit omits the affected
+instructions and adds a bounded warning; excess selected-Skill warnings collapse
+into one bounded mandatory warning.
