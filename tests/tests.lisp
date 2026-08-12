@@ -173,6 +173,7 @@
     (test-openai-compatible-provider)
     (test-anthropic-provider)
     (test-fireworks-provider)
+    (test-opencode-provider)
     (test-resource-protocol)
     (test-resource-edit-operation-schema)
     (test-workspace-file-resources)

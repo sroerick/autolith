@@ -167,11 +167,11 @@ tries to open a browser, polls the device endpoint, completes PKCE, and stores
 only Autolith's own credentials.
 
 Autolith stores ChatGPT credentials in
-=${XDG_STATE_HOME:-~/.local/state}/autolith/auth.sexp= with mode 0600. It stores
-OpenAI-compatible provider keys in =api-keys.sexp= beside it, also mode 0600,
-in unencrypted plaintext. Mode 0600 limits filesystem access. It does not
-encrypt keys. The last successful provider model lists are cached in
-=provider-models.sexp=.
+=${XDG_STATE_HOME:-~/.local/state}/autolith/auth.sexp= with mode 0600. API-key
+credentials use =api-keys.sexp= or a provider-specific file beside it, including
+=opencode-auth.sexp=. Every credential file is unencrypted plaintext with mode
+0600, which limits filesystem access but does not encrypt keys. The last
+successful provider model lists are cached in =provider-models.sexp=.
 
 On first use, Autolith may read =~/.codex/auth.json= only if its private store is
 absent. It copies a bounded access token and account ID, never a refresh token,
@@ -182,6 +182,15 @@ For an API-key provider, run =autolith --auth PROVIDER= or =/auth PROVIDER=.
 The key prompt intentionally shows no characters. Paste or type the key, then
 press Enter. Do not put keys in =init.lisp=, conversations, memories, journals,
 private replay scripts, or saved images.
+
+OpenCode uses =autolith --auth opencode= and stores the entered key in
+=opencode-auth.sexp=. =OPENCODE_API_KEY= overrides that saved key when set.
+Run =/models= to discover its current catalog; local identifiers use the
+=opencode/= prefix so names shared with ChatGPT or Grok cannot change provider
+routing. =AUTOLITH_OPENCODE_PROVIDER_ENDPOINT= overrides chat requests and
+=AUTOLITH_OPENCODE_MODELS_ENDPOINT= independently overrides discovery. The
+public model catalog cannot validate an API key, so a rejected key is reported
+on the first chat request.
 
 * Talk to Autolith
 

@@ -72,6 +72,13 @@
     :reader provider-registration-model-discovery-endpoint
     :type (option string)
     :documentation "The endpoint used for model discovery, when declared.")
+   (model-discovery-endpoint-resolver
+    :initarg :model-discovery-endpoint-resolver
+    :initform nil
+    :reader provider-registration-model-discovery-endpoint-resolver
+    :type (option function)
+    :documentation
+    "The optional zero-argument function returning the current discovery endpoint.")
    (model-discovery-lock
     :initform (make-recursive-lock "Provider model discovery")
     :reader provider-registration-model-discovery-lock
@@ -281,18 +288,38 @@ SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
                      entries)))
         (error () nil))))
 
+(-> provider--effective-model-discovery-endpoint
+    (provider-registration)
+    (option string))
+(defun provider--effective-model-discovery-endpoint (registration)
+  "Return REGISTRATION's current model-discovery cache identity."
+  (let ((resolver
+          (provider-registration-model-discovery-endpoint-resolver registration)))
+    (if resolver
+        (let ((endpoint (funcall resolver)))
+          (unless (non-empty-string-p endpoint)
+            (error 'configuration-error
+                   :message
+                   (format nil
+                           "Provider ~A resolved an invalid model discovery endpoint."
+                           (provider-registration-name registration))))
+          endpoint)
+        (provider-registration-model-discovery-endpoint registration))))
+
 (-> provider--cache-entry-for (provider-registration list) (option list))
 (defun provider--cache-entry-for (registration entries)
   "Find the cache ENTRY matching REGISTRATION's discovery identity."
-  (find-if
-   (lambda (entry)
-     (and (string= (provider--registration-key
-                    (provider-registration-name registration))
-                   (provider--registration-key
-                    (getf entry :provider-name)))
-          (equal (provider-registration-model-discovery-endpoint registration)
-                 (getf entry :discovery-endpoint))))
-   entries))
+  (let ((discovery-endpoint
+          (provider--effective-model-discovery-endpoint registration)))
+    (find-if
+     (lambda (entry)
+       (and (string= (provider--registration-key
+                      (provider-registration-name registration))
+                     (provider--registration-key
+                      (getf entry :provider-name)))
+            (equal discovery-endpoint
+                   (getf entry :discovery-endpoint))))
+     entries)))
 
 (-> provider--write-model-cache
     (configuration provider-registration list)
@@ -305,7 +332,7 @@ SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
                (entries (provider--read-model-cache pathname))
                (provider-name (provider-registration-name registration))
                (discovery-endpoint
-                 (provider-registration-model-discovery-endpoint registration))
+                 (provider--effective-model-discovery-endpoint registration))
                (updated-entry
                  (list :provider-name provider-name
                        :discovery-endpoint discovery-endpoint
@@ -341,17 +368,20 @@ SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
             (:endpoint (option string))
             (:model-discovery (option function))
             (:model-discovery-endpoint (option string))
+            (:model-discovery-endpoint-resolver (option function))
             (:source keyword))
     string)
 (defun register-provider
     (name &key description family models factory authenticator
       (protocol ':custom) endpoint model-discovery model-discovery-endpoint
+      model-discovery-endpoint-resolver
       (source (provider--current-registration-source)))
   "Register a provider and its model metadata.
 
 FACTORY receives CONFIGURATION and the keyword REASONING-SUMMARIES-P and must
 return a MODEL-PROVIDER. MODEL-DISCOVERY, when supplied, receives CONFIGURATION
-and returns model strings or metadata property lists. AUTHENTICATOR, when
+and returns model strings or metadata property lists. The optional endpoint
+resolver returns the current model-discovery cache identity. AUTHENTICATOR, when
 supplied, receives the provider and the keyword arguments STREAM and
 OPEN-BROWSER-P. Registrations from user-init.lisp and live runtime registrations
 replace only the same source and shadow lower-precedence registrations with the
@@ -367,6 +397,13 @@ same name."
            :message
            (format nil
                    "Provider ~A has a non-callable :model-discovery."
+                   name)))
+  (when (and model-discovery-endpoint-resolver
+             (not (functionp model-discovery-endpoint-resolver)))
+    (error 'configuration-error
+           :message
+           (format nil
+                   "Provider ~A has a non-callable model discovery endpoint resolver."
                    name)))
   (unless (or model-discovery (and (listp models) models))
     (error 'configuration-error
@@ -402,6 +439,10 @@ same name."
          (retained-discovered-models
            (if (and model-discovery
                     previous-registration
+                    (null model-discovery-endpoint-resolver)
+                    (null
+                     (provider-registration-model-discovery-endpoint-resolver
+                      previous-registration))
                     (equal endpoint
                            (provider-registration-endpoint previous-registration))
                     (equal model-discovery-endpoint
@@ -422,6 +463,8 @@ same name."
             :discovered-models retained-discovered-models
             :model-discovery model-discovery
             :model-discovery-endpoint model-discovery-endpoint
+            :model-discovery-endpoint-resolver
+            model-discovery-endpoint-resolver
             :factory factory
             :authenticator authenticator
             :protocol protocol
@@ -746,25 +789,48 @@ then newest registration order decide which provider is effective."
     (provider--refresh-model-settings))
   nil)
 
+(-> provider--snapshot-discovered-models
+    (provider-registration list)
+    list)
+(defun provider--snapshot-discovered-models (registration model-snapshot)
+  "Return discovered models from current or legacy MODEL-SNAPSHOT state."
+  (if (rest (rest model-snapshot))
+      (copy-list (third model-snapshot))
+      (let ((declared-models
+              (provider-registration-declared-models registration)))
+        (loop for model in (second model-snapshot)
+              unless (find (provider-model-name model)
+                           declared-models
+                           :key #'provider-model-name
+                           :test #'string=)
+                collect model))))
+
 (-> provider--registry-snapshot () list)
 (defun provider--registry-snapshot ()
-  "Return an exact snapshot of provider registration layers and model lists."
+  "Return an exact snapshot of provider registration layers and model state."
   (with-recursive-lock-held (*provider-registry-lock*)
     (list :registrations (copy-list *provider-registrations*)
           :models
           (loop for registration in *provider-registrations*
-                collect (list registration
-                              (copy-list
-                               (provider-registration-models registration))))
+                collect
+                (list registration
+                      (copy-list
+                       (provider-registration-models registration))
+                      (copy-list
+                       (provider-registration-discovered-models registration))))
           :sequence *provider-registration-sequence*)))
 
 (-> provider--registry-restore (list) null)
 (defun provider--registry-restore (snapshot)
-  "Restore provider registration layers and model lists from SNAPSHOT."
+  "Restore provider registration layers and model state from SNAPSHOT."
   (with-recursive-lock-held (*provider-registry-lock*)
     (dolist (model-snapshot (getf snapshot ':models))
-      (setf (slot-value (first model-snapshot) 'models)
-            (copy-list (second model-snapshot))))
+      (let ((registration (first model-snapshot)))
+        (setf (slot-value registration 'models)
+              (copy-list (second model-snapshot))
+              (slot-value registration 'discovered-models)
+              (provider--snapshot-discovered-models
+               registration model-snapshot))))
     (setf *provider-registrations* (copy-list (getf snapshot ':registrations))
           *provider-registration-sequence* (getf snapshot ':sequence))
     (provider--refresh-model-settings))

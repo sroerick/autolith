@@ -71,6 +71,7 @@ hidden field: paste the key, press Enter, and expect no characters to appear.
 #+BEGIN_SRC sh
 autolith --auth anthropic
 autolith --auth fireworks
+autolith --auth opencode
 #+END_SRC
 
 Then start Autolith:

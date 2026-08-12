@@ -60,6 +60,29 @@
   "https://api.anthropic.com/v1/messages"
   "The Anthropic Messages API endpoint.")
 
+;; The public OpenCode Chat Completions API, verified on 2026-08-12: the
+;; endpoint accepts the standard streaming OpenAI Chat Completions dialect
+;; with function tools and dynamic model discovery.
+(defparameter *opencode-chat-completions-endpoint*
+  "https://opencode.ai/zen/go/v1/chat/completions"
+  "The OpenCode Chat Completions API endpoint.")
+
+(defparameter *opencode-models-endpoint*
+  "https://opencode.ai/zen/go/v1/models"
+  "The OpenCode models endpoint used for dynamic model discovery.")
+
+(defparameter *opencode-models-environment-variable*
+  "AUTOLITH_OPENCODE_MODELS_ENDPOINT"
+  "The environment variable overriding OpenCode dynamic model discovery.")
+
+(-> opencode-models-endpoint () string)
+(defun opencode-models-endpoint ()
+  "Return the configured OpenCode models endpoint."
+  (let ((override (uiop:getenv *opencode-models-environment-variable*)))
+    (if (non-empty-string-p override)
+        override
+        *opencode-models-endpoint*)))
+
 (defparameter *anthropic-models-endpoint*
   "https://api.anthropic.com/v1/models"
   "The Anthropic models endpoint used to validate API keys.")
@@ -250,32 +273,46 @@ configuration can be created before executable user initialization loads."
 
 (-> configuration--provider-endpoint-for (string) string)
 (defun configuration--provider-endpoint-for (model)
-  "Return MODEL's registered endpoint or its built-in family endpoint.
+  "Return MODEL's environment override, registered endpoint, or family default.
 
 AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
-AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint, and
-AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint."
-  (or (and (fboundp 'provider-model-endpoint)
-           (provider-model-endpoint model))
-      (case (model-family model)
-        (:codex
-         (or (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT")
-             *codex-responses-endpoint*))
-        (:grok
-         (or (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT")
-             *grok-responses-endpoint*))
-        (:fireworks
-         (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
-             *fireworks-responses-endpoint*))
-        (otherwise
-         (error 'configuration-error
-                :message
-                (format nil
-                        "Registered provider ~A did not declare an endpoint for model ~A."
-                        (or (and (fboundp 'provider-model-provider-name)
-                                 (provider-model-provider-name model))
-                            (model-family model))
-                        model))))))
+AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint,
+AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint, and
+AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
+  (let* ((family (model-family model))
+         (override
+           (case family
+             (:codex
+              (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT"))
+             (:grok
+              (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT"))
+             (:fireworks
+              (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
+             (:opencode
+              (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))))
+         (registered
+           (and (fboundp 'provider-model-endpoint)
+                (provider-model-endpoint model))))
+    (or (and (non-empty-string-p override) override)
+        registered
+        (case family
+          (:codex
+           *codex-responses-endpoint*)
+          (:grok
+           *grok-responses-endpoint*)
+          (:fireworks
+           *fireworks-responses-endpoint*)
+          (:opencode
+           *opencode-chat-completions-endpoint*)
+          (otherwise
+           (error 'configuration-error
+                  :message
+                  (format nil
+                          "Registered provider ~A did not declare an endpoint for model ~A."
+                          (or (and (fboundp 'provider-model-provider-name)
+                                   (provider-model-provider-name model))
+                              family)
+                          model)))))))
 
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
@@ -685,6 +722,11 @@ reasoning effort only when that effort is supported by the selected model."
 (defun configuration-fireworks-auth-path (configuration)
   "Return Autolith's private Fireworks API key credential pathname."
   (merge-pathnames "fireworks-auth.sexp" (configuration-state-root configuration)))
+
+(-> configuration-opencode-auth-path (configuration) pathname)
+(defun configuration-opencode-auth-path (configuration)
+  "Return Autolith's private OpenCode API key credential pathname."
+  (merge-pathnames "opencode-auth.sexp" (configuration-state-root configuration)))
 
 (-> configuration-provider-model-cache-path (configuration) pathname)
 (defun configuration-provider-model-cache-path (configuration)

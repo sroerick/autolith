@@ -28,6 +28,24 @@
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':fireworks configuration))
 
+(-> provider--opencode-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--opencode-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in OpenCode provider from registry metadata."
+  (declare (ignore reasoning-summaries-p))
+  (provider-family-create ':opencode configuration))
+
+(-> provider--opencode-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--opencode-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Prompt for and save the built-in OpenCode provider's API key."
+  (declare (ignore open-browser-p))
+  (opencode-api-key-login (provider-credential-manager provider)
+                           :stream (or stream *standard-output*)))
 (-> provider--fireworks-registration-authenticator
     (model-provider &key (:stream stream) (:open-browser-p boolean))
     string)
@@ -108,4 +126,17 @@
  :factory #'provider--anthropic-registration-factory
  :authenticator #'provider--anthropic-registration-authenticator
  :endpoint *anthropic-messages-endpoint*
+ :source ':builtin)
+
+(register-provider
+ "opencode"
+ :description "OpenCode (zen/go)"
+ :family ':opencode
+ :protocol ':chat-completions
+ :endpoint *opencode-chat-completions-endpoint*
+ :factory #'provider--opencode-registration-factory
+ :authenticator #'provider--opencode-registration-authenticator
+ :model-discovery #'opencode--fetch-models
+ :model-discovery-endpoint *opencode-models-endpoint*
+ :model-discovery-endpoint-resolver #'opencode-models-endpoint
  :source ':builtin)

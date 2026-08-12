@@ -169,45 +169,75 @@
                (push identifier models))
       (nreverse models))))
 
+(-> openai-compatible--signal-model-discovery-status
+    (non-empty-string credential-manager integer)
+    null)
+(defun openai-compatible--signal-model-discovery-status
+    (provider-name manager status)
+  "Signal the typed model-discovery failure for provider HTTP STATUS."
+  (if (= status 401)
+      (error 'authentication-error
+             :message
+             (format nil "~A rejected Autolith's API key; ~A."
+                     provider-name
+                     (credential-manager-login-hint manager)))
+      (error 'configuration-error
+             :message
+             (format nil "The model discovery endpoint returned HTTP ~D."
+                     status))))
+
 (-> openai-compatible--fetch-models
     (configuration &key
                    (:provider-name non-empty-string)
                    (:endpoint non-empty-string)
-                   (:headers list))
+                   (:headers list)
+                   (:credential-manager (option credential-manager)))
     list)
 (defun openai-compatible--fetch-models
-    (configuration &key provider-name endpoint headers)
-  "Fetch model identifiers from one authenticated OpenAI-compatible endpoint."
+    (configuration &key provider-name endpoint headers credential-manager)
+  "Fetch model identifiers from one OpenAI-compatible endpoint.
+
+When CREDENTIAL-MANAGER is supplied, use it instead of creating a default API-key
+manager from PROVIDER-NAME."
   (let ((manager
-          (api-key-credential-manager-create
-           :provider-name provider-name
-           :pathname (configuration-api-keys-path configuration))))
+          (or credential-manager
+              (api-key-credential-manager-create
+               :provider-name provider-name
+               :pathname (configuration-api-keys-path configuration)))))
     (call-with-credentials
      manager
      (lambda (credentials)
-        (multiple-value-bind (body status response-headers)
-            (handler-case
-                (dexador:get
-                 endpoint
-                 :headers
-                 (openai-compatible--authenticated-headers
-                  credentials
-                  :accept "application/json"
-                  :custom headers)
-                 :force-string t
-                 :connect-timeout 10
-                 :read-timeout 30)
-              (error ()
-                (error 'configuration-error
-                       :message
-                       "The model discovery endpoint could not be reached.")))
+       (multiple-value-bind (body status response-headers)
+           (handler-case
+               (dexador:get
+                endpoint
+                :headers
+                (openai-compatible--authenticated-headers
+                 credentials
+                 :accept "application/json"
+                 :custom headers)
+                :force-string t
+                :connect-timeout 10
+                :read-timeout 30)
+             (dexador.error:http-request-unauthorized ()
+               (openai-compatible--signal-model-discovery-status
+                provider-name manager 401))
+             (http-request-failed (condition)
+               (let ((status (response-status condition)))
+                 (if (integerp status)
+                     (openai-compatible--signal-model-discovery-status
+                      provider-name manager status)
+                     (error 'configuration-error
+                            :message
+                            "The model discovery endpoint could not be reached."))))
+             (error ()
+               (error 'configuration-error
+                      :message
+                      "The model discovery endpoint could not be reached.")))
          (declare (ignore response-headers))
          (unless (and (integerp status) (<= 200 status 299))
-           (error 'configuration-error
-                  :message
-                  (format nil
-                          "The model discovery endpoint returned HTTP ~D."
-                          status)))
+           (openai-compatible--signal-model-discovery-status
+            provider-name manager status))
          (openai-compatible--decode-model-list body))))))
 
 
