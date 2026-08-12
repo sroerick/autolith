@@ -228,7 +228,7 @@ It should not be more than a real live lisp system with a llm wrapper that lets 
 
 Like I see you have a lisp shell, why should this be a separate system from that? They're nearly identical dude
 
-(Lukáš Hozda comment: he's referencing CCLSH, which is my login shell on this user, and I am its author also, and its source lives in /root/common-lisp/cclsh)
+(Lukáš Hozda comment: he's referencing CCLSH, which is my login shell and another Common Lisp project I maintain.)
 
 (Lukáš hozda comment: I then responded to him "people are retarded, so /thing *should* probably be sugar for (thing ...) which should warn the user that "btw you can do (thing ....)" hmmm
 

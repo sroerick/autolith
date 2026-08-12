@@ -7,7 +7,7 @@
   :::.      :::        AUTOLITH v0.32.2
   ;;`;;     ;;;        ─────────────────────────────────────────
  ,[[ '[[,   [[[        model         gpt-5.6-terra (effort high)
-c$$$cc$$$c  $$'        workspace     /root/common-lisp/frob/
+c$$$cc$$$c  $$'        workspace     ~/src/autolith/
  888   888,o88oo,.__
  YMM   ""` """"YUMMM
 

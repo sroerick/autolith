@@ -34,23 +34,14 @@ with a terminal interface, one primary agent, and no claim of hostile-code
 sandboxing. Nix builds support Linux x86-64 and macOS arm64; packaged binary
 releases remain Linux x86-64.
 
-## Upstream Reference Checkouts
+## Upstream References
 
-Current upstream source is available in shallow, read-only reference
-checkouts outside this Git worktree:
-
-- OpenAI Codex: `/home/mag/common-lisp/frob-reference-sources/codex`
-  at `ba42e6866cef4baed7ad92c73e6be8cd42e49d8b`
-- Pi Agent Harness: `/home/mag/common-lisp/frob-reference-sources/pi`
-  at `5416b1834a28b79800393b7bf792ab36065c49b2`
-- OpenCode: `/home/mag/common-lisp/frob-reference-sources/opencode`
-  at `9976269ab1accfc9f9dc98a4a688c516934de422`
-
-Use these checkouts to study established agent behavior and implementation
-details. They are references, not Autolith dependencies. Do not edit them or copy
-their architecture wholesale. Record the inspected commit when a conclusion
-depends on upstream behavior, and refresh a checkout before making claims
-about current upstream code.
+When a change depends on established behavior in another agent, inspect a
+current upstream checkout outside this Git worktree. Keep reference checkouts
+read-only, record the repository URL and exact inspected commit in the review
+notes, and refresh the checkout before making claims about current behavior.
+References are research inputs, not Autolith dependencies; do not edit them or
+copy their architecture wholesale.
 
 ## Architectural Guardrails
 
