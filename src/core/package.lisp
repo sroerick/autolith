@@ -321,6 +321,7 @@
                 #:sbcl-worker-environment
                 #:sbcl-worker-environment-context
                 #:sbcl-worker-environment-create
+                #:sbcl-worker-cancel-request
                 #:sbcl-worker-error
                 #:sbcl-worker-error-message
                 #:sbcl-worker-error-operation

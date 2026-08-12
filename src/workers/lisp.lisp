@@ -294,8 +294,8 @@
     (context arguments &key tool-name summary operation-function)
   "Run one named-worker operation directly or through an inspectable session job.
 
-Cancellation stops the selected worker before unwinding the job, so its next
-request restarts from a clean protocol stream."
+Cancellation detaches the selected worker before unwinding the job, so its next
+request restarts immediately from a clean protocol stream."
   (let* ((async-p
            (tool-boolean-argument arguments "async" :tool-name tool-name))
          (worker (lisp-tool-worker context arguments))
@@ -310,7 +310,7 @@ request restarts from a clean protocol stream."
        (handler-bind ((job-aborted
                         (lambda (condition)
                           (declare (ignore condition))
-                          (lisp-worker-stop worker))))
+                          (sbcl-worker-cancel-request worker))))
          (funcall operation-function worker)))
      :async-p async-p
      :parent-call-id (tool-context-call-id context))))

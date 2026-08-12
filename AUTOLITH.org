@@ -251,14 +251,14 @@ a user-local init.lisp change, or a private image commit.
   retains its product-specific migration, validation, provenance, atomic state,
   authority, cancellation, and output policies. Pinned =sexp-config= =408fa90=
   handles standard keyword-to-string reader boundaries directly;
-  =sbcl-workers= =3cda0db= owns the shared worker-name predicate;
-  =sbcl-generations= =e65e27e= owns the live-thread snapshot preflight, with hosts
-  retaining exclusion across that check and fork; and =cl-jobpond= =ee2e2eb= owns
-  atomic four-limit pool policy publication, immediate worker and monitor capacity
-  refresh, and the locked default-runtime admission boundary. No pool-policy
-  compatibility adapter remains in Autolith. Dependency lock materialization,
-  exact Nix builds, and release builds validate the three pin surfaces; Autolith
-  does not carry source-shape tests for its dependency metadata.
+  =sbcl-workers= =d46e94c= owns the shared worker-name predicate and prompt
+  request cancellation; =sbcl-generations= =e65e27e= owns the live-thread
+  snapshot preflight, with hosts retaining exclusion across that check and fork;
+  and =cl-jobpond= =ee2e2eb= owns atomic four-limit pool policy publication,
+  immediate worker and monitor capacity refresh, and the locked default-runtime
+  admission boundary. No pool-policy compatibility adapter remains in Autolith.
+  Dependency lock materialization, exact Nix builds, and release builds validate
+  the three pin surfaces; Autolith carries no dependency metadata shape tests.
 - Scope and location: tracked project work in =src/conversation/=, =src/mcp/=,
   =src/skills/=, =src/state/generations.lisp=, =src/task/=,
   =src/tools/workspace.lisp=, =src/workers/lisp.lisp=, dependency locks, Nix
