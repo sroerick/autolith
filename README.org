@@ -1,33 +1,31 @@
 #+TITLE: Autolith
-#+SUBTITLE: A terminal agent you can inspect and change in Common Lisp
+#+SUBTITLE: A live, self-modifying Common Lisp terminal agent
 #+STARTUP: content
 
-Autolith, or AL, is a terminal agent inside a live Common Lisp image. It owns
-its model loop, tools, conversations, local state, checkpoints, and recovery.
-It talks directly to configured model services instead of launching a vendor
-agent CLI. Use prose for open-ended work. Start an input with an opening
-parenthesis for an exact local Lisp action.
+Autolith, or AL, is a terminal agent inside a live Common Lisp image. It can
+observe, self-modify, discover, introspect its own code, its live state and what
+it's doing. This lets Autolith adapt to the user's preferences or to what is needed
+for the task. This may sound unstable, but Autolith creates generations of this
+image your or it can rollback to. Even a full frontal lobotomy is not a showstopper
+as AL will just reload into a recovery image and diagnose and optionally fix the
+issue.
 
-Autolith is not a security sandbox. Code it runs has your user privileges.
+Autolith has a moderate focus on good ergonomics, good visuals, following XDG
+standards and similar, and minimal intrusiveness. It is not a "small game engine",
+but it is pretty close to a Lisp Machine.
 
-* Read next
+* Sections
 
-- [[file:docs/guide.org][Guide]]: install, authenticate, choose a provider, use the terminal,
-  manage state, and recover.
-- [[file:docs/architecture.org][Architecture]]: understand the active image, workers, launcher,
-  durable mutation, and recovery boundaries.
-- [[file:docs/skills.org][Skills]]: load request-local instructions from native Skill
-  directories.
-- [[file:docs/mcp.org][MCP]]: connect tools, resources, and prompts over standard I/O or
-  HTTP.
-- [[file:docs/release-service.org][Release service]]: build, publish, and deploy packaged
-  releases.
-- [[file:AGENTS.md][Contributor rules]]: change the repository safely.
+- [[file:docs/guide.org][Guide]]
+- [[file:docs/architecture.org][Architecture]]
+- [[file:docs/skills.org][Skills]]
+- [[file:docs/mcp.org][MCP]]
+- [[file:AGENTS.md][Contributor rules]]
 
-* Start
+* Install
 
-Nix and source checkouts support Linux x86-64 and native macOS arm64. Packaged
-binary releases support Linux x86-64.
+Autolith supports Linux x86-64 and macOS via Nix. Packaged
+binary releases are available for Linux x86-64, but not yet for macos (good first issue? hmm?).
 
 Nix supplies the complete runtime:
 
@@ -35,27 +33,25 @@ Nix supplies the complete runtime:
 nix run github:luciusmagn/autolith
 #+END_SRC
 
-The conventional Linux installer is shorter. Inspect the
+A Linux curl-into-sh installer is also available. Inspect the
 [[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell.
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
-Then authenticate and start:
+Then you can authenticate:
 
 #+BEGIN_SRC sh
 autolith --auth
 autolith
 #+END_SRC
 
-The [[file:docs/guide.org][guide]] covers source setup, providers, permissions, updates, and the
-first machine-local image build.
+* Some features
 
-* See it work
+** The prompt input is the REPL
 
-** One prompt, prose and Lisp
-
+In Autolith, the message window is just a LISP repl with familiar 
 Ask in prose when interpretation helps. Enter a form when you need an exact
 local action or a computed prompt.
 
@@ -68,7 +64,18 @@ local action or a computed prompt.
 The form runs in the active image without a model rewriting it. Registered
 operations still keep their normal authority and approval rules.
 
-** Inspect the machine at the right boundary
+** Tools for self modification and ephemeral Lisp REPLs
+Autolith has a well organized suite of *self* tools for inspecting and modifying itself live.
+You would think that doing live brain surgery on yourself would be catastrophic, but
+Autolith can triage and revert changes.
+
+Similar set of *lisp* tools let Autolith avoid littering temporary Python3 scripts, instead
+doing these things in its bundled Common Lisp runtime, but in REPLs that are pristine and
+separate from the agent's image. That's one less system dependency, and it also lets Autolith
+observe its scripts better.
+
+Autolith can decide if it wants to keep the same Lisp REPL alive or to create a pristine one,
+and can maintain multiple.
 
 #+BEGIN_SRC lisp
 (lisp.eval :form "(+ 20 22)" :repl "scratch")
@@ -78,71 +85,92 @@ operations still keep their normal authority and approval rules.
 
 =lisp.*= uses named, heap-isolated SBCL workers. =self.*= inspects or changes
 the active Autolith image. Durable live changes have private replay history.
-A separate pristine image remains available for recovery.
 
-** Steer a running child
+** Messages are just syntax sugar
+When you type a message like:
+#+BEGIN_SRC lisp
+Hello Autolith! How do you do?
+#+END_SRC
 
-Ask Autolith to delegate work, then keep working while the children run. If one
-visible child is named =test-review=, this form adds exact FIFO guidance:
+It is just syntactic sugar for:
+
+#+BEGIN_SRC lisp
+(prompt "Hello Autolith! how do you do?")
+#+END_SRC
+
+This omits the default value for the *:to* parameter:
+
+#+BEGIN_SRC lisp
+(prompt :to 'autolith "Hello Autolith! how do you do?")
+#+END_SRC
+
+
+So if you ask Autolith to delegate work (it is likely to do it on its own with mostmodels), so it can keep working
+while the children run, you can talk to them as well.
+If one visible child is named =test-review=, you steer the sub-agent by prompting it:
 
 #+BEGIN_SRC lisp
 (prompt :to 'test-review
         "Run the focused tests and report only failures.")
 #+END_SRC
 
-The child must already be running. Its next useful verbal response returns to
+As a convenience, its next useful verbal response returns to
 the primary terminal.
 
-** Update the running packaged release
+* Update
+If you want to pull an update, you can do so easily:
 
 #+BEGIN_SRC lisp
 (update)
 #+END_SRC
 
-For a selected binary release, this performs a fresh check and requests
-an attended, verified launcher update when a newer release exists. Source and
-Nix starts only explain their external update path.
+Or do *autolith update* in your shell.
 
 * What makes Autolith different
 
 ** Lisp-first control
+Prose, callable commands, tools, and explicit Common Lisp share the REPL.
+This means that you can construct scripts easily, and you can call tools just
+like the clanker does it.
 
-- Prose, callable commands, tools, and explicit Common Lisp share one input
-  surface.
-- Exact local forms can compute prompts or return results without model
-  interpretation.
-- Matching SBCL source and live image state are available for inspection.
+Exact forms can compute prompts or return results, and the model will see them.
 
-** Responsive terminal work
+For example, if you put your prompt to a file, you can just do:
 
-- Keep editing and queue more work while a response or tool is running.
-- Use multiline input, completion, image attachments, readable transcripts,
-  and ordinary scrollback.
-- Steer bounded child jobs and collect their results without blocking the
-  primary session.
+#+BEGIN_SRC lisp
+(prompt (read-file "path"))
+#+END_SRC
+
+You could do templating, too, if you like.
+
+** Responsive and inobtrusive terminal work
+Autolith is not a fullscreen TUI application and it generally defers to the base 16
+colors your terminal sets, therefore, it should look pretty good no matter what your
+terminal color scheme is, so long as you like it.
+
+Autolith also emits prompt markers, so if your terminal can scroll jump between shell prompts,
+it can also scroll between messages to Autolith
+
+The line editor is the fairly powerful [[https://github.com/luciusmagn/clinedi][clinedi]], it should support all the editing niceties
+and shortcuts you are used to.
 
 ** Durable state and recovery
+Conversations use append-only readable files. Memories and workspace agendas remain explicit.
 
-- Conversations use append-only readable files. Memories and workspace
-  agendas remain explicit.
-- Accepted input survives active-image crashes in a conversation-scoped vault.
-  It is never submitted automatically.
-- Checkpoints, private mutation commits, generations, and a pristine recovery
-  image keep live work reconstructible.
+Steering messages and follow-ups survive active-image crashes in a conversation-scoped vault.
+The vault is (intentionally) not resubmitted automatically, since you may want to diagnose
+the crash before you resume your previous work.
 
-** Extensions with visible authority
+You can use the following commands to interact with the vault:
+#+BEGIN_SRC lisp
+(vault)         ; see what's in da vault
+(vault-restore) ; re-submit follow-ups and steering messages in the vault
+(vault-discard) ; delete vault contents
+#+END_SRC
 
-- Search, file, shell, resource, Lisp-worker, and self operations have distinct
-  boundaries.
-- Native Skills and MCP add request-local instructions and external
-  capabilities.
-- Command approval modes and =--immutable= startup make authority choices
-  explicit.
 
-* Development
+Finally, checkpoints, private mutation commits, generations, and a pristine recovery image keep
+live work reconstructible, so it's hard to terminally lobotomize AL.
 
-Read [[file:AGENTS.md][AGENTS.md]] before editing. The [[file:docs/guide.org][guide]] documents user-visible
-behavior, and the [[file:docs/architecture.org][architecture note]] maps source files to runtime
-responsibilities.
-
+* License
 Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].
