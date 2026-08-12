@@ -5245,17 +5245,50 @@
              (eq (application-input-controller-active-work-kind controller)
                  ':message))
         "message kind survives durable active-work acknowledgment")
-       (multiple-value-bind (accepted-p delivery)
-           (application-input-controller-submit-primary-prompt
-            controller "steer active message")
-         (test-assert
-          (and accepted-p
-               (eq delivery ':steering)
-               (equal
-                (mapcar #'user-message-input-text
-                        (application-input-controller-steering-items controller))
-                '("steer active message")))
-          "prompt steers an active message after its user record is durable"))))
+        (let* ((image
+                 (merge-pathnames
+                  (format nil "terminal-prompt-~A.png" (make-identifier))
+                  (uiop:temporary-directory)))
+               (input nil)
+               (observed nil)
+               (original-prompt (symbol-function 'prompt)))
+          (unwind-protect
+               (progn
+                 (test-conversation--write-tiny-png image)
+                 (setf input
+                       (user-message-input-create
+                        :text "[Image #1] steer active message"
+                        :image-pathnames (list (truename image))))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'prompt
+                         (lambda (&rest arguments)
+                           (setf observed
+                                 (list arguments
+                                       *prompt-primary-prefer-steering-p*))
+                           (apply original-prompt arguments))))
+                  (lambda ()
+                    (application-input-controller--handle-submission
+                     controller input :steer-p t)))
+                 (let ((observed-input (first (first observed)))
+                       (steering-input
+                         (first
+                          (application-input-controller-steering-items controller))))
+                   (test-assert
+                    (and (typep observed-input 'user-message-input)
+                         (string= (user-message-input-text observed-input)
+                                  "[Image #1] steer active message")
+                         (equal (user-message-input-image-pathnames observed-input)
+                                (list (truename image)))
+                         (second observed)
+                         (string=
+                          (user-message-input-text steering-input)
+                          "[Image #1] steer active message")
+                         (equal
+                          (user-message-input-image-pathnames steering-input)
+                          (list (truename image))))
+                    "terminal image prose invokes canonical PROMPT with steering")))
+            (ignore-errors (delete-file image))))))
     (call-with-controller
      (lambda (controller)
        (application-input-controller--enqueue controller ':lisp "(+ 1 2)")
@@ -5263,26 +5296,28 @@
         (equal (application-input-controller--next-work controller)
                '(:lisp "(+ 1 2)"))
         "local Lisp becomes active work")
-        (let ((ui
-                (application-ui
-                 (application-input-controller-application controller))))
-          (terminal-ui-set-input ui "ordinary during local Lisp")
-          (application-input-controller--process-event controller ':complete))
-        (test-assert
-         (and (null (application-input-controller-steering-items controller))
-              (equal (application-input-controller-work-items controller)
-                     '((:message "ordinary during local Lisp"))))
-         "ordinary terminal prose during local Lisp queues through prompt admission")
-        (multiple-value-bind (accepted-p delivery)
-            (application-input-controller-submit-primary-prompt
-             controller "computed prompt")
+        (let* ((ui
+                 (application-ui
+                  (application-input-controller-application controller)))
+               (observed nil)
+               (original-prompt (symbol-function 'prompt)))
+          (test-call-with-function-replacements
+           (list
+            (list 'prompt
+                  (lambda (&rest arguments)
+                    (setf observed
+                          (list arguments *prompt-primary-prefer-steering-p*))
+                    (apply original-prompt arguments))))
+           (lambda ()
+             (terminal-ui-set-input ui "ordinary during local Lisp")
+             (application-input-controller--process-event controller ':complete)))
           (test-assert
-           (and accepted-p
-                (eq delivery ':queued)
+           (and (equal (first observed) '("ordinary during local Lisp"))
+                (null (second observed))
+                (null (application-input-controller-steering-items controller))
                 (equal (application-input-controller-work-items controller)
-                       '((:message "ordinary during local Lisp")
-                         (:message "computed prompt"))))
-           "computed prompt during local Lisp joins the ordinary FIFO queue"))))
+                       '((:message "ordinary during local Lisp"))))
+           "terminal prose invokes canonical PROMPT without message steering"))))
     (call-with-controller
      (lambda (controller)
        (application-input-controller--enqueue
@@ -5470,8 +5505,8 @@
               "the initial submission becomes active work")
              (application-input-controller--enqueue
               controller ':message "tab follow-up")
-             (application-input-controller--enqueue-steering
-              controller "late enter")
+              (application-input-controller-submit-primary-prompt
+               controller "late enter")
              (application-input-controller--finish-work controller)
              (test-assert
               (equal (application-input-controller--next-work controller)
@@ -8559,10 +8594,10 @@
                        (equal (getf active-form :work)
                               '(:message "active turn")))
                   "version-two snapshots represent dispatched active work"))))
-           (application-input-controller--enqueue-steering
-            controller "first steering")
-           (application-input-controller--enqueue-steering
-            controller "second steering")
+            (application-input-controller-submit-primary-prompt
+             controller "first steering")
+            (application-input-controller-submit-primary-prompt
+             controller "second steering")
            (application-input-controller--enqueue
             controller ':message "follow later")
            (test-assert

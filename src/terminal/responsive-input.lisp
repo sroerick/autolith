@@ -1302,10 +1302,10 @@ the ordinary FIFO queue."
     (application-input-controller--publish-counts controller)
     (values (not (null delivery)) (or delivery ':rejected))))
 
-(-> application-prompt--primary-target-p ((or null string)) boolean)
+(-> application-prompt--primary-target-p (string) boolean)
 (defun application-prompt--primary-target-p (target)
-  "Return whether TARGET is the internal primary-agent designator."
-  (null target))
+  "Return whether TARGET explicitly names the primary agent."
+  (string-equal target "autolith"))
 
 (-> application-prompt--primary-rejection-reason
     (application-input-controller)
@@ -1430,7 +1430,7 @@ the ordinary FIFO queue."
         :target target)))))
 
 (defmethod application-submit-prompt
-    ((application application) target content)
+    ((application application) target input)
   "Prompt APPLICATION's primary agent or steer one visible running child."
   (if (application-prompt--primary-target-p target)
       (let ((controller
@@ -1444,7 +1444,9 @@ the ordinary FIFO queue."
         (application-localgroup-resume application)
         (multiple-value-bind (accepted-p delivery)
             (application-input-controller-submit-primary-prompt
-             controller content :prefer-steering-p t)
+             controller
+             input
+             :prefer-steering-p *prompt-primary-prefer-steering-p*)
           (unless accepted-p
             (let ((reason
                     (application-prompt--primary-rejection-reason controller)))
@@ -1457,7 +1459,9 @@ the ordinary FIFO queue."
                 :accepted-p t
                 :target ':autolith
                 :delivery delivery
-                :content-characters (length content))))
+                :content-characters (length (user-message-input-text input))
+                :image-count (length
+                              (user-message-input-image-pathnames input)))))
       (let* ((job (application-prompt--find-child application target))
              (snapshot (task-job-snapshot job)))
         (unless (eq (getf snapshot :state) ':running)
@@ -1465,7 +1469,7 @@ the ordinary FIFO queue."
            job target ':not-running))
         (multiple-value-bind (entry reason)
             (task-job-enqueue-steering
-             job content :promote-response-p t)
+             job input :promote-response-p t)
           (unless entry
             (application-prompt--child-admission-error job target reason))
           (list :prompt
@@ -1475,16 +1479,11 @@ the ordinary FIFO queue."
                 :job-id (session-job-identifier job)
                 :execution-id (task-job-execution-identifier job)
                 :steering-id (agent-steering-input-identifier entry)
-                :delivery ':steering)))))
+                :delivery ':steering
+                :content-characters (length (user-message-input-text input))
+                :image-count (length
+                              (user-message-input-image-pathnames input)))))))
 
-(-> application-input-controller--enqueue-steering
-    (application-input-controller (or string user-message-input))
-    null)
-(defun application-input-controller--enqueue-steering (controller input)
-  "Prefer steering INPUT into the active primary message turn."
-  (application-input-controller-submit-primary-prompt
-   controller input :prefer-steering-p t)
-  nil)
 
 (-> application-input-controller--take-steering
     (application-input-controller)
@@ -1874,16 +1873,17 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
              result)))))))
 
 (-> application-input-controller--handle-recalled-submission
-    (application-input-controller (or string user-message-input))
+    (application-input-controller (or string user-message-input)
+     &key (:prefer-steering-p boolean))
     boolean)
 (defun application-input-controller--handle-recalled-submission
-    (controller input)
+    (controller input &key (prefer-steering-p t))
   "Atomically route recalled INPUT and report whether recalled work handled it.
 
-Blank input keeps the recalled work selected. Active messages commit to the
-current turn's steering queue before its completion can race. Registered
-nonconflicting operations may execute immediately; other Lisp waits for the idle
-boundary."
+Blank input keeps the recalled work selected. Recalled Enter may steer an active
+message, while recalled Tab retains its virtual FIFO position. Both decisions are
+atomic across active-turn completion races. Registered nonconflicting operations
+may execute immediately; other Lisp waits for the idle boundary."
   (let* ((application
            (application-input-controller-application controller))
          (message (application--message-input input))
@@ -1929,11 +1929,11 @@ boundary."
             (cond
               (message
                (let ((delivery
-                       (application-input-controller--admit-primary-prompt-locked
-                        controller
-                        message
-                        :prefer-steering-p t
-                        :queue-index index)))
+                        (application-input-controller--admit-primary-prompt-locked
+                         controller
+                         message
+                         :prefer-steering-p prefer-steering-p
+                         :queue-index index)))
                  (setf accepted-p (not (null delivery))
                        restored-p (eq delivery ':queued))))
               ((application-input-controller-active-p controller)
@@ -2005,69 +2005,97 @@ boundary."
       (application-input-controller--vault-command-p input)
       (application-input-controller--prompt-storage-ready-p controller)))
 
+(-> application-input-controller--prompt
+    (application-input-controller (or string user-message-input)
+     &key (:prefer-steering-p boolean))
+    boolean)
+(defun application-input-controller--prompt
+    (controller input &key (prefer-steering-p t))
+  "Submit terminal INPUT through canonical PROMPT and report acceptance."
+  (let* ((application
+           (application-input-controller-application controller))
+         (*application-operation-application* application)
+         (*prompt-primary-prefer-steering-p* prefer-steering-p))
+    (handler-case
+        (progn
+          (prompt input)
+          t)
+      (prompt-error (condition)
+        (unless (eq (prompt-error-reason condition) ':storage-unavailable)
+          (application-present application (autolith-error-message condition)))
+        nil))))
+
 (-> application-input-controller--handle-submission
     (application-input-controller (or string user-message-input)
      &key (:steer-p boolean))
     null)
 (defun application-input-controller--handle-submission
     (controller input &key steer-p)
-  "Route submitted INPUT to local Lisp, model work, or command policy."
-  (unless (application-input-controller--submission-storage-ready-p
-           controller input)
-    (return-from application-input-controller--handle-submission nil))
-  (application-localgroup-resume
-   (application-input-controller-application controller))
-  (let ((message (application--message-input input))
-        (text (user-message-input-text input)))
+  "Route submitted INPUT to canonical prompt, local Lisp, or command policy."
+  (let* ((application
+           (application-input-controller-application controller))
+         (message (application--message-input input))
+         (text (user-message-input-text input)))
     (cond
-      ((terminal-ui--lisp-draft-p text)
-       (if (application-input-controller-busy-p controller)
-           (ecase (application-input-controller--lisp-active-turn-action
-                   controller text)
-             (:cancel
-              (application-input-controller--request-exit controller ':quit))
-             (:execute
-              (when (eq (application-input-controller--run-responsive-lisp
-                         controller text)
-                        ':quit)
-                (application-input-controller--request-exit controller ':quit)))
-             (:hold
-              (application-input-controller--schedule-lisp controller text)))
-           (application-input-controller--enqueue controller ':lisp text)))
       (message
-       (application-input-controller-submit-primary-prompt
+       (application-input-controller--prompt
         controller message :prefer-steering-p steer-p))
-      ((not (non-empty-string-p text))
+      ((not (application-input-controller--submission-storage-ready-p
+             controller input))
        nil)
-      ((application-input-controller-busy-p controller)
-       (let* ((invocation (application-command-invocation-parse text))
-              (command
-                (application-command-invocation-command invocation))
-              (action
-                (if command
-                    (application-command-busy-action command invocation)
-                    ':hold)))
-         (ecase action
-           (:cancel
-            (application-input-controller--request-exit controller ':quit))
-           (:execute
-            (when (eq (application-input-controller--run-responsive-command
-                       controller command invocation)
-                      ':quit)
-              (application-input-controller--request-exit controller ':quit)))
-           (:hold
-            (application-input-controller--schedule-command controller text)))))
       (t
-       (application-input-controller--enqueue controller ':command text))))
+       (application-localgroup-resume application)
+       (cond
+         ((terminal-ui--lisp-draft-p text)
+          (if (application-input-controller-busy-p controller)
+              (ecase (application-input-controller--lisp-active-turn-action
+                      controller text)
+                (:cancel
+                 (application-input-controller--request-exit controller ':quit))
+                (:execute
+                 (when (eq (application-input-controller--run-responsive-lisp
+                            controller text)
+                           ':quit)
+                   (application-input-controller--request-exit controller ':quit)))
+                (:hold
+                 (application-input-controller--schedule-lisp controller text)))
+              (application-input-controller--enqueue controller ':lisp text)))
+         ((not (non-empty-string-p text))
+          nil)
+         ((application-input-controller-busy-p controller)
+          (let* ((invocation (application-command-invocation-parse text))
+                 (command
+                   (application-command-invocation-command invocation))
+                 (action
+                   (if command
+                       (application-command-busy-action command invocation)
+                       ':hold)))
+            (ecase action
+              (:cancel
+               (application-input-controller--request-exit controller ':quit))
+              (:execute
+               (when (eq (application-input-controller--run-responsive-command
+                          controller command invocation)
+                         ':quit)
+                 (application-input-controller--request-exit controller ':quit)))
+              (:hold
+               (application-input-controller--schedule-command controller text)))))
+         (t
+          (application-input-controller--enqueue controller ':command text))))))
   nil)
 
 (-> application-input-controller--handle-queue-submission
     (application-input-controller (or string user-message-input))
     null)
 (defun application-input-controller--handle-queue-submission (controller input)
-  "Queue INPUT as post-turn work, preserving a recalled follow-up's position."
-  (when (application-input-controller--submission-storage-ready-p controller input)
-    (application-input-controller--queue-input controller input))
+  "Queue terminal INPUT as post-turn work through canonical prompt when prose."
+  (let ((message (application--message-input input)))
+    (if message
+        (application-input-controller--prompt
+         controller message :prefer-steering-p nil)
+        (when (application-input-controller--submission-storage-ready-p
+               controller input)
+          (application-input-controller--queue-input controller input))))
   nil)
 
 (-> application-input-controller--recall-follow-up
@@ -2253,12 +2281,15 @@ boundary."
                          :steer-p
                          (application-input-controller-turn-active-p
                           controller)))))
-                   (:queue
-                    (unless
-                        (application-input-controller--defer-lisp-submission-p
-                         controller payload)
-                      (application-input-controller--handle-queue-submission
-                       controller payload)))
+                    (:queue
+                     (unless
+                         (application-input-controller--defer-lisp-submission-p
+                          controller payload)
+                       (unless
+                           (application-input-controller--handle-recalled-submission
+                            controller payload :prefer-steering-p nil)
+                         (application-input-controller--handle-queue-submission
+                          controller payload))))
                    (:edit-queue
                     (application-input-controller--recall-follow-up controller))
                    (:cycle-queue

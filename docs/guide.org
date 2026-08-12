@@ -252,24 +252,27 @@ form after use; =(help)= is canonical. A user call and a provider call reach
 the same named operation, while authority still follows the caller and the
 operation's approval policy.
 
-The canonical =prompt= operation routes exact computed text through the
-responsive input path:
+The canonical =prompt= operation routes exact computed text and optional local
+images through the responsive input path. Ordinary terminal prose is syntax
+sugar for the same operation:
 
 #+BEGIN_SRC lisp
 (prompt "ordinary text")
-(prompt (read-file "/root/blabla.txt"))
+(prompt :to 'autolith (read-file "/root/blabla.txt"))
+(prompt :images "/root/diagram.png" "Review this diagram")
 (prompt :to 'shared-diff-final-review "additional context")
 #+END_SRC
 
-With one argument, =prompt= submits a nonempty string to the primary agent just
-like ordinary text. =read-file= supplies bounded UTF-8 text, so local Lisp may
-compute or load the prompt first. Only the one-argument form targets primary
-Autolith. Every =:to= target resolves one child visible to the primary session
-by its unique case-insensitive display name, then falls back to its visible job
-ID. The child must already be running; prompting never spawns, revives, or
-replaces it. Accepted child prompts enter its bounded FIFO steering mailbox.
-Thus =(prompt :to 'autolith "...")= targets a visible running child named
-=autolith=, never the primary agent.
+=(prompt "text")= is exactly the primary form =(prompt :to 'autolith "text")=.
+=read-file= supplies bounded UTF-8 text, so local Lisp may compute or load the
+prompt first. =:images= accepts one local image pathname or a list, validates
+each image, and adds matching =[Image #N]= labels to the submitted text. The
+case-insensitive target =autolith= is reserved exclusively for the primary
+agent. Every other =:to= target resolves one child visible to the primary
+session by its unique case-insensitive display name, then falls back to its
+visible job ID. The child must already be running; prompting never spawns,
+revives, or replaces it. Accepted child prompts, including image attachments,
+enter its bounded FIFO steering mailbox.
 
 Each accepted child-targeted =prompt= reserves one FIFO response-promotion
 token. Tool calls, reasoning, and blank or whitespace-only assistant output do

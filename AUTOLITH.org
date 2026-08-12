@@ -498,48 +498,50 @@ a user-local init.lisp change, or a private image commit.
 ** Callable PROMPT and child response promotion
 
 - Problem: the Lisp-first operation surface had no canonical way to submit exact
-  computed text to the primary agent or add context to an already running named
-  child. A child received its assignment only at admission, and its later verbal
-  response remained in private task state rather than appearing where the user
-  asked for the additional work.
-- Behavior: =(prompt CONTENT)= routes bounded nonempty text through ordinary
-  primary responsive-input admission, while =(prompt (read-file PATH))= supports
-  exact computed UTF-8 prompts. Only the one-argument form targets primary
-  Autolith. Every =(prompt :to TARGET CONTENT)= resolves one child visible to the
+  computed text or image attachments to the primary agent, add context to an
+  already running named child, or guarantee that ordinary terminal prose used
+  the same operation. A child received its assignment only at admission, and its
+  later verbal response remained in private task state rather than appearing
+  where the user asked for the additional work.
+- Behavior: ordinary terminal prose and =(prompt CONTENT)= both invoke the
+  canonical prompt operation. =(prompt CONTENT)= is exactly
+  =(prompt :to 'autolith CONTENT)=, while =(prompt (read-file PATH))= supports
+  exact computed UTF-8 prompts. =:images= accepts one local image pathname or a
+  proper list, validates every image, adds matching =[Image #N]= labels, and
+  preserves rich image input through primary admission or child steering. The
+  case-insensitive target =autolith= is reserved exclusively for the primary.
+  Every other =(prompt :to TARGET CONTENT)= resolves one child visible to the
   primary session by unique case-insensitive display name before visible job ID,
-  accepts only a running job, and never spawns or revives one. Thus
-  =(prompt :to 'autolith "...")= targets a visible running child named
-  =autolith=, never the primary agent. Accepted child prompts enter a bounded
-  FIFO steering mailbox and reserve one FIFO response-promotion token each. Tool
-  calls, reasoning, blank assistant output, and failed persistence leave tokens
-  pending. The first later durable nonblank verbal response consumes the oldest
-  token exactly once and appears in the primary window below an unconditional
-  timestamped =● autolith [child-name] YYYY-MM-DD HH:MM= header. The child name
-  uses xterm-256 color 78 with a green fallback. Exact listener identity and a
-  single presentation transaction exclude stale reconnect events. Promotion
-  does not append a primary conversation record or expose hidden reasoning.
+  accepts only a running job, and never spawns or revives one. Accepted child
+  prompts enter a bounded FIFO steering mailbox and reserve one FIFO
+  response-promotion token each. Tool calls, reasoning, blank assistant output,
+  and failed persistence leave tokens pending. The first later durable nonblank
+  verbal response consumes the oldest token exactly once and appears in the
+  primary window below an unconditional timestamped
+  =● autolith [child-name] YYYY-MM-DD HH:MM= header. The child name uses
+  xterm-256 color 78 with a green fallback. Exact listener identity and a single
+  presentation transaction exclude stale reconnect events. Promotion does not
+  append a primary conversation record or expose hidden reasoning.
 - Scope and location: tracked project work in
   =src/application/operation.lisp=, =src/terminal/responsive-input.lisp=,
   =src/task/state.lisp=, =src/task/runtime.lisp=, =src/task/child.lisp=,
   =src/agent/runtime.lisp=, =src/application/runtime.lisp=,
-  =src/terminal/style.lisp=, focused agent, task, operation, application, and
-  terminal regressions, the guide, and the minimal technical specification.
-  Implementation commits are =94bb2a2=, =6aface1=, =abc34ed=, =67dc694=,
-  =535b164=, and =044e77c=.
-- Verification: fresh-SBCL focused tests cover primary routing, computed file
-  prompts, visible-name and job-ID child resolution including a child named
-  =autolith=, rejection paths, FIFO steering, durable observer ordering, blank
-  and nonverbal exclusion, bounded and concurrent exact-once token consumption,
-  terminal cleanup, canonical response presentation, stale and replaced
-  listeners, overlapping reconnects, terminal color fallback, and application
-  replacement and unwind safety. A fresh-SBCL loop also invoked the
-  overlapping-connect regression ten times successfully. Source delimiter scans
-  and =git diff --check= pass. Implementation reviews identified stale-listener
-  and overlapping-connect races; the final post-fix concurrency review found no
-  findings. Documentation review exposed the =:to autolith= routing ambiguity;
-  =044e77c= corrected the implementation, its focused code review found no
-  findings, and final documentation UX re-review found no findings. The complete
-  repository check was intentionally not run at the user's direction.
+  =src/terminal/style.lisp=, focused agent, task, operation, application,
+  recovery-vault, and terminal regressions, and the guide. Original implementation
+  commits are =94bb2a2=, =6aface1=, =abc34ed=, =67dc694=, =535b164=, and
+  =044e77c=; current tracked source supersedes the original =:to autolith=
+  child-routing rule.
+- Verification: fresh-SBCL focused tests cover primary routing, the explicit
+  =autolith= alias, computed file prompts, validated primary and child images,
+  circular image-list rejection, terminal prose delegation to canonical
+  =prompt= with and without steering, visible-name and job-ID child resolution,
+  rejection paths, FIFO steering, durable recovery ordering, observer ordering,
+  blank and nonverbal exclusion, bounded and concurrent exact-once token
+  consumption, terminal cleanup, canonical response presentation, stale and
+  replaced listeners, overlapping reconnects, terminal color fallback, and
+  application replacement and unwind safety. Source delimiter scans,
+  =git diff --check=, and the full 4,341-test repository check pass. Final review
+  of the unified implementation found no remaining defects.
 - Removal condition: a replacement local prompting and child-steering protocol
   provides the same exact primary admission, named running-child resolution,
   bounded FIFO delivery, durable one-response promotion, stale-listener safety,

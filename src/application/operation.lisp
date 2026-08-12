@@ -48,6 +48,9 @@
 (defvar *application-local-user-evaluation-p* nil
   "Whether evaluation came from one explicit local Lisp submission.")
 
+(defvar *prompt-primary-prefer-steering-p* t
+  "Whether the current primary PROMPT should prefer active-turn steering.")
+
 (define-condition prompt-error (autolith-error)
   ((reason
     :initarg :reason
@@ -66,7 +69,7 @@
   "The largest text accepted by one local PROMPT form.")
 
 (defparameter *prompt-target-maximum-characters* 200
-  "The largest child target name accepted by one local PROMPT form.")
+  "The largest prompt target name accepted by one local PROMPT form.")
 
 (-> prompt--error (keyword string &key (:target t)) nil)
 (defun prompt--error (reason message &key target)
@@ -86,26 +89,100 @@
        :target target))
     (copy-seq name)))
 
-(-> prompt--content (t) non-empty-string)
-(defun prompt--content (content)
-  "Return validated prompt CONTENT or signal a typed prompt failure."
-  (unless (stringp content)
-    (prompt--error ':invalid-content "PROMPT content must be a string."))
-  (unless (plusp (length content))
-    (prompt--error ':empty-content "PROMPT content must not be empty."))
-  (when (> (length content) *prompt-maximum-characters*)
-    (prompt--error
-     ':content-too-large
-     (format nil "PROMPT content exceeds the ~D-character limit."
-             *prompt-maximum-characters*)))
-  (copy-seq content))
+(-> prompt--image-pathnames (t) list)
+(defun prompt--image-pathnames (images)
+  "Return validated local image pathnames from IMAGES or signal PROMPT-ERROR."
+  (let ((locations
+          (cond
+            ((null images)
+             nil)
+            ((typep images '(or string pathname))
+             (list images))
+            ((handler-case
+                 (and (listp images) (integerp (list-length images)))
+               (type-error ()
+                 nil))
+             images)
+            (t
+             (prompt--error
+              ':invalid-images
+              "PROMPT :IMAGES must be a pathname or a proper list of pathnames.")))))
+    (unless (every (lambda (location)
+                     (typep location '(or string pathname)))
+                   locations)
+      (prompt--error
+       ':invalid-images
+       "Every PROMPT image must be a string or pathname."))
+    (mapcar
+     (lambda (location)
+       (handler-case
+           (image-input-validate-pathname location)
+         (autolith-error (condition)
+           (prompt--error ':invalid-image
+                          (autolith-error-message condition)
+                          :target location))))
+     locations)))
+
+(-> prompt--input (t t) (or string user-message-input))
+(defun prompt--input (content images)
+  "Return validated prompt CONTENT with optional local IMAGES."
+  (cond
+    ((typep content 'user-message-input)
+     (when images
+       (prompt--error
+        ':invalid-images
+        "A rich PROMPT input cannot also supply :IMAGES."))
+     (let* ((text (user-message-input-text content))
+            (image-pathnames
+              (prompt--image-pathnames
+               (user-message-input-image-pathnames content))))
+       (unless (or (plusp (length text)) image-pathnames)
+         (prompt--error ':empty-content "PROMPT content must not be empty."))
+       (when (> (length text) *prompt-maximum-characters*)
+         (prompt--error
+          ':content-too-large
+          (format nil "PROMPT content exceeds the ~D-character limit."
+                  *prompt-maximum-characters*)))
+       (user-message-input-create
+        :text (copy-seq text)
+        :image-pathnames image-pathnames)))
+    ((stringp content)
+     (let* ((image-pathnames (prompt--image-pathnames images))
+            (labels
+              (format nil "~{[Image #~D]~^ ~}"
+                      (loop for number from 1 to (length image-pathnames)
+                            collect number)))
+            (text
+              (cond
+                ((null image-pathnames)
+                 content)
+                ((plusp (length content))
+                 (format nil "~A ~A" labels content))
+                (t
+                 labels))))
+       (unless (plusp (length text))
+         (prompt--error ':empty-content "PROMPT content must not be empty."))
+       (when (> (length text) *prompt-maximum-characters*)
+         (prompt--error
+          ':content-too-large
+          (format nil "PROMPT content exceeds the ~D-character limit."
+                  *prompt-maximum-characters*)))
+       (if image-pathnames
+           (user-message-input-create
+            :text text
+            :image-pathnames image-pathnames)
+           (copy-seq text))))
+    (t
+     (prompt--error
+      ':invalid-content
+      "PROMPT content must be a string or rich user message input."))))
 
 (-> application-submit-prompt
-    (application (or null string) non-empty-string)
+    (application non-empty-string (or string user-message-input))
     list)
-(defgeneric application-submit-prompt (application target content)
+(defgeneric application-submit-prompt (application target input)
   (:documentation
-   "Submit CONTENT to primary when TARGET is NIL, or to child TARGET."))
+   "Submit INPUT to primary AUTOLITH or to one named running child TARGET."))
 
 (-> read-file ((or string pathname)) string)
 (defun read-file (path)
@@ -131,34 +208,49 @@
 
 (-> prompt (&rest t) list)
 (defun prompt (&rest arguments)
-  "Prompt primary Autolith, or steer a named running child with :TO TARGET."
+  "Prompt primary Autolith or steer a named running child with optional images."
   (unless (typep *application-operation-application* 'application)
     (prompt--error
      ':no-application
      "PROMPT requires an active local Autolith evaluation."))
-  (multiple-value-bind (target content primary-target-p)
-      (cond
-        ((= (length arguments) 1)
-         (values nil (first arguments) t))
-        ((and (= (length arguments) 3)
-              (eq (first arguments) ':to))
-         (values (second arguments) (third arguments) nil))
-        (t
-         (prompt--error
-          ':malformed-arguments
-          "Use (prompt CONTENT) or (prompt :to TARGET CONTENT).")))
-    (unless (or primary-target-p
-                (typep target '(or string symbol)))
+  (unless (and arguments (oddp (length arguments)))
+    (prompt--error
+     ':malformed-arguments
+     "Use (prompt [:to TARGET] [:images IMAGES] CONTENT)."))
+  (let ((target 'autolith)
+        (images nil)
+        (target-supplied-p nil)
+        (images-supplied-p nil)
+        (content (first (last arguments))))
+    (loop for (key value) on (butlast arguments) by #'cddr
+          do (case key
+               (:to
+                (when target-supplied-p
+                  (prompt--error
+                   ':malformed-arguments
+                   "PROMPT :TO may appear only once."))
+                (setf target value
+                      target-supplied-p t))
+               (:images
+                (when images-supplied-p
+                  (prompt--error
+                   ':malformed-arguments
+                   "PROMPT :IMAGES may appear only once."))
+                (setf images value
+                      images-supplied-p t))
+               (otherwise
+                (prompt--error
+                 ':malformed-arguments
+                 "Use only :TO and :IMAGES before PROMPT content."))))
+    (unless (typep target '(or string symbol))
       (prompt--error
        ':invalid-target
        "PROMPT target must be a symbol or string."
        :target target))
-    (let ((validated-content (prompt--content content))
-          (target-name
-            (and (not primary-target-p)
-                 (prompt--target-name target))))
-      (application-submit-prompt
-       *application-operation-application* target-name validated-content))))
+    (application-submit-prompt
+     *application-operation-application*
+     (prompt--target-name target)
+     (prompt--input content images))))
 
 
 (defmacro eval-now (&body body)

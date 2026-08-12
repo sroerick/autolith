@@ -422,8 +422,8 @@
                  (= (application-input-controller-follow-up-edit-index controller)
                     5))
             "restore publishes five older items and retains recalled FIFO position")
-           (application-input-controller--enqueue-steering
-            controller "typed during restore")
+            (application-input-controller-submit-primary-prompt
+             controller "typed during restore")
            (multiple-value-bind (pending-form complete-p)
                (snapshot-read pending-pathname)
              (let* ((state
@@ -519,8 +519,8 @@
             (equal (application-input-controller--next-work controller)
                    '(:message "restored active"))
             "the first restored message becomes active")
-           (application-input-controller--enqueue-steering
-            controller "late steering")
+            (application-input-controller-submit-primary-prompt
+             controller "late steering")
            (application-input-controller--enqueue
             controller ':message "newer follow-up")
            (test-assert

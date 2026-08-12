@@ -90,6 +90,7 @@
   "Test local primary prompting, computed content, and named child steering."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
+         (prompt-image (merge-pathnames "prompt-image.png" root))
          (conversation
            (conversation-create configuration :identifier "prompt-operation"))
          (registry (task-augment-tool-registry (make-default-tool-registry)))
@@ -144,36 +145,67 @@
                     application
                     :load-pending-p nil
                     :start-reader-p nil))
-             (let ((path (merge-pathnames "prompt-content.txt" root)))
-               (with-open-file (stream path
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
-                 (write-string "computed prompt text" stream))
-               (let ((*application-operation-application* application))
-                 (let ((receipt (prompt "ordinary prompt text")))
-                   (test-assert
-                    (and (eq (first receipt) ':prompt)
-                         (getf (rest receipt) :accepted-p)
-                         (eq (getf (rest receipt) :target) ':autolith)
-                         (eq (getf (rest receipt) :delivery) ':queued))
-                    "PROMPT returns a portable primary acceptance receipt")))
-               (let ((evaluation
-                       (application-lisp-evaluate
-                        (format nil "(prompt (read-file ~S))" (namestring path))
-                        :application application)))
-                 (test-assert
-                  (eq (application-lisp-evaluation-status evaluation) ':ok)
-                  "computed READ-FILE prompt executes through local Lisp"))
-               (test-assert
-                (equal
-                 (mapcar
-                  (lambda (work)
-                    (user-message-input-text (second work)))
-                  (application-input-controller-work-items controller))
-                 '("ordinary prompt text" "computed prompt text"))
-                "primary PROMPT preserves exact computed content and FIFO order")
+              (let ((path (merge-pathnames "prompt-content.txt" root)))
+                (with-open-file (stream path
+                                        :direction :output
+                                        :if-exists :supersede
+                                        :if-does-not-exist :create
+                                        :external-format :utf-8)
+                  (write-string "computed prompt text" stream))
+                (test-conversation--write-tiny-png prompt-image)
+                (let ((*application-operation-application* application))
+                  (let ((receipt (prompt "ordinary prompt text")))
+                    (test-assert
+                     (and (eq (first receipt) ':prompt)
+                          (getf (rest receipt) :accepted-p)
+                          (eq (getf (rest receipt) :target) ':autolith)
+                          (eq (getf (rest receipt) :delivery) ':queued))
+                     "PROMPT returns a portable primary acceptance receipt"))
+                  (let ((receipt
+                          (prompt :to 'autolith "explicit primary prompt")))
+                    (test-assert
+                     (eq (getf (rest receipt) :target) ':autolith)
+                     ":TO AUTOLITH explicitly targets the primary agent"))
+                  (let ((receipt
+                          (prompt :to "AuToLiTh"
+                                  "case-insensitive primary prompt")))
+                    (test-assert
+                     (eq (getf (rest receipt) :target) ':autolith)
+                     "string AUTOLITH targets the primary case-insensitively"))
+                  (let ((receipt
+                          (prompt :images (list prompt-image) "image prompt")))
+                    (test-assert
+                     (and (= (getf (rest receipt) :image-count) 1)
+                          (= (getf (rest receipt) :content-characters)
+                             (length "[Image #1] image prompt")))
+                     "PROMPT returns primary image acceptance metadata")))
+                (let ((evaluation
+                        (application-lisp-evaluate
+                         (format nil "(prompt (read-file ~S))" (namestring path))
+                         :application application)))
+                  (test-assert
+                   (eq (application-lisp-evaluation-status evaluation) ':ok)
+                   "computed READ-FILE prompt executes through local Lisp"))
+                (let* ((work-items
+                         (application-input-controller-work-items controller))
+                       (image-input (second (fourth work-items))))
+                  (test-assert
+                   (equal
+                    (mapcar
+                     (lambda (work)
+                       (user-message-input-text (second work)))
+                     work-items)
+                    '("ordinary prompt text"
+                      "explicit primary prompt"
+                      "case-insensitive primary prompt"
+                      "[Image #1] image prompt"
+                      "computed prompt text"))
+                   "primary PROMPT preserves exact computed content and FIFO order")
+                  (test-assert
+                   (and (typep image-input 'user-message-input)
+                        (equal (user-message-input-image-pathnames image-input)
+                               (list (truename prompt-image))))
+                   "primary PROMPT preserves validated image attachments"))
                 (test-assert
                  (string= (read-file path) "computed prompt text")
                  "READ-FILE returns exact UTF-8 text")
@@ -182,33 +214,44 @@
                        (prompt-reason (lambda () (read-file path))))
                      ':content-too-large)
                  "READ-FILE enforces its bound while consuming one open stream"))
-             (dolist (case
-                      (list
-                       (list nil ':malformed-arguments)
-                       (list '("one" "two") ':malformed-arguments)
-                       (list '(:to child) ':malformed-arguments)
-                       (list '(:to 42 "text") ':invalid-target)
-                       (list '("") ':empty-content)
-                       (list '(42) ':invalid-content)))
-               (destructuring-bind (arguments expected) case
-                 (test-assert
-                  (eq
-                   (let ((*application-operation-application* application))
-                     (prompt-reason
-                      (lambda () (apply #'prompt arguments))))
-                   expected)
-                  (format nil "PROMPT rejects malformed arguments with ~S" expected))))
-             (test-assert
-              (eq (let ((*application-operation-application* nil))
-                    (prompt-reason (lambda () (prompt "text"))))
-                  ':no-application)
-              "PROMPT rejects calls outside local application evaluation")
-             (test-assert
-              (eq (let ((*application-operation-application* application)
-                        (*prompt-maximum-characters* 3))
-                    (prompt-reason (lambda () (prompt "four"))))
-                  ':content-too-large)
-              "PROMPT enforces its content bound before routing")
+              (dolist (case
+                       (list
+                        (list nil ':malformed-arguments)
+                        (list '("one" "two") ':malformed-arguments)
+                        (list '(:to child) ':malformed-arguments)
+                        (list '(:to 42 "text") ':invalid-target)
+                        (list '(:images 42 "text") ':invalid-images)
+                        (list '(:unknown t "text") ':malformed-arguments)
+                        (list '("") ':empty-content)
+                        (list '(42) ':invalid-content)))
+                (destructuring-bind (arguments expected) case
+                  (test-assert
+                   (eq
+                    (let ((*application-operation-application* application))
+                      (prompt-reason
+                       (lambda () (apply #'prompt arguments))))
+                    expected)
+                   (format nil "PROMPT rejects malformed arguments with ~S" expected))))
+              (let ((circular-images (list prompt-image)))
+                (setf (rest circular-images) circular-images)
+                (test-assert
+                 (eq (let ((*application-operation-application* application))
+                       (prompt-reason
+                        (lambda ()
+                          (prompt :images circular-images "circular images"))))
+                     ':invalid-images)
+                 "PROMPT rejects circular image lists without traversing forever"))
+              (test-assert
+               (eq (let ((*application-operation-application* nil))
+                     (prompt-reason (lambda () (prompt "text"))))
+                   ':no-application)
+               "PROMPT rejects calls outside local application evaluation")
+              (test-assert
+               (eq (let ((*application-operation-application* application)
+                         (*prompt-maximum-characters* 3))
+                     (prompt-reason (lambda () (prompt "four"))))
+                   ':content-too-large)
+               "PROMPT enforces its content bound before routing")
              (let* ((named
                       (task-tests--register-job
                        orchestrator primary definition
@@ -222,10 +265,6 @@
                       (task-tests--register-job
                        orchestrator primary definition
                        :name "identifier-review"))
-                    (autolith-named
-                      (task-tests--register-job
-                       orchestrator primary definition
-                       :name "autolith"))
                     (queued
                       (task-tests--register-job
                        orchestrator primary definition
@@ -246,12 +285,12 @@
                       (task-tests--register-job
                        orchestrator primary definition
                        :name "duplicate-review"))
-                    (hidden
-                      (task-tests--register-job
-                       orchestrator primary definition
-                       :name "hidden-review"
-                       :owner-identifiers '("foreign-owner")
-                       :root-conversation-identifier "foreign-root"))
+                     (hidden
+                       (task-tests--register-job
+                        orchestrator primary definition
+                        :name "hidden-review"
+                        :owner-identifiers '("foreign-owner")
+                        :root-conversation-identifier "foreign-root"))
                      (closing-job
                        (task-tests--register-job
                         orchestrator primary definition
@@ -272,8 +311,8 @@
                       (length (task-orchestrator-list-jobs orchestrator))))
                (declare (ignore duplicate-one duplicate-two hidden))
                 (mapc (lambda (job) (mark-state job ':running))
-                      (list named blocking identifier-target autolith-named
-                            closing-job closed-job race-closing race-closed))
+                      (list named blocking identifier-target closing-job closed-job
+                            race-closing race-closed))
                 (mark-state terminal-job ':completed)
                 (task-job-cancel cancelled ':test-cancellation)
                 (with-lock-held ((cl-jobpond::job--lock closing-job))
@@ -302,23 +341,21 @@
                   (equal (steering-texts named)
                          '("first child context" "second child context"))
                   "multiple child prompts enter the existing mailbox in FIFO order")
-                 (let* ((primary-work-count
-                          (length
-                           (application-input-controller-work-items controller)))
-                        (receipt
-                          (prompt :to 'autolith
-                                  "context for child named autolith")))
-                   (test-assert
-                    (and (eq (getf (rest receipt) :target) ':child)
-                         (string= (getf (rest receipt) :child-name) "autolith")
-                         (string= (getf (rest receipt) :job-id)
-                                  (session-job-identifier autolith-named))
-                         (equal (steering-texts autolith-named)
-                                '("context for child named autolith"))
-                         (= (length
-                             (application-input-controller-work-items controller))
-                            primary-work-count))
-                    ":TO AUTOLITH resolves the running child, not the primary agent"))
+                  (let* ((receipt
+                           (prompt :to 'shared-diff-final-review
+                                   :images (list prompt-image)
+                                   "image child context"))
+                         (entry (first (last (task-job-steering-items named))))
+                         (input (agent-steering-input-content entry)))
+                    (test-assert
+                     (and (eq (getf (rest receipt) :target) ':child)
+                          (= (getf (rest receipt) :image-count) 1)
+                          (typep input 'user-message-input)
+                          (string= (user-message-input-text input)
+                                   "[Image #1] image child context")
+                          (equal (user-message-input-image-pathnames input)
+                                 (list (truename prompt-image))))
+                     "child PROMPT preserves validated image attachments"))
                   (let ((*task-steering-maximum-items* 2))
                     (test-assert
                      (eq (prompt-reason
