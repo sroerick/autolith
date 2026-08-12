@@ -186,13 +186,13 @@ quiescing, because both touch the private history repository."
 
 (-> generation--translate (t) t)
 (defun generation--translate (condition)
-  "Signal CONDITION as the Autolith checkpoint error reporting it.
+  "Signal CONDITION as the Autolith error reporting it.
 
-A host check that already signaled an Autolith checkpoint error reaches here
-wrapped as the library's cause. Re-signal that original instead of the wrapper,
-so its own stage and message survive the round trip."
+A host check that already signaled an Autolith error reaches here wrapped as
+the library's cause. Re-signal that original instead of the wrapper, so its
+structured type and message survive the round trip."
   (let ((cause (sbcl-generations:checkpoint-error-cause condition)))
-    (if (typep cause 'checkpoint-error)
+    (if (typep cause 'autolith-error)
         (error cause)
         (error 'checkpoint-error
                :message (sbcl-generations::checkpoint-error-message condition)

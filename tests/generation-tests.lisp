@@ -611,6 +611,31 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> generation-tests--test-autolith-error-translation () null)
+(defun generation-tests--test-autolith-error-translation ()
+  "Test generation translation preserves structured Autolith failures."
+  (let* ((cause
+           (make-condition 'image-commit-error
+                           :message "Private replay failed."
+                           :tool-name "self.commit"
+                           :pathname nil
+                           :stage ':replay-probe))
+         (wrapper
+           (make-condition 'sbcl-generations:checkpoint-error
+                           :message "Checkpoint preparation failed."
+                           :stage ':backend
+                           :pathname nil
+                           :cause cause)))
+    (test-assert
+     (handler-case
+         (progn
+           (generation--translate wrapper)
+           nil)
+       (image-commit-error (condition)
+         (eq condition cause)))
+     "checkpoint translation preserves a structured Autolith cause"))
+  nil)
+
 ;;;; -- Subsystem Tests --
 
 (-> test-generation-manifest () null)
@@ -621,6 +646,7 @@
   (generation-tests--test-active-provider-secret-refusal)
   (generation-tests--test-checkpoint-worker-detachment)
   (generation-tests--test-active-image-single-thread-check)
+  (generation-tests--test-autolith-error-translation)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (generation
