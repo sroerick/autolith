@@ -483,6 +483,38 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
     (release-script-tests--make-release source-root release-root)
     (uiop:ensure-all-directories-exist
      (list fixture-root fixture-source fixture-bin fixture-release))
+    (let* ((uname (merge-pathnames "uname" fixture-bin))
+           (path
+             (format nil "~A:~A"
+                     (string-right-trim "/" (namestring fixture-bin))
+                     (or (uiop:getenv "PATH") ""))))
+      (release-script-tests--write-file
+       uname
+       "#!/bin/sh
+case ${1:-} in
+  -s) printf 'Darwin\\n' ;;
+  -m) printf 'arm64\\n' ;;
+  *) exit 64 ;;
+esac
+")
+      (release-script-tests--chmod "755" uname)
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list "/bin/sh" "-c"
+                 (format nil "~A --version ~A 2>&1"
+                         (namestring installer)
+                         tag))
+           :environment
+           (list (format nil "HOME=~A" (namestring root))
+                 (format nil "PATH=~A" path))
+           :ignore-error-status t)
+        (declare (ignore error-output))
+        (test-assert
+         (and (not (eql status 0))
+              (search
+               "On macOS, install Autolith with Nix: nix run github:luciusmagn/autolith."
+               output))
+         "the binary installer directs macOS users to Nix")))
     (release-script-tests--install-linux-host-tools fixture-bin)
     (release-script-tests--run
      (list "cp" "-a" (format nil "~A." (namestring release-root))

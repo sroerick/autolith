@@ -97,7 +97,7 @@ done
 
 [ -n "$home" ] || fail "HOME is not set."
 [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] ||
-  fail "binary releases currently support Linux x86-64 only."
+  fail "binary releases currently support Linux x86-64 only. On macOS, install Autolith with Nix: nix run github:luciusmagn/autolith."
 for command in bash bwrap curl git grep openssl sha256sum tar; do
   command -v "$command" >/dev/null 2>&1 ||
     fail "$command is required. Nix is the recommended installation path when system dependencies are unavailable."
