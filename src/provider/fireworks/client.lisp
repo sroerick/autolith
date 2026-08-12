@@ -58,11 +58,29 @@
 
 ;;;; -- Fireworks Protocol Specializations --
 
+(defparameter *fireworks-reasoning-effort-models-blacklist* '()
+  "Fireworks model identifiers whose serving stacks reject any reasoning
+effort parameter.  Requests for these models must omit the reasoning
+object entirely; see PROVIDER-RESPONSES-WIRE-EFFORT.")
+
+(-> fireworks-model-reasoning-effort-p (string) boolean)
+(defun fireworks-model-reasoning-effort-p (model)
+  "Return true when MODEL accepts a reasoning effort parameter."
+  (not (member model *fireworks-reasoning-effort-models-blacklist*
+               :test #'string=)))
+
+
 (defmethod provider-responses-wire-effort
     ((provider fireworks-api-key-provider) (configuration configuration))
-  "Return CONFIGURATION's Fireworks reasoning effort."
+  "Return CONFIGURATION's Fireworks reasoning effort, or NIL to omit it.
+
+Models in *fireworks-reasoning-effort-models-blacklist* reject every
+reasoning effort value at the serving stack, so NIL tells the shared
+request builder to omit the reasoning object entirely."
   (declare (ignore provider))
-  (configuration-fireworks-wire-effort configuration))
+  (when (fireworks-model-reasoning-effort-p
+         (configuration-model configuration))
+    (configuration-fireworks-wire-effort configuration)))
 
 (defmethod provider-responses-request-fields
     ((provider fireworks-api-key-provider) (conversation conversation))
