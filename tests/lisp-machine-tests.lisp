@@ -749,7 +749,7 @@
            (reader-state nil)
            (reader-output nil)
            (prompt-start
-             (semantic-prompt-marker-sequence ':prompt-start))
+             (terminal--prompt-marker-sequence ':prompt-start 0))
            (input-start
              (semantic-prompt-marker-sequence ':input-start)))
       (unwind-protect
@@ -806,11 +806,13 @@
            (terminal (terminal-ui-terminal ui))
            (controller (lisp-machine-tests--controller application)))
       (labels ((marker (payload)
-                 (format nil "~C]133;~A~C~C"
-                         *terminal-escape-character*
-                         payload
-                         *terminal-escape-character*
-                         #\\))
+                 (if (string= payload "A")
+                     (terminal--prompt-marker-sequence ':prompt-start 0)
+                     (format nil "~C]133;~A~C~C"
+                             *terminal-escape-character*
+                             payload
+                             *terminal-escape-character*
+                             #\\)))
 
                (markers-in-order-p (output payloads)
                  (block nil
