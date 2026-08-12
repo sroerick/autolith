@@ -124,6 +124,17 @@ let
     ];
   };
 
+  structlisp = pkgs.sbcl.buildASDFSystem {
+    pname = "structlisp";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "luciusmagn";
+      repo = "structlisp";
+      rev = "8842f7181ae14806d3d989fdcf7c3fdfed78fa08";
+      hash = "sha256-ZpbFTbwckQGX0SIPAP2A9t3zk+uQzyNuRfhVvRguh3o=";
+    };
+  };
+
   clifff = pkgs.sbcl.buildASDFSystem {
     pname = "clifff";
     version = "0.1.0";
@@ -299,6 +310,7 @@ let
       sbclWorkers
       sexpConfig
       sexpStore
+      structlisp
     ];
     nativeBuildInputs = [ pkgs.git ];
 

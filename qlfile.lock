@@ -98,3 +98,7 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/sbcl-workers.git" :ref "d46e94cd95562a645acf144cf84daf0b31cc707a")
   :version "git-d46e94cd95562a645acf144cf84daf0b31cc707a"))
+("structlisp" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/luciusmagn/structlisp.git" :ref "8842f7181ae14806d3d989fdcf7c3fdfed78fa08")
+  :version "git-8842f7181ae14806d3d989fdcf7c3fdfed78fa08"))

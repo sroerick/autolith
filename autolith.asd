@@ -30,6 +30,7 @@
                #:sbcl-workers
                #:sexp-config
                #:sexp-store
+               #:structlisp
                #:usocket
                #:yason)
   :components ((:module "src"
