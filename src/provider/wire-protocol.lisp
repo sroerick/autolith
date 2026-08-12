@@ -107,10 +107,12 @@
         copy)
       item))
 
-(-> provider-responses-wire-effort (responses-api-provider configuration) string)
+(-> provider-responses-wire-effort (responses-api-provider configuration) (option string))
 (defgeneric provider-responses-wire-effort (provider configuration)
   (:documentation
-   "Return CONFIGURATION's reasoning effort encoded for PROVIDER."))
+   "Return CONFIGURATION's reasoning effort encoded for PROVIDER.
+NIL means the serving stack rejects the reasoning parameter entirely;
+the request builder then omits the reasoning object."))
 
 (-> provider-responses-hosted-tool
     (responses-api-provider configuration)
@@ -220,12 +222,14 @@ after a completed response."
                    "tools" tools)
              (when (plusp (length tools))
                (list "tool_choice" "auto"))
-             (list "parallel_tool_calls" false
-                   "reasoning"
-                   (json-object
-                    "effort"
-                    (provider-responses-wire-effort provider configuration))
-                   "store" false
+             (list "parallel_tool_calls" false)
+             ;; A NIL wire effort means the serving stack rejects the
+             ;; reasoning parameter entirely; omit the reasoning object.
+             (let ((effort
+                     (provider-responses-wire-effort provider configuration)))
+               (when effort
+                 (list "reasoning" (json-object "effort" effort))))
+             (list "store" false
                    "stream" t)
              (provider-responses-request-fields provider conversation)))
      delivery)))
