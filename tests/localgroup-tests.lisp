@@ -285,23 +285,34 @@
        "localgroup status exposes encoded start times and fits narrow terminals"))
   (let ((*standard-input* (make-string-input-stream ""))
         (*standard-output* (make-string-output-stream)))
-    (test-assert
-     (handler-case
-         (progn
-           (localgroup-attach-record
-            (test-configuration)
-            (cons #P"noninteractive.sexp"
-                  (list :localgroup-endpoint
-                        :session-id "NONTTY"
-                        :port 1
-                        :token "unused"))
-            ':read-only)
-           nil)
-       (localgroup-error (condition)
-         (and (eq (localgroup-error-operation condition) ':attach)
-              (search "interactive terminal"
-                      (autolith-error-message condition)))))
-     "localgroup attach rejects noninteractive input before connecting"))
+    (test-call-with-function-replacements
+     (list
+      (list 'terminal--interactive-file-descriptor-p
+            (lambda (file-descriptor)
+              (declare (ignore file-descriptor))
+              nil))
+      (list 'localgroup-connect
+            (lambda (port)
+              (declare (ignore port))
+              (error "Noninteractive attach reached the network."))))
+     (lambda ()
+       (test-assert
+        (handler-case
+            (progn
+              (localgroup-attach-record
+               (test-configuration)
+               (cons #P"noninteractive.sexp"
+                     (list :localgroup-endpoint
+                           :session-id "NONTTY"
+                           :port 1
+                           :token "unused"))
+               ':read-only)
+              nil)
+          (localgroup-error (condition)
+            (and (eq (localgroup-error-operation condition) ':attach)
+                 (search "interactive terminal"
+                         (autolith-error-message condition)))))
+         "localgroup attach rejects noninteractive input before connecting"))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)

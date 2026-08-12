@@ -1268,7 +1268,8 @@
 (-> test-conversation--child-configuration-form (configuration) string)
 (defun test-conversation--child-configuration-form (configuration)
   "Return a readable form that reconstructs CONFIGURATION in a child process."
-  (let ((*print-readably* t)
+  (let ((*package* (find-package '#:cl-user))
+        (*print-readably* t)
         (*print-circle* nil))
     (prin1-to-string
      `(make-instance
@@ -1382,9 +1383,11 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
   (let* ((root (test-configuration-root configuration))
          (ready-path (merge-pathnames "lease-child-ready" root))
          (release-path (merge-pathnames "lease-child-release" root))
+         (output-path (merge-pathnames "lease-child-output" root))
          (process nil))
-    (when (probe-file ready-path) (delete-file ready-path))
-    (when (probe-file release-path) (delete-file release-path))
+    (dolist (pathname (list ready-path release-path output-path))
+      (when (probe-file pathname)
+        (delete-file pathname)))
     (setf process
           (uiop:launch-program
            (list (test-conversation--sbcl-command)
@@ -1408,7 +1411,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                   (namestring ready-path)
                   (namestring release-path))
                  "--quit")
-           :output :string
+           :output output-path
            :error-output :output))
     (unwind-protect
          (progn

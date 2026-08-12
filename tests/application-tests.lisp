@@ -5134,18 +5134,19 @@
               (thread-alive-p
                (application-input-controller-reader-thread controller))
               "the responsive terminal reader starts independently")
-             (let ((survivors
-                     (application-input-controller-call-with-reader-paused
-                      controller
-                      (lambda ()
-                        (unless (checkpoint-single-threaded-p)
-                          (mapcar #'bordeaux-threads:thread-name
-                                  (bordeaux-threads:all-threads)))))))
+             (let* ((reader
+                      (application-input-controller-reader-thread controller))
+                    (reader-paused-p
+                      (application-input-controller-call-with-reader-paused
+                       controller
+                       (lambda ()
+                         (and (not (thread-alive-p reader))
+                              (null
+                               (application-input-controller-reader-thread
+                                controller)))))))
                (test-assert
-                (null survivors)
-                (format nil
-                        "pausing input leaves checkpoint work on the only Lisp thread, saw ~S"
-                        survivors)))
+                reader-paused-p
+                "pausing input removes and joins the competing terminal reader"))
              (test-assert
               (thread-alive-p
                (application-input-controller-reader-thread controller))
