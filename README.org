@@ -69,8 +69,8 @@ autolith
 
 ** The prompt input is the REPL
 
-In Autolith, the message window is just a LISP repl with familiar 
-Ask in prose when interpretation helps. Enter a form when you need an exact
+In Autolith, the message window is just a LISP repl with familiar interactivity,
+you can make prompts in regular prose, or you can enter a form when you need an exact
 local action or a computed prompt.
 
 #+BEGIN_SRC lisp
@@ -79,8 +79,7 @@ local action or a computed prompt.
 (prompt (read-file "review-notes.org"))
 #+END_SRC
 
-The form runs in the active image without a model rewriting it. Registered
-operations still keep their normal authority and approval rules.
+The form runs in the active image.
 
 ** Tools for self modification and ephemeral Lisp REPLs
 Autolith has a well organized suite of *self* tools for inspecting and modifying itself live.
