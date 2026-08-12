@@ -373,6 +373,10 @@
                 #:snapshot-read
                 #:snapshot-write
                 #:store-error)
+  (:import-from #:structlisp
+                #:deque->vector
+                #:deque-push-back
+                #:make-deque)
   (:import-from #:yason
                 #:false)
   (:export #:application-command

@@ -2085,15 +2085,6 @@ newly acquired lease."
     (otherwise
      nil)))
 
-(-> application--ring-records (vector integer integer) list)
-(defun application--ring-records (ring total limit)
-  "Return the newest records in circular RING in chronological order."
-  (let* ((count (min total limit))
-         (start (if (> total limit)
-                    (mod total limit)
-                    0)))
-    (loop for offset below count
-          collect (aref ring (mod (+ start offset) limit)))))
 
 (-> application--present-conversation-record
     (application list
@@ -2193,7 +2184,7 @@ newly acquired lease."
 The values are the newest LIMIT visible records after AFTER-SEQUENCE, the
 unbounded visible candidate count, the newest durable sequence, and the next
 readable byte position."
-  (let ((ring (make-array limit))
+  (let ((records (make-deque :maximum-count limit))
         (candidate-count 0)
         (latest-sequence 0)
         (conversation (application-conversation application)))
@@ -2208,11 +2199,11 @@ readable byte position."
                (setf latest-sequence (max latest-sequence sequence))
                (when (and (> sequence after-sequence)
                           (application--record-visible-p application record))
-                 (setf (aref ring (mod candidate-count limit)) record)
-                 (incf candidate-count))))))
+                  (deque-push-back records record)
+                  (incf candidate-count))))))
       (declare (ignore incomplete-tail-p record-count
                        start-sequence next-sequence))
-      (values (application--ring-records ring candidate-count limit)
+      (values (coerce (deque->vector records) 'list)
               candidate-count
               latest-sequence
               position))))
@@ -2438,7 +2429,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (values list integer))
 (defun application--history-page-records (application floor limit)
   "Return the newest LIMIT replay candidates before sequence FLOOR."
-  (let ((ring (make-array limit))
+  (let ((records (make-deque :maximum-count limit))
         (candidate-count 0))
     (conversation-map-records
      (application-conversation application)
@@ -2447,9 +2438,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
          (when (and sequence
                     (< sequence floor)
                     (application--record-visible-p application record))
-           (setf (aref ring (mod candidate-count limit)) record)
-           (incf candidate-count)))))
-    (values (application--ring-records ring candidate-count limit)
+            (deque-push-back records record)
+            (incf candidate-count)))))
+    (values (coerce (deque->vector records) 'list)
             candidate-count)))
 
 (-> application--history-floor-ensure
