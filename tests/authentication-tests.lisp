@@ -122,11 +122,311 @@
      "OAuth error extraction bounds an untrusted string code"))
   nil)
 
+(-> authentication-tests--test-api-key-prompt () null)
+(defun authentication-tests--test-api-key-prompt ()
+  "Test API-key entry gives explicit hidden-input instructions without echoing."
+  (let* ((escape (code-char 27))
+         (key "secret-test-key")
+         (input
+           (make-string-input-stream
+            (format nil "~C[200~~~A~C[201~~~%" escape key escape)))
+         (output (make-string-output-stream))
+         (value
+            (api-key-read-hidden
+             "Example"
+             :input input
+             :input-file-descriptor -1
+             :stream output
+             :note "EXAMPLE_API_KEY overrides the stored key when set."))
+         (text (get-output-stream-string output)))
+    (test-assert
+     (string= value key)
+     "API-key entry removes bracketed-paste markers")
+    (test-assert
+     (and (search "Example authentication" text)
+          (search "Paste the Example API key below, then press Enter." text)
+          (search "Input is hidden. Nothing will appear" text)
+          (search "EXAMPLE_API_KEY overrides the stored key" text)
+          (search "API key" text)
+          (not (search key text)))
+     "API-key entry clearly labels the hidden field without echoing its value"))
+  nil)
+
+(defclass authentication-test-error-input-stream
+    (sb-gray:fundamental-character-input-stream)
+  ()
+  (:documentation "A test stream that fails as soon as API-key input is read."))
+
+(defmethod sb-gray:stream-read-char
+    ((stream authentication-test-error-input-stream))
+  "Signal a synthetic input failure for STREAM."
+  (declare (ignore stream))
+  (error "synthetic API-key input failure"))
+
+(-> authentication-tests--test-api-key-terminal-mode () null)
+(defun authentication-tests--test-api-key-terminal-mode ()
+  "Test hidden entry detects descriptors, fails closed, and always restores modes."
+  (let ((restored nil))
+    (test-call-with-function-replacements
+     (list
+      (list 'api-key--hidden-input-mode
+            (lambda (input configured-descriptor)
+              (declare (ignore input configured-descriptor))
+              (cons 7 ':saved-mode)))
+      (list 'api-key--restore-input-mode
+            (lambda (saved-mode)
+              (setf restored saved-mode)
+              nil)))
+     (lambda ()
+       (test-assert
+        (string=
+         (api-key-read-hidden
+          "Example"
+          :input (make-string-input-stream (format nil "restored-key~%"))
+          :stream (make-string-output-stream))
+         "restored-key")
+        "API-key entry returns the entered key when concealment succeeds")))
+    (test-assert
+     (equal restored (cons 7 ':saved-mode))
+     "API-key entry restores the saved terminal mode after reading"))
+  (let ((restore-count 0)
+        (restored nil))
+    (test-call-with-function-replacements
+     (list
+      (list 'api-key--hidden-input-mode
+            (lambda (input configured-descriptor)
+              (declare (ignore input configured-descriptor))
+              (cons 8 ':saved-mode)))
+      (list 'api-key--restore-input-mode
+            (lambda (saved-mode)
+              (incf restore-count)
+              (setf restored saved-mode)
+              nil)))
+     (lambda ()
+       (test-assert
+        (handler-case
+            (progn
+              (api-key-read-hidden
+               "Example"
+               :input (make-instance 'authentication-test-error-input-stream)
+               :stream (make-string-output-stream))
+              nil)
+          (simple-error ()
+            t))
+        "API-key entry propagates an input failure after concealment")))
+    (test-assert
+     (and (= restore-count 1)
+          (equal restored (cons 8 ':saved-mode)))
+     "API-key entry restores the saved terminal mode exactly once after read failure"))
+  (let ((input (make-string-input-stream (format nil "must-not-be-read~%"))))
+    (test-call-with-function-replacements
+     (list
+      (list 'api-key--hidden-input-mode
+            (lambda (ignored configured-descriptor)
+              (declare (ignore ignored configured-descriptor))
+              (error 'authentication-error
+                     :message "synthetic concealment failure"))))
+     (lambda ()
+       (test-assert
+        (handler-case
+            (progn
+              (api-key-read-hidden
+               "Example"
+               :input input
+               :stream (make-string-output-stream))
+              nil)
+          (authentication-error ()
+            t))
+        "API-key entry fails instead of reading when concealment fails")))
+    (test-assert
+     (string= (read-line input) "must-not-be-read")
+     "failed concealment leaves the API key unread"))
+  (let ((input (make-string-input-stream (format nil "descriptorless-key~%"))))
+    (test-assert
+     (handler-case
+         (progn
+           (api-key-read-hidden
+            "Example"
+            :input input
+            :stream (make-string-output-stream))
+           nil)
+       (authentication-error ()
+         t))
+     "API-key entry rejects an input wrapper without a known descriptor")
+    (test-assert
+     (string= (read-line input) "descriptorless-key")
+     "descriptorless failure leaves the API key unread"))
+  (let ((input (make-string-input-stream (format nil "bound-wrapper-key~%"))))
+    (let ((*standard-input* input))
+      (test-assert
+       (handler-case
+           (progn
+             (api-key-read-hidden
+              "Example"
+              :input input
+              :stream (make-string-output-stream))
+             nil)
+         (authentication-error ()
+           t))
+       "a descriptorless standard-input wrapper still fails closed"))
+    (test-assert
+     (string= (read-line input) "bound-wrapper-key")
+     "a descriptorless standard-input wrapper remains unread"))
+  (let ((process nil))
+    (unwind-protect
+         (progn
+           (setf process
+                 (sb-ext:run-program "/bin/sh"
+                                     '("-c" "sleep 10")
+                                     :pty t
+                                     :wait nil))
+           (let* ((pty (sb-ext:process-pty process))
+                  (descriptor (sb-sys:fd-stream-fd pty))
+                  (input (make-string-input-stream (format nil "wrapped-key~%"))))
+             (test-assert
+              (not (interactive-stream-p input))
+              "the descriptor test uses a noninteractive input wrapper")
+             (test-assert
+              (api-key--interactive-file-descriptor-p descriptor)
+              "API-key entry recognizes the wrapped TTY descriptor")
+              (let* ((original (sb-posix:tcgetattr descriptor))
+                     (echo-mode (sb-posix:tcgetattr descriptor)))
+                (unwind-protect
+                     (progn
+                       (setf (sb-posix:termios-lflag echo-mode)
+                             (logior (sb-posix:termios-lflag echo-mode)
+                                     sb-posix:echo))
+                       (sb-posix:tcsetattr descriptor sb-posix:tcsanow echo-mode)
+                       (let* ((before (sb-posix:tcgetattr descriptor))
+                              (before-flags (sb-posix:termios-lflag before))
+                              (saved-mode
+                                (api-key--hidden-input-mode input descriptor))
+                              (during (sb-posix:tcgetattr descriptor))
+                              (during-flags (sb-posix:termios-lflag during)))
+                         (unwind-protect
+                              (test-assert
+                               (and
+                                (not (zerop (logand before-flags sb-posix:echo)))
+                                (zerop (logand during-flags sb-posix:echo)))
+                               "API-key concealment clears ECHO on the actual TTY")
+                           (api-key--restore-input-mode saved-mode))
+                         (test-assert
+                          (= (sb-posix:termios-lflag (sb-posix:tcgetattr descriptor))
+                             before-flags)
+                          "API-key concealment restores the actual TTY mode")))
+                  (sb-posix:tcsetattr descriptor sb-posix:tcsanow original)))
+             (test-assert
+              (string=
+               (api-key-read-hidden
+                "Example"
+                :input input
+                :input-file-descriptor descriptor
+                :stream (make-string-output-stream))
+               "wrapped-key")
+              "API-key entry conceals a TTY reached through a noninteractive wrapper")))
+      (when process
+        (ignore-errors (sb-ext:process-kill process 15))
+        (ignore-errors (sb-ext:process-wait process)))))
+  nil)
+
+(-> authentication-tests--test-provider-api-key-prompts () null)
+(defun authentication-tests--test-provider-api-key-prompts ()
+  "Test built-in API-key providers use the shared hidden prompt and secret scope."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (calls nil)
+         (fireworks-secret-use-active-p nil)
+         (fireworks-input-descriptor nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'api-key-read-hidden
+                 (lambda (provider-name
+                          &key input input-file-descriptor stream note)
+                   (declare (ignore input stream))
+                   (when (string= provider-name "Fireworks")
+                     (setf fireworks-input-descriptor input-file-descriptor))
+                   (push (list provider-name note) calls)
+                   (format nil "~A-test-key" (string-downcase provider-name))))
+           (list 'anthropic-validate-api-key
+                 (lambda (key)
+                   (declare (ignore key))
+                   nil))
+           (list 'fireworks-validate-api-key
+                 (lambda (key)
+                   (declare (ignore key))
+                   (setf fireworks-secret-use-active-p
+                         (secret-use-active-p))
+                   nil)))
+          (lambda ()
+            (anthropic-api-key-login
+             (anthropic-credential-manager-create configuration)
+             :stream (make-string-output-stream))
+            (fireworks-api-key-login
+             (fireworks-credential-manager-create configuration)
+             :stream (make-string-output-stream)
+             :input (make-string-input-stream "")
+             :input-file-descriptor 17)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))
+    (test-assert
+     (and
+      (find "Anthropic" calls :key #'first :test #'string=)
+      (find "Fireworks" calls :key #'first :test #'string=)
+      (every (lambda (call)
+               (search "overrides the stored key" (second call)))
+             calls))
+     "Anthropic and Fireworks use the shared labeled prompt with override guidance")
+    (test-assert
+     (and fireworks-secret-use-active-p
+          (= fireworks-input-descriptor 17)
+          (not (secret-use-active-p)))
+     "Fireworks forwards its descriptor, validates in secret scope, and releases it"))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (fireworks-secret-use-active-p nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'api-key-read-hidden
+                 (lambda (provider-name
+                          &key input input-file-descriptor stream note)
+                   (declare
+                    (ignore provider-name input input-file-descriptor stream note))
+                   "fireworks-test-key"))
+           (list 'fireworks-validate-api-key
+                 (lambda (key)
+                   (declare (ignore key))
+                   (setf fireworks-secret-use-active-p
+                         (secret-use-active-p))
+                   (error 'authentication-error
+                          :message "synthetic Fireworks validation failure"))))
+          (lambda ()
+            (test-assert
+             (handler-case
+                 (progn
+                   (fireworks-api-key-login
+                    (fireworks-credential-manager-create configuration)
+                    :stream (make-string-output-stream)
+                    :input (make-string-input-stream ""))
+                   nil)
+               (authentication-error ()
+                 t))
+             "Fireworks login propagates validation failure")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))
+    (test-assert
+     (and fireworks-secret-use-active-p
+          (not (secret-use-active-p)))
+     "Fireworks validation failure releases its secret scope"))
+  nil)
+
 (-> test-authentication-store () null)
 (defun test-authentication-store ()
   "Test private credential storage without exposing real authentication data."
   (authentication-tests--test-secret-use-quiescence)
   (authentication-tests--test-oauth-error-code)
+  (authentication-tests--test-api-key-prompt)
+  (authentication-tests--test-api-key-terminal-mode)
+  (authentication-tests--test-provider-api-key-prompts)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (source (make-instance 'autolith-credential-source

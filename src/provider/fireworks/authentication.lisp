@@ -168,48 +168,47 @@
                  "The Fireworks API key could not be validated; check the network."))))
   nil)
 
-(-> fireworks--read-api-key (stream stream) string)
-(defun fireworks--read-api-key (input output)
-  "Read one API key from INPUT without terminal echo when INPUT is interactive."
-  (if (not (interactive-stream-p input))
-      (or (read-line input nil "") "")
-      (let* ((descriptor (sb-sys:fd-stream-fd input))
-             (saved-mode (sb-posix:tcgetattr descriptor))
-             (hidden-mode (sb-posix:tcgetattr descriptor)))
-        (setf (sb-posix:termios-lflag hidden-mode)
-              (logandc2 (sb-posix:termios-lflag hidden-mode) sb-posix:echo))
-        (sb-posix:tcsetattr descriptor sb-posix:tcsanow hidden-mode)
-        (unwind-protect
-             (or (read-line input nil "") "")
-          (sb-posix:tcsetattr descriptor sb-posix:tcsanow saved-mode)
-          (terpri output)
-          (finish-output output)))))
 
 (-> fireworks-api-key-login
-    (fireworks-credential-manager &key (:stream t) (:input t))
+    (fireworks-credential-manager &key
+                                  (:stream stream)
+                                  (:input stream)
+                                  (:input-file-descriptor (option integer)))
     string)
-(defun fireworks-api-key-login (manager
-                                &key (stream *standard-output*)
-                                     (input *standard-input*))
+(defun fireworks-api-key-login
+    (manager
+     &key
+       (stream *standard-output*)
+       (input *standard-input*)
+       input-file-descriptor)
   "Prompt for a Fireworks API key, validate it, and save it to MANAGER's store."
-  (format stream "~&Enter your Fireworks API key.~%It is also read from ~A when set.~%API key: "
-          *fireworks-environment-variable*)
-  (finish-output stream)
-  (let ((key (string-trim '(#\Space #\Tab #\Newline #\Return)
-                          (fireworks--read-api-key input stream))))
-    (unless (non-empty-string-p key)
-      (error 'authentication-error
-             :message "No Fireworks API key was entered."))
-    (fireworks-validate-api-key key)
-    (credential-source-save
-     (credential-manager-primary-source manager)
-     (make-instance 'oauth-credentials
-                    :access-token key
-                    :refresh-token nil
-                    :id-token nil
-                    :account-id *fireworks-account-label*
-                    :expires-at nil
-                    :source-path
-                    (credential-source-pathname
-                     (credential-manager-primary-source manager))))
-    "Fireworks authentication was saved by Autolith."))
+  (call-with-secret-use
+   (lambda ()
+     (let ((key
+             (string-trim
+              '(#\Space #\Tab #\Newline #\Return)
+               (or (api-key-read-hidden
+                    "Fireworks"
+                    :input input
+                    :input-file-descriptor input-file-descriptor
+                    :stream stream
+                    :note
+                    (format nil "~A overrides the stored key when set."
+                            *fireworks-environment-variable*))
+                  ""))))
+       (unless (non-empty-string-p key)
+         (error 'authentication-error
+                :message "No Fireworks API key was entered."))
+       (fireworks-validate-api-key key)
+       (credential-source-save
+        (credential-manager-primary-source manager)
+        (make-instance 'oauth-credentials
+                       :access-token key
+                       :refresh-token nil
+                       :id-token nil
+                       :account-id *fireworks-account-label*
+                       :expires-at nil
+                       :source-path
+                       (credential-source-pathname
+                        (credential-manager-primary-source manager))))
+       "Fireworks authentication was saved by Autolith."))))

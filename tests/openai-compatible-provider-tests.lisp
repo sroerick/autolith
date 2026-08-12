@@ -27,6 +27,45 @@
     :pathname (configuration-api-keys-path configuration))
    api-key))
 
+(-> openai-compatible-provider-tests--call-with-input
+    (string function)
+    t)
+(defun openai-compatible-provider-tests--call-with-input (content function)
+  "Call FUNCTION with a descriptor-backed input stream containing CONTENT."
+  (multiple-value-bind (read-descriptor write-descriptor)
+      (sb-posix:pipe)
+    (let ((input nil)
+          (output nil))
+      (unwind-protect
+           (progn
+             (setf input
+                   (sb-sys:make-fd-stream
+                    read-descriptor
+                    :input t
+                    :element-type 'character
+                    :external-format :utf-8
+                    :buffering ':none
+                    :auto-close nil)
+                   output
+                   (sb-sys:make-fd-stream
+                    write-descriptor
+                    :output t
+                    :element-type 'character
+                    :external-format :utf-8
+                    :buffering ':none
+                    :auto-close nil))
+              (write-string content output)
+              (finish-output output)
+              (close output)
+              (setf output nil)
+              (funcall function input))
+        (when input
+          (close input))
+        (when output
+          (close output))
+        (ignore-errors (sb-posix:close read-descriptor))
+        (ignore-errors (sb-posix:close write-descriptor))))))
+
 (-> test-openai-compatible-provider-bootstrap () null)
 (defun test-openai-compatible-provider-bootstrap ()
   "Test deferred startup validation for user-defined model metadata."
@@ -568,17 +607,18 @@
                     (provider-authentication-provider
                      configuration "bootstrap-auth"))
                   (output (make-string-output-stream))
-                  (message
-                    (let ((*standard-input*
-                            (make-string-input-stream
-                             (format nil
-                                     "~C[200~~bootstrap-key~C[201~~~%"
-                                     *terminal-escape-character*
-                                     *terminal-escape-character*)))
-                          (*standard-output* output))
-                      (provider-authenticate provider
-                                             :stream output
-                                             :open-browser-p nil))))
+                   (message
+                     (openai-compatible-provider-tests--call-with-input
+                      (format nil
+                              "~C[200~~bootstrap-key~C[201~~~%"
+                              *terminal-escape-character*
+                              *terminal-escape-character*)
+                      (lambda (input)
+                        (let ((*standard-input* input)
+                              (*standard-output* output))
+                          (provider-authenticate provider
+                                                 :stream output
+                                                 :open-browser-p nil))))))
              (test-assert
               (typep provider 'openai-compatible-provider)
               "named authentication creates a discovery-only provider before a key exists")
@@ -743,15 +783,16 @@
                     nil)
                 (configuration-error () t))
               "reload rejects a lost active custom provider instead of falling back")
-             (let* ((output (make-string-output-stream))
-                    (message
-                      (let ((*standard-input*
-                              (make-string-input-stream
-                               (format nil "~A~%" key)))
-                            (*standard-output* output))
-                        (provider-authenticate provider
-                                               :stream output
-                                               :open-browser-p nil))))
+              (let* ((output (make-string-output-stream))
+                     (message
+                       (openai-compatible-provider-tests--call-with-input
+                        (format nil "~A~%" key)
+                        (lambda (input)
+                          (let ((*standard-input* input)
+                                (*standard-output* output))
+                            (provider-authenticate provider
+                                                   :stream output
+                                                   :open-browser-p nil))))))
                (test-assert
                 (and (search "API key was saved" message)
                      (not (search key message))
@@ -1023,14 +1064,16 @@
                      :family ':prompt-openai
                      :headers nil
                      :reasoning-parameter nil))
-                  (prompt-output (make-string-output-stream))
-                  (prompt-input (make-string-input-stream "prompt-key\n"))
-                  (message
-                    (let ((*standard-input* prompt-input)
-                          (*standard-output* prompt-output))
-                      (provider-authenticate prompt-provider
-                                             :stream prompt-output
-                                             :open-browser-p nil))))
+                   (prompt-output (make-string-output-stream))
+                   (message
+                     (openai-compatible-provider-tests--call-with-input
+                      "prompt-key\n"
+                      (lambda (input)
+                        (let ((*standard-input* input)
+                              (*standard-output* prompt-output))
+                          (provider-authenticate prompt-provider
+                                                 :stream prompt-output
+                                                 :open-browser-p nil))))))
              (test-assert
               (and (search "API key was saved" message)
                    (not (search "prompt-key" message))

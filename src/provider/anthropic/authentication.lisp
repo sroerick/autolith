@@ -138,16 +138,18 @@
     string)
 (defun anthropic-api-key-login (manager &key (stream *standard-output*))
   "Prompt for, validate, and store the Anthropic API key."
-  (format stream
-          "~&The key is stored in Autolith's private credential store; ~
-           the ~A environment variable overrides it.~%"
-          *anthropic-environment-variable*)
-  (finish-output stream)
   (call-with-secret-use
    (lambda ()
-     (let ((key (string-trim '(#\Space #\Tab #\Newline #\Return)
-                             (or (openai-compatible--read-api-key "Anthropic" stream)
-                                 ""))))
+     (let ((key
+             (string-trim
+              '(#\Space #\Tab #\Newline #\Return)
+              (or (api-key-read-hidden
+                   "Anthropic"
+                   :stream stream
+                   :note
+                   (format nil "~A overrides the stored key when set."
+                           *anthropic-environment-variable*))
+                  ""))))
        (unless (non-empty-string-p key)
          (error 'authentication-error
                 :message "No Anthropic API key was entered."))

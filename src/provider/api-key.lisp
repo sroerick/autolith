@@ -191,6 +191,98 @@
        credentials))))
 
 
+;;;; -- Interactive API-Key Input --
+
+(-> api-key--strip-bracketed-paste (string) string)
+(defun api-key--strip-bracketed-paste (text)
+  "Remove one terminal bracketed-paste wrapper from TEXT."
+  (let* ((escape (code-char 27))
+         (start  (format nil "~C[200~~" escape))
+         (end    (format nil "~C[201~~" escape)))
+    (if (and (uiop:string-prefix-p start text)
+             (uiop:string-suffix-p text end)
+             (>= (length text) (+ (length start) (length end))))
+        (subseq text (length start) (- (length text) (length end)))
+        text)))
+
+(-> api-key--input-file-descriptor (stream (option integer)) (option integer))
+(defun api-key--input-file-descriptor (input configured)
+  "Return INPUT's configured or direct file descriptor."
+  (or configured
+      (ignore-errors (sb-sys:fd-stream-fd input))))
+
+(-> api-key--interactive-file-descriptor-p (integer) boolean)
+(defun api-key--interactive-file-descriptor-p (file-descriptor)
+  "Return true when FILE-DESCRIPTOR names an interactive terminal."
+  (and (not (minusp file-descriptor))
+       (let ((result (sb-unix:unix-isatty file-descriptor)))
+         (and result (plusp result)))))
+
+(-> api-key--hidden-input-mode (stream (option integer)) (option cons))
+(defun api-key--hidden-input-mode (input configured-descriptor)
+  "Hide terminal echo for INPUT's known descriptor and return the mode to restore."
+  (let ((descriptor
+          (api-key--input-file-descriptor input configured-descriptor)))
+    (when (null descriptor)
+      (error 'authentication-error
+             :message
+             "Could not identify the input descriptor for API-key entry; no key was read."))
+    (when (api-key--interactive-file-descriptor-p descriptor)
+      (handler-case
+          (let ((saved-mode (sb-posix:tcgetattr descriptor))
+                (hidden-mode (sb-posix:tcgetattr descriptor)))
+            (setf (sb-posix:termios-lflag hidden-mode)
+                  (logandc2 (sb-posix:termios-lflag hidden-mode) sb-posix:echo))
+            (sb-posix:tcsetattr descriptor sb-posix:tcsanow hidden-mode)
+            (cons descriptor saved-mode))
+        (error ()
+          (error 'authentication-error
+                 :message
+                 "Could not disable terminal echo for API-key entry; no key was read."))))))
+
+(-> api-key--restore-input-mode (cons) null)
+(defun api-key--restore-input-mode (saved-mode)
+  "Restore one terminal mode returned by API-KEY--HIDDEN-INPUT-MODE."
+  (sb-posix:tcsetattr (first saved-mode)
+                      sb-posix:tcsanow
+                      (rest saved-mode))
+  nil)
+
+(-> api-key-read-hidden
+    (string &key
+            (:input stream)
+            (:input-file-descriptor (option integer))
+            (:stream stream)
+            (:note (option string)))
+    (option string))
+(defun api-key-read-hidden
+    (provider-name
+     &key
+       (input *standard-input*)
+       input-file-descriptor
+       (stream *standard-output*)
+       note)
+  "Clearly prompt for PROVIDER-NAME's API key and read it without terminal echo."
+  (format stream
+          "~&╭─ ~A authentication~%~
+             │ Paste the ~A API key below, then press Enter.~%~
+             │ Input is hidden. Nothing will appear while you type or paste.~%"
+          provider-name provider-name)
+  (when (non-empty-string-p note)
+    (format stream "│ ~A~%" note))
+  (write-string "╰─ API key › " stream)
+  (finish-output stream)
+  (let ((saved-mode
+          (api-key--hidden-input-mode input input-file-descriptor)))
+    (unwind-protect
+         (let ((value (read-line input nil nil)))
+           (and value (api-key--strip-bracketed-paste value)))
+      (when saved-mode
+        (api-key--restore-input-mode saved-mode))
+      (terpri stream)
+      (finish-output stream))))
+
+
 ;;;; -- API-Key Credential Manager --
 
 (defclass api-key-credential-manager (credential-manager)

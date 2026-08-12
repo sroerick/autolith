@@ -74,45 +74,6 @@
    :reasoning-parameter
    (openai-compatible-provider-reasoning-parameter provider)))
 
-(-> openai-compatible--strip-bracketed-paste (string) string)
-(defun openai-compatible--strip-bracketed-paste (text)
-  "Remove one terminal bracketed-paste wrapper from TEXT."
-  (let* ((escape (code-char 27))
-         (start (format nil "~C[200~~" escape))
-         (end (format nil "~C[201~~" escape)))
-    (if (and (uiop:string-prefix-p start text)
-             (uiop:string-suffix-p text end)
-             (>= (length text) (+ (length start) (length end))))
-        (subseq text (length start) (- (length text) (length end)))
-        text)))
-
-(-> openai-compatible--read-api-key (string stream) (option string))
-(defun openai-compatible--read-api-key (provider-name stream)
-  "Read one API key from standard input without echoing interactive input."
-  (let ((output (or stream *standard-output*))
-        (saved-mode
-          (and (interactive-stream-p *standard-input*)
-               (handler-case
-                   (sb-posix:tcgetattr 0)
-                 (error () nil)))))
-    (format output
-            "~&Enter the ~A API key (input hidden; paste, then press Enter): "
-            provider-name)
-    (finish-output output)
-    (unwind-protect
-         (progn
-           (when saved-mode
-             (let ((active-mode (sb-posix:tcgetattr 0)))
-               (setf (sb-posix:termios-lflag active-mode)
-                     (logandc2 (sb-posix:termios-lflag active-mode)
-                               sb-posix:echo))
-               (sb-posix:tcsetattr 0 sb-posix:tcsanow active-mode)))
-           (openai-compatible--strip-bracketed-paste
-            (read-line *standard-input* nil nil)))
-      (when saved-mode
-        (sb-posix:tcsetattr 0 sb-posix:tcsanow saved-mode))
-      (terpri output)
-      (finish-output output))))
 
 (-> openai-compatible--authenticate
     (openai-compatible-provider &key
@@ -127,7 +88,9 @@
          (provider-name (provider-account-label provider)))
     (call-with-secret-use
      (lambda ()
-       (let ((api-key (openai-compatible--read-api-key provider-name stream)))
+        (let ((api-key (api-key-read-hidden
+                        provider-name
+                        :stream (or stream *standard-output*))))
          (setf api-key
                (and api-key
                     (string-trim '(#\Space #\Tab #\Newline #\Return)
