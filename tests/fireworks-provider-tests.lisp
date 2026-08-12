@@ -203,6 +203,13 @@
                                            "effort")
                                  "high")
                         "default Ultra reasoning clamps to Fireworks high effort")
+           (test-assert (fireworks-model-reasoning-effort-p
+                         "accounts/fireworks/models/kimi-k3")
+                        "kimi-k3 keeps reasoning effort support")
+           (test-assert
+            (not (fireworks-model-reasoning-effort-p
+                  "accounts/fireworks/models/qwen3p7-plus"))
+            "qwen3p7-plus is registered as reasoning-effort-free")
            (test-assert (eq (json-get request "store") false)
                         "Fireworks requests never store server-side responses")
            (test-assert (eq (json-get request "stream") t)
@@ -230,6 +237,41 @@
              (test-assert
               (zerop (length (json-get compaction-request "tools")))
               "compaction requests carry no tools")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> fireworks-provider-test--reasoning-omission () null)
+(defun fireworks-provider-test--reasoning-omission ()
+  "Test that reasoning-effort-free models omit the reasoning request object."
+  (let* ((base-configuration
+           (configuration-with-model (test-configuration) "accounts/fireworks/models/qwen3p7-plus"))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration
+                                 :working-directory root)))
+    (unwind-protect
+         (let* ((conversation (conversation-create configuration
+                                                   :identifier "fireworks-qwen-shape"))
+                (provider (fireworks-provider-create configuration))
+                (request nil))
+           (conversation-append-user-message conversation "hello")
+           (setf request (provider-request-object provider conversation #()))
+           (test-assert (string= (json-get request "model") "accounts/fireworks/models/qwen3p7-plus")
+                        "the request names the reasoning-free model")
+           (test-assert
+            (equal (configuration--reasoning-efforts-for
+                    (configuration-model configuration))
+                   '("none"))
+            "qwen3p7-plus offers no ignored reasoning choices")
+           (multiple-value-bind (reasoning present-p)
+               (gethash "reasoning" request)
+             (declare (ignore reasoning))
+             (test-assert (not present-p)
+                          "reasoning-free models omit the reasoning object"))
+           (test-assert (eq (json-get request "store") false)
+                        "store=false still rides reasoning-free requests")
+           (test-assert (eq (json-get request "stream") t)
+                        "streaming still rides reasoning-free requests"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -268,5 +310,6 @@
   (fireworks-provider-test--credential-source)
   (fireworks-provider-test--wire-tools)
   (fireworks-provider-test--request-shape)
+  (fireworks-provider-test--reasoning-omission)
   (fireworks-provider-test--static-authentication-rejection)
   nil)

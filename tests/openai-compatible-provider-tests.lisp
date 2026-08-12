@@ -686,6 +686,7 @@
                            "gpt-5.6-terra"
                            "grok-4.5"
                            "accounts/fireworks/models/kimi-k3"
+                           "accounts/fireworks/models/qwen3p7-plus"
                            "claude-opus-5"
                            "claude-sonnet-5"
                            "claude-haiku-4-5-20251001"

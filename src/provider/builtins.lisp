@@ -84,7 +84,11 @@
  :family ':fireworks
  :protocol ':responses
  :models '((:name "accounts/fireworks/models/kimi-k3"
-            :context-window 1048576))
+            :context-window 1048576)
+           ;; Fireworks advertises a 262k token context window.
+           (:name "accounts/fireworks/models/qwen3p7-plus"
+            :context-window 262144
+            :reasoning-efforts ("none")))
  :factory #'provider--fireworks-registration-factory
  :authenticator #'provider--fireworks-registration-authenticator
  :endpoint *fireworks-responses-endpoint*

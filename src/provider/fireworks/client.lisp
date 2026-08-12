@@ -58,7 +58,12 @@
 
 ;;;; -- Fireworks Protocol Specializations --
 
-(defparameter *fireworks-reasoning-effort-models-blacklist* '()
+;; Verified 2026-08-11 against the live Fireworks Responses API: every
+;; effort level Autolith can send (low, medium, high) fails for this model
+;; with a 404 'Model not found, inaccessible, and/or not deployed', while
+;; omitting the reasoning object succeeds.
+(defparameter *fireworks-reasoning-effort-models-blacklist*
+  '("accounts/fireworks/models/qwen3p7-plus")
   "Fireworks model identifiers whose serving stacks reject any reasoning
 effort parameter.  Requests for these models must omit the reasoning
 object entirely; see PROVIDER-RESPONSES-WIRE-EFFORT.")
