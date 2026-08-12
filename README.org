@@ -2,6 +2,24 @@
 #+SUBTITLE: A live, self-modifying Common Lisp terminal agent
 #+STARTUP: content
 
+#+begin_src
+
+  :::.      :::        AUTOLITH v0.32.1
+  ;;`;;     ;;;        ─────────────────────────────────────────
+ ,[[ '[[,   [[[        model         gpt-5.6-terra (effort high)
+c$$$cc$$$c  $$'        workspace     /root/common-lisp/frob/
+ 888   888,o88oo,.__
+ YMM   ""` """"YUMMM
+
+Autolith executes model-generated code with your user privileges.
+Sandboxing is no substitute for human oversight
+
+Tip: (ste) toggles short, direct Simple Technical English replies.
+
+❯ Ask Autolith anything. Type (help) for operations.
+
+#+end_src
+
 Autolith, or AL, is a terminal agent inside a live Common Lisp image. It can
 observe, self-modify, discover, introspect its own code, its live state and what
 it's doing. This lets Autolith adapt to the user's preferences or to what is needed
