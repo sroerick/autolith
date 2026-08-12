@@ -687,13 +687,14 @@
 
 (-> application--model-items (application) list)
 (defun application--model-items (application)
-  "Return picker items for all effective registered provider models."
+  "Return picker items for the configured provider's models."
   (let ((current (configuration-model
                   (application-configuration application))))
     (loop for model in (provider-model-identifiers)
           for provider-name = (provider-model-provider-name model)
           for metadata = (provider-model-for model)
-          collect (list :name model
+          when (string= provider-name (provider-model-provider-name current))
+            collect (list :name model
                         :argument nil
                         :group provider-name
                         :description
@@ -708,7 +709,7 @@
 
 (-> application--models-description (application) string)
 (defun application--models-description (application)
-  "Return a readable listing of effective registered provider models."
+  "Return a readable listing of the configured provider's models."
   (let ((current (configuration-model
                   (application-configuration application))))
     (if (null (provider-model-identifiers))
@@ -718,7 +719,9 @@
                 (loop for model in (provider-model-identifiers)
                       for provider-name = (provider-model-provider-name model)
                       for metadata = (provider-model-for model)
-                      collect
+                        when (string= provider-name
+                                      (provider-model-provider-name current))
+                          collect
                       (format nil "- ~A / ~A~:[~; (current)~]~@[ - ~A~]"
                               provider-name
                               model
