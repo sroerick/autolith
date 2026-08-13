@@ -170,9 +170,16 @@
     :type (option string)
     :documentation "The newest user or assistant text retained for conversation pickers.")
    (user-operation-records
-    :initform nil
-    :accessor conversation-user-operation-records
-    :type list
+    :initform (make-deque
+               :maximum-count 16
+               :weight-function
+               (lambda (record)
+                 (let ((properties (rest record)))
+                   (+ (length (getf properties :source))
+                      (length (getf properties :result)))))
+               :maximum-weight 32000)
+    :reader conversation-user-operation-records
+    :type deque
     :documentation
     "Recent bounded local user operations in chronological durable order.")
    (latest-goal-record
@@ -585,7 +592,8 @@ reports an operating-system failure."
         (mapcar #'copy-seq
                 (conversation-durable-pending-input-identifiers conversation))
         :user-operation-records
-        (copy-tree (conversation-user-operation-records conversation))
+        (copy-tree (deque->list
+                    (conversation-user-operation-records conversation)))
         :latest-goal-record
         (copy-tree (conversation-latest-goal-record conversation))))
 

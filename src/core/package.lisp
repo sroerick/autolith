@@ -375,10 +375,13 @@
                 #:store-error)
   (:import-from #:structlisp
                 #:deque
+                #:deque->list
                 #:deque->vector
                 #:deque-clear
                 #:deque-empty-p
                 #:deque-front
+                #:deque-maximum-count
+                #:deque-maximum-weight
                 #:deque-pop-front
                 #:deque-push-back
                 #:deque-ref

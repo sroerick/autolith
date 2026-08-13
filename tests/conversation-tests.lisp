@@ -388,7 +388,7 @@
                         expected-last-activity)
                      (equal (conversation-pending-input-identifiers loaded)
                             '("pending-before-compaction"))
-                     (= (length (conversation-user-operation-records loaded)) 1)
+                     (= (length (conversation-user-operation-snapshot loaded)) 1)
                      (string=
                       (getf (rest (conversation-latest-goal-record loaded))
                             :objective)

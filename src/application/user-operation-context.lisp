@@ -114,41 +114,22 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
           :status (getf properties :status)
           :result (copy-seq (getf properties :result)))))
 
-(-> conversation-user-operation--character-count (list) (integer 0))
-(defun conversation-user-operation--character-count (record)
-  "Return the retained source and result character count for RECORD."
-  (let ((properties (rest record)))
-    (+ (length (getf properties :source))
-       (length (getf properties :result)))))
-
-(-> conversation-user-operation--retention-limit (t (integer 0)) (integer 0))
-(defun conversation-user-operation--retention-limit (value fallback)
-  "Return nonnegative integer VALUE, or stable FALLBACK for invalid live policy."
-  (if (typep value '(integer 0)) value fallback))
-
-(-> conversation-user-operation--retain-record (conversation list) list)
+(-> conversation-user-operation--retain-record (conversation list) (option list))
 (defun conversation-user-operation--retain-record (conversation record)
   "Retain a bounded chronological copy of user-operation RECORD."
   (with-recursive-lock-held ((conversation-append-lock conversation))
-    (let* ((count-limit
-             (conversation-user-operation--retention-limit
-              *conversation-user-operation-count-limit* 16))
-           (character-limit
-             (conversation-user-operation--retention-limit
-              *conversation-user-operation-character-limit* 32000))
-           (records
-             (append (conversation-user-operation-records conversation)
-                     (list (conversation-user-operation--copy-record record)))))
-      (loop while
-            (and records
-                 (or (> (length records) count-limit)
-                     (> (reduce #'+ records
-                                :key #'conversation-user-operation--character-count
-                                :initial-value 0)
-                        character-limit)))
-            do (setf records (rest records)))
-      (setf (conversation-user-operation-records conversation) records)
-      (and records (first (last records))))))
+    (let* ((records (conversation-user-operation-records conversation))
+           (copy (conversation-user-operation--copy-record record)))
+      (setf (deque-maximum-count records)
+            (if (typep *conversation-user-operation-count-limit* '(integer 0))
+                *conversation-user-operation-count-limit*
+                16)
+            (deque-maximum-weight records)
+            (if (typep *conversation-user-operation-character-limit* '(integer 0))
+                *conversation-user-operation-character-limit*
+                32000))
+      (deque-push-back records copy)
+      (and (not (deque-empty-p records)) copy))))
 
 (defmethod conversation--project-record
     ((kind (eql :user-operation)) (conversation conversation) properties)
@@ -207,7 +188,8 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
   "Return detached recent user-operation records in chronological order."
   (with-recursive-lock-held ((conversation-append-lock conversation))
     (mapcar #'conversation-user-operation--copy-record
-            (conversation-user-operation-records conversation))))
+            (deque->list
+             (conversation-user-operation-records conversation)))))
 
 
 ;;;; -- Interactive Command Capture --

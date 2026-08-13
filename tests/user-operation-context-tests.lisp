@@ -268,19 +268,28 @@
                                (conversation-user-operation-snapshot conversation))
                        '("two" "three"))
                 "the recent operation projection evicts oldest records by count"))
-             (let ((*conversation-user-operation-count-limit* 16)
-                   (*conversation-user-operation-character-limit* 8))
-               (conversation-append-user-operation
-                conversation
-                :kind ':command
-                :source "four"
-                :status ':ok
-                :result "1234")
-               (test-assert
-                (equal (mapcar #'user-operation-context-tests--source
-                               (conversation-user-operation-snapshot conversation))
-                       '("four"))
-                "the recent operation projection evicts oldest records by aggregate characters")))
+              (let ((*conversation-user-operation-count-limit* 16)
+                    (*conversation-user-operation-character-limit* 8))
+                (conversation-append-user-operation
+                 conversation
+                 :kind ':command
+                 :source "four"
+                 :status ':ok
+                 :result "1234")
+                (let ((at-limit
+                        (conversation-user-operation-snapshot conversation)))
+                  (conversation-append-user-operation
+                   conversation
+                   :kind ':command
+                   :source "five"
+                   :status ':ok
+                   :result "12345")
+                  (test-assert
+                   (and
+                    (equal (mapcar #'user-operation-context-tests--source at-limit)
+                           '("four"))
+                    (null (conversation-user-operation-snapshot conversation)))
+                   "the character budget retains exact fits and evicts overweight records"))))
            (let ((conversation
                    (conversation-create configuration
                                         :identifier "user-operation-future-field")))
