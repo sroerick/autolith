@@ -128,10 +128,10 @@ let
     pname = "structlisp";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "structlisp";
-      rev = "3b424005faeae08170226c81c20ea1d0b9f2e55d";
-      hash = "sha256-fnQogtSDVMJ/O2dcfUht4IJAN58nZJ6iID/AmFEE82g=";
+      rev = "94186ffbe2ca56b00caabf8fe225482b488a54f7";
+      hash = "sha256-zt6LazCoXGZ2cv0a4vahcOgQ5b/mRrbZ6hRsBFgYh/M=";
     };
   };
 
