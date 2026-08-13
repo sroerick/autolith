@@ -17,7 +17,7 @@
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
       # Nix builds run on Linux x86-64 (the packaged release target) and on
       # macOS arm64. nix/package.nix asserts the same platform set.
-      systems = [ "x86_64-linux" "aarch64-darwin" ];
+      systems = [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
 
       perSystem = { pkgs, ... }:
         let
