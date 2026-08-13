@@ -390,6 +390,16 @@
                 #:deque-ref
                 #:deque-total-weight
                 #:make-deque
+                 #:fifo-cache
+                 #:fifo-cache-count
+                 #:fifo-cache-count-if
+                 #:fifo-cache-delete-first-if
+                 #:fifo-cache-find-if
+                 #:fifo-cache-get
+                 #:fifo-cache-map
+                 #:fifo-cache-put
+                 #:fifo-cache-total-weight
+                 #:make-fifo-cache
                 #:make-ordered-map
                 #:ordered-map
                 #:ordered-map-delete-if
