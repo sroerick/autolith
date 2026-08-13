@@ -2744,15 +2744,13 @@
            (progn
              (setf (application-configuration application) configuration
                    (application-conversation application) conversation)
-              (with-recursive-lock-held
-                  ((conversation-resource-observation-lock conversation))
-                (let ((states
-                        (conversation-resource-observations conversation)))
-                  (setf (gethash revision states) state
-                        (gethash partial-revision states) partial-state
-                        (gethash empty-revision states) empty-state
-                        (conversation-resource-observation-order conversation)
-                        (list revision partial-revision empty-revision))))
+               (with-recursive-lock-held
+                   ((conversation-resource-observation-lock conversation))
+                 (let ((states
+                         (conversation-resource-observations conversation)))
+                   (fifo-cache-put states revision state)
+                   (fifo-cache-put states partial-revision partial-state)
+                   (fifo-cache-put states empty-revision empty-state)))
              (let* ((entry
                       (workspace-replacement-entry application uri revision))
                     (text (markdown-tests--row-text entry)))
@@ -3006,13 +3004,12 @@
                        'agenda-observation-state
                        :alias revision
                        :observation observation)))
-               (with-recursive-lock-held
-                   ((conversation-resource-observation-lock conversation))
-                 (setf (gethash revision
-                                (conversation-resource-observations conversation))
-                       observation-state
-                       (conversation-resource-observation-order conversation)
-                       (list revision)))
+                (with-recursive-lock-held
+                    ((conversation-resource-observation-lock conversation))
+                  (fifo-cache-put
+                   (conversation-resource-observations conversation)
+                   revision
+                   observation-state))
                (with-recursive-lock-held (*agenda-lock*)
                  (agenda-update configuration
                                 (agenda-load configuration)
@@ -3224,19 +3221,13 @@
                        'memory-observation-state
                        :alias global-revision
                        :observation global-observation)))
-               (with-recursive-lock-held
-                   ((conversation-resource-observation-lock conversation))
-                 (setf (gethash item-revision
-                                (conversation-resource-observations conversation))
-                       item-state
-                       (gethash collection-revision
-                                (conversation-resource-observations conversation))
-                       collection-state
-                       (gethash global-revision
-                                (conversation-resource-observations conversation))
-                       global-state
-                       (conversation-resource-observation-order conversation)
-                       (list item-revision collection-revision global-revision)))
+                (with-recursive-lock-held
+                    ((conversation-resource-observation-lock conversation))
+                  (let ((states
+                          (conversation-resource-observations conversation)))
+                    (fifo-cache-put states item-revision item-state)
+                    (fifo-cache-put states collection-revision collection-state)
+                    (fifo-cache-put states global-revision global-state)))
                (memory-remember
                 configuration
                 :identifier identifier

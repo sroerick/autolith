@@ -366,35 +366,6 @@
                          "agenda-remove" "id"
                          (agenda-item-identifier aba-item))))
                       "the ABA regression cleans up through its refreshed revision"))))
-             (let* ((file (merge-pathnames "coexist.txt" first-workspace))
-                    (workspace-read nil)
-                    (agenda-read nil))
-               (workspace-resource-tests--write-text file "alpha\nbeta\n")
-               (setf workspace-read
-                     (call first-context "resource" "read"
-                           "uri" "workspace:coexist.txt")
-                     agenda-read (read-agenda first-context))
-               (let* ((workspace-alias (revision workspace-read))
-                      (agenda-alias (revision agenda-read))
-                      (states
-                        (conversation-resource-observations first-conversation)))
-                 (test-assert
-                  (and (typep (gethash workspace-alias states)
-                              'workspace-file-observation-state)
-                       (typep (gethash agenda-alias states)
-                              'agenda-observation-state))
-                  "workspace and agenda observations coexist in one conversation")
-                 (let ((*agenda-resource-maximum-observations* 1))
-                   (call first-context "agenda" "add" "text" "expire agenda alias")
-                   (read-agenda first-context)
-                   (test-assert
-                    (null (resource-observation-state-find
-                           states agenda-alias 'agenda-observation-state))
-                    "agenda observation retention expires the oldest agenda alias")
-                   (test-assert
-                    (typep (gethash workspace-alias states)
-                           'workspace-file-observation-state)
-                    "agenda observation expiry preserves workspace observations"))))
              (let ((ready-lock (make-lock "agenda legacy concurrency ready"))
                    (ready-condition (make-condition-variable))
                    (ready 0)

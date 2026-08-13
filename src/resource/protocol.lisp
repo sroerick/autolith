@@ -143,21 +143,29 @@
     :documentation "The complete internal observation represented by the alias."))
   (:documentation "Conversation-local state for one model-visible resource observation."))
 
-(-> resource-observation-state-new-alias (hash-table) non-empty-string)
+(defmethod resource-observation-state-weight
+    (alias (state resource-observation-state))
+  "Charge no retained workspace bytes for a general resource observation."
+  (declare (ignore alias state))
+  0)
+
+(-> resource-observation-state-new-alias (fifo-cache) non-empty-string)
 (defun resource-observation-state-new-alias (states)
   "Return a fresh opaque alias not present in resource observation STATES."
   (loop for candidate = (format nil "R~A"
                                 (subseq (localgroup-random-token) 0 16))
-        unless (gethash candidate states)
+        unless (nth-value 1 (fifo-cache-get states candidate))
           return candidate))
 
 (-> resource-observation-state-find
-    (hash-table non-empty-string t)
+    (fifo-cache non-empty-string t)
     (option resource-observation-state))
 (defun resource-observation-state-find (states alias class)
   "Return ALIAS from STATES only when it is an instance of CLASS."
-  (let ((state (gethash alias states)))
-    (and (typep state class) state)))
+  (multiple-value-bind (state present-p)
+      (fifo-cache-get states alias)
+    (and present-p (typep state class) state)))
+
 
 (-> resource-observation-state-maximum
     (resource-observation-state)
@@ -173,23 +181,18 @@
   "Trim STATE's observation family in CONVERSATION without disturbing others."
   (let* ((states  (conversation-resource-observations conversation))
          (class   (class-of state))
-         (maximum (resource-observation-state-maximum state))
-         (excess
-           (- (loop for candidate being the hash-values of states
-                    count (typep candidate class))
-              maximum)))
-    (loop for alias in (copy-list
-                        (conversation-resource-observation-order conversation))
-          while (plusp excess)
-          when (resource-observation-state-find states alias class)
-            do
-               (setf (conversation-resource-observation-order conversation)
-                     (remove alias
-                             (conversation-resource-observation-order conversation)
-                             :test #'string=
-                             :count 1))
-               (remhash alias states)
-               (decf excess)))
+         (maximum (resource-observation-state-maximum state)))
+    (loop while (> (fifo-cache-count-if
+                    (lambda (alias candidate)
+                      (declare (ignore alias))
+                      (typep candidate class))
+                    states)
+                   maximum)
+          do (fifo-cache-delete-first-if
+              (lambda (alias candidate)
+                (declare (ignore alias))
+                (typep candidate class))
+              states)))
   nil)
 
 (-> resource-snapshot-digest

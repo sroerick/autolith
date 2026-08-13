@@ -9,7 +9,7 @@
   "The largest exact workspace-file snapshot retained for revision-gated editing.")
 
 (defparameter *workspace-file-resource-maximum-retained-bytes* (* 16 1024 1024)
-  "The maximum decoded string storage retained by workspace observations per conversation.")
+  "The maximum UTF-8 bytes retained by workspace observations per conversation.")
 
 (defparameter *workspace-file-resource-default-line-count* 400
   "The lines requested by resource.read when no explicit count is supplied.")
@@ -64,24 +64,14 @@
   (or (workspace-file-observation-stored-lines observation)
       (text--split-lines (resource-observation-content observation))))
 
-(-> workspace-file--string-storage-bytes (string) (integer 0))
-(defun workspace-file--string-storage-bytes (text)
-  "Return TEXT's SBCL backing storage bytes, excluding headers and padding."
-  (* (length text)
-     (if (typep text 'base-string) 1 4)))
-
 (-> workspace-file--observation-retained-bytes
     (workspace-file-observation)
     (integer 0))
 (defun workspace-file--observation-retained-bytes (observation)
-  "Return the decoded string storage retained by OBSERVATION."
-  (+ (workspace-file--string-storage-bytes
-      (resource-observation-content observation))
-     (let ((lines (workspace-file-observation-stored-lines observation)))
-       (if lines
-           (loop for line across lines
-                 sum (workspace-file--string-storage-bytes line))
-           0))))
+  "Return the UTF-8 bytes retained by OBSERVATION's exact snapshot."
+  (length (sb-ext:string-to-octets
+           (resource-observation-content observation)
+           :external-format ':utf-8)))
 
 (defclass workspace-file-observation-state (resource-observation-state)
   ((visible-ranges
@@ -90,6 +80,14 @@
     :type list
     :documentation "Inclusive original line ranges fully shown to the model."))
   (:documentation "One conversation-local model observation of a workspace file."))
+
+(defmethod resource-observation-state-weight
+    (alias (state workspace-file-observation-state))
+  "Return STATE's retained workspace snapshot bytes."
+  (declare (ignore alias))
+  (workspace-file--observation-retained-bytes
+   (resource-observation-state-observation state)))
+
 
 (defmethod resource-observation-state-maximum
     ((state workspace-file-observation-state))
@@ -100,30 +98,17 @@
 
 (-> workspace-file--trim-observation-storage (conversation) null)
 (defun workspace-file--trim-observation-storage (conversation)
-  "Evict oldest workspace observations until retained decoded strings fit."
+  "Evict oldest workspace observations until retained UTF-8 strings fit."
   (with-recursive-lock-held
       ((conversation-resource-observation-lock conversation))
-    (let* ((states (conversation-resource-observations conversation))
-           (retained-bytes
-             (loop for state being the hash-values of states
-                   when (typep state 'workspace-file-observation-state)
-                     sum (workspace-file--observation-retained-bytes
-                          (resource-observation-state-observation state)))))
-      (dolist (alias (copy-list
-                      (conversation-resource-observation-order conversation)))
-        (when (> retained-bytes
-                 *workspace-file-resource-maximum-retained-bytes*)
-          (let ((state (gethash alias states)))
-            (when (typep state 'workspace-file-observation-state)
-              (decf retained-bytes
-                    (workspace-file--observation-retained-bytes
-                     (resource-observation-state-observation state)))
-              (remhash alias states)
-              (setf (conversation-resource-observation-order conversation)
-                    (remove alias
-                            (conversation-resource-observation-order conversation)
-                            :test #'string=
-                            :count 1))))))))
+    (let ((states (conversation-resource-observations conversation)))
+      (loop while (> (fifo-cache-total-weight states)
+                     *workspace-file-resource-maximum-retained-bytes*)
+            do (fifo-cache-delete-first-if
+                (lambda (alias state)
+                  (declare (ignore alias))
+                  (typep state 'workspace-file-observation-state))
+                states))))
   nil)
 
 
@@ -295,19 +280,21 @@
   (with-recursive-lock-held ((conversation-resource-observation-lock conversation))
     (let* ((states (conversation-resource-observations conversation))
            (matching
-             (loop for state being the hash-values of states
-                   when (typep state 'workspace-file-observation-state)
-                     do
-                        (let ((existing
-                                (resource-observation-state-observation state)))
-                          (when (and
-                                 (string= (resource-observation-uri existing)
-                                          (resource-observation-uri observation))
-                                 (string= (resource-observation-revision existing)
-                                          (resource-observation-revision observation))
-                                 (string= (resource-observation-content existing)
-                                          (resource-observation-content observation)))
-                            (return state))))))
+             (nth-value
+              1
+              (fifo-cache-find-if
+               (lambda (alias state)
+                 (declare (ignore alias))
+                 (and (typep state 'workspace-file-observation-state)
+                      (let ((existing
+                              (resource-observation-state-observation state)))
+                        (and (string= (resource-observation-uri existing)
+                                      (resource-observation-uri observation))
+                             (string= (resource-observation-revision existing)
+                                      (resource-observation-revision observation))
+                             (string= (resource-observation-content existing)
+                                      (resource-observation-content observation))))))
+               states))))
       (when matching
         (setf (workspace-file-observation-state-visible-ranges matching)
               (workspace-file--merge-visible-ranges
@@ -319,10 +306,7 @@
                                    :alias          alias
                                    :observation    observation
                                    :visible-ranges visible-ranges)))
-        (setf (gethash alias states) state
-              (conversation-resource-observation-order conversation)
-              (append (conversation-resource-observation-order conversation)
-                      (list alias)))
+        (fifo-cache-put states alias state)
         (resource-observation-state-trim conversation state)
         (workspace-file--trim-observation-storage conversation)
         state))))

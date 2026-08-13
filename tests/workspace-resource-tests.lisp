@@ -215,18 +215,13 @@
                        :alias "Rforeign"
                        :observation other-observation)))
                (workspace-resource-tests--write-text path "workspace")
-               (with-recursive-lock-held
-                   ((conversation-resource-observation-lock
-                     heterogeneous-conversation))
-                 (setf
-                  (gethash
+                (with-recursive-lock-held
+                    ((conversation-resource-observation-lock
+                      heterogeneous-conversation))
+                  (fifo-cache-put
+                   (conversation-resource-observations heterogeneous-conversation)
                    "Rforeign"
-                   (conversation-resource-observations
-                    heterogeneous-conversation))
-                  other-state
-                  (conversation-resource-observation-order
-                   heterogeneous-conversation)
-                  (list "Rforeign")))
+                   other-state))
                (let ((*workspace-file-resource-maximum-observations* 1))
                  (multiple-value-bind (result uri revision)
                      (read-resource heterogeneous-context
@@ -246,8 +241,8 @@
                             other-state)
                         "workspace observation expiry preserves other resource states")
                         (test-assert
-                         (and (= (hash-table-count states) 2)
-                              (typep (gethash revision states)
+                         (and (= (fifo-cache-count states) 2)
+                              (typep (fifo-cache-get states revision)
                                      'workspace-file-observation-state))
                          "workspace and other resource observation states coexist")))
                    (test-assert
@@ -267,61 +262,73 @@
                                       :configuration configuration
                                       :worker nil
                                       :conversation retention-conversation))
-                     (path (merge-pathnames "retained.txt" workspace)))
-                (let ((*workspace-file-resource-maximum-retained-bytes* 60))
-                  (workspace-resource-tests--write-text
-                   path (format nil "first~%line"))
-                  (multiple-value-bind (first-result uri first-revision)
-                      (read-resource retention-context "workspace:retained.txt")
-                    (test-assert (tool-result-success-p first-result)
-                                 "workspace observations establish a retained revision")
-                    (let* ((state
-                             (workspace-file--find-observation-state
-                              retention-conversation uri first-revision))
-                           (observation
-                             (resource-observation-state-observation state)))
-                      (test-assert
-                       (null (workspace-file-observation-stored-lines observation))
-                       "workspace observations do not retain duplicated logical lines")
-                      (test-assert
-                       (equalp (workspace-file-observation-lines observation)
-                               #("first" "line"))
-                       "workspace observation lines remain available on demand"))
-                    (workspace-resource-tests--write-text
-                     path (format nil "later~%text"))
-                    (multiple-value-bind (second-result second-uri second-revision)
-                        (read-resource retention-context "workspace:retained.txt")
-                      (test-assert (tool-result-success-p second-result)
-                                   "workspace observations accept a replacement snapshot")
-                      (test-assert
-                       (handler-case
-                           (progn
-                             (workspace-file--find-observation-state
-                              retention-conversation uri first-revision)
-                             nil)
-                         (resource-revision-stale ()
-                           t))
-                       "workspace observation storage evicts the oldest revision")
-                      (let* ((states
-                               (conversation-resource-observations
-                                retention-conversation))
-                             (second-state
-                               (workspace-file--find-observation-state
-                                retention-conversation
-                                second-uri second-revision))
-                             (retained-bytes
-                               (loop for state being the hash-values of states
-                                     when (typep state
-                                                 'workspace-file-observation-state)
-                                       sum (workspace-file--observation-retained-bytes
-                                            (resource-observation-state-observation
-                                             state)))))
-                        (test-assert
-                         (and (= (hash-table-count states) 1)
-                              second-state
-                              (<= retained-bytes
-                                  *workspace-file-resource-maximum-retained-bytes*))
-                         "workspace observations retain the newest revision within the byte budget"))))))
+                      (path (merge-pathnames "retained.txt" workspace))
+                      (other-observation
+                        (make-instance 'resource-observation
+                                       :uri "memory:retained"
+                                       :revision "other-retained-revision"
+                                       :content nil))
+                      (other-state
+                        (make-instance
+                         'workspace-resource-tests-other-observation-state
+                         :alias "Rretained-other"
+                         :observation other-observation)))
+                 (with-recursive-lock-held
+                     ((conversation-resource-observation-lock
+                       retention-conversation))
+                   (fifo-cache-put
+                    (conversation-resource-observations retention-conversation)
+                    "Rretained-other"
+                    other-state))
+                 (let ((*workspace-file-resource-maximum-retained-bytes* 12))
+                   (workspace-resource-tests--write-text path "ááá")
+                   (multiple-value-bind (first-result uri first-revision)
+                       (read-resource retention-context "workspace:retained.txt")
+                     (test-assert (tool-result-success-p first-result)
+                                  "workspace observations establish a retained revision")
+                     (let* ((state
+                              (workspace-file--find-observation-state
+                               retention-conversation uri first-revision))
+                            (observation
+                              (resource-observation-state-observation state)))
+                       (test-assert
+                        (null (workspace-file-observation-stored-lines observation))
+                        "workspace observations do not retain duplicated logical lines")
+                       (test-assert
+                        (equalp (workspace-file-observation-lines observation)
+                                #("ááá"))
+                        "workspace observation lines remain available on demand"))
+                     (workspace-resource-tests--write-text path "žžžž")
+                     (multiple-value-bind (second-result second-uri second-revision)
+                         (read-resource retention-context "workspace:retained.txt")
+                       (test-assert (tool-result-success-p second-result)
+                                    "workspace observations accept a replacement snapshot")
+                       (test-assert
+                        (handler-case
+                            (progn
+                              (workspace-file--find-observation-state
+                               retention-conversation uri first-revision)
+                              nil)
+                          (resource-revision-stale ()
+                            t))
+                        "workspace byte budget evicts the oldest multibyte revision")
+                       (let* ((states
+                                (conversation-resource-observations
+                                 retention-conversation))
+                              (second-state
+                                (workspace-file--find-observation-state
+                                 retention-conversation
+                                 second-uri second-revision)))
+                         (test-assert
+                          (and (= (fifo-cache-count states) 2)
+                               second-state
+                               (= (fifo-cache-total-weight states) 8)
+                               (eq (resource-observation-state-find
+                                    states
+                                    "Rretained-other"
+                                    'workspace-resource-tests-other-observation-state)
+                                   other-state))
+                          "workspace byte eviction preserves zero-weight resource families"))))))
              (let* ((resolver
                       (gethash "workspace"
                                (resource-registry-resolvers
@@ -471,11 +478,11 @@
                              "start-line" 2
                              "end-line" 2
                              "content" "TWO")))))
-                   (test-assert
-                    (and (not (tool-result-success-p expired))
-                         (zerop (hash-table-count
-                                 (conversation-resource-observations reloaded))))
-                    "resource observations stay out of conversation persistence and expire after reload"))))
+                    (test-assert
+                     (and (not (tool-result-success-p expired))
+                          (zerop (fifo-cache-count
+                                  (conversation-resource-observations reloaded))))
+                     "resource observations stay out of conversation persistence and expire after reload"))))
              (let ((path (merge-pathnames "empty.txt" workspace)))
                (workspace-resource-tests--write-text path "")
                (multiple-value-bind (read-result uri revision)

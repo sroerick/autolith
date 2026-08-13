@@ -340,30 +340,28 @@
       ((conversation-resource-observation-lock conversation))
     (let* ((states (conversation-resource-observations conversation))
            (matching
-             (loop for state being the hash-values of states
-                   when (typep state 'memory-observation-state)
-                     do
-                        (let ((existing
-                                (resource-observation-state-observation state)))
-                          (when (and
-                                 (string= (resource-observation-uri existing)
-                                          (resource-observation-uri observation))
-                                 (string= (resource-observation-revision existing)
-                                          (resource-observation-revision observation))
-                                 (equal (memory-observation-snapshot existing)
-                                        (memory-observation-snapshot observation)))
-                            (return state))))))
+             (nth-value
+              1
+              (fifo-cache-find-if
+               (lambda (alias state)
+                 (declare (ignore alias))
+                 (and (typep state 'memory-observation-state)
+                      (let ((existing
+                              (resource-observation-state-observation state)))
+                        (and (string= (resource-observation-uri existing)
+                                      (resource-observation-uri observation))
+                             (string= (resource-observation-revision existing)
+                                      (resource-observation-revision observation))
+                             (equal (memory-observation-snapshot existing)
+                                    (memory-observation-snapshot observation))))))
+               states))))
       (when matching
         (return-from memory-resource--observation-state-for-snapshot matching))
-      (let* ((states (conversation-resource-observations conversation))
-             (alias (resource-observation-state-new-alias states))
+      (let* ((alias (resource-observation-state-new-alias states))
              (state (make-instance 'memory-observation-state
                                    :alias       alias
                                    :observation observation)))
-        (setf (gethash alias states) state
-              (conversation-resource-observation-order conversation)
-              (append (conversation-resource-observation-order conversation)
-                      (list alias)))
+        (fifo-cache-put states alias state)
         (resource-observation-state-trim conversation state)
         state))))
 

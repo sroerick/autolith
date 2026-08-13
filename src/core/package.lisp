@@ -396,7 +396,6 @@
                  #:fifo-cache-delete-first-if
                  #:fifo-cache-find-if
                  #:fifo-cache-get
-                 #:fifo-cache-map
                  #:fifo-cache-put
                  #:fifo-cache-total-weight
                  #:make-fifo-cache

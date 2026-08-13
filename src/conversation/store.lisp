@@ -2,6 +2,10 @@
 
 ;;;; -- Conversation Object --
 
+(-> resource-observation-state-weight (t t) (integer 0))
+(defgeneric resource-observation-state-weight (alias state)
+  (:documentation "Return STATE's retained byte weight under opaque ALIAS."))
+
 (defclass conversation ()
   ((identifier
     :initarg :identifier
@@ -90,17 +94,13 @@
     :documentation
     "Request-local provider items and owned attachments awaiting one response.")
    (resource-observations
-    :initform (make-hash-table :test #'equal)
+    :initform (make-fifo-cache
+               :test            #'equal
+               :weight-function #'resource-observation-state-weight)
     :reader conversation-resource-observations
-    :type hash-table
+    :type fifo-cache
     :documentation
-    "Transient model-visible resource revisions keyed by opaque alias.")
-   (resource-observation-order
-    :initform nil
-    :accessor conversation-resource-observation-order
-    :type list
-    :documentation
-    "Oldest-first aliases bounding transient resource observation retention.")
+    "Transient model-visible resource revisions in FIFO insertion order.")
    (resource-observation-lock
     :initform (make-recursive-lock "Autolith resource observations")
     :reader conversation-resource-observation-lock
