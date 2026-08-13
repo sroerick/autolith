@@ -1,0 +1,94 @@
+#+TITLE: Structlisp Adoption Audit
+#+DATE: 2026-08-13
+#+STARTUP: content
+#+OPTIONS: toc:nil num:nil
+
+Autolith uses Structlisp only where the complete integration reduces source
+while preserving the existing public and persisted representations. This note
+records the adopted structures and the candidates deliberately left alone.
+
+* Dependency
+
+Autolith pins Structlisp revision
+=8842f7181ae14806d3d989fdcf7c3fdfed78fa08= through ASDF, Qlot, and Nix. The
+Nix source hash is
+=sha256-ZpbFTbwckQGX0SIPAP2A9t3zk+uQzyNuRfhVvRguh3o==.
+
+Only required symbols are imported into the single =autolith= package. Deques
+remain internal runtime structures. Durable records and public snapshots keep
+portable lists.
+
+* Adopted structures
+
+** Transcript replay history
+
+The transcript pager in =src/application/runtime.lisp= used duplicate circular
+arrays with manual indices and counts. A count-bounded deque now owns both
+buffers. Replay order, page boundaries, and public list projections are
+unchanged.
+
+This integration removed five net source lines.
+
+** Localgroup transport
+
+=src/localgroup/terminal.lisp= now uses lock-confined deques for three distinct
+collections:
+
+- attachment packets, bounded by maintained character weight;
+- terminal input events, consumed in FIFO order;
+- terminal replay history, bounded to an exact character budget.
+
+The packet queue still rejects and closes an overflowing packet instead of
+evicting accepted packets. Replay trimming still retains the exact suffix of a
+partially removed front entry. Writer wakeups and close behavior are unchanged.
+
+The complete integration removed 28 net source lines and added focused
+regression coverage for overflow, ordering, and partial-front trimming.
+
+** Child activity trace
+
+The newest-eight completed-tool list in =src/task/state.lisp= and
+=src/task/runtime.lisp= is now a count-bounded chronological deque. Completion
+appends at the back, overflow evicts the oldest entry, and snapshots copy the
+deque into portable chronological lists while holding the existing progress
+lock.
+
+The slot is reader-only because callers mutate the deque rather than replace
+it. The complete integration removed six net source lines.
+
+* Rejected integrations
+
+The following candidates were checked against Structlisp's current APIs and
+left unchanged because wrappers, projections, or semantic changes erased the
+source reduction.
+
+- User-operation context :: A weighted deque does not directly express the
+  existing combined count, character, rendering, and context-selection policy.
+- Tool registry :: An ordered map would require adapters around established
+  registry ordering, grouping, lookup, and presentation APIs.
+- Workspace visible-line ranges :: An interval set would require conversions at
+  every revision and edit boundary while the current merged-list form is also
+  the public representation.
+- Deferred input :: The scheduler needs stable ordering, persistence as lists,
+  cancellation, rescheduling, and coordinated wakeup behavior. A priority queue
+  did not reduce the complete implementation.
+- Resource observations :: The cache combines revision authority, pinning,
+  class-specific limits, byte accounting, and publication order. A generic LRU
+  would need a policy wrapper larger than the code it replaced.
+- Task steering :: Admission, in-flight accounting, exact character limits,
+  cancellation, and snapshot projection extend beyond a plain deque.
+- Responsive follow-ups :: Indexed editing, Shift-Tab cycling, queue partition
+  state, image-bearing inputs, and durable FIFO restoration require operations
+  and invariants not captured by a direct deque substitution.
+- Command and model completion :: A sorted index would add synchronization and
+  projection code around small, frequently rebuilt UI collections.
+- Terminal image history :: A bounded deque would simplify insertion, but exact
+  text lookup would require a traversal adapter or a fresh vector projection.
+  The complete change was not meaningfully source-negative.
+
+* Result
+
+The three adopted integrations remove 39 net source lines after imports and
+preserve existing behavior. The audit stops there: using a library structure is
+not a goal by itself, and future adoption should meet the same complete,
+behavior-preserving, source-negative standard.
