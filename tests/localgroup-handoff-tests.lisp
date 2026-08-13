@@ -26,7 +26,6 @@
            (make-instance 'application-input-controller
                           :application application
                           :later-state (make-instance 'later-state)
-                          :pending-later-entries nil
                           :main-thread (current-thread))))
     (when persisted-p
       (conversation-append-user-message conversation "persisted"))

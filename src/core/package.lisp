@@ -399,6 +399,14 @@
                  #:fifo-cache-put
                  #:fifo-cache-total-weight
                  #:make-fifo-cache
+                 #:make-priority-queue
+                 #:priority-queue
+                 #:priority-queue->list
+                 #:priority-queue-change-priority
+                 #:priority-queue-cancel
+                 #:priority-queue-peek
+                 #:priority-queue-pop
+                 #:priority-queue-push
                 #:make-ordered-map
                 #:ordered-map
                 #:ordered-map-delete-if

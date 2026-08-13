@@ -10,37 +10,44 @@
     (unwind-protect
          (let* ((state (later-load configuration))
                 (directory (configuration-working-directory configuration))
-                (later-entry
-                  (later-schedule :configuration configuration
-                                  :state state
-                                  :input "second"
-                                  :directory directory
-                                  :due-at 200
-                                  :window "weekly"
-                                  :created-at 20))
-                (earlier-entry
-                  (later-schedule :configuration configuration
-                                  :state state
-                                  :input "first"
-                                  :directory directory
-                                  :due-at 100
-                                  :window "5h"
-                                  :created-at 10))
-                (loaded (later-load configuration)))
-           (test-assert
-            (equal (mapcar #'later-entry-input (later-state-entries loaded))
-                   '("first" "second"))
-            "deferred inputs reload in due-time order")
+                 (last-entry
+                   (later-schedule :configuration configuration :state state :input "last"
+                                   :directory directory :due-at 200 :window "weekly" :created-at 20))
+                 (tie-entry
+                   (later-schedule :configuration configuration :state state :input "second"
+                                   :directory directory :due-at 100 :window "5h" :created-at 10))
+                 (earlier-entry
+                   (later-schedule :configuration configuration :state state :input "first"
+                                   :directory directory :due-at 90 :window "5h" :created-at 10))
+                 (created-earlier-entry
+                   (later-schedule :configuration configuration :state state :input "created earlier"
+                                   :directory directory :due-at 100 :window "5h" :created-at 5))
+                 (loaded (later-load configuration)))
+             (later-reschedule :configuration configuration :state loaded
+                               :entry (later-pop-due loaded 90)
+                               :due-at 100 :window "5h")
+             (test-call-with-function-replacements
+              (list (list 'later--write (lambda (&rest arguments)
+                                         (declare (ignore arguments))
+                                         (error "forced write failure"))))
+              (lambda ()
+                 (ignore-errors (later-cancel configuration loaded
+                                              (later-entry-identifier tie-entry)))))
+             (test-assert
+              (equal (mapcar #'later-entry-input (later-state-entries loaded))
+                     '("created earlier" "first" "second" "last"))
+              "rescheduling and failed cancellation preserve exact-tie FIFO")
            (test-assert
             (and (later-cancel configuration loaded
                                (later-entry-identifier earlier-entry))
                  (not (later-cancel configuration loaded "missing")))
             "deferred cancellation reports exact identifiers")
-           (test-assert
-            (equal (mapcar #'later-entry-identifier
-                           (later-state-entries (later-load configuration)))
-                   (list (later-entry-identifier later-entry)))
-            "deferred cancellation persists without disturbing other entries")
+            (test-assert
+             (equal (mapcar #'later-entry-identifier
+                            (later-state-entries (later-load configuration)))
+                    (mapcar #'later-entry-identifier
+                            (list created-earlier-entry tie-entry last-entry)))
+             "deferred cancellation persists without disturbing other entries")
            (test-assert (= (logand (sb-posix:stat-mode
                                     (sb-posix:stat
                                      (namestring

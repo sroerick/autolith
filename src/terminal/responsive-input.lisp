@@ -96,11 +96,6 @@
     :reader application-input-controller-later-state
     :type later-state
     :documentation "The durable deferred inputs owned by this controller.")
-   (pending-later-entries
-    :initarg :pending-later-entries
-    :accessor application-input-controller-pending-later-entries
-    :type list
-    :documentation "Deferred entries not currently dispatched by this process.")
    (active-p
     :initform nil
     :accessor application-input-controller-active-p
@@ -2616,83 +2611,50 @@ may execute immediately; other Lisp waits for the idle boundary."
 (defun application-input-controller-schedule-later
     (controller input &key due-at window)
   "Persist INPUT for DUE-AT and wake CONTROLLER's deferred scheduler."
-  (let* ((application (application-input-controller-application controller))
-         (configuration (application-configuration application))
-         (entry
-           (later-schedule
-            :configuration configuration
-            :state (application-input-controller-later-state controller)
-            :input input
-            :directory (configuration-working-directory configuration)
-            :due-at due-at
-            :window window)))
+  (let ((application (application-input-controller-application controller)))
     (with-lock-held ((application-input-controller-lock controller))
-      (setf (application-input-controller-pending-later-entries controller)
-            (later--sort-entries
-             (append
-              (application-input-controller-pending-later-entries controller)
-              (list entry))))
-      (sb-thread:condition-broadcast
-       (application-input-controller-condition-variable controller)))
-    entry))
+      (let ((entry
+              (later-schedule
+               :configuration (application-configuration application)
+               :state (application-input-controller-later-state controller)
+               :input input
+               :directory (configuration-working-directory
+                           (application-configuration application))
+               :due-at due-at
+               :window window)))
+        (sb-thread:condition-broadcast
+         (application-input-controller-condition-variable controller))
+        entry))))
 
 (-> application-input-controller-cancel-later
     (application-input-controller string)
     boolean)
 (defun application-input-controller-cancel-later (controller identifier)
-  "Cancel deferred IDENTIFIER durably and remove it from CONTROLLER."
-  (let* ((application (application-input-controller-application controller))
-         (cancelled-p
-           (later-cancel
-            (application-configuration application)
-            (application-input-controller-later-state controller)
-            identifier)))
-    (when cancelled-p
-      (with-lock-held ((application-input-controller-lock controller))
-        (setf (application-input-controller-pending-later-entries controller)
-              (remove identifier
-                      (application-input-controller-pending-later-entries
-                       controller)
-                      :key #'later-entry-identifier
-                      :test #'string=))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller))))
-    cancelled-p))
+  "Cancel deferred IDENTIFIER durably and wake CONTROLLER."
+  (let ((application (application-input-controller-application controller)))
+    (with-lock-held ((application-input-controller-lock controller))
+      (let ((cancelled-p
+              (later-cancel
+               (application-configuration application)
+               (application-input-controller-later-state controller)
+               identifier)))
+        (when cancelled-p
+          (sb-thread:condition-broadcast
+           (application-input-controller-condition-variable controller)))
+        cancelled-p))))
 
-(-> application-input-controller--promote-due-later
-    (application-input-controller timestamp)
-    null)
-(defun application-input-controller--promote-due-later (controller now)
-  "Move CONTROLLER's entries due at NOW onto its ordinary work queue."
-  (loop for entry = (first
-                     (application-input-controller-pending-later-entries
-                      controller))
-        while (and entry (<= (later-entry-due-at entry) now))
-        do (pop (application-input-controller-pending-later-entries controller))
-           (setf (application-input-controller-work-items controller)
-                 (nconc (application-input-controller-work-items controller)
-                        (list (list ':later entry)))))
-  nil)
-
-(-> application-input-controller--later-wait-seconds
-    (application-input-controller timestamp)
-    (option real))
-(defun application-input-controller--later-wait-seconds (controller now)
-  "Return seconds until CONTROLLER's next deferred entry, if one exists."
-  (let ((entry (first
-                (application-input-controller-pending-later-entries controller))))
-    (and entry (max 0.01 (- (later-entry-due-at entry) now)))))
 
 (-> application-input-controller--complete-later
     (application-input-controller later-entry)
     null)
 (defun application-input-controller--complete-later (controller entry)
   "Remove successfully dispatched ENTRY from durable deferred state."
-  (later-cancel
-   (application-configuration
-    (application-input-controller-application controller))
-   (application-input-controller-later-state controller)
-   (later-entry-identifier entry))
+  (with-lock-held ((application-input-controller-lock controller))
+    (later-cancel
+     (application-configuration
+      (application-input-controller-application controller))
+     (application-input-controller-later-state controller)
+     (later-entry-identifier entry)))
   nil)
 
 (-> application-input-controller--retry-later
@@ -2708,24 +2670,20 @@ may execute immediately; other Lisp waits for the idle boundary."
         (later-reset-deadline (and provider (provider-rate-limits provider))
                               :now now)
       (let ((replacement
-              (later-reschedule
-               :configuration configuration
-               :state (application-input-controller-later-state controller)
-               :entry entry
-               :due-at (if (and reset-at (> reset-at now))
-                           reset-at
-                           (+ now 300))
-               :window (if (and window reset-at (> reset-at now))
-                           window
-                           "5 minute retry"))))
-        (with-lock-held ((application-input-controller-lock controller))
-          (setf (application-input-controller-pending-later-entries controller)
-                (later--sort-entries
-                 (append
-                  (application-input-controller-pending-later-entries controller)
-                  (list replacement))))
-          (sb-thread:condition-broadcast
-           (application-input-controller-condition-variable controller)))
+              (with-lock-held ((application-input-controller-lock controller))
+                (prog1
+                    (later-reschedule
+                     :configuration configuration
+                     :state (application-input-controller-later-state controller)
+                     :entry entry
+                     :due-at (if (and reset-at (> reset-at now))
+                                 reset-at
+                                 (+ now 300))
+                     :window (if (and window reset-at (> reset-at now))
+                                 window
+                                 "5 minute retry"))
+                  (sb-thread:condition-broadcast
+                   (application-input-controller-condition-variable controller))))))
         (application-present
          application
          (format nil "Deferred input ~A was rescheduled after ~A."
@@ -2757,8 +2715,6 @@ may execute immediately; other Lisp waits for the idle boundary."
                           :application application
                           :initial-work-items (copy-tree initial-work-items)
                           :later-state later-state
-                          :pending-later-entries
-                          (copy-list (later-state-entries later-state))
                           :pending-persistence-enabled-p
                           pending-persistence-enabled-p
                           :main-thread (current-thread))))
@@ -2782,8 +2738,14 @@ may execute immediately; other Lisp waits for the idle boundary."
       (setf (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work-interactive-p controller) nil)
       (loop
-        (application-input-controller--promote-due-later
-         controller (get-universal-time))
+        (let ((entry
+                (later-pop-due
+                 (application-input-controller-later-state controller)
+                 (get-universal-time))))
+          (when entry
+            (setf (application-input-controller-work-items controller)
+                  (nconc (application-input-controller-work-items controller)
+                         (list (list ':later entry))))))
         (when (or (application-input-controller-failure controller)
                   (application-input-controller-stopping-p controller))
           (return))
@@ -2843,9 +2805,14 @@ may execute immediately; other Lisp waits for the idle boundary."
            ;; durably represents it as active work.
            (application-input-controller--persist-pending controller)
            (return)))
-        (let* ((later-wait
-                 (application-input-controller--later-wait-seconds
-                  controller (get-universal-time)))
+        (let* ((state (application-input-controller-later-state controller))
+                (entry
+                  (unless (later-state-active-entry state)
+                    (priority-queue-peek (later-state-queue state))))
+                (later-wait
+                  (and entry
+                       (max 0.01 (- (later-entry-due-at entry)
+                                    (get-universal-time)))))
                (handoff-wait
                  (and (application-localgroup-handoff-pending-p application)
                       1/10))
@@ -2984,7 +2951,6 @@ may execute immediately; other Lisp waits for the idle boundary."
             (application-input-controller-work-items controller) nil
             (application-input-controller-steering-items controller) nil
             (application-input-controller-steering-in-flight-items controller) nil
-            (application-input-controller-pending-later-entries controller) nil
             (application-input-controller-active-p controller) nil
             (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work controller) nil
@@ -3180,66 +3146,56 @@ the next application boundary because it does not depend on the provider."
             (window-label (if (and window reset-at (> reset-at now))
                               window
                               "5 minute retry"))
-            (pending nil))
+            (failures nil))
         (with-lock-held ((application-input-controller-lock controller))
           (let* ((queued-work
                    (application-input-controller-work-items controller))
                  (local-work
-                   (remove-if-not (lambda (work)
-                                    (eq (first work) ':lisp))
+                   (remove-if-not (lambda (work) (eq (first work) ':lisp))
                                   queued-work))
-                 (provider-work
-                   (remove-if (lambda (work)
-                                (eq (first work) ':lisp))
-                              queued-work)))
-            (setf pending
-                  (append
-                   (mapcar
-                    (lambda (entry)
-                      (list ':message (agent-steering-input-content entry)))
-                    (application-input-controller-steering-in-flight-items
-                     controller))
-                   (mapcar (lambda (input)
-                             (list ':message input))
-                           (application-input-controller-steering-items controller))
-                   provider-work)
-                  (application-input-controller-steering-in-flight-items controller)
+                 (pending
+                   (append
+                    (mapcar
+                     (lambda (entry)
+                       (list ':message (agent-steering-input-content entry)))
+                     (application-input-controller-steering-in-flight-items
+                      controller))
+                    (mapcar (lambda (input) (list ':message input))
+                            (application-input-controller-steering-items controller))
+                    (remove-if (lambda (work) (eq (first work) ':lisp))
+                               queued-work))))
+            (setf (application-input-controller-steering-in-flight-items controller)
                   nil
                   (application-input-controller-steering-items controller) nil
-                  (application-input-controller-work-items controller) local-work)))
-        (dolist (item pending)
-          (let ((input
-                  (case (first item)
-                    (:message
-                     (user-message-input-text (second item)))
-                    (:command (second item))
-                    (t nil))))
-            (when (non-empty-string-p input)
-              (handler-case
-                  (let ((entry
-                          (later-schedule
-                           :configuration configuration
-                           :state (application-input-controller-later-state
-                                   controller)
-                           :input input
-                           :directory directory
-                           :due-at due-at
-                           :window window-label)))
-                    (with-lock-held
-                        ((application-input-controller-lock controller))
-                      (setf (application-input-controller-pending-later-entries
-                             controller)
-                            (later--sort-entries
-                             (append
-                              (application-input-controller-pending-later-entries
-                               controller)
-                              (list entry))))
-                      (sb-thread:condition-broadcast
-                       (application-input-controller-condition-variable
-                        controller)))
-                    (incf deferred-count))
-                (later-error (condition)
-                  (application-handle-expected-error application condition))))))
+                  (application-input-controller-work-items controller) local-work)
+            (dolist (item pending)
+              (let ((input
+                      (case (first item)
+                        (:message (user-message-input-text (second item)))
+                        (:command (second item))
+                        (t nil))))
+                (when (non-empty-string-p input)
+                  (handler-case
+                      (progn
+                        (later-schedule
+                         :configuration configuration
+                         :state (application-input-controller-later-state controller)
+                         :input input
+                         :directory directory
+                         :due-at due-at
+                         :window window-label)
+                        (incf deferred-count))
+                    (later-error (condition)
+                      (push condition failures)
+                      (setf (application-input-controller-work-items controller)
+                            (nconc
+                             (application-input-controller-work-items controller)
+                             (list item))))))))
+            (when (plusp deferred-count)
+              (sb-thread:condition-broadcast
+               (application-input-controller-condition-variable controller)))))
+        (dolist (condition (nreverse failures))
+          (application-handle-expected-error application condition))
         (application-input-controller--publish-counts controller)
         (when (plusp deferred-count)
           (application-present

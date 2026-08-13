@@ -23,7 +23,7 @@
     :documentation "The canonical workspace in which this input was scheduled.")
    (due-at
     :initarg :due-at
-    :reader later-entry-due-at
+    :accessor later-entry-due-at
     :type timestamp
     :documentation "The universal time at which this input becomes runnable.")
    (created-at
@@ -33,18 +33,23 @@
     :documentation "The universal time at which this input was scheduled.")
    (window
     :initarg :window
-    :reader later-entry-window
+    :accessor later-entry-window
     :type non-empty-string
     :documentation "The rate-limit window or estimate governing DUE-AT."))
   (:documentation "One durable input waiting for a rate-limit reset."))
 
 (defclass later-state ()
-  ((entries
-    :initarg :entries
+  ((queue
+    :initarg :queue
+    :initform (later--make-queue)
+    :accessor later-state-queue
+    :type priority-queue
+    :documentation "Deferred entries indexed and ordered for in-process scheduling.")
+   (active-entry
     :initform nil
-    :accessor later-state-entries
-    :type list
-    :documentation "Deferred entries ordered by due time and creation time."))
+    :accessor later-state-active-entry
+    :type (option later-entry)
+    :documentation "The deferred entry dispatched but not yet completed."))
   (:documentation "Validated deferred inputs restored across Autolith processes."))
 
 (-> later--entry-form-p (t) boolean)
@@ -103,15 +108,24 @@
 
 (-> later--entry< (later-entry later-entry) boolean)
 (defun later--entry< (left right)
-  "Return true when LEFT should run before RIGHT."
+  "Return true when LEFT's deadline and creation time precede RIGHT's."
   (or (< (later-entry-due-at left) (later-entry-due-at right))
       (and (= (later-entry-due-at left) (later-entry-due-at right))
            (< (later-entry-created-at left) (later-entry-created-at right)))))
 
-(-> later--sort-entries (list) list)
-(defun later--sort-entries (entries)
-  "Return a fresh due-time-ordered copy of ENTRIES."
-  (stable-sort (copy-list entries) #'later--entry<))
+(-> later--make-queue (&optional list) priority-queue)
+(defun later--make-queue (&optional entries)
+  "Return an indexed stable priority queue containing ENTRIES."
+  (let ((queue (make-priority-queue :lessp #'later--entry<
+                                     :key-function #'later-entry-identifier
+                                     :key-test 'equal)))
+    (dolist (entry entries queue)
+      (priority-queue-push queue entry entry))))
+
+(-> later-state-entries (later-state) list)
+(defun later-state-entries (state)
+  "Return STATE's deferred entries as a detached ordered list."
+  (priority-queue->list (later-state-queue state)))
 
 (-> later--read (configuration) later-state)
 (defun later--read (configuration)
@@ -131,11 +145,11 @@
                      :pathname pathname
                      :operation ':read
                      :cause nil))
-            (make-instance
-             'later-state
-             :entries
-             (later--sort-entries
-              (mapcar #'later--entry-form->entry (fifth form)))))
+             (make-instance
+              'later-state
+              :queue
+              (later--make-queue
+               (mapcar #'later--entry-form->entry (fifth form)))))
         (later-error (condition)
           (error condition))
         (error (cause)
@@ -168,20 +182,20 @@
         :created-at (later-entry-created-at entry)
         :window (later-entry-window entry)))
 
-(-> later--state-form (later-state) list)
-(defun later--state-form (state)
+(-> later--state-form (later-state &optional list) list)
+(defun later--state-form (state &optional (entries (later-state-entries state)))
   "Return STATE as one portable readable form."
-  (list :later
-        :version *later-version*
-        :entries (mapcar #'later--entry->form
-                         (later-state-entries state))))
+  (list :later :version *later-version* :entries
+        (mapcar #'later--entry->form entries)))
 
-(-> later--write (configuration later-state) null)
-(defun later--write (configuration state)
+(-> later--write (configuration later-state &optional list) null)
+(defun later--write (configuration state &optional (entries nil entries-p))
   "Atomically persist deferred input STATE with private file permissions."
   (let ((pathname (configuration-later-path configuration)))
     (handler-case
-        (snapshot-write pathname (later--state-form state))
+        (snapshot-write pathname
+                        (later--state-form state (if entries-p entries
+                                                    (later-state-entries state))))
       (error (cause)
         (error 'later-error
                :message (format nil "Could not persist deferred inputs at ~A: ~A"
@@ -215,40 +229,47 @@
              :pathname (configuration-later-path configuration)
              :operation ':validate
              :cause nil))
-    (let* ((entry
-             (make-instance 'later-entry
-                            :identifier (make-identifier)
-                            :input (copy-seq input)
-                            :directory
-                            (namestring
-                             (uiop:ensure-directory-pathname
-                              (truename existing-directory)))
-                            :due-at due-at
-                            :created-at created-at
-                            :window (copy-seq window)))
-           (entries
-             (later--sort-entries
-              (append (later-state-entries state) (list entry))))
-           (replacement (make-instance 'later-state :entries entries)))
-      (later--write configuration replacement)
-      (setf (later-state-entries state) entries)
-      entry)))
+    (let ((entry
+            (make-instance 'later-entry
+                           :identifier (make-identifier)
+                           :input (copy-seq input)
+                           :directory
+                           (namestring
+                            (uiop:ensure-directory-pathname
+                             (truename existing-directory)))
+                           :due-at due-at
+                           :created-at created-at
+                           :window (copy-seq window))))
+      (priority-queue-push (later-state-queue state) entry entry)
+      (handler-case
+          (progn (later--write configuration state) entry)
+        (error (condition)
+          (priority-queue-cancel (later-state-queue state)
+                                 (later-entry-identifier entry))
+          (error condition))))))
 
 (-> later-cancel (configuration later-state string) boolean)
 (defun later-cancel (configuration state identifier)
   "Remove IDENTIFIER from STATE durably and report whether it existed."
-  (let* ((previous (later-state-entries state))
-         (entries (remove identifier previous
-                          :key #'later-entry-identifier
-                          :test #'string=)))
-    (if (= (length entries) (length previous))
-        nil
-        (progn
-          (later--write configuration
-                        (make-instance 'later-state :entries entries))
-          (setf (later-state-entries state) entries)
-          t))))
+  (let* ((entries (later-state-entries state))
+         (replacement
+           (remove identifier entries :key #'later-entry-identifier :test #'string=)))
+    (unless (= (length entries) (length replacement))
+      (later--write configuration state replacement)
+      (priority-queue-cancel (later-state-queue state) identifier)
+      (when (and (later-state-active-entry state)
+                 (string= identifier
+                          (later-entry-identifier (later-state-active-entry state))))
+        (setf (later-state-active-entry state) nil))
+      t)))
 
+(-> later-pop-due (later-state timestamp) (option later-entry))
+(defun later-pop-due (state now)
+  "Mark STATE's next entry active when it is due at NOW."
+  (unless (later-state-active-entry state)
+    (let ((entry (priority-queue-peek (later-state-queue state))))
+      (when (and entry (<= (later-entry-due-at entry) now))
+        (setf (later-state-active-entry state) entry)))))
 (-> later--window-exhausted-p ((option list)) boolean)
 (defun later--window-exhausted-p (window)
   "Return true when WINDOW reports all of its allowance used."
@@ -306,33 +327,28 @@ reset. Five seconds of margin avoids dispatching on the reset boundary."
           (:entry later-entry) (:due-at timestamp) (:window string))
     later-entry)
 (defun later-reschedule (&key configuration state entry due-at window)
-  "Persist ENTRY with a replacement DUE-AT and WINDOW, preserving its identity."
-  (let* ((replacement-entry
-           (make-instance 'later-entry
-                          :identifier (copy-seq
-                                       (later-entry-identifier entry))
-                          :input (copy-seq (later-entry-input entry))
-                          :directory (copy-seq (later-entry-directory entry))
-                          :due-at due-at
-                          :created-at (later-entry-created-at entry)
-                          :window (copy-seq window)))
-         (entries
-           (later--sort-entries
-            (substitute replacement-entry
-                        (later-entry-identifier entry)
-                        (later-state-entries state)
-                        :key #'later-entry-identifier
-                        :test #'string=))))
-    (unless (find (later-entry-identifier entry)
-                  (later-state-entries state)
-                  :key #'later-entry-identifier
-                  :test #'string=)
-      (error 'later-error
-             :message (format nil "Deferred input ~A no longer exists."
-                              (later-entry-identifier entry))
-             :pathname (configuration-later-path configuration)
-             :operation ':reschedule
-             :cause nil))
-    (later--write configuration (make-instance 'later-state :entries entries))
-    (setf (later-state-entries state) entries)
-    replacement-entry))
+  "Persist active ENTRY with a replacement DUE-AT and WINDOW."
+  (unless (eq entry (later-state-active-entry state))
+    (error 'later-error
+           :message (format nil "Deferred input ~A is not active."
+                            (later-entry-identifier entry))
+           :pathname (configuration-later-path configuration)
+           :operation ':reschedule
+           :cause nil))
+  (let ((old-due-at (later-entry-due-at entry))
+        (old-window (later-entry-window entry)))
+    (setf (later-entry-due-at entry) due-at
+          (later-entry-window entry) (copy-seq window))
+    (priority-queue-change-priority
+     (later-state-queue state) (later-entry-identifier entry) entry)
+    (handler-case
+        (progn
+          (later--write configuration state)
+          (setf (later-state-active-entry state) nil)
+          entry)
+      (error (condition)
+        (setf (later-entry-due-at entry) old-due-at
+              (later-entry-window entry) old-window)
+        (priority-queue-change-priority
+         (later-state-queue state) (later-entry-identifier entry) entry)
+        (error condition)))))

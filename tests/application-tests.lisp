@@ -1186,7 +1186,6 @@
                    'application-input-controller
                    :application application
                    :later-state (make-instance 'later-state)
-                   :pending-later-entries nil
                    :main-thread (current-thread)
                    :interrupt-clock-function (lambda () 10)
                    :forced-exit-function
@@ -1238,7 +1237,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () 10)
             :forced-exit-function
@@ -1332,7 +1330,6 @@
               'application-input-controller
               :application application
               :later-state (make-instance 'later-state)
-              :pending-later-entries nil
               :main-thread (current-thread)
               :interrupt-clock-function (lambda () now))))
       (setf (application-input-controller application) controller
@@ -1439,7 +1436,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () 10))))
     (setf (application-input-controller application) controller)
@@ -1886,7 +1882,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -1935,7 +1930,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -1977,7 +1971,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -2031,7 +2024,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now)
             :forced-exit-function
@@ -2069,7 +2061,6 @@
             'application-input-controller
             :application application
             :later-state (make-instance 'later-state)
-            :pending-later-entries nil
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now)
             :forced-exit-function
@@ -8753,10 +8744,10 @@
            (make-instance 'application-input-controller
                           :application application
                           :later-state later-state
-                          :pending-later-entries nil
                           :main-thread (bt:current-thread)))
-         (ran-inputs nil)
-         (presented nil))
+           (ran-inputs nil)
+           (presented nil)
+           (original-later-schedule (symbol-function 'later-schedule)))
     (unwind-protect
          (progn
            (setf (provider-rate-limits provider)
@@ -8785,7 +8776,17 @@
               'application-present
               (lambda (application text)
                 (declare (ignore application))
-                (push text presented))))
+                 (push text presented)))
+              (list
+               'later-schedule
+               (lambda (&rest arguments)
+                 (if (string= (getf arguments :input) "third")
+                     (error 'later-error
+                            :message "forced deferred write failure"
+                            :pathname (configuration-later-path configuration)
+                            :operation ':write
+                            :cause nil)
+                     (apply original-later-schedule arguments)))))
             (lambda ()
               (let ((work
                       (with-lock-held
@@ -8798,25 +8799,19 @@
                                                         (list ':message
                                                               (second work)))
                 (application-input-controller--finish-work controller))))
-           (test-assert (equal (nreverse ran-inputs) '("first"))
-                        "only the rate-limited turn runs before deferral")
-           (test-assert
-            (null (application-input-controller-work-items controller))
-            "queued follow-ups leave the ordinary work queue after a 429")
-           (let ((entries
-                   (application-input-controller-pending-later-entries
-                    controller)))
-             (test-assert (= (length entries) 2)
-                          "remaining follow-ups become durable deferred inputs")
-             (test-assert
-              (equal (mapcar #'later-entry-input entries)
-                     '("second" "third"))
-              "deferred follow-ups preserve submission order"))
-           (test-assert
-            (some (lambda (text)
-                    (search "Deferred 2 queued follow-ups" text))
-                  presented)
-            "the user is told that follow-ups were deferred"))
+             (test-assert (equal (nreverse ran-inputs) '("first"))
+                          "only the rate-limited turn runs before deferral")
+             (test-assert (equal (application-input-controller-work-items controller)
+                                 '((:message "third")))
+                          "a failed deferred write restores its queued follow-up")
+             (let ((entries (later-state-entries later-state)))
+               (test-assert
+                (and (= (length entries) 1)
+                     (string= (later-entry-input (first entries)) "second"))
+                "successfully persisted follow-ups retain submission order"))
+             (test-assert (some (lambda (text) (search "Deferred 1 queued follow-up" text))
+                                presented)
+                          "the user is told that follow-ups were deferred"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
@@ -8895,12 +8890,13 @@
                               (later-entry-identifier entry))
                      (> (later-entry-due-at replacement) (get-universal-time)))
                 "another rate limit reschedules the same durable input")
-               (test-assert
-                (member
-                 replacement
-                 (application-input-controller-pending-later-entries controller)
-                 :test #'eq)
-                "a rate-limited deferred input returns to the pending scheduler")
+                (test-assert
+                 (member
+                  replacement
+                  (later-state-entries
+                   (application-input-controller-later-state controller))
+                  :test #'eq)
+                 "a rate-limited deferred input returns to the pending scheduler")
                (application-input-controller--complete-later controller replacement))
              (application-input-controller--finish-work controller)
              (test-assert

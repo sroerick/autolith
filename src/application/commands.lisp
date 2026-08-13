@@ -1370,10 +1370,10 @@ to TERMINAL-UI-SELECT."
 (defun application--later-list (application)
   "Return APPLICATION's durable deferred inputs in execution order."
   (let* ((controller (application-input-controller application))
-         (entries
-           (and controller
-                (later-state-entries
-                 (application-input-controller-later-state controller)))))
+         (entries (and controller
+                       (with-lock-held ((application-input-controller-lock controller))
+                         (later-state-entries (application-input-controller-later-state
+                                               controller))))))
     (if entries
         (format nil "Deferred inputs:~%~{~A~^~%~}"
                 (loop for entry in entries
