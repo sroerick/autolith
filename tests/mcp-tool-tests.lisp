@@ -4041,6 +4041,67 @@
                 all-tools-registry :only-dirty-p t)
                (mcp-tool-registry-refresh
                 child-safe-registry :only-dirty-p t)
+               (let* ((binding
+                         (mcp-tool-registry-binding all-tools-registry))
+                       (before-tools
+                         (tool-registry-tools all-tools-registry))
+                       (before-revisions
+                         (copy-list
+                          (mcp-registry-binding-reconciled-revisions binding)))
+                       (static-tool
+                         (make-instance
+                          'tool
+                          :namespace "static"
+                          :name "conflict"
+                          :description "Conflict with one invalid MCP replacement."
+                          :parameters (tool-object-schema (json-object) nil)))
+                       (conflicting-replacement
+                         (make-instance
+                          'tool
+                          :namespace "static"
+                          :name "conflict"
+                          :description "Invalid conflicting MCP replacement."
+                          :parameters (tool-object-schema (json-object) nil)))
+                       (failure nil))
+                  (tool-registry-register all-tools-registry static-tool)
+                  (setf before-tools (tool-registry-tools all-tools-registry))
+                  (setf failure
+                        (handler-case
+                            (progn
+                              (mcp-tool-registry--replace-dynamic-tools
+                               all-tools-registry
+                               manager
+                               (cons conflicting-replacement
+                                     (mcp-tools--manager-tool-objects manager)))
+                              nil)
+                          (tool-error (condition)
+                            condition)))
+                  (test-assert
+                   (and failure
+                        (equal before-revisions
+                               (mcp-registry-binding-reconciled-revisions binding))
+                        (equal before-tools
+                               (tool-registry-tools all-tools-registry)))
+                   "a conflicting MCP refresh leaves tools and revisions intact")
+                  (tool-registry-delete-if all-tools-registry
+                                           (lambda (tool)
+                                             (eq tool static-tool)))
+                  (mcp-tool-registry--replace-dynamic-tools
+                   all-tools-registry
+                   manager
+                   (mcp-tools--manager-tool-objects manager))
+                  (test-assert
+                   (equal
+                    (mapcar
+                     (lambda (tool)
+                       (mcp-tool-name (mcp-provider-tool-raw-tool tool)))
+                     (remove-if-not
+                      (lambda (tool)
+                        (and (typep tool 'mcp-provider-tool)
+                             (eq (mcp-managed-tool-manager tool) manager)))
+                      (tool-registry-tools all-tools-registry)))
+                    '("read file" "read/file" "mutate" "error" "image"))
+                   "a valid MCP retry restores provider tools in discovery order"))
                (test-assert
                 (and
                  (test-mcp--tool-with-raw-name

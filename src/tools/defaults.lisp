@@ -907,14 +907,9 @@
 (-> default-tools--remove-mutable-self-tools (tool-registry) tool-registry)
 (defun default-tools--remove-mutable-self-tools (registry)
   "Remove every mutable active-image tool from REGISTRY."
-  (dolist (tool (copy-list (tool-registry-tools registry)))
-    (when (typep tool 'mutable-self-tool)
-      (remhash (tool-canonical-name tool) (tool-registry-index registry))))
-  (setf (tool-registry-tools registry)
-        (remove-if (lambda (tool)
-                     (typep tool 'mutable-self-tool))
-                   (tool-registry-tools registry)))
-  registry)
+  (tool-registry-delete-if registry
+                           (lambda (tool)
+                             (typep tool 'mutable-self-tool))))
 
 (-> make-default-tool-registry (&key (:immutable-p boolean)) tool-registry)
 (defun make-default-tool-registry (&key immutable-p)

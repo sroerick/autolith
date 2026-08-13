@@ -431,10 +431,9 @@ local-user override."
   (let ((registry
           (and (slot-boundp application 'tool-registry)
                (application-tool-registry application))))
-    (if (typep registry 'tool-registry)
-        (remove-if-not #'tool-user-callable-p
-                       (copy-list (tool-registry-tools registry)))
-        nil)))
+    (and (typep registry 'tool-registry)
+         (remove-if-not #'tool-user-callable-p
+                        (tool-registry-tools registry)))))
 
 (-> application-operation--validate-unique-names (list) list)
 (defun application-operation--validate-unique-names (operations)

@@ -2921,12 +2921,10 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
       (error 'tool-error
              :message "The MCP registry has no matching runtime binding."
              :tool-name "mcp.refresh"))
-    (dolist (tool (remove-if
-                   (lambda (candidate)
-                     (and (typep candidate 'mcp-provider-tool)
-                          (eq (mcp-managed-tool-manager candidate) manager)))
-                   (tool-registry-tools registry)))
-      (setf (gethash (tool-canonical-name tool) seen) t))
+    (dolist (tool (tool-registry-tools registry))
+      (unless (and (typep tool 'mcp-provider-tool)
+                   (eq (mcp-managed-tool-manager tool) manager))
+        (setf (gethash (tool-canonical-name tool) seen) t)))
     (dolist (tool effective-replacements)
       (let ((name (tool-canonical-name tool)))
         (when (gethash name seen)
@@ -2936,19 +2934,13 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                          name)
                  :tool-name "mcp.refresh"))
         (setf (gethash name seen) t)))
-    (setf (tool-registry-tools registry)
-          (nconc
-           (remove-if
-            (lambda (tool)
-              (and (typep tool 'mcp-provider-tool)
-                   (eq (mcp-managed-tool-manager tool) manager)))
-            (tool-registry-tools registry))
-           effective-replacements))
-    (clrhash (tool-registry-index registry))
-    (dolist (tool (tool-registry-tools registry))
-      (setf (gethash (tool-canonical-name tool)
-                     (tool-registry-index registry))
-            tool)))
+    (tool-registry-delete-if
+     registry
+     (lambda (tool)
+       (and (typep tool 'mcp-provider-tool)
+            (eq (mcp-managed-tool-manager tool) manager))))
+    (dolist (tool effective-replacements)
+      (tool-registry-register registry tool)))
   registry)
 
 (-> mcp-tool-registry-refresh

@@ -245,11 +245,62 @@
                 (null (gethash "query" (json-get parameters "properties")))
                 "web.run no longer declares its incompatible query shim"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  (let* ((registry (make-instance 'tool-registry))
+         (empty-schema (tool-object-schema (json-object) nil))
+         (replaceable
+           (make-instance 'tool
+                          :namespace "second"
+                          :name "replaceable"
+                          :description "Original registered tool."
+                          :parameters empty-schema))
+         (first
+           (make-instance 'tool
+                          :namespace "first"
+                          :name "one"
+                          :description "Later namespace tool."
+                          :parameters empty-schema))
+         (second
+           (make-instance 'tool
+                          :namespace "second"
+                          :name "two"
+                          :description "Later tool in the first namespace."
+                          :parameters empty-schema))
+         (replacement
+           (make-instance 'tool
+                          :namespace "second"
+                          :name "replaceable"
+                          :description "Replacement registered tool."
+                          :parameters empty-schema)))
+    (dolist (tool (list replaceable first second replacement))
+      (tool-registry-register registry tool))
+    (test-assert
+     (and (eq (tool-registry-find registry "second" "replaceable") replacement)
+          (equal (mapcar #'tool-canonical-name (tool-registry-tools registry))
+                 '("second.replaceable" "first.one" "second.two")))
+     "replacement lookup changes the object without moving its presentation position")
+    (let ((projection (tool-registry-tools registry)))
+      (setf (first projection) first)
+      (test-assert
+       (equal (mapcar #'tool-canonical-name (tool-registry-tools registry))
+              '("second.replaceable" "first.one" "second.two"))
+       "the public tool list is detached from registry storage"))
+    (let ((schemas (tool-registry-provider-schemas registry)))
+      (test-assert
+       (and (equalp
+             (map 'vector (lambda (schema) (json-get schema "name")) schemas)
+             #("second" "first"))
+            (equalp
+             (map 'vector
+                  (lambda (schema) (json-get schema "name"))
+                  (json-get (aref schemas 0) "tools"))
+             #("replaceable" "two")))
+       "provider schemas preserve first-seen namespace and tool order")))
   (let ((registry (make-instance 'tool-registry))
         (runtime-identity (list ':shared-runtime))
         (close-count 0)
         (resume-count 0)
-        (detach-count 0))
+        (detach-count 0)
+        (events nil))
     (flet ((make-runtime-tool (name)
              "Return one test tool sharing the lexical runtime counters."
              (make-instance
@@ -259,9 +310,18 @@
               :description "Exercise the runtime lifecycle protocol."
               :parameters (tool-object-schema (json-object) nil)
               :runtime-identity runtime-identity
-              :close-function (lambda () (incf close-count))
-              :resume-function (lambda () (incf resume-count))
-              :detach-function (lambda () (incf detach-count)))))
+              :close-function
+              (lambda ()
+                (incf close-count)
+                (push (list name ':close) events))
+              :resume-function
+              (lambda ()
+                (incf resume-count)
+                (push (list name ':resume) events))
+              :detach-function
+              (lambda ()
+                (incf detach-count)
+                (push (list name ':detach) events)))))
       (tool-registry-register registry (make-runtime-tool "first"))
       (tool-registry-register registry (make-runtime-tool "second"))
       (tool-registry-close-runtime-state registry)
@@ -272,7 +332,11 @@
       (test-assert (= resume-count 1)
                    "a shared tool runtime resumes exactly once per registry")
       (test-assert (= detach-count 1)
-                   "a shared tool runtime detaches exactly once per registry")))
+                   "a shared tool runtime detaches exactly once per registry")
+      (test-assert
+       (equal (nreverse events)
+              '(("second" :close) ("first" :resume) ("first" :detach)))
+       "runtime operations select the representative for their traversal direction")))
   (let ((registry (make-instance 'tool-registry))
         (close-order nil)
         (resume-order nil)

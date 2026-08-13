@@ -646,15 +646,11 @@
 
 (defclass tool-registry ()
   ((tools
-    :initform nil
-    :accessor tool-registry-tools
-    :type list
-    :documentation "Registered tools in presentation order.")
-   (index
-    :initform (make-hash-table :test #'equal)
-    :reader tool-registry-index
-    :type hash-table
-    :documentation "Canonical dotted tool names mapped to tool objects.")
+    :initform (make-ordered-map :test #'equal)
+    :reader tool-registry-tool-map
+    :type ordered-map
+    :documentation
+    "Canonical dotted tool names mapped to tools in presentation order.")
    (runtime-bindings
     :initform (make-hash-table :test #'eq)
     :reader tool-registry-runtime-bindings
@@ -667,6 +663,11 @@
     :type resource-registry
     :documentation "The per-agent registry of authority-neutral resource resolvers."))
   (:documentation "The model-visible tools and their active dispatch objects."))
+
+(-> tool-registry-tools (tool-registry) list)
+(defun tool-registry-tools (registry)
+  "Return a fresh list of REGISTRY's tools in presentation order."
+  (coerce (ordered-map-values (tool-registry-tool-map registry)) 'list))
 
 (-> tool-runtime-resume (tool tool-registry) null)
 (defgeneric tool-runtime-resume (tool registry)
@@ -698,16 +699,13 @@
     list)
 (defun tool-registry--runtime-representatives (registry &key reverse-p)
   "Return one representative tool for every distinct runtime in REGISTRY."
-  (let ((seen (make-hash-table :test #'eq))
-        (representatives nil))
-    (dolist (tool (if reverse-p
-                      (reverse (copy-list (tool-registry-tools registry)))
-                      (tool-registry-tools registry)))
-      (let ((identity (tool-runtime-identity tool)))
-        (when (and identity (not (gethash identity seen)))
-          (setf (gethash identity seen) t)
-          (push tool representatives))))
-    (nreverse representatives)))
+  (let ((tools
+          (remove-if-not #'tool-runtime-identity
+                         (tool-registry-tools registry))))
+    (remove-duplicates (if reverse-p (nreverse tools) tools)
+                       :key #'tool-runtime-identity
+                       :test #'eq
+                       :from-end t)))
 
 (-> tool-registry--ordered-runtime-representatives
     (tool-registry &key (:reverse-p boolean) (:priority-p boolean))
@@ -820,22 +818,26 @@
 
 (-> tool-registry-register (tool-registry tool) tool)
 (defun tool-registry-register (registry tool)
-  "Register TOOL in REGISTRY, replacing an existing object with the same name."
-  (let* ((canonical-name (tool-canonical-name tool))
-         (existing (gethash canonical-name (tool-registry-index registry))))
-    (when existing
-      (setf (tool-registry-tools registry)
-            (remove existing (tool-registry-tools registry))))
-    (setf (gethash canonical-name (tool-registry-index registry)) tool
-          (tool-registry-tools registry)
-          (nconc (tool-registry-tools registry) (list tool)))
-    tool))
+  "Register TOOL, preserving an existing name's presentation position."
+  (ordered-map-set (tool-registry-tool-map registry)
+                   (tool-canonical-name tool)
+                   tool))
+
+(-> tool-registry-delete-if (tool-registry function) tool-registry)
+(defun tool-registry-delete-if (registry predicate)
+  "Delete every tool satisfying PREDICATE from REGISTRY and return REGISTRY."
+  (ordered-map-delete-if
+   (lambda (canonical-name tool)
+     (declare (ignore canonical-name))
+     (funcall predicate tool))
+   (tool-registry-tool-map registry))
+  registry)
 
 (-> tool-registry-find (tool-registry string string) (option tool))
 (defun tool-registry-find (registry namespace name)
   "Return the tool named NAMESPACE.NAME from REGISTRY, or NIL."
-  (gethash (format nil "~A.~A" namespace name)
-           (tool-registry-index registry)))
+  (ordered-map-get (tool-registry-tool-map registry)
+                   (format nil "~A.~A" namespace name)))
 
 (-> tool-context-execution-runtime (tool-context) t)
 (defun tool-context-execution-runtime (context)
@@ -878,30 +880,30 @@
 (defun tool-registry-provider-schemas
     (registry &key (canonical-names nil canonical-names-supplied-p))
   "Return REGISTRY grouped into provider schemas, optionally filtered by name."
-  (let ((namespace-order nil)
-        (namespace-tools (make-hash-table :test #'equal)))
+  (let ((namespace-tools (make-ordered-map :test #'equal))
+        (schemas (make-deque)))
     (dolist (tool (tool-registry-tools registry))
       (when (or (not canonical-names-supplied-p)
                 (member (tool-canonical-name tool)
                         canonical-names
                         :test #'string=))
-        (unless (gethash (tool-namespace tool) namespace-tools)
-          (setf (gethash (tool-namespace tool) namespace-tools) nil)
-          (setf namespace-order
-                (nconc namespace-order (list (tool-namespace tool)))))
-        (setf (gethash (tool-namespace tool) namespace-tools)
-              (nconc (gethash (tool-namespace tool) namespace-tools)
-                     (list (tool-provider-schema tool))))))
-    (coerce
-     (mapcar
-      (lambda (namespace)
+        (let ((tools
+                (or (ordered-map-get namespace-tools (tool-namespace tool))
+                    (ordered-map-set namespace-tools
+                                     (tool-namespace tool)
+                                     (make-deque)))))
+          (deque-push-back tools (tool-provider-schema tool)))))
+    (ordered-map-map
+     (lambda (namespace tools)
+       (deque-push-back
+        schemas
         (json-object
          "type" "namespace"
          "name" namespace
          "description" (tool-namespace-description namespace)
-         "tools" (coerce (gethash namespace namespace-tools) 'vector)))
-      namespace-order)
-     'vector)))
+         "tools" (deque->vector tools))))
+     namespace-tools)
+    (deque->vector schemas)))
 
 (-> function-call-canonical-name (json-object) string)
 (defun function-call-canonical-name (call)

@@ -389,7 +389,14 @@
                 #:deque-push-back
                 #:deque-ref
                 #:deque-total-weight
-                #:make-deque)
+                #:make-deque
+                #:make-ordered-map
+                #:ordered-map
+                #:ordered-map-delete-if
+                #:ordered-map-get
+                #:ordered-map-map
+                #:ordered-map-set
+                #:ordered-map-values)
   (:import-from #:yason
                 #:false)
   (:export #:application-command
