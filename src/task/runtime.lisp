@@ -494,38 +494,19 @@ name is bounded here, because only the identifier derived from it was."
 
 ;;;; -- Child Steering --
 
-(-> task-job--steering-content-characters
-    ((or string user-message-input))
-    (integer 0))
-(defun task-job--steering-content-characters (content)
-  "Return the text character count carried by steering CONTENT."
-  (length (user-message-input-text content)))
-
-(-> task-job--steering-entry-characters (agent-steering-input) (integer 0))
-(defun task-job--steering-entry-characters (entry)
-  "Return the text character count retained by steering ENTRY."
-  (task-job--steering-content-characters
-   (agent-steering-input-content entry)))
-
-(-> task-job--steering-character-count-locked (task-job) (integer 0))
-(defun task-job--steering-character-count-locked (job)
-  "Return locked JOB's combined queued and in-flight steering characters."
-  (loop for entry in (append (task-job-steering-items job)
-                             (task-job-steering-in-flight-items job))
-        sum (task-job--steering-entry-characters entry)))
 
 (-> task-job-steering-pending-count (task-job) (integer 0))
 (defun task-job-steering-pending-count (job)
   "Return JOB's accepted steering messages not yet durably acknowledged."
   (with-lock-held ((task-job-steering-lock job))
-    (+ (length (task-job-steering-items job))
-       (length (task-job-steering-in-flight-items job)))))
+    (+ (deque-count (task-job-steering-items job))
+       (deque-count (task-job-steering-in-flight-items job)))))
 
 (-> task-job-response-promotion-pending-count (task-job) (integer 0))
 (defun task-job-response-promotion-pending-count (job)
   "Return JOB's accepted steering prompts still awaiting a verbal response."
   (with-lock-held ((task-job-steering-lock job))
-    (length (task-job-response-promotion-identifiers job))))
+    (deque-count (task-job-response-promotion-identifiers job))))
 
 (-> task-job-enqueue-steering
     (task-job (or string user-message-input)
@@ -538,7 +519,7 @@ When PROMOTE-RESPONSE-P is true, acceptance also reserves one FIFO token for
 JOB's first later durable verbal response."
   (block nil
     (let* ((copy (user-message-input-copy content))
-           (characters (task-job--steering-content-characters copy)))
+           (characters (length (user-message-input-text copy))))
       (unless (or (plusp characters)
                   (user-message-input-image-pathnames copy))
         (return (values nil ':empty)))
@@ -553,13 +534,16 @@ JOB's first later durable verbal response."
         (with-lock-held ((task-job-steering-lock job))
           (when (task-job-steering-closed-p job)
             (return (values nil ':closed)))
-          (let ((count (+ (length (task-job-steering-items job))
-                          (length (task-job-steering-in-flight-items job))))
+          (let ((count
+                  (+ (deque-count (task-job-steering-items job))
+                     (deque-count (task-job-steering-in-flight-items job))))
                 (retained-characters
-                  (task-job--steering-character-count-locked job)))
+                  (+ (deque-total-weight (task-job-steering-items job))
+                     (deque-total-weight
+                      (task-job-steering-in-flight-items job)))))
             (when (or (>= count *task-steering-maximum-items*)
                       (and promote-response-p
-                           (>= (length
+                           (>= (deque-count
                                 (task-job-response-promotion-identifiers job))
                                *task-response-promotion-maximum-items*))
                       (> (+ retained-characters characters)
@@ -569,41 +553,34 @@ JOB's first later durable verbal response."
                   (agent-steering-input-create
                    :identifier (make-identifier)
                    :content copy)))
-            (setf (task-job-steering-items job)
-                  (nconc (task-job-steering-items job) (list entry)))
+            (deque-push-back (task-job-steering-items job) entry)
             (when promote-response-p
-              (setf (task-job-response-promotion-identifiers job)
-                    (nconc
-                     (task-job-response-promotion-identifiers job)
-                     (list (agent-steering-input-identifier entry)))))
+              (deque-push-back
+               (task-job-response-promotion-identifiers job)
+               (agent-steering-input-identifier entry)))
             (values entry ':accepted)))))))
 
 (-> task-job-take-steering (task-job) list)
 (defun task-job-take-steering (job)
   "Move JOB's queued steering into in-flight state and return it in FIFO order."
   (with-lock-held ((task-job-steering-lock job))
-    (let ((entries (task-job-steering-items job)))
-      (setf (task-job-steering-in-flight-items job)
-            (nconc (task-job-steering-in-flight-items job) entries)
-            (task-job-steering-items job) nil)
+    (let ((entries (deque->list (task-job-steering-items job))))
+      (deque-move-all
+       (task-job-steering-items job)
+       (task-job-steering-in-flight-items job))
       entries)))
 
 (-> task-job-acknowledge-steering (task-job non-empty-string) boolean)
 (defun task-job-acknowledge-steering (job identifier)
   "Forget one in-flight steering IDENTIFIER after its child append is durable."
   (with-lock-held ((task-job-steering-lock job))
-    (let ((entry
-            (find identifier
-                  (task-job-steering-in-flight-items job)
-                  :key #'agent-steering-input-identifier
-                  :test #'string=)))
-      (when entry
-        (setf (task-job-steering-in-flight-items job)
-              (delete entry
-                      (task-job-steering-in-flight-items job)
-                      :test #'eq
-                      :count 1))
-        t))))
+    (nth-value
+     1
+     (deque-delete
+      identifier
+      (task-job-steering-in-flight-items job)
+      :key #'agent-steering-input-identifier
+      :test #'string=))))
 
 (-> task-job-note-verbal-response (task-job string timestamp) boolean)
 (defun task-job-note-verbal-response (job text timestamp)
@@ -615,10 +592,8 @@ JOB's first later durable verbal response."
           (with-lock-held ((task-job-steering-lock job))
             (let ((identifiers
                     (task-job-response-promotion-identifiers job)))
-              (when identifiers
-                (setf (task-job-response-promotion-identifiers job)
-                      (rest identifiers))
-                (first identifiers))))))
+              (unless (deque-empty-p identifiers)
+                (deque-pop-front identifiers))))))
     (when steering-identifier
       (task-orchestrator-emit
        (task-job-orchestrator job)
@@ -635,12 +610,13 @@ JOB's first later durable verbal response."
 (defun task-job-close-steering (job)
   "Close JOB's mailbox, release its content, and return undelivered entry count."
   (with-lock-held ((task-job-steering-lock job))
-    (let ((count (+ (length (task-job-steering-items job))
-                    (length (task-job-steering-in-flight-items job)))))
-      (setf (task-job-steering-closed-p job) t
-            (task-job-steering-items job) nil
-            (task-job-steering-in-flight-items job) nil
-            (task-job-response-promotion-identifiers job) nil)
+    (let ((count
+            (+ (deque-count (task-job-steering-items job))
+               (deque-count (task-job-steering-in-flight-items job)))))
+      (setf (task-job-steering-closed-p job) t)
+      (deque-clear (task-job-steering-items job))
+      (deque-clear (task-job-steering-in-flight-items job))
+      (deque-clear (task-job-response-promotion-identifiers job))
       count)))
 
 (-> task-job-identity (task-job) list)

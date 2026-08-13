@@ -132,12 +132,16 @@
                  (prompt-error (condition)
                    (prompt-error-reason condition))))
 
+             (steering-items (job)
+               (with-lock-held ((task-job-steering-lock job))
+                 (deque->list (task-job-steering-items job))))
+
              (steering-texts (job)
                (mapcar
                 (lambda (entry)
                   (user-message-input-text
                    (agent-steering-input-content entry)))
-                (task-job-steering-items job))))
+                (steering-items job))))
       (unwind-protect
            (progn
              (setf controller
@@ -345,8 +349,8 @@
                            (prompt :to 'shared-diff-final-review
                                    :images (list prompt-image)
                                    "image child context"))
-                         (entry (first (last (task-job-steering-items named))))
-                         (input (agent-steering-input-content entry)))
+                          (entry (first (last (steering-items named))))
+                          (input (agent-steering-input-content entry)))
                     (test-assert
                      (and (eq (getf (rest receipt) :target) ':child)
                           (= (getf (rest receipt) :image-count) 1)

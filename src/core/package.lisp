@@ -378,10 +378,13 @@
                 #:deque->list
                 #:deque->vector
                 #:deque-clear
+                #:deque-count
+                #:deque-delete
                 #:deque-empty-p
                 #:deque-front
                 #:deque-maximum-count
                 #:deque-maximum-weight
+                #:deque-move-all
                 #:deque-pop-front
                 #:deque-push-back
                 #:deque-ref

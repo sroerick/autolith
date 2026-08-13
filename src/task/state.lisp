@@ -279,6 +279,13 @@ nesting depth, and lifecycle listeners."))
   (:documentation
    "Common session ownership, identity, ordering, and waiting state for a job."))
 
+(-> task-job--steering-entry-characters (agent-steering-input) (integer 0))
+(defun task-job--steering-entry-characters (entry)
+  "Return the text character count retained by steering ENTRY."
+  (length
+   (user-message-input-text
+    (agent-steering-input-content entry))))
+
 (defclass task-job (session-job)
   ((definition :initarg :definition :accessor task-job-definition :type
                (option task-agent-definition) :documentation
@@ -326,19 +333,19 @@ nesting depth, and lifecycle listeners."))
      :documentation
      "The lock serializing steering, response promotion, and terminal claims.")
     (steering-items
-     :initform nil
-     :accessor task-job-steering-items
-     :type list
+     :initform (make-deque :weight-function #'task-job--steering-entry-characters)
+     :reader task-job-steering-items
+     :type deque
      :documentation "Accepted steering entries waiting for the next safe boundary.")
     (steering-in-flight-items
-     :initform nil
-     :accessor task-job-steering-in-flight-items
-     :type list
+     :initform (make-deque :weight-function #'task-job--steering-entry-characters)
+     :reader task-job-steering-in-flight-items
+     :type deque
      :documentation "Steering entries drained but not yet durably acknowledged.")
     (response-promotion-identifiers
-     :initform nil
-     :accessor task-job-response-promotion-identifiers
-     :type list
+     :initform (make-deque)
+     :reader task-job-response-promotion-identifiers
+     :type deque
      :documentation "FIFO steering identifiers awaiting one durable verbal response.")
     (steering-closed-p
      :initform nil
@@ -396,8 +403,8 @@ parent, and borrowed capabilities are released at terminal state."))
 (-> task-job--steering-pending-p (task-job) boolean)
 (defun task-job--steering-pending-p (job)
   "Return true when locked JOB has queued or in-flight steering."
-  (or (not (null (task-job-steering-items job)))
-      (not (null (task-job-steering-in-flight-items job)))))
+  (or (not (deque-empty-p (task-job-steering-items job)))
+      (not (deque-empty-p (task-job-steering-in-flight-items job)))))
 
 (-> task-job--terminal-admission-reason-locked
     (task-job)
