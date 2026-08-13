@@ -23,4 +23,4 @@ git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref e65
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref 408fa906e2d16aa515b39c943d3affcab3811ffc
 git sexp-store https://github.com/luciusmagn/sexp-store.git :ref 0a586df98c295ca6d2fcd47e33bc5f478075f470
 git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref d46e94cd95562a645acf144cf84daf0b31cc707a
-git structlisp https://github.com/luciusmagn/structlisp.git :ref 8842f7181ae14806d3d989fdcf7c3fdfed78fa08
+git structlisp https://github.com/luciusmagn/structlisp.git :ref bac49473be5fb2303899f2b4ea314d99bd447d6b
