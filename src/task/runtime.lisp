@@ -454,13 +454,7 @@ identifier is what an agent uses to refer to its own children."
         (:tool-call-completed
          (let ((tool (getf details :tool)))
            (when tool
-             (push tool (task-progress-recent-tools progress))
-             (setf (task-progress-recent-tools progress)
-                   (subseq
-                    (task-progress-recent-tools progress)
-                    0
-                    (min *task-progress-recent-tool-limit*
-                         (length (task-progress-recent-tools progress)))))))
+             (deque-push-back (task-progress-recent-tools progress) tool)))
          (setf (task-progress-current-tool progress) nil
                (task-progress-current-tool-started-at progress) nil)))
       (setf (task-progress-updated-at progress) now
@@ -698,7 +692,7 @@ handed rather than storing a second copy."
                     (task-progress-current-tool-started-at progress)
                     now))
               :recent-tools
-              (reverse (copy-list (task-progress-recent-tools progress)))
+              (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
               :recent-output (task-progress-output-tail progress)
               :request-count (task-progress-request-count progress)
               :usage (copy-tree (task-progress-usage progress))
@@ -831,7 +825,7 @@ values from either side of a terminal transition."
                         (task-progress-current-tool-started-at progress)
                         now))
                   :recent-tools
-                  (reverse (copy-list (task-progress-recent-tools progress)))
+                  (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
                   :request-count (task-progress-request-count progress)
                   :duration-ms
                   (and (task-progress-started-at progress)

@@ -165,10 +165,10 @@
      :type (option integer)
      :documentation "The internal real time at which the current tool began.")
    (recent-tools
-    :initform nil
-    :accessor task-progress-recent-tools
-    :type list
-    :documentation "The newest completed child tools, newest first.")
+    :initform (make-deque :maximum-count *task-progress-recent-tool-limit*)
+    :reader task-progress-recent-tools
+    :type deque
+    :documentation "The completed child tools retained in chronological order.")
    (output-tail
     :initform ""
     :accessor task-progress-output-tail
