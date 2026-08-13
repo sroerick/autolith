@@ -130,8 +130,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "structlisp";
-      rev = "bac49473be5fb2303899f2b4ea314d99bd447d6b";
-      hash = "sha256-6kgtETmPxWdkyWz/ZY22WHEOYv60ENBzkf9kWBz57Lg=";
+      rev = "3b424005faeae08170226c81c20ea1d0b9f2e55d";
+      hash = "sha256-fnQogtSDVMJ/O2dcfUht4IJAN58nZJ6iID/AmFEE82g=";
     };
   };
 
