@@ -920,14 +920,15 @@
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "interrupted"))
-                (call
-                  (json-object
-                   "type" "function_call"
-                   "status" "completed"
-                   "arguments" "{\"patterns\":[\"one\",\"two\"]}"
-                   "call_id" "call-interrupted"
-                   "name" "multi-content"
-                   "namespace" "search")))
+                 (call
+                   ;; Keep the removed name to cover interrupted pre-upgrade history.
+                   (json-object
+                    "type" "function_call"
+                    "status" "completed"
+                    "arguments" "{\"patterns\":[\"one\",\"two\"]}"
+                    "call_id" "call-interrupted"
+                    "name" "multi-content"
+                    "namespace" "search")))
            (conversation-append-user-message conversation "continue the task")
            (conversation-append-provider-item conversation call)
            ;; Reproduce a user message persisted after restart but before the

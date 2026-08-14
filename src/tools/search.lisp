@@ -38,9 +38,6 @@
   ()
   (:documentation "Search indexed workspace file contents."))
 
-(defclass search-multi-content-tool (search-tool)
-  ()
-  (:documentation "Search indexed contents for any of several literal patterns."))
 
 (defmethod tool-child-safe-p ((tool search-tool))
   "Permit isolated indexed workspace searches inside child agents."

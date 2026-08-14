@@ -326,48 +326,40 @@
         (list
          'search-content-tool
          "search" "content"
-         "Search indexed workspace contents. Plain matching is the default; put file or path constraints in the query, for example '*.lisp symbol', 'src/ symbol', or '!tests/ symbol'."
-         (tool-object-schema
-          (json-object
-           "query" (tool-string-property
-                    "Text plus optional inline file constraints to find.")
-           "mode" (json-object
-                   "type" "string"
-                   "enum" #("plain" "regex" "fuzzy")
-                   "description" "Matching mode; default plain.")
-           "file-offset" (tool-integer-property
-                          "Pagination cursor from next-file-offset; default 0.")
-           "max-results" (tool-integer-property
-                          "Matches returned from 1 to 100; default 20.")
-           "max-matches-per-file" (tool-integer-property
-                                   "Matches retained per file from 1 to 100; default 20.")
-           "context" (tool-integer-property
-                      "Lines before and after each match from 0 to 10; default 0.")
-           "time-budget-ms" (tool-integer-property
-                             "Search budget from 1 to 10000 milliseconds; default 3000."))
-          '("query"))
-         :engine worker)
-        (list
-         'search-multi-content-tool
-         "search" "multi-content"
-         "Search indexed contents once for any of several literal patterns, with optional file and path constraints."
-         (tool-object-schema
-          (json-object
-           "patterns" (tool-string-array-property
-                       "Non-empty literal alternatives searched in one pass.")
-           "constraints" (tool-string-property
-                          "Optional space-separated file constraints such as '*.lisp src/ !tests/'.")
-           "file-offset" (tool-integer-property
-                          "Pagination cursor from next-file-offset; default 0.")
-           "max-results" (tool-integer-property
-                          "Matches returned from 1 to 100; default 20.")
-           "max-matches-per-file" (tool-integer-property
-                                   "Matches retained per file from 1 to 100; default 20.")
-           "context" (tool-integer-property
-                      "Lines before and after each match from 0 to 10; default 0.")
-           "time-budget-ms" (tool-integer-property
-                             "Search budget from 1 to 10000 milliseconds; default 3000."))
-          '("patterns"))
+         "Search indexed workspace contents. Provide exactly one query or patterns array. Plain query matching is the default; put file or path constraints inline, or use separate constraints with literal patterns."
+         (let ((schema
+                 (tool-object-schema
+                  (json-object
+                   "query" (tool-string-property
+                            "Text plus optional inline file constraints to find.")
+                   "patterns" (json-object
+                               "type" "array"
+                               "description" "Non-empty literal alternatives searched in one pass."
+                               "minItems" 1
+                               "items" (json-object "type" "string"
+                                                    "minLength" 1))
+                   "mode" (json-object
+                           "type" "string"
+                           "enum" #("plain" "regex" "fuzzy")
+                           "description" "Single-query matching mode; default plain.")
+                   "constraints" (tool-string-property
+                                  "Optional space-separated file constraints used only with patterns, such as '*.lisp src/ !tests/'.")
+                   "file-offset" (tool-integer-property
+                                  "Pagination cursor from next-file-offset; default 0.")
+                   "max-results" (tool-integer-property
+                                  "Matches returned from 1 to 100; default 20.")
+                   "max-matches-per-file" (tool-integer-property
+                                           "Matches retained per file from 1 to 100; default 20.")
+                   "context" (tool-integer-property
+                              "Lines before and after each match from 0 to 10; default 0.")
+                   "time-budget-ms" (tool-integer-property
+                                     "Search budget from 1 to 10000 milliseconds; default 3000."))
+                  nil)))
+           (setf (gethash "oneOf" schema)
+                 (vector
+                  (json-object "type" "object" "required" #("query"))
+                  (json-object "type" "object" "required" #("patterns"))))
+           schema)
          :engine worker)))
     (default-tools--register registry specification))
   registry)

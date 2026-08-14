@@ -54,7 +54,7 @@
 
 (-> test-search-tools () null)
 (defun test-search-tools ()
-  "Exercise the clifff adapter and all four indexed workspace operations."
+  "Exercise the clifff adapter and all three indexed workspace operations."
   (let* ((default-configuration
            (configuration-create
             :source-root (asdf:system-source-directory :autolith)
@@ -98,73 +98,120 @@
             (format nil "AUTOLITH_FFF_SECONDARY~%"))
            (setf configuration (search-tests--configuration workspace-root)
                  registry (make-default-tool-registry))
-           (let* ((conversation
-                    (conversation-create configuration :identifier "fff-search"))
-                  (context
-                    (make-instance 'tool-context
-                                   :configuration configuration
-                                   :worker nil
-                                   :conversation conversation
-                                   :registry registry))
-                  (files-tool (tool-registry-find registry "search" "files"))
-                  (glob-tool (tool-registry-find registry "search" "glob"))
-                  (content-tool (tool-registry-find registry "search" "content"))
-                  (multi-tool
-                    (tool-registry-find registry "search" "multi-content")))
-             (test-assert (and files-tool glob-tool content-tool multi-tool)
-                          "all native search tools are registered")
-             (test-assert
-              (eq (search-tool-engine files-tool)
-                  (search-tool-engine multi-tool))
-              "one registry shares one isolated index across search operations")
-             (let ((result (search-tests--call registry context
-                                               "search" "files"
-                                               "query" "model selection")))
-               (test-assert (tool-result-success-p result)
-                            (format nil
-                                    "search.files completes through clifff: ~A"
-                                    (tool-result-content result)))
-               (test-assert (search "src/model-selection.lisp"
-                                    (tool-result-content result))
-                            "search.files returns fuzzy workspace-relative paths"))
-             (let ((result (search-tests--call registry context
-                                               "search" "glob"
-                                               "pattern" "**/*.lisp")))
-               (test-assert (tool-result-success-p result)
-                            "search.glob completes through the shared index")
-               (test-assert (search "src/model-selection.lisp"
-                                    (tool-result-content result))
-                            "search.glob filters indexed relative paths"))
-             (let ((result (search-tests--call registry context
-                                               "search" "content"
-                                               "query" "AUTOLITH_FFF_PRIMARY"
-                                               "context" 1)))
-               (test-assert (tool-result-success-p result)
-                            "search.content completes through the content index")
-               (test-assert
-                (and (search "src/model-selection.lisp:2:"
-                             (tool-result-content result))
-                     (search "first context line"
-                             (tool-result-content result))
-                     (search "last context line"
-                             (tool-result-content result)))
-                (format nil "search.content renders locations and bounded context: ~S"
-                        (tool-result-content result))))
-             (let ((result
-                     (search-tests--call
-                      registry context
-                      "search" "multi-content"
-                      "patterns" #("AUTOLITH_FFF_PRIMARY"
-                                   "AUTOLITH_FFF_SECONDARY")
-                      "constraints" "*.lisp")))
-               (test-assert (tool-result-success-p result)
-                            "search.multi-content searches alternatives in one pass")
-               (test-assert (and (search "src/model-selection.lisp"
-                                         (tool-result-content result))
-                                 (not (search "docs/search-guide.org"
-                                              (tool-result-content result))))
-             "search.multi-content honors separate file constraints"))
-             (let* ((worker (search-tool-engine files-tool))
+            (let* ((conversation
+                     (conversation-create configuration :identifier "fff-search"))
+                   (context
+                     (make-instance 'tool-context
+                                    :configuration configuration
+                                    :worker nil
+                                    :conversation conversation
+                                    :registry registry))
+                   (files-tool (tool-registry-find registry "search" "files"))
+                   (glob-tool (tool-registry-find registry "search" "glob"))
+                   (content-tool
+                     (tool-registry-find registry "search" "content"))
+                   (multi-tool
+                     (tool-registry-find registry "search" "multi-content")))
+              (test-assert (and files-tool glob-tool content-tool (null multi-tool))
+                           "three native search tools are registered")
+              (test-assert
+               (eq (search-tool-engine files-tool)
+                   (search-tool-engine content-tool))
+               "one registry shares one isolated index across search operations")
+              (let* ((schema (tool-parameters content-tool))
+                     (properties (json-get schema "properties"))
+                     (patterns-schema (json-get properties "patterns"))
+                     (item-schema (json-get patterns-schema "items"))
+                     (one-of (json-get schema "oneOf")))
+                (test-assert
+                 (and (vectorp one-of)
+                      (= (length one-of) 2)
+                      (equalp
+                       (map 'list
+                            (lambda (variant)
+                              (json-get variant "required"))
+                            one-of)
+                       '(#("query") #("patterns")))
+                      (= (json-get patterns-schema "minItems") 1)
+                      (string= (json-get item-schema "type") "string")
+                      (= (json-get item-schema "minLength") 1))
+                 "search.content schema requires exactly one non-empty query or patterns array"))
+              (let ((result (search-tests--call registry context
+                                                "search" "files"
+                                                "query" "model selection")))
+                (test-assert (tool-result-success-p result)
+                             (format nil
+                                     "search.files completes through clifff: ~A"
+                                     (tool-result-content result)))
+                (test-assert (search "src/model-selection.lisp"
+                                     (tool-result-content result))
+                             "search.files returns fuzzy workspace-relative paths"))
+              (let ((result (search-tests--call registry context
+                                                "search" "glob"
+                                                "pattern" "**/*.lisp")))
+                (test-assert (tool-result-success-p result)
+                             "search.glob completes through the shared index")
+                (test-assert (search "src/model-selection.lisp"
+                                     (tool-result-content result))
+                             "search.glob filters indexed relative paths"))
+              (let ((result (search-tests--call registry context
+                                                "search" "content"
+                                                "query" "AUTOLITH_FFF_PRIMARY"
+                                                "context" 1)))
+                (test-assert (tool-result-success-p result)
+                             "search.content completes through the content index")
+                (test-assert
+                 (and (search "src/model-selection.lisp:2:"
+                              (tool-result-content result))
+                      (search "first context line"
+                              (tool-result-content result))
+                      (search "last context line"
+                              (tool-result-content result)))
+                 (format nil "search.content renders locations and bounded context: ~S"
+                         (tool-result-content result))))
+              (let ((result
+                      (search-tests--call
+                       registry context
+                       "search" "content"
+                       "patterns" #("AUTOLITH_FFF_PRIMARY"
+                                    "AUTOLITH_FFF_SECONDARY")
+                       "constraints" "*.lisp")))
+                (test-assert (tool-result-success-p result)
+                             "search.content searches literal alternatives in one pass")
+                (test-assert (and (search "src/model-selection.lisp"
+                                          (tool-result-content result))
+                                  (not (search "docs/search-guide.org"
+                                               (tool-result-content result))))
+                             "search.content honors separate pattern constraints"))
+              (dolist (case
+                        (list
+                         (list "missing selector" nil
+                               "exactly one of query or patterns")
+                         (list "both selectors"
+                               (list "query" "AUTOLITH_FFF_PRIMARY"
+                                     "patterns" #("AUTOLITH_FFF_SECONDARY"))
+                               "exactly one of query or patterns")
+                         (list "empty patterns" (list "patterns" #())
+                               "non-empty literal strings")
+                         (list "invalid patterns" (list "patterns" #(42))
+                               "non-empty literal strings")
+                         (list "mode with patterns"
+                               (list "patterns" #("AUTOLITH_FFF_PRIMARY")
+                                     "mode" "plain")
+                               "mode applies only")
+                         (list "constraints with query"
+                               (list "query" "AUTOLITH_FFF_PRIMARY"
+                                     "constraints" "*.lisp")
+                               "constraints apply only")))
+                (destructuring-bind (label arguments expected) case
+                  (let ((result
+                          (apply #'search-tests--call
+                                 registry context "search" "content" arguments)))
+                    (test-assert
+                     (and (not (tool-result-success-p result))
+                          (search expected (tool-result-content result)))
+                     (format nil "search.content rejects ~A" label)))))
+              (let* ((worker (search-tool-engine files-tool))
                     (watched-process (worker-process worker))
                     (watched-pid (uiop:process-info-pid watched-process)))
                (sleep 0.25)

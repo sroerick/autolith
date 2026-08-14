@@ -120,7 +120,7 @@
 
 (defparameter *application-recovery-diagnostic-tool-names*
   '("resource.read"
-    "search.files" "search.glob" "search.content" "search.multi-content"
+    "search.files" "search.glob" "search.content"
     "self.inspect" "self.source" "self.status" "self.diff"
     "self.generations")
   "Read-only native tools available to the recovered diagnosis turn.")

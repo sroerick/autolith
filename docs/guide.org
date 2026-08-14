@@ -517,10 +517,10 @@ macOS uses a generated Seatbelt profile. Neither makes Autolith a hostile-code
 sandbox.
 
 Use =search.*= before shell searching a workspace. =search.files= fuzzy matches
-paths, =search.glob= accepts one glob, =search.content= supports plain, regex,
-or fuzzy content matching, and =search.multi-content= searches several literal
-alternatives at once. They share a warm fff index and return compact,
-workspace-relative, paginated results. =AGENTS.md= is discovered from a Git root
+paths, =search.glob= accepts one glob, and =search.content= accepts either one
+plain, regex, or fuzzy query or several literal patterns in one pass. The tools
+share a warm fff index and return compact, workspace-relative, paginated results.
+=AGENTS.md= is discovered from a Git root
 down to the workspace on every request. An optional root =AUTOLITH.org= supplies
 bounded advisory project context; it is never executable or policy override.
 

@@ -5158,7 +5158,6 @@
           (equal (fourth observed)
                  '("resource.read"
                    "search.files" "search.glob" "search.content"
-                   "search.multi-content"
                    "self.inspect" "self.source" "self.status" "self.diff"
                    "self.generations"))
           (fifth observed)
