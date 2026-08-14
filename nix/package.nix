@@ -130,8 +130,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "structlisp";
-      rev = "598e295c028daf6c66dfd64d4e2a27733f0da976";
-      hash = "sha256-1pQQjWmr+Amg+zAWCGrzbp9CM7pQq9Nz7k+/WMf+jIM=";
+      rev = "e9ad8666c98a6471804dbd54d777721da5afb442";
+      hash = "sha256-BqSXgR1UHKlnBIbW7IoIM1zIZ/+Vhpx/Ur4JsSixpTg=";
     };
   };
 

@@ -100,5 +100,5 @@
   :version "git-d46e94cd95562a645acf144cf84daf0b31cc707a"))
 ("structlisp" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "598e295c028daf6c66dfd64d4e2a27733f0da976")
-  :version "git-598e295c028daf6c66dfd64d4e2a27733f0da976"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/structlisp.git" :ref "e9ad8666c98a6471804dbd54d777721da5afb442")
+  :version "git-e9ad8666c98a6471804dbd54d777721da5afb442"))
