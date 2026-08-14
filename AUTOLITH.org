@@ -18,6 +18,25 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** Isolated sibling ASDF verification
+
+- Problem: Lisp workers start with Autolith's Qlot source registry and loaded
+  systems. Loading a sibling checkout's ASDF file under the same system name can
+  silently retain the pinned Qlot definition and produce a false-positive test
+  result against old source.
+- Behavior: before claiming sibling dependency test results, inspect
+  =asdf:system-source-file=. If it does not name the intended checkout, run the
+  documented =asdf:test-system= operation in a pristine host SBCL process from
+  that checkout rather than trusting the worker's loaded system.
+- Scope and location: tracked project workflow note for sibling Common Lisp
+  dependency development; no executable behavior changes.
+- Verification: an explicit Structlisp checkout load in a Lisp worker still
+  resolved revision =e9ad866= from Qlot while the checkout was at =66bbfbe=.
+  A pristine noninteractive SBCL process loaded the checkout ASDF file and ran
+  its complete suite successfully.
+- Removal condition: Lisp workers support an isolated source registry or an
+  explicit source-root system load whose resolved source file is verified.
+
 ** Modified Enter terminal compatibility
 
 - Problem: the active-turn cancellation change disabled Kitty CSI-u reporting to
