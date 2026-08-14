@@ -367,15 +367,6 @@ local-user override."
   (declare (ignore tool))
   ':hold)
 
-(defmethod tool-active-turn-action ((tool self-inspect-tool))
-  "Permit read-only active-image inspection during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool self-source-tool))
-  "Permit read-only active-image source lookup during an active turn."
-  (declare (ignore tool))
-  ':execute)
 
 (defmethod tool-active-turn-action ((tool self-status-tool))
   "Permit read-only active-image status inspection during an active turn."

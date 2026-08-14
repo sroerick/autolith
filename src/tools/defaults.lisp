@@ -499,27 +499,39 @@
           (list
            'lisp-describe-tool
            "lisp" "describe"
-           "Describe a readable Lisp object or symbol in a named persistent REPL."
+           "Describe a readable Lisp object or symbol in a named worker or the active image."
            (tool-object-schema
             (json-object
              "designator" (tool-string-property
-                           "A readable Lisp form naming the object.")
+                           "A readable Lisp form naming the object or active symbol.")
+             "target" (json-object
+                       "type" "string"
+                       "enum" #("worker" "self")
+                       "description" "Inspect a worker by default, or the active image with self.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default."))
             '("designator")))
-          (list
-           'lisp-source-tool
-           "lisp" "source"
-           "Read a definition from the hash-verified source matching the pinned SBCL runtime, using source locations from one named REPL."
-           (tool-object-schema
-            (json-object
-             "name" (tool-string-property
-                     "A readable definition name, such as CL:MAPCAR or SB-C::IR1-CONVERT.")
-             "kind" (tool-string-property
-                     "An optional SBCL definition kind, such as function, optimizer, transform, or vop.")
-             "repl" (tool-string-property
-                     "The persistent REPL name; defaults to default."))
-            '("name")))
+           (list
+            'lisp-source-tool
+            "lisp" "source"
+            "Read matching source from a named worker or the active image."
+            (tool-object-schema
+             (json-object
+              "name" (tool-string-property
+                      "A readable definition or active symbol name.")
+              "target" (json-object
+                        "type" "string"
+                        "enum" #("worker" "self")
+                        "description" "Inspect a worker by default, or the active image with self.")
+              "kind" (tool-string-property
+                      "An optional SBCL definition kind, such as function, optimizer, transform, or vop.")
+              "package" (tool-string-property
+                         "The active-image reader package for an unqualified name; defaults to AUTOLITH.")
+              "system" (tool-string-property
+                        "An optional direct Autolith ASDF dependency containing the active symbol.")
+              "repl" (tool-string-property
+                      "The persistent REPL name; defaults to default."))
+             '("name")))
           (list
            'lisp-run-tests-tool
            "lisp" "run-tests"
@@ -580,30 +592,6 @@
     (dolist
         (specification
          (list
-          (list
-           'self-inspect-tool
-           "self" "inspect"
-           "Inspect documentation, bindings, lambda list, and description for an active symbol."
-           (tool-object-schema
-            (json-object
-             "symbol" (tool-string-property
-                       "A symbol name, optionally package-qualified."))
-            '("symbol")))
-          (list
-           'self-source-tool
-           "self" "source"
-           "Read complete tracked Autolith or direct dependency source, or hash-verified matching SBCL source, for an active symbol without general evaluation."
-           (tool-object-schema
-            (json-object
-             "symbol" (tool-string-property
-                       "A symbol name, optionally package-qualified.")
-             "package" (tool-string-property
-                        "The reader package for an unqualified symbol; defaults to AUTOLITH.")
-             "system" (tool-string-property
-                        "An optional direct Autolith ASDF dependency containing the symbol.")
-             "kind" (tool-string-property
-                      "An optional SBCL definition kind when inspecting implementation source."))
-            '("symbol")))
           (list
            'self-eval-tool
            "self" "eval"

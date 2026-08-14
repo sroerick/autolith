@@ -2575,7 +2575,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 5 :time 0 :call-id 4
-                         :tool "self.inspect" :status :ok
+                          :tool "lisp.describe" :status :ok
                          :output (format nil
                                          "Symbol: FOO~%Package: AUTOLITH~%~
                                           Function binding: yes~%~
@@ -5157,7 +5157,7 @@
           (equal (fourth observed)
                  '("resource.read"
                    "search.files" "search.glob" "search.content"
-                   "self.inspect" "self.source" "self.status" "self.diff"
+                   "lisp.describe" "lisp.source" "self.status" "self.diff"
                    "self.generations"))
           (fifth observed)
           (null (sixth observed))

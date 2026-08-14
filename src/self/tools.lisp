@@ -109,15 +109,14 @@
     (format stream "~%Describe:~%")
     (describe symbol stream)))
 
-(defmethod tool-execute ((tool self-inspect-tool)
-                         (context tool-context)
-                         (arguments hash-table))
+(defmethod lisp-describe-active-image
+    ((context tool-context) (arguments hash-table))
   "Inspect one required symbol in CONTEXT's active image."
-  (declare (ignore tool context))
+  (declare (ignore context))
   (tool-success
    (self-inspect-symbol
     (self-resolve-symbol
-     (tool-argument arguments "symbol" :required t)))))
+     (tool-argument arguments "designator" :required t)))))
 
 
 ;;;; -- Mutation Journal --
@@ -973,13 +972,13 @@ protocol."
                  :message
                  (format nil "~S is not a direct Autolith ASDF dependency."
                          requested-name)
-                 :tool-name "self.source"
+                 :tool-name "lisp.source"
                  :pathname nil))
         (return nil))
       (or (asdf:find-system name nil)
           (error 'source-mutation-error
                  :message (format nil "ASDF cannot locate dependency ~S." name)
-                 :tool-name "self.source"
+                 :tool-name "lisp.source"
                  :pathname nil)))))
 
 (-> self-dependency-definitions
@@ -1014,7 +1013,7 @@ protocol."
   (unless definitions
     (error 'source-mutation-error
            :message (format nil "No tracked top-level definition names ~S." symbol)
-           :tool-name "self.source"
+           :tool-name "lisp.source"
            :pathname nil))
   (with-output-to-string (stream)
     (loop for definition in definitions
@@ -1026,15 +1025,13 @@ protocol."
                      (tracked-definition-relative-pathname definition)
                      (tracked-definition-source definition)))))
 
-(defmethod tool-execute ((tool self-source-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Return tracked source definitions for one symbol in CONTEXT."
-  (declare (ignore tool))
+(defmethod lisp-source-active-image
+    ((context tool-context) (arguments hash-table))
+  "Return active-image source definitions selected by ARGUMENTS."
   (let* ((package
            (self-resolve-package (tool-argument arguments "package")))
          (symbol (self-resolve-symbol
-                  (tool-argument arguments "symbol" :required t)
+                  (tool-argument arguments "name" :required t)
                   :package package))
          (tracked-definitions
            (self-tracked-definitions

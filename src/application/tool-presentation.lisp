@@ -1700,16 +1700,10 @@ model."
   (application--simple-call-entry application call "designator"))
 
 (defmethod application-tool-call-entry
-    ((tool self-inspect-tool) (application application) (call hash-table))
-  "Present the active symbol being inspected."
+    ((tool lisp-source-tool) (application application) (call hash-table))
+  "Present the Lisp definition whose source is requested."
   (declare (ignore tool))
-  (application--simple-call-entry application call "symbol"))
-
-(defmethod application-tool-call-entry
-    ((tool self-source-tool) (application application) (call hash-table))
-  "Present the active symbol whose tracked source is requested."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "symbol"))
+  (application--simple-call-entry application call "name"))
 
 (defmethod application-tool-call-entry
     ((tool self-rollback-tool) (application application) (call hash-table))
@@ -2103,16 +2097,6 @@ re-emitting untrusted serialized JSON."
               (or (getf (rest record) :output) "")))
       (call-next-method)))
 
-(defmethod application-tool-result-entry
-    ((tool self-inspect-tool) (application application) record)
-  "Present self.inspect output as aligned fields and named sections."
-  (if (application--tool-result-success-p record)
-      (application--tool-result-entry
-       application
-       record
-       :rows (application--labeled-output-rows
-              (or (getf (rest record) :output) "")))
-      (call-next-method)))
 
 (defmethod application-tool-result-entry
     ((tool lisp-describe-tool) (application application) record)
@@ -2137,8 +2121,8 @@ re-emitting untrusted serialized JSON."
       (call-next-method)))
 
 (defmethod application-tool-result-entry
-    ((tool self-source-tool) (application application) record)
-  "Present tracked source as a bounded Lisp code area."
+    ((tool lisp-source-tool) (application application) record)
+  "Present matching source as a bounded Lisp code area."
   (if (application--tool-result-success-p record)
       (application--tool-result-entry
        application

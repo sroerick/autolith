@@ -158,9 +158,13 @@
                          registry unknown-call context)))
            (let ((immutable-registry
                    (make-default-tool-registry :immutable-p t)))
-             (dolist (name '("inspect" "source" "status" "diff" "generations"))
-               (test-assert (tool-registry-find immutable-registry "self" name)
-                            (format nil "immutable mode retains self.~A" name)))
+              (dolist (name '("status" "diff" "generations"))
+                (test-assert (tool-registry-find immutable-registry "self" name)
+                             (format nil "immutable mode retains self.~A" name)))
+              (test-assert
+               (and (tool-registry-find immutable-registry "lisp" "describe")
+                    (tool-registry-find immutable-registry "lisp" "source"))
+               "immutable mode retains active-image inspection through Lisp targets")
              (dolist (name '("eval" "redefine" "set" "persist-definition"
                              "discard" "exercise" "commit" "checkpoint"
                              "rollback"))

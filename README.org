@@ -111,12 +111,12 @@ and can maintain multiple.
 
 #+BEGIN_SRC lisp
 (lisp.eval :form "(+ 20 22)" :repl "scratch")
-(self.inspect :symbol "APPLICATION")
+(lisp.describe :designator "APPLICATION" :target "self")
 (self.status)
 #+END_SRC
 
-=lisp.*= uses named, heap-isolated SBCL workers. =self.*= inspects or changes
-the active Autolith image. Durable live changes have private replay history.
+=lisp.*= uses named, heap-isolated SBCL workers and can target read-only active
+inspection explicitly. =self.*= changes or reports the active Autolith image.
 
 ** Messages are just syntax sugar
 When you type a message like:

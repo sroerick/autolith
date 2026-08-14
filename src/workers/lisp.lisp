@@ -349,29 +349,59 @@ request restarts immediately from a clean protocol stream."
        (worker-response-tool-result
         (lisp-worker-request worker :load-system (list :system system)))))))
 
+(-> lisp-tool--active-target-p (tool-context hash-table string) boolean)
+(defun lisp-tool--active-target-p (context arguments tool-name)
+  "Return true for an authorized self target, rejecting unknown targets."
+  (let ((target (or (tool-argument arguments "target") "worker")))
+    (cond
+      ((string= target "worker")
+       nil)
+      ((string= target "self")
+       (when (resource-context-child-agent-p context)
+         (error 'tool-error
+                :message "Task child agents cannot inspect the active image."
+                :tool-name tool-name))
+       t)
+      (t
+       (error 'tool-error
+              :message (format nil "~A target must be worker or self." tool-name)
+              :tool-name tool-name)))))
+
+(-> lisp-describe-active-image (tool-context hash-table) tool-result)
+(defgeneric lisp-describe-active-image (context arguments)
+  (:documentation "Describe one active-image symbol selected by ARGUMENTS."))
+
+(-> lisp-source-active-image (tool-context hash-table) tool-result)
+(defgeneric lisp-source-active-image (context arguments)
+  (:documentation "Read active-image source selected by ARGUMENTS."))
+
 (defmethod tool-execute ((tool lisp-describe-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Describe the required designator through CONTEXT's isolated worker."
+  "Describe the required designator in a worker or the active image."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :describe
-    (list :designator
-          (tool-argument arguments "designator" :required t)))))
+  (if (lisp-tool--active-target-p context arguments "lisp.describe")
+      (lisp-describe-active-image context arguments)
+      (worker-response-tool-result
+       (lisp-worker-request
+        (lisp-tool-worker context arguments)
+        :describe
+        (list :designator
+              (tool-argument arguments "designator" :required t))))))
 
 (defmethod tool-execute ((tool lisp-source-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Read exact matching source through CONTEXT's selected worker."
+  "Read matching source from a worker or the active image."
   (declare (ignore tool))
-  (worker-response-tool-result
-   (lisp-worker-request
-    (lisp-tool-worker context arguments)
-    :source
-    (list :name (tool-argument arguments "name" :required t)
-          :kind (tool-argument arguments "kind")))))
+  (if (lisp-tool--active-target-p context arguments "lisp.source")
+      (lisp-source-active-image context arguments)
+      (worker-response-tool-result
+       (lisp-worker-request
+        (lisp-tool-worker context arguments)
+        :source
+        (list :name (tool-argument arguments "name" :required t)
+              :kind (tool-argument arguments "kind"))))))
 
 (defmethod tool-execute ((tool lisp-run-tests-tool)
                          (context tool-context)

@@ -102,13 +102,6 @@
   ()
   (:documentation "Save one named REPL as an immutable worker image."))
 
-(defclass self-inspect-tool (self-tool)
-  ()
-  (:documentation "Inspect a documented symbol in the active image."))
-
-(defclass self-source-tool (self-tool)
-  ()
-  (:documentation "Read tracked top-level definitions for one active symbol."))
 
 (defclass self-eval-tool (mutable-self-tool)
   ()

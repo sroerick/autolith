@@ -166,6 +166,28 @@
                             "tracked source inspection reports its nested repository path")
                (test-assert (search "Tracked source documentation." rendered)
                             "tracked source inspection returns exact definition text")))
+            (let* ((conversation
+                     (conversation-create configuration
+                                          :identifier "self-describe"))
+                   (context
+                     (make-instance 'tool-context
+                                    :configuration configuration
+                                    :worker nil
+                                    :conversation conversation))
+                   (registry (make-default-tool-registry))
+                   (result
+                     (tool-execute
+                      (tool-registry-find registry "lisp" "describe")
+                      context
+                      (json-object "designator" "TEST-SELF-TARGET"
+                                   "target" "self"))))
+              (test-assert
+               (and (null (tool-registry-find registry "self" "inspect"))
+                    (null (tool-registry-find registry "self" "source"))
+                    (tool-result-success-p result)
+                    (search "Return the installed test value."
+                            (tool-result-content result)))
+               "lisp.describe target self replaces self.inspect"))
            (let* ((conversation
                     (conversation-create configuration
                                          :identifier "self-sbcl-source"))
@@ -174,19 +196,20 @@
                                    :configuration configuration
                                    :worker nil
                                    :conversation conversation))
-                  (result
-                    (tool-execute
-                     (tool-registry-find (make-default-tool-registry)
-                                         "self"
-                                         "source")
-                     context
-                     (json-object "symbol" "CL:MAPCAR"
-                                  "kind" "function"))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (search "src/code/list.lisp"
-                           (tool-result-content result)))
-              "self.source falls back to matching active SBCL source"))
+                   (result
+                     (tool-execute
+                      (tool-registry-find (make-default-tool-registry)
+                                          "lisp"
+                                          "source")
+                      context
+                      (json-object "name" "CL:MAPCAR"
+                                   "target" "self"
+                                   "kind" "function"))))
+              (test-assert
+               (and (tool-result-success-p result)
+                    (search "src/code/list.lisp"
+                            (tool-result-content result)))
+               "lisp.source target self falls back to matching active SBCL source"))
            (let* ((conversation
                     (conversation-create configuration
                                          :identifier "self-dependency-source"))
@@ -195,21 +218,22 @@
                                    :configuration configuration
                                    :worker nil
                                    :conversation conversation))
-                  (result
-                    (tool-execute
-                     (tool-registry-find (make-default-tool-registry)
-                                         "self"
-                                         "source")
-                     context
-                     (json-object
-                      "symbol" "SBCL-WORKERS:SBCL-WORKER-CREATE"))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (search "sbcl-workers:source/workers.lisp"
-                           (tool-result-content result))
-                   (search "(defun sbcl-worker-create"
-                           (tool-result-content result)))
-              "self.source reads exact pinned ASDF dependency source"))
+                   (result
+                     (tool-execute
+                      (tool-registry-find (make-default-tool-registry)
+                                          "lisp"
+                                          "source")
+                      context
+                      (json-object
+                       "name" "SBCL-WORKERS:SBCL-WORKER-CREATE"
+                       "target" "self"))))
+              (test-assert
+               (and (tool-result-success-p result)
+                    (search "sbcl-workers:source/workers.lisp"
+                            (tool-result-content result))
+                    (search "(defun sbcl-worker-create"
+                            (tool-result-content result)))
+               "lisp.source target self reads exact pinned dependency source"))
            (test-assert
             (handler-case
                 (progn

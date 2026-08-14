@@ -254,7 +254,7 @@
               (reader-error (condition)
                 (error 'source-mutation-error
                        :message (format nil "Malformed mutation journal: ~A" condition)
-                       :tool-name "self.inspect"
+                       :tool-name "self.status"
                        :pathname pathname)))
             (nreverse records)))
         nil)))
@@ -325,7 +325,7 @@ Historical journals may name tracked src/ files or retired overlay paths."
       (unless (durable-mutation-record-p configuration record)
         (error 'source-mutation-error
                :message "A durable mutation journal record is invalid."
-               :tool-name "self.inspect"
+               :tool-name "self.status"
                :pathname (configuration-journal-path configuration)))
       (let* ((properties (rest record))
              (identifier (getf properties :id))
@@ -339,7 +339,7 @@ Historical journals may name tracked src/ files or retired overlay paths."
                             phase))
                 (error 'source-mutation-error
                        :message "A durable mutation journal transition is invalid."
-                       :tool-name "self.inspect"
+                       :tool-name "self.status"
                        :pathname (configuration-journal-path configuration)))
               (setf (durable-mutation-phase existing) phase
                     (durable-mutation-git-commit existing)
@@ -348,7 +348,7 @@ Historical journals may name tracked src/ files or retired overlay paths."
               (unless (eq phase :pending)
                 (error 'source-mutation-error
                        :message "A durable mutation journal begins after its pending state."
-                       :tool-name "self.inspect"
+                       :tool-name "self.status"
                        :pathname (configuration-journal-path configuration)))
               (let ((mutation
                       (make-instance 'durable-mutation
