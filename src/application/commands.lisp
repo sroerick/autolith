@@ -260,6 +260,48 @@
                                  (application--reset-description
                                   (getf window :resets-at)))))))
 
+(-> application--toggle-state (boolean) string)
+(defun application--toggle-state (enabled-p)
+  "Return the compact user-facing state for ENABLED-P."
+  (if enabled-p "on" "off"))
+
+(-> application-info-entry (application) list)
+(defun application-info-entry (application)
+  "Return APPLICATION's read-only model and runtime settings display."
+  (let ((configuration (application-configuration application)))
+    (append
+     (list (terminal-span ':brand (format nil "settings~%")))
+     (application--field-spans "model"
+                               (configuration-model configuration))
+     (application--field-spans "effort"
+                               (configuration-reasoning-effort configuration))
+     (application--field-spans "web search"
+                               (configuration-web-search-mode configuration))
+     (application--field-spans
+      "trace"
+      (application--toggle-state
+       (application-reasoning-traces-p application)))
+     (application--field-spans
+      "timestamps"
+      (application--toggle-state
+       (application-turn-timestamps-p application)))
+     (application--field-spans
+      "compact view"
+      (application--toggle-state
+       (application-compact-view-p application)))
+     (application--field-spans
+      "STE"
+      (application--toggle-state
+       (preferences-simple-technical-english-p configuration)))
+     (application--field-spans
+      "hurry-up"
+      (application--toggle-state
+       (application-hurry-up-p application)))
+     (application--field-spans
+      "permissions"
+      (application--permission-mode-name
+       (application-permission-mode application))))))
+
 (-> application-status-entry (application) list)
 (defun application-status-entry (application)
   "Return the styled /status summary of APPLICATION's session and rate limits."
@@ -1976,6 +2018,19 @@ to TERMINAL-UI-SELECT."
     (when identifier
       (generation-request-rollback
        (application-configuration application) identifier)))
+  ':continue)
+
+(define-application-command application--builtin-info-command
+    (:name "/info"
+     :argument nil
+     :description "show current model and runtime settings"
+     :tip "prints the current settings without changing them."
+     :busy-behavior :inspect
+     :terminal-behavior :shared
+     :call-lambda-list ()
+     :slash-argument-mode :none)
+    (application)
+  (application-present application (application-info-entry application))
   ':continue)
 
 (define-application-command application--builtin-status-command

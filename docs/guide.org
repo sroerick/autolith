@@ -259,9 +259,13 @@ the earlier prefix. These spellings are available:
 /trace on|off  /timestamps on|off  /ste on|off  /hurry-up on|off
 /permissions  /later INPUT  /goal [OBJECTIVE]  /agenda
 /papercuts  /papercut ID  /papercut-close ID
-/checkpoint  /generations  /rollback [ID]  /status
+/checkpoint  /generations  /rollback [ID]  /info  /status
 /compact [on|off]  /quit
 #+END_EXAMPLE
+
+=(info)= or =/info= prints the current model, effort, web search, trace,
+timestamps, compact view, Simple Technical English, hurry-up, and command
+permission settings. It does not change them.
 
 =/resume=, =/rollback=, =/model=, and =/effort= have searchable vertical
 pickers and also accept an explicit argument. Resume groups current-directory

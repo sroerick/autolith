@@ -822,6 +822,91 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-application-info-command () null)
+(defun test-application-info-command ()
+  "Test the read-only current-settings display and callable command."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (application-tests--ui-application :columns 80))
+         (ui (application-ui application))
+         (terminal (terminal-ui-terminal ui)))
+    (setf (application-configuration application) configuration
+          (application-reasoning-traces-p application) t
+          (application-turn-timestamps-p application) t
+          (application-compact-view-p application) nil
+          (application-hurry-up-p application) t
+          (application-permission-mode application) ':sandboxed)
+    (unwind-protect
+         (progn
+           (preferences-set-simple-technical-english configuration t)
+           (terminal-ui-start ui)
+           (recording-terminal-reset terminal)
+           (labels ((settings-state ()
+                      "Return every live setting displayed by INFO."
+                      (let ((current (application-configuration application)))
+                        (list
+                         :model (configuration-model current)
+                         :effort (configuration-reasoning-effort current)
+                         :web-search (configuration-web-search-mode current)
+                         :trace (application-reasoning-traces-p application)
+                         :timestamps (application-turn-timestamps-p application)
+                         :compact-view (application-compact-view-p application)
+                         :ste (preferences-simple-technical-english-p current)
+                         :hurry-up (application-hurry-up-p application)
+                         :permissions (application-permission-mode application)))))
+             (let ((before (settings-state)))
+               (test-assert
+                (null (application-operation-call application "info"))
+                "the callable info command completes without a loop action")
+               (let* ((text (recording-terminal-output terminal))
+                      (lines
+                        (uiop:split-string text :separator '(#\Newline))))
+                 (test-assert
+                  (search "settings" text)
+                  "the callable info command presents the settings display")
+                 (flet ((field-present-p (label value)
+                          "Return true when one output line associates LABEL with VALUE."
+                          (some (lambda (line)
+                                  (and (search label line)
+                                       (search value line)))
+                                lines)))
+                   (dolist (field
+                            (list
+                             (list "model" (getf before :model))
+                             (list "effort" (getf before :effort))
+                             (list "web search" (getf before :web-search))
+                             '("trace" "on")
+                             '("timestamps" "on")
+                             '("compact view" "off")
+                             '("STE" "on")
+                             '("hurry-up" "on")
+                             '("permissions"
+                               "allow commands inside the workspace sandbox")))
+                     (test-assert
+                      (field-present-p (first field) (second field))
+                      (format nil "info reports the ~A setting" (first field))))))
+               (test-assert
+                (equal before (settings-state))
+                "info does not change any displayed setting")
+               (test-assert
+                (handler-case
+                    (progn
+                      (application-operation-call application "info" "unexpected")
+                      nil)
+                  (program-error ()
+                    t))
+                "info rejects callable arguments")
+               (let ((command (application-command-find "/info")))
+                 (test-assert
+                  (and command
+                       (application-command-semantic-handler-p command)
+                       (null (application-command-call-lambda-list command)))
+                  "info exposes no editable command arguments")))))
+      (when (terminal-started-p terminal)
+        (terminal-ui-stop ui))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> test-reasoning-trace-command () null)
 (defun test-reasoning-trace-command ()
   "Test persistent control of provider-visible reasoning summaries."
@@ -8938,6 +9023,7 @@
   (test-explicit-update-operation)
   (test-thinking-label-selection)
   (test-application-status-details)
+  (test-application-info-command)
   (test-reasoning-trace-command)
   (test-compact-view-command)
   (test-turn-timestamps-command)
