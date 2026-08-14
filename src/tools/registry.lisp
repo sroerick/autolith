@@ -513,6 +513,11 @@
   "Hide ordinary successful results in compact presentation."
   nil)
 
+(defmethod tool-compact-result-visible-p ((tool resource-edit-tool))
+  "Keep successful resource mutations visible in compact presentation."
+  (declare (ignore tool))
+  t)
+
 (-> tool-runtime-identity (tool) t)
 (defgeneric tool-runtime-identity (tool)
   (:documentation

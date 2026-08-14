@@ -295,7 +295,7 @@
            (let ((value (and arguments (json-get arguments "base-revision"))))
              (if (stringp value) value "")))
          (operations (and arguments (json-get arguments "operations")))
-         (path (application--workspace-resource-path uri)))
+         (path (application--file-resource-path uri)))
     (application--tool-entry
      application
      :style ':tool

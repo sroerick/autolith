@@ -48,7 +48,7 @@
 
 (-> default-tools--resource-operation-schema () json-object)
 (defun default-tools--resource-operation-schema ()
-  "Return the closed workspace, agenda, and memory resource.edit variants."
+  "Return the closed workspace, scratchpad, agenda, and memory resource.edit variants."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (json-object "type" "integer"
@@ -145,6 +145,10 @@
                    "Non-empty complete content for an observed missing resource or empty file."))
        '("content"))
       (operation-schema
+       "scratchpad-delete"
+       (json-object)
+       nil)
+      (operation-schema
        "agenda-add"
        (json-object
         "text" (tool-string-property "Complete bounded agenda item text.")
@@ -194,6 +198,9 @@
      (make-instance 'workspace-file-resolver :scheme "workspace"))
     (resource-registry-register
      resource-registry
+     (make-instance 'scratchpad-resolver :scheme "scratchpad"))
+    (resource-registry-register
+     resource-registry
      (make-instance 'agenda-resolver :scheme "agenda"))
     (resource-registry-register
      resource-registry
@@ -204,11 +211,11 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
+                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -222,7 +229,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: files and missing targets accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful workspace-file edits may append a non-fatal unmatched or mismatched delimiter warning for recognized Common Lisp, Scheme, and Clojure files."
+           "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -232,7 +239,7 @@
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations."
+                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))
@@ -468,54 +475,6 @@
            (default-tools--required-form-schema
             "One readable Common Lisp form."))
           (list
-           'lisp-scratchpad-list-tool
-           "lisp" "scratchpad-list"
-           "List files in the current conversation's disposable scratchpad folder."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "An optional relative scratchpad directory; defaults to the folder root."))
-            nil))
-          (list
-           'lisp-scratchpad-read-tool
-           "lisp" "scratchpad-read"
-           "Read one file from the current conversation's disposable scratchpad folder."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The relative scratchpad file path.")
-             "start-line" (tool-integer-property
-                           "The first line to return, starting at 1.")
-             "line-count" (tool-integer-property
-                           "The number of lines to return; defaults to 400."))
-            '("path")))
-          (list
-           'lisp-scratchpad-write-tool
-           "lisp" "scratchpad-write"
-           "Create or replace one file in the current conversation's disposable scratchpad folder. Successful writes to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The relative scratchpad file path.")
-             "content" (tool-string-property
-                        "The complete new file content."))
-            '("path" "content")))
-          (list
-           'lisp-scratchpad-edit-tool
-           "lisp" "scratchpad-edit"
-           "Replace exact text inside one current-conversation scratchpad file. Successful edits to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The relative scratchpad file path.")
-             "old-text" (tool-string-property
-                         "The exact existing text to replace.")
-             "new-text" (tool-string-property
-                         "The replacement text.")
-             "replace-all" (tool-boolean-property
-                            "Replace every occurrence instead of requiring a unique match."))
-            '("path" "old-text" "new-text")))
-          (list
            'lisp-scratchpad-run-tool
            "lisp" "scratchpad-run"
            "Load one current-conversation scratchpad file into a named persistent REPL, optionally as an inspectable job."
@@ -528,15 +487,6 @@
              "async" (tool-boolean-property
                       "Run as an inspectable background job; defaults to false."))
             '("path")))
-          (list
-           'lisp-scratchpad-delete-tool
-           "lisp" "scratchpad-delete"
-           "Delete one scratchpad path, or clear the current conversation's folder when path is omitted."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "An optional relative file or directory to delete."))
-            nil))
           (list
            'lisp-paren-check-tool
            "lisp" "paren-check"

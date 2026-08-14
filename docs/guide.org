@@ -467,20 +467,32 @@ byte sizes. Missing paths return an observed missing state; =replace-empty= can
 then create the file and its parent directories. Directory resources are
 read-only.
 
-=resource.edit= applies non-overlapping line operations against exactly the
-observed file or missing state: =replace-lines=, =insert-before=,
-=insert-after=, =delete-lines=, or =replace-empty=. It rejects unseen, stale,
-and expired input before atomic publication. Mixed LF and CRLF content needs
-deliberate normalization first. When an exact before-and-after projection
-exists, file, memory, and agenda mutation results share a line-numbered
-syntax-highlighted diff. Otherwise Autolith presents the structured operation
+Conversation scratchpads use the same resource protocol under =scratchpad:.=
+and child URIs such as =scratchpad:program.lisp=. They are rooted outside the
+workspace, isolated by conversation, safe for child agents, and retain bounded
+UTF-8 reads, line edits, missing-file creation, and delimiter warnings.
+=scratchpad-delete= removes one exactly observed file, directory, or the root;
+it refuses truncated directory observations. The root itself cannot be created
+as a file. =lisp.scratchpad-run= remains the execution boundary for loading one
+scratchpad file into a named worker.
+
+=resource.edit= applies non-overlapping line operations against exactly an
+observed workspace or scratchpad file or missing state: =replace-lines=,
+=insert-before=, =insert-after=, =delete-lines=, or =replace-empty=. It rejects
+unseen, stale, and expired input before atomic publication. Mixed LF and CRLF
+content needs deliberate normalization first. When an exact before-and-after
+projection exists, file, memory, and agenda mutation results share a line-numbered
+syntax-highlighted diff. Successful resource mutations remain visible in
+compact transcripts. Otherwise Autolith presents the structured operation
 without guessing.
 
-Autolith serializes its own workspace edits and validates the exact observed
-state immediately before atomic replacement. Portable POSIX has no conditional
-rename, so an unrelated external writer in the final rename window can still be
-overwritten. Missing-file creation uses no-overwrite publication and rejects
-that race instead.
+Autolith serializes its own file edits and validates the exact observed state
+immediately before atomic replacement. Portable POSIX has no conditional
+rename, so an unrelated external writer in the final rename window can still
+be overwritten. Missing-file creation uses no-overwrite publication and
+rejects that race instead. Scratchpad deletion likewise validates immediately
+before removal; POSIX provides no portable compare-and-delete for a final
+external-writer race.
 
 =fs.view-image= visually attaches a local image. =shell.run= runs one authorized
 external command with bounded combined output. It defaults to 60 seconds but has
@@ -488,10 +500,10 @@ no product timeout ceiling when you request a longer positive duration. Invalid
 output bytes display safely as replacement characters.
 
 After writing Common Lisp, Scheme, or Clojure files, Autolith advises about
-unmatched or mismatched delimiters without rolling back the edit. =lisp.paren-check=
-runs the same bounded checker on one recognized file or a safely contained
-directory tree. It reports exact retained locations and honest incomplete-scan
-counts. Both operations can be handed off as jobs with =async: true=.
+unmatched or mismatched delimiters without rolling back the edit.
+=lisp.paren-check= runs the same bounded checker on one recognized file or a
+safely contained directory tree. It reports exact retained locations and
+honest incomplete-scan counts.
 
 Unknown shell commands ask before execution. A one-time or saved approval runs
 with an isolated network and read-only host except the workspace and temporary

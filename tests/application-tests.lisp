@@ -990,7 +990,7 @@
            (test-assert
             (conversation-record-entry application failed-read)
             "compact presentation retains failed routine results")
-           (dolist (tool-name '("shell.run" "lisp.eval" "self.eval"))
+           (dolist (tool-name '("shell.run" "lisp.eval" "self.eval" "resource.edit"))
              (test-assert
               (conversation-record-entry
                application
@@ -2718,40 +2718,6 @@
               (find (terminal-span :syntax-number "1") entry :test #'equal)
               (find (terminal-span :syntax-number "2") entry :test #'equal))
          "self.set syntax-highlights its value form beside a green ruler"))
-      (dolist (specification
-               '(("lisp" "scratchpad-write" "highlighted.lisp")))
-        (destructuring-bind (namespace name path) specification
-          (let* ((entry
-                   (call-entry
-                    application namespace name
-                    :arguments (json-object "path" path "content" source)))
-                 (text (markdown-tests--row-text entry)))
-            (test-assert
-             (and (find (terminal-span :success "+ 1 │ ") entry :test #'equal)
-                  (find (terminal-span :success "+ 2 │ ") entry :test #'equal)
-                  (find (terminal-span :syntax-keyword "defun")
-                        entry :test #'equal)
-                  (find (terminal-span :syntax-function "highlighted-source")
-                        entry :test #'equal)
-                  (not (search "content unavailable" text)))
-             (format nil "~A.~A numbers available syntax-highlighted added content"
-                     namespace name)))))
-      (let ((entry
-              (call-entry
-               application "lisp" "scratchpad-edit"
-               :arguments
-               (json-object
-                "path" "highlighted.lisp"
-                "old-text" "(defun old-source () 1)"
-                "new-text" "(defun new-source () 2)"))))
-        (test-assert
-         (and (find (terminal-span :failure "- │ ") entry :test #'equal)
-              (find (terminal-span :success "+ │ ") entry :test #'equal)
-              (find (terminal-span :syntax-function "old-source")
-                    entry :test #'equal)
-              (find (terminal-span :syntax-function "new-source")
-                    entry :test #'equal))
-         "scratchpad edits use red removed and green added syntax rulers"))
       (let* ((entry
                (call-entry
                 application "shell" "run"
@@ -2846,6 +2812,43 @@
                       (search "- 4 │" text)
                       (search "+ 4 │" text))
                  "workspace resource edits number both the preimage and replacement"))
+              (let* ((scratchpad-uri "scratchpad:highlighted.lisp")
+                     (scratchpad-revision "Rscratchpad-line-change")
+                     (scratchpad-observation
+                       (make-instance
+                        'workspace-file-observation
+                        :kind ':file
+                        :uri scratchpad-uri
+                        :revision "scratchpad-snapshot-digest"
+                        :content (format nil "~{~A~%~}" (coerce lines 'list))
+                        :lines lines
+                        :line-ending (string #\Newline)
+                        :final-newline-p t))
+                     (scratchpad-state
+                       (make-instance
+                        'workspace-file-observation-state
+                        :alias scratchpad-revision
+                        :observation scratchpad-observation
+                        :visible-ranges '((1 7)))))
+                (with-recursive-lock-held
+                    ((conversation-resource-observation-lock conversation))
+                  (fifo-cache-put
+                   (conversation-resource-observations conversation)
+                   scratchpad-revision
+                   scratchpad-state))
+                (let ((entry
+                        (workspace-replacement-entry
+                         application scratchpad-uri scratchpad-revision)))
+                  (test-assert
+                   (and (find (terminal-span :failure "- 4 │ ")
+                              entry :test #'equal)
+                        (find (terminal-span :success "+ 4 │ ")
+                              entry :test #'equal)
+                        (find (terminal-span :syntax-function "old-source")
+                              entry :test #'equal)
+                        (find (terminal-span :syntax-function "new-source")
+                              entry :test #'equal))
+                   "scratchpad resource edits reuse the numbered syntax change view")))
               (let* ((entry
                        (call-entry
                         application "resource" "edit"

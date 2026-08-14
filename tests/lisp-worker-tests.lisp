@@ -392,13 +392,11 @@
                      '("eval" "compile" "load-system" "run-tests"
                        "scratchpad-run"))
               "only execution-oriented Lisp tools advertise asynchronous jobs")
-             (test-assert
-              (notany #'async-schema-p
-                      '("describe" "source" "reset" "start" "stop" "repls"
-                        "images" "save-image" "scratchpad-list"
-                        "scratchpad-read" "scratchpad-write" "scratchpad-edit"
-                        "scratchpad-delete"))
-              "Lisp inspection, lifecycle, and scratchpad file tools stay synchronous")
+              (test-assert
+               (notany #'async-schema-p
+                       '("describe" "source" "reset" "start" "stop" "repls"
+                         "images" "save-image"))
+               "Lisp inspection and lifecycle tools stay synchronous")
              (let* ((*tool-execution-blocking-grace-seconds* 5)
                     (result
                       (run-lisp "eval"
@@ -510,15 +508,27 @@
                (test-assert
                 (tool-result-success-p load-result)
                 "lisp.load-system uses the shared execution path"))
-             (let* ((write-result
-                      (run-lisp
-                       "scratchpad-write"
-                       "path" "async-program.lisp"
-                       "content"
-                       (format nil
-                               "(defparameter *async-scratchpad-value* 41)~%~
-                                (sleep 1)~%~
-                                (incf *async-scratchpad-value*)~%")))
+              (let* ((read-result
+                       (workspace-resource-tests--call
+                        registry context "resource" "read"
+                        "uri" "scratchpad:async-program.lisp"))
+                     (revision
+                       (workspace-resource-tests--field
+                        (tool-result-content read-result) "Revision: "))
+                     (write-result
+                       (workspace-resource-tests--call
+                        registry context "resource" "edit"
+                        "uri" "scratchpad:async-program.lisp"
+                        "base-revision" revision
+                        "operations"
+                        (vector
+                         (workspace-resource-tests--operation
+                          "replace-empty"
+                          "content"
+                          (format nil
+                                  "(defparameter *async-scratchpad-value* 41)~%~
+                                   (sleep 1)~%~
+                                   (incf *async-scratchpad-value*)~%")))))
                     (run-result
                       (run-lisp "scratchpad-run"
                                 "path" "async-program.lisp"
@@ -550,7 +560,7 @@
 
 (-> test-lisp-scratchpad-tools () null)
 (defun test-lisp-scratchpad-tools ()
-  "Test conversation-scoped scratchpad files, edits, execution, and cleanup."
+  "Test conversation-scoped scratchpad resources, execution, and deletion."
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (pool          (lisp-worker-pool-create configuration))
@@ -564,137 +574,235 @@
          (other-context (make-instance 'tool-context
                                        :configuration configuration
                                        :worker        pool
-                                       :conversation  other))
-         (write-tool    (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-write"))
-         (edit-tool     (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-edit"))
-         (read-tool     (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-read"))
-         (list-tool     (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-list"))
-         (run-tool      (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-run"))
-         (delete-tool   (tool-registry-find registry
-                                            "lisp"
-                                            "scratchpad-delete")))
-    (unwind-protect
-         (progn
-           (lisp-worker-pool-start pool "scratch" "pristine")
-           (let ((result
-                   (tool-execute
-                    write-tool
-                    context
-                    (json-object
-                     "path" "program.lisp"
-                     "content" (format nil
-                                       "(defparameter *scratchpad-value* 40)~%~
-                                        (incf *scratchpad-value* 2)~%")))))
-             (test-assert (tool-result-success-p result)
-                          "scratchpad.write creates a conversation file"))
-           (test-assert
-            (probe-file (merge-pathnames "program.lisp"
-                                         (lisp-scratchpad-root context)))
-            "scratchpad files live beneath the configured cache root")
-           (let ((result
-                   (tool-execute
-                    edit-tool
-                    context
-                    (json-object "path" "program.lisp"
-                                 "old-text" "40"
-                                 "new-text" "41"))))
-             (test-assert (tool-result-success-p result)
-                          "scratchpad.edit replaces exact source text"))
-           (let ((result
-                   (tool-execute
-                    read-tool
-                    context
-                    (json-object "path" "program.lisp"))))
+                                       :conversation  other)))
+    (labels ((call-resource (authority name &rest arguments)
+               "Execute resource.NAME with ARGUMENTS under AUTHORITY."
+               (apply #'workspace-resource-tests--call
+                      registry authority "resource" name arguments))
+
+             (read-resource (authority uri)
+               "Read URI under AUTHORITY."
+               (call-resource authority "read" "uri" uri))
+
+             (observation-field (result label)
+               "Return LABEL from successful resource RESULT."
+               (workspace-resource-tests--field
+                (tool-result-content result) label))
+
+             (edit-resource (authority result &rest operations)
+               "Edit the exact resource observation in RESULT with OPERATIONS."
+               (call-resource
+                authority "edit"
+                "uri" (observation-field result "URI: ")
+                "base-revision" (observation-field result "Revision: ")
+                "operations" (coerce operations 'vector)))
+
+             (create-resource (authority uri content)
+               "Create missing scratchpad URI with exact CONTENT."
+               (edit-resource
+                authority
+                (read-resource authority uri)
+                (workspace-resource-tests--operation
+                 "replace-empty" "content" content))))
+      (unwind-protect
+           (progn
+             (lisp-worker-pool-start pool "scratch" "pristine")
              (test-assert
-              (and (tool-result-success-p result)
-                   (search "*scratchpad-value* 41"
-                           (tool-result-content result)))
-              "scratchpad.read returns the edited session file"))
-            (tool-execute
-             write-tool
-             context
-             (json-object "path" "utf8.txt"
-                          "content" "λ café"))
-            (let ((result
-                    (tool-execute
-                     read-tool
-                     context
-                     (json-object "path" "utf8.txt"))))
-              (test-assert
-               (and (tool-result-success-p result)
-                    (search "λ café" (tool-result-content result)))
-               "scratchpad.read decodes exact UTF-8 content"))
-            (tool-execute
-             write-tool
-             context
-             (json-object "path" "oversized.txt"
-                          "content" "123456789"))
-            (let ((*workspace-file-resource-maximum-bytes* 8))
-              (test-assert
-               (handler-case
-                   (progn
-                     (tool-execute
-                      read-tool
+              (and (tool-registry-find registry "lisp" "scratchpad-run")
+                   (every
+                    #'null
+                    (mapcar
+                     (lambda (name)
+                       (tool-registry-find registry "lisp" name))
+                     '("scratchpad-list" "scratchpad-read" "scratchpad-write"
+                       "scratchpad-edit" "scratchpad-delete"))))
+              "scratchpad resources replace the five flat Lisp file tools")
+             (let* ((other-root (read-resource other-context "scratchpad:."))
+                    (replacement
+                      (edit-resource
+                       other-context other-root
+                       (workspace-resource-tests--operation
+                        "replace-empty" "content" "not a directory"))))
+               (test-assert
+                (and (tool-result-success-p other-root)
+                     (search "Kind: missing" (tool-result-content other-root))
+                     (not (tool-result-success-p replacement))
+                     (eq (workspace-file--path-kind
+                          (lisp-scratchpad-root other-context))
+                         ':missing))
+                "scratchpad:. observes a missing root without creating it as a file"))
+             (let ((result
+                     (create-resource
                       context
-                      (json-object "path" "oversized.txt"))
-                     nil)
-                 (tool-error ()
-                   t))
-               "scratchpad.read rejects files above its exact byte limit"))
-           (let ((result
-                   (tool-execute
-                    run-tool
-                    context
-                    (json-object "path" "program.lisp"
-                                 "repl" "scratch"))))
-             (test-assert (tool-result-success-p result)
-                          "scratchpad.run loads the file into the selected REPL"))
-           (let ((result
-                   (lisp-worker-request
-                    (lisp-worker-pool-worker pool "scratch")
-                    :eval
-                    '(:form "*scratchpad-value*"))))
-             (test-assert (equal (getf (rest result) :values) '("43"))
-                          "scratchpad execution retains definitions in the REPL"))
-           (let ((result (tool-execute list-tool other-context (json-object))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (not (search "program.lisp" (tool-result-content result)))
-                   (not (equal (lisp-scratchpad-root context)
-                               (lisp-scratchpad-root other-context))))
-              "different conversations receive isolated scratchpad folders"))
-           (test-assert
-            (handler-case
-                (progn
-                  (tool-execute
-                   write-tool
-                   context
-                   (json-object "path" "../escape.lisp"
-                                "content" "nil"))
-                  nil)
-              (tool-error ()
-                t))
-            "scratchpad paths cannot escape the session folder")
-           (let ((result (tool-execute delete-tool context (json-object))))
-             (test-assert
-              (and (tool-result-success-p result)
-                   (not (uiop:directory-exists-p
-                         (lisp-scratchpad-root context))))
-              "scratchpad.delete clears the conversation folder")))
-      (lisp-worker-pool-stop-all pool)
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist :ignore)))
+                      "scratchpad:program.lisp"
+                      (format nil
+                              "(defparameter *scratchpad-value* 40)~%~
+                               (incf *scratchpad-value* 2)~%"))))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (probe-file (merge-pathnames
+                                  "program.lisp"
+                                  (lisp-scratchpad-root context))))
+                "resource.edit creates a missing conversation scratchpad file"))
+             (let* ((observed (read-resource context "scratchpad:program.lisp"))
+                    (edited
+                      (edit-resource
+                       context observed
+                       (workspace-resource-tests--operation
+                        "replace-lines"
+                        "start-line" 1
+                        "end-line" 1
+                        "content" "(defparameter *scratchpad-value* 41)"))))
+               (test-assert
+                (and (tool-result-success-p edited)
+                     (search "*scratchpad-value* 41"
+                             (tool-result-content edited)))
+                "scratchpad resources inherit revision-gated original-line edits"))
+             (let ((result
+                     (create-resource context
+                                      "scratchpad:broken.lisp"
+                                      "(list 1")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (search "delimiter checking found 1 unmatched"
+                             (tool-result-content result)))
+                "scratchpad resource edits preserve non-fatal delimiter warnings"))
+             (create-resource context "scratchpad:utf8.txt" "λ café")
+             (let ((result (read-resource context "scratchpad:utf8.txt")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (search "λ café" (tool-result-content result)))
+                "scratchpad resources decode exact UTF-8 content"))
+             (create-resource context "scratchpad:oversized.txt" "123456789")
+             (let* ((*workspace-file-resource-maximum-bytes* 8)
+                    (result (read-resource context "scratchpad:oversized.txt")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "up to 8 bytes"
+                             (tool-result-content result)))
+                "scratchpad resources reject files above the exact byte limit"))
+             (let ((result
+                     (tool-execute
+                      (tool-registry-find registry "lisp" "scratchpad-run")
+                      context
+                      (json-object "path" "program.lisp"
+                                   "repl" "scratch"))))
+               (test-assert
+                (tool-result-success-p result)
+                "lisp.scratchpad-run loads a resource-created file"))
+             (let ((result
+                     (lisp-worker-request
+                      (lisp-worker-pool-worker pool "scratch")
+                      :eval
+                      '(:form "*scratchpad-value*"))))
+               (test-assert
+                (equal (getf (rest result) :values) '("43"))
+                "scratchpad execution retains definitions in the selected REPL"))
+             (let ((result (read-resource other-context "scratchpad:.")))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (not (search "program.lisp" (tool-result-content result)))
+                     (not (equal (lisp-scratchpad-root context)
+                                 (lisp-scratchpad-root other-context))))
+                "different conversations resolve isolated scratchpad roots"))
+             (let* ((outside (merge-pathnames "outside/" root))
+                    (escape (merge-pathnames "escape"
+                                             (lisp-scratchpad-root context))))
+               (ensure-directories-exist (merge-pathnames "secret.txt" outside))
+               (with-open-file (stream (merge-pathnames "secret.txt" outside)
+                                       :direction :output
+                                       :if-exists :supersede
+                                       :if-does-not-exist :create
+                                       :external-format :utf-8)
+                 (write-string "secret" stream))
+               (sb-posix:symlink (namestring outside) (namestring escape))
+               (test-assert
+                (handler-case
+                    (progn
+                      (resource-registry-resolve
+                       (tool-registry-resource-registry registry)
+                       "scratchpad:escape/new.lisp"
+                       context)
+                      nil)
+                  (tool-error ()
+                    t))
+                "scratchpad URI resolution rejects missing descendants through escaping symlinks")
+               (delete-file escape))
+             (let* ((observed (read-resource context "scratchpad:program.lisp"))
+                    (path (merge-pathnames "program.lisp"
+                                           (lisp-scratchpad-root context))))
+               (with-open-file (stream path
+                                       :direction :output
+                                       :if-exists :append
+                                       :external-format :utf-8)
+                 (write-string "; changed" stream))
+               (let ((stale
+                       (edit-resource
+                        context observed
+                        (workspace-resource-tests--operation
+                         "scratchpad-delete"))))
+                 (test-assert
+                  (and (not (tool-result-success-p stale))
+                       (search "stale" (string-downcase
+                                        (tool-result-content stale)))
+                       (probe-file path))
+                  "scratchpad deletion rejects an exact stale file observation"))
+               (let* ((fresh (read-resource context "scratchpad:program.lisp"))
+                      (deleted
+                        (edit-resource
+                         context fresh
+                         (workspace-resource-tests--operation
+                          "scratchpad-delete"))))
+                 (test-assert
+                  (and (tool-result-success-p deleted)
+                       (not (probe-file path)))
+                  "scratchpad-delete removes an exactly observed file")))
+             (create-resource context "scratchpad:delete-me/child.txt" "child")
+             (let* ((directory (read-resource context "scratchpad:delete-me/"))
+                    (deleted
+                      (edit-resource
+                       context directory
+                       (workspace-resource-tests--operation
+                        "scratchpad-delete"))))
+               (test-assert
+                (and (tool-result-success-p deleted)
+                     (not (uiop:directory-exists-p
+                           (merge-pathnames "delete-me/"
+                                            (lisp-scratchpad-root context)))))
+                "scratchpad-delete recursively removes an observed directory"))
+             (create-resource context "scratchpad:crowded/a.txt" "a")
+             (create-resource context "scratchpad:crowded/b.txt" "b")
+             (let* ((*workspace-file-resource-maximum-directory-entries* 1)
+                    (directory (read-resource context "scratchpad:crowded/"))
+                    (rejected
+                      (edit-resource
+                       context directory
+                       (workspace-resource-tests--operation
+                        "scratchpad-delete"))))
+               (test-assert
+                (and (search "[directory listing truncated]"
+                             (tool-result-content directory))
+                     (not (tool-result-success-p rejected))
+                     (uiop:directory-exists-p
+                      (merge-pathnames "crowded/"
+                                       (lisp-scratchpad-root context))))
+                "scratchpad-delete refuses a truncated directory observation"))
+             (let* ((scratchpad-root (read-resource context "scratchpad:."))
+                    (deleted
+                      (edit-resource
+                       context scratchpad-root
+                       (workspace-resource-tests--operation
+                        "scratchpad-delete"))))
+               (test-assert
+                (and (tool-result-success-p deleted)
+                     (not (uiop:directory-exists-p
+                           (lisp-scratchpad-root context))))
+                "scratchpad-delete clears the exactly observed conversation root")))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (ignore-errors (lisp-worker-pool-stop-all pool))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist :ignore))))
   nil)
 
 (-> test-lisp-worker-image-snapshot () null)

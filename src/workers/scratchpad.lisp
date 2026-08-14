@@ -1,51 +1,33 @@
 (in-package #:autolith)
 
-;;;; -- Lisp Scratchpad Tools --
+;;;; -- Lisp Scratchpad Resources and Execution --
 
 (defclass lisp-scratchpad-tool (lisp-tool)
   ()
   (:documentation
    "A tool operating on the current conversation's disposable Lisp files."))
 
-(defclass lisp-scratchpad-list-tool (lisp-scratchpad-tool)
-  ()
-  (:documentation "List the current conversation's scratchpad folder."))
-
-(defclass lisp-scratchpad-read-tool (lisp-scratchpad-tool)
-  ()
-  (:documentation "Read one file from the current conversation's scratchpad."))
-
-(defclass lisp-scratchpad-write-tool (lisp-scratchpad-tool)
-  ()
-  (:documentation "Create or replace one file in the conversation scratchpad."))
-
-(defclass lisp-scratchpad-edit-tool (lisp-scratchpad-tool)
-  ()
-  (:documentation "Replace exact text inside one conversation scratchpad file."))
-
 (defclass lisp-scratchpad-run-tool (lisp-scratchpad-tool)
   ()
   (:documentation "Load one conversation scratchpad file into a named Lisp REPL."))
-
-(defclass lisp-scratchpad-delete-tool (lisp-scratchpad-tool)
-  ()
-  (:documentation "Delete one scratchpad path or clear the conversation folder."))
-
-(defmethod tool-compact-result-visible-p ((tool lisp-scratchpad-write-tool))
-  "Keep successful scratchpad writes visible in compact presentation."
-  t)
-
-(defmethod tool-compact-result-visible-p ((tool lisp-scratchpad-edit-tool))
-  "Keep successful scratchpad edits visible in compact presentation."
-  t)
 
 (defmethod tool-compact-result-visible-p ((tool lisp-scratchpad-run-tool))
   "Keep arbitrary scratchpad execution visible in compact presentation."
   t)
 
-(defmethod tool-compact-result-visible-p ((tool lisp-scratchpad-delete-tool))
-  "Keep destructive scratchpad operations visible in compact presentation."
-  t)
+(defclass scratchpad-resolver (resource-resolver)
+  ()
+  (:documentation
+   "Resolve scratchpad: URIs beneath the current conversation's disposable root."))
+
+(defclass scratchpad-resource (workspace-file-resource)
+  ((root
+    :initarg :root
+    :reader scratchpad-resource-root
+    :type pathname
+    :documentation "The canonical conversation scratchpad root."))
+  (:documentation
+   "A file, directory, or missing path beneath one conversation scratchpad."))
 
 
 ;;;; -- Session Paths --
@@ -70,7 +52,7 @@
 (defun lisp-scratchpad-root (context)
   "Return CONTEXT's conversation-scoped disposable scratchpad folder."
   (let* ((configuration (tool-context-configuration context))
-         (conversation (tool-context-conversation context))
+         (conversation  (tool-context-conversation context))
          (fragment
            (lisp-scratchpad--identifier-fragment
             (conversation-identifier conversation))))
@@ -80,248 +62,234 @@
 
 (-> lisp-scratchpad-path (tool-context string) pathname)
 (defun lisp-scratchpad-path (context relative-path)
-  "Resolve RELATIVE-PATH inside CONTEXT's scratchpad or signal TOOL-ERROR."
+  "Resolve RELATIVE-PATH beneath CONTEXT's scratchpad or signal TOOL-ERROR."
   (unless (non-empty-string-p relative-path)
     (error 'tool-error
            :message "A scratchpad path must be a non-empty relative pathname."
-           :tool-name "lisp.scratchpad"))
-  (let* ((root (lisp-scratchpad-root context))
-         (relative (pathname relative-path))
-         (directory (pathname-directory relative)))
-    (when (or (uiop:absolute-pathname-p relative)
-              (wild-pathname-p relative)
-              (some (lambda (component)
-                      (member component '(:up :back :wild :wild-inferiors)))
-                    directory))
-      (error 'tool-error
-             :message "Scratchpad paths must stay inside the session folder."
-             :tool-name "lisp.scratchpad"))
-    (let ((resolved (merge-pathnames relative root)))
-      (unless (uiop:subpathp resolved root)
+           :tool-name "scratchpad"))
+  (let ((root (workspace-tool--canonical-path
+               (lisp-scratchpad-root context))))
+    (when (string= relative-path ".")
+      (return-from lisp-scratchpad-path root))
+    (let* ((relative  (pathname relative-path))
+           (directory (pathname-directory relative)))
+      (when (or (uiop:absolute-pathname-p relative)
+                (wild-pathname-p relative)
+                (some (lambda (component)
+                        (member component '(:up :back :wild :wild-inferiors)))
+                      directory))
         (error 'tool-error
-               :message "Scratchpad paths must stay inside the session folder."
-               :tool-name "lisp.scratchpad"))
-      resolved)))
+               :message "Scratchpad paths must stay inside the conversation folder."
+               :tool-name "scratchpad"))
+      (let ((resolved
+              (workspace-tool--canonical-path
+               (merge-pathnames relative root))))
+        (unless (or (uiop:pathname-equal resolved root)
+                    (uiop:subpathp resolved root))
+          (error 'tool-error
+                 :message "Scratchpad paths must stay inside the conversation folder."
+                 :tool-name "scratchpad"))
+        resolved))))
 
-(-> lisp-scratchpad--file-size (pathname) (integer 0))
-(defun lisp-scratchpad--file-size (pathname)
-  "Return PATHNAME's byte length, or zero when it cannot be measured."
-  (handler-case
-      (with-open-file (stream pathname :element-type '(unsigned-byte 8))
-        (file-length stream))
-    (error ()
-      0)))
+(-> scratchpad-resource--canonical-uri (pathname pathname) string)
+(defun scratchpad-resource--canonical-uri (root path)
+  "Return PATH's canonical scratchpad URI relative to ROOT."
+  (let ((relative (enough-namestring path root)))
+    (format nil "scratchpad:~A"
+            (workspace-file--encode-identifier
+             (if (zerop (length relative)) "." relative)))))
 
+(-> scratchpad-resource--readable-roots (scratchpad-resource) list)
+(defun scratchpad-resource--readable-roots (resource)
+  "Return readable roots including RESOURCE's conversation scratchpad."
+  (let ((root (scratchpad-resource-root resource)))
+    (cons root
+          (remove root
+                  *workspace-tool-readable-roots*
+                  :test #'uiop:pathname-equal))))
 
-(-> lisp-scratchpad--read-file (pathname non-empty-string) string)
-(defun lisp-scratchpad--read-file (path tool-name)
-  "Read PATH as bounded, stable UTF-8 text for TOOL-NAME."
-  (file--read-bounded-utf-8
-   path
-   :maximum-bytes *workspace-file-resource-maximum-bytes*
-   :tool-name tool-name
-   :description "Scratchpad file"))
-
-(-> lisp-scratchpad--list-entries (pathname pathname) list)
-(defun lisp-scratchpad--list-entries (root directory)
-  "Return recursive, sorted entry descriptions beneath DIRECTORY relative to ROOT."
-  (let ((directories (sort (uiop:subdirectories directory)
-                           #'string<
-                           :key #'namestring))
-        (files (sort (uiop:directory-files directory)
-                     #'string<
-                     :key #'namestring)))
-    (append
-     (loop for child in directories
-           append (cons (format nil "d           ~A"
-                                (enough-namestring child root))
-                        (lisp-scratchpad--list-entries root child)))
-     (loop for file in files
-           collect (format nil "f ~9D  ~A"
-                           (lisp-scratchpad--file-size file)
-                           (enough-namestring file root))))))
-
-(-> lisp-scratchpad--count-occurrences (string string) (integer 0))
-(defun lisp-scratchpad--count-occurrences (needle haystack)
-  "Return the number of non-overlapping NEEDLE occurrences in HAYSTACK."
-  (loop with start = 0
-        for position = (search needle haystack :start2 start)
-        while position
-        count t
-        do (setf start (+ position (length needle)))))
-
-(-> lisp-scratchpad--replace-occurrences
-    (string string string &key (:all boolean))
-    string)
-(defun lisp-scratchpad--replace-occurrences (needle replacement haystack &key all)
-  "Return HAYSTACK with NEEDLE replaced by REPLACEMENT, once or everywhere."
-  (with-output-to-string (stream)
-    (loop with start = 0
-          for position = (search needle haystack :start2 start)
-          while position
-          do (write-string haystack stream :start start :end position)
-             (write-string replacement stream)
-             (setf start (+ position (length needle)))
-          unless all
-            do (loop-finish)
-          finally (write-string haystack stream :start start))))
+(-> scratchpad-resource--root-p (scratchpad-resource) boolean)
+(defun scratchpad-resource--root-p (resource)
+  "Return true when RESOURCE names the conversation scratchpad root itself."
+  (uiop:pathname-equal (workspace-file-resource-pathname resource)
+                       (scratchpad-resource-root resource)))
 
 
-;;;; -- Tool Executions --
+;;;; -- URI Resolution and Authority --
 
-(defmethod tool-execute ((tool lisp-scratchpad-list-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "List one directory within the current conversation's scratchpad."
-  (declare (ignore tool))
-  (let* ((root (lisp-scratchpad-root context))
-         (relative-path (tool-argument arguments "path"))
-         (directory (if relative-path
-                        (uiop:ensure-directory-pathname
-                         (lisp-scratchpad-path context relative-path))
-                        root)))
-    (uiop:ensure-all-directories-exist (list root))
-    (if (not (uiop:directory-exists-p directory))
-        (tool-failure (format nil "~A is not a scratchpad directory." directory))
-        (tool-success
-         (format nil "~A~%~{~A~%~}"
-                 directory
-                 (lisp-scratchpad--list-entries root directory))))))
+(defmethod resource-resolver-child-safe-p
+    ((resolver scratchpad-resolver) context)
+  "Permit child agents to use their inherited conversation scratchpad."
+  (declare (ignore resolver context))
+  t)
 
-(defmethod tool-execute ((tool lisp-scratchpad-read-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Read a numbered window from one scratchpad file."
-  (declare (ignore tool))
-  (let* ((path
-           (lisp-scratchpad-path
-            context
-            (tool-argument arguments "path" :required t)))
-         (start-line
-           (max 1 (or (workspace-tool-integer-argument
-                       arguments "start-line")
-                      1)))
-         (line-count
-           (min *workspace-file-resource-maximum-line-count*
-                (max 1 (or (workspace-tool-integer-argument
-                            arguments "line-count")
-                           *workspace-file-resource-default-line-count*)))))
-    (cond
-      ((uiop:directory-exists-p path)
-       (tool-failure (format nil "~A is a directory." path)))
-      ((not (probe-file path))
-       (tool-failure (format nil "~A does not exist." path)))
-      (t
-       (let* ((content (lisp-scratchpad--read-file
-                        path "lisp.scratchpad-read"))
-              (lines (text--split-lines content))
-              (total-lines (length lines)))
-         (if (and (plusp total-lines) (> start-line total-lines))
-             (tool-failure
-              (format nil "Start line ~D is beyond the scratchpad file's ~D lines."
-                      start-line total-lines))
-             (multiple-value-bind (body visible-ranges last-line truncated-p)
-                 (text--numbered-line-window
-                  lines start-line line-count
-                  *workspace-file-resource-maximum-result-characters*)
-               (if (and (plusp total-lines) (null visible-ranges))
-                   (tool-failure
-                    (format nil "Line ~D exceeds the scratchpad.read result limit."
-                            start-line))
-                   (tool-success
-                    (format nil "~A lines ~D-~D of ~D~%~A~:[~;~%... scratchpad output truncated; request a smaller line window.~]"
-                            path start-line last-line total-lines body truncated-p))))))))))
+(defmethod resource-resolver-resolve
+    ((resolver scratchpad-resolver) identifier (context tool-context))
+  "Resolve IDENTIFIER beneath CONTEXT's conversation scratchpad."
+  (declare (ignore resolver))
+  (let* ((root (workspace-tool--canonical-path
+                (lisp-scratchpad-root context)))
+         (path (lisp-scratchpad-path context (url-decode identifier))))
+    (make-instance 'scratchpad-resource
+                   :uri      (scratchpad-resource--canonical-uri root path)
+                   :pathname path
+                   :root     root)))
 
-(defmethod tool-execute ((tool lisp-scratchpad-write-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Create or replace one scratchpad file."
-  (declare (ignore tool))
-  (let ((path
-          (lisp-scratchpad-path
-           context
-           (tool-argument arguments "path" :required t)))
-        (content (tool-argument arguments "content" :required t)))
-    (unless (stringp content)
+(defmethod resource-capabilities
+    ((resource scratchpad-resource) (context tool-context))
+  "Return scratchpad operations allowed by CONTEXT for RESOURCE."
+  (declare (ignore context))
+  (if (eq (workspace-file--path-kind
+           (workspace-file-resource-pathname resource))
+          ':other)
+      '(:read)
+      '(:read :edit)))
+
+(defmethod resource-observe :around
+    ((resource scratchpad-resource) (context tool-context))
+  "Observe RESOURCE with its disposable root inside the read boundary."
+  (let ((*workspace-tool-readable-roots*
+          (scratchpad-resource--readable-roots resource)))
+    (call-next-method)))
+
+(defmethod resource-apply-operations :around
+    ((resource scratchpad-resource) (context tool-context)
+     &key base-revision operations)
+  "Edit RESOURCE with its disposable root inside the read boundary."
+  (declare (ignore base-revision operations))
+  (let ((*workspace-tool-readable-roots*
+          (scratchpad-resource--readable-roots resource)))
+    (call-next-method)))
+
+
+;;;; -- Revision-Gated Deletion --
+
+(-> scratchpad-resource--delete-operation-p (t) boolean)
+(defun scratchpad-resource--delete-operation-p (operation)
+  "Return true when OPERATION requests scratchpad deletion."
+  (and (json-object-p operation)
+       (let ((name (gethash "op" operation)))
+         (and (stringp name)
+              (string= name "scratchpad-delete")))))
+
+(-> scratchpad-resource--base-observation
+    (scratchpad-resource tool-context non-empty-string)
+    workspace-file-observation)
+(defun scratchpad-resource--base-observation (resource context base-revision)
+  "Return RESOURCE's retained BASE-REVISION observation under CONTEXT."
+  (with-recursive-lock-held
+      ((conversation-resource-observation-lock
+        (tool-context-conversation context)))
+    (resource-observation-state-observation
+     (workspace-file--find-observation-state
+      (tool-context-conversation context)
+      (resource-uri resource)
+      base-revision))))
+
+(-> scratchpad-resource--delete
+    (scratchpad-resource tool-context non-empty-string list)
+    workspace-file-observation)
+(defun scratchpad-resource--delete (resource context base-revision operations)
+  "Delete RESOURCE after exact BASE-REVISION validation and return its new state."
+  (unless (= (length operations) 1)
+    (error 'tool-error
+           :message "Operation scratchpad-delete must be the only resource edit operation."
+           :tool-name "resource.edit"))
+  (let ((operation (first operations)))
+    (unless (json-object-p operation)
       (error 'tool-error
-             :message "lisp.scratchpad-write requires string content."
-             :tool-name "lisp.scratchpad-write"))
-    (if (uiop:directory-exists-p path)
-        (tool-failure (format nil "~A is a directory." path))
-        (let* ((existed-p (and (probe-file path) t))
-               (result-content
-                 (lisp-source-edit-result-content
-                  (format nil
-                          "~:[Created~;Replaced~] scratchpad file ~A with ~:D character~:P."
-                          existed-p
-                          path
-                          (length content))
-                  path
-                  content)))
-          (ensure-directories-exist path)
-          (with-open-file (stream path
-                                  :direction :output
-                                  :if-exists :supersede
-                                  :if-does-not-exist :create
-                                  :external-format :utf-8)
-            (write-string content stream))
-          (tool-success result-content)))))
-
-(defmethod tool-execute ((tool lisp-scratchpad-edit-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Replace exact text occurrences inside one scratchpad file."
-  (declare (ignore tool))
-  (let ((path
-          (lisp-scratchpad-path
-           context
-           (tool-argument arguments "path" :required t)))
-        (old-text (tool-argument arguments "old-text" :required t))
-        (new-text (tool-argument arguments "new-text" :required t))
-        (replace-all (tool-argument arguments "replace-all")))
-    (unless (and (stringp old-text) (stringp new-text))
+             :message "Every resource edit operation must be a JSON object."
+             :tool-name "resource.edit"))
+    (unless (scratchpad-resource--delete-operation-p operation)
       (error 'tool-error
-             :message "lisp.scratchpad-edit requires string old-text and new-text."
-             :tool-name "lisp.scratchpad-edit"))
+             :message "Expected scratchpad-delete operation."
+             :tool-name "resource.edit"))
+    (when (workspace-file--operation-extra-keys-p operation '("op"))
+      (error 'tool-error
+             :message "Operation scratchpad-delete contains unsupported fields."
+             :tool-name "resource.edit")))
+  (let ((conversation (tool-context-conversation context)))
+    (with-recursive-lock-held (*workspace-file-mutation-lock*)
+      (with-recursive-lock-held
+          ((conversation-resource-observation-lock conversation))
+        (let* ((state
+                 (workspace-file--find-observation-state
+                  conversation (resource-uri resource) base-revision))
+               (base-observation
+                 (resource-observation-state-observation state))
+               (current (workspace-file--observe-path resource context))
+               (path (workspace-file-resource-pathname resource)))
+          (unless (workspace-file--same-observation-p current base-observation)
+            (workspace-file--signal-stale resource base-observation current))
+          (when (and (eq (workspace-file-observation-kind base-observation)
+                         ':directory)
+                     (search "[directory listing truncated]"
+                             (resource-observation-content base-observation)))
+            (error 'tool-error
+                   :message "Refusing scratchpad directory deletion because its bounded observation was truncated. Read or delete smaller child resources first."
+                   :tool-name "resource.edit"))
+          (case (workspace-file-observation-kind base-observation)
+            (:file
+             (delete-file path))
+            (:directory
+             (uiop:delete-directory-tree path
+                                         :validate t
+                                         :if-does-not-exist :error))
+            (:missing
+             (error 'tool-error
+                    :message "Cannot delete an observed missing scratchpad resource."
+                    :tool-name "resource.edit")))
+          (let ((published (workspace-file--observe-path resource context)))
+            (unless (eq (workspace-file-observation-kind published) ':missing)
+              (error 'tool-error
+                     :message "Scratchpad deletion did not leave the resource missing."
+                     :tool-name "resource.edit"))
+            (values
+             published
+             (list (list :kind ':scratchpad-delete
+                         :start 1
+                         :end 1
+                         :summary
+                         (if (scratchpad-resource--root-p resource)
+                             "scratchpad-delete root"
+                             "scratchpad-delete"))))))))))
+
+(defmethod resource-apply-operations
+    ((resource scratchpad-resource) (context tool-context)
+     &key base-revision operations)
+  "Apply scratchpad deletion or inherited structured file edits."
+  (let ((delete-count
+          (count-if #'scratchpad-resource--delete-operation-p operations)))
     (cond
-      ((zerop (length old-text))
-       (tool-failure "lisp.scratchpad-edit requires non-empty old-text."))
-      ((or (uiop:directory-exists-p path) (not (probe-file path)))
-       (tool-failure (format nil "~A is not an existing scratchpad file." path)))
+      ((plusp delete-count)
+       (unless (and (= delete-count 1) (= (length operations) 1))
+         (error 'tool-error
+                :message "Operation scratchpad-delete must be the only resource edit operation."
+                :tool-name "resource.edit"))
+       (scratchpad-resource--delete
+        resource context base-revision operations))
       (t
-       (let* ((text (lisp-scratchpad--read-file
-                     path "lisp.scratchpad-edit"))
-              (occurrences (lisp-scratchpad--count-occurrences old-text text)))
-         (cond
-           ((zerop occurrences)
-            (tool-failure
-             (format nil "The old-text was not found in ~A." path)))
-           ((and (> occurrences 1) (not replace-all))
-            (tool-failure
-             (format nil "The old-text matches ~D times in ~A; include more context or set replace-all."
-                     occurrences
-                     path)))
-           (t
-            (let* ((replacement
-                     (lisp-scratchpad--replace-occurrences
-                      old-text
-                      new-text
-                      text
-                      :all (and replace-all t)))
-                   (result-content
-                     (lisp-source-edit-result-content
-                      (format nil
-                              "Replaced ~D occurrence~:P in scratchpad file ~A."
-                              (if replace-all occurrences 1)
-                              path)
-                      path
-                      replacement)))
-              (with-open-file (stream path
-                                      :direction :output
-                                      :if-exists :supersede
-                                      :external-format :utf-8)
-                (write-string replacement stream))
-              (tool-success result-content)))))))))
+       (let ((base-observation
+               (scratchpad-resource--base-observation
+                resource context base-revision)))
+         (when (eq (workspace-file-observation-kind base-observation) ':directory)
+           (error 'tool-error
+                  :message "Scratchpad directories accept only scratchpad-delete."
+                  :tool-name "resource.edit"))
+         (when (and (scratchpad-resource--root-p resource)
+                    (eq (workspace-file-observation-kind base-observation) ':missing)
+                    (some (lambda (operation)
+                            (and (json-object-p operation)
+                                 (string= (or (gethash "op" operation) "")
+                                          "replace-empty")))
+                          operations))
+           (error 'tool-error
+                  :message "The scratchpad root cannot be created as a file. Edit a child scratchpad URI instead."
+                  :tool-name "resource.edit"))
+         (call-next-method))))))
+
+
+;;;; -- Lisp Execution --
 
 (defmethod tool-execute ((tool lisp-scratchpad-run-tool)
                          (context tool-context)
@@ -359,28 +327,3 @@
                          repl
                          (tool-result-content result)))
                 result))))))))
-
-(defmethod tool-execute ((tool lisp-scratchpad-delete-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Delete one scratchpad path, or clear the whole conversation folder."
-  (declare (ignore tool))
-  (let* ((root (lisp-scratchpad-root context))
-         (relative-path (tool-argument arguments "path"))
-         (path (if relative-path
-                   (lisp-scratchpad-path context relative-path)
-                   root)))
-    (cond
-      ((uiop:directory-exists-p path)
-       (uiop:delete-directory-tree path
-                                   :validate t
-                                   :if-does-not-exist :ignore)
-       (tool-success
-        (if relative-path
-            (format nil "Deleted scratchpad directory ~A." path)
-            (format nil "Cleared scratchpad folder ~A." root))))
-      ((probe-file path)
-       (delete-file path)
-       (tool-success (format nil "Deleted scratchpad file ~A." path)))
-      (t
-       (tool-failure (format nil "~A does not exist." path))))))

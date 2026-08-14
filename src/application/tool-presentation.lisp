@@ -1243,16 +1243,18 @@ structural discriminator as a readable heading instead."
 
 
 
-(-> application--workspace-resource-path (string) (option string))
-(defun application--workspace-resource-path (uri)
-  "Return the decoded source path from a workspace resource URI, or NIL."
-  (let ((prefix "workspace:"))
+(-> application--file-resource-path (string) (option string))
+(defun application--file-resource-path (uri)
+  "Return the decoded path from a workspace or scratchpad resource URI, or NIL."
+  (dolist (prefix '("workspace:" "scratchpad:"))
     (when (and (uiop:string-prefix-p prefix uri)
                (> (length uri) (length prefix)))
-      (handler-case
-          (url-decode (subseq uri (length prefix)))
-        (error ()
-          nil)))))
+      (return-from application--file-resource-path
+        (handler-case
+            (url-decode (subseq uri (length prefix)))
+          (error ()
+            nil)))))
+  nil)
 
 (-> application--workspace-resource-observed-text
     (application string string &key (:start-line integer) (:end-line integer))
@@ -1564,60 +1566,6 @@ model."
        (when (integerp count)
          (list (list :label "line count" :value (princ-to-string count)))))))))
 
-(defmethod application-tool-call-entry
-    ((tool lisp-scratchpad-write-tool)
-     (application application)
-     (call hash-table))
-  "Present scratchpad writes as syntax-highlighted added source."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (path (or (and arguments (json-get arguments "path")) ""))
-         (content (and arguments (json-get arguments "content"))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ lisp.scratchpad-write"
-     :rows
-     (append
-      (list (list (terminal-span ':code path)))
-      (if (stringp content)
-          (append
-           (list (application--tool-section-row
-                  (format nil "content · ~:D character~:P" (length content))))
-           (or (change-viewer-render
-                :added-content content
-                :added-start-line 1
-                :source-path path)
-               (list (list (terminal-span ':dim "(empty content)")))))
-          (list (application--tool-section-row "content unavailable")))))))
-
-(defmethod application-tool-call-entry
-    ((tool lisp-scratchpad-edit-tool)
-     (application application)
-     (call hash-table))
-  "Present scratchpad replacements as syntax-highlighted removed and added lines."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (path (or (and arguments (json-get arguments "path")) ""))
-         (old-text (or (and arguments (json-get arguments "old-text")) ""))
-         (new-text (or (and arguments (json-get arguments "new-text")) ""))
-         (replace-all (and arguments (json-get arguments "replace-all"))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ lisp.scratchpad-edit"
-     :rows
-     (append
-      (list (list (terminal-span ':code path)))
-      (when replace-all
-        (application--tool-field-rows
-         application
-         (list (list :label "scope" :value "all occurrences"))))
-      (list nil)
-      (change-viewer-render
-       :removed-content old-text
-       :added-content new-text
-       :source-path path)))))
 
 (-> application--shell-command-rows (string) list)
 (defun application--shell-command-rows (command)

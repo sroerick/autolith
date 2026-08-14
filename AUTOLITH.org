@@ -371,9 +371,9 @@ a user-local init.lisp change, or a private image commit.
   received only a success result. The repository's separate copied Rust checker
   duplicated a weaker parenthesis-only implementation and was unavailable through
   the normal tool and canonical Lisp operation surfaces.
-- Behavior: successful =fs.write=, workspace-file =resource.edit=,
-  =lisp.scratchpad-write=, and =lisp.scratchpad-edit= operations classify the
-  resulting file by extension and run a language-aware lexical delimiter scan.
+- Behavior: successful workspace: and scratchpad: file =resource.edit=
+  operations classify the resulting file by extension and run a language-aware
+  lexical delimiter scan.
   Strings, supported comments, escaped symbols, character literals, script
   headers, and reader-specific escapes avoid structural false positives. The scan
   counts every issue while retaining bounded exact-location details, appends an
@@ -384,10 +384,11 @@ a user-local init.lisp change, or a private image commit.
   snapshots, input and traversal budgets, bounded diagnostics, and failed
   results for issues, changes, or incomplete checks.
 - Scope and location: the generic scanner, bounded edit-warning composition, safe
-  recursive checker, and 72 regression assertions now live in the COLL-Attribution
-  Parenchek library pinned at revision =a7dc0a7=. Autolith retains the five
-  editing call sites, imports two public functions, and provides a 36-line tool
-  adapter in =src/tools/lisp-paren-check.lisp= with exact ASDF, Qlot, and Nix pins.
+  recursive checker, and 72 regression assertions live in the COLL-Attribution
+  Parenchek library pinned at revision =a7dc0a7=. Autolith retains one shared
+  resource-file edit integration, imports two public functions, and provides a
+  36-line tool adapter in =src/tools/lisp-paren-check.lisp= with exact ASDF,
+  Qlot, and Nix pins.
   451-line scanner, 854-line checker implementation, 647-line specialized test
   file, three test-entry calls, and the remaining dedicated registry assertion
   were removed.
