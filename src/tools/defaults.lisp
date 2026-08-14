@@ -441,13 +441,13 @@
           (list
            'plan-update-tool
            "plan" "update"
-           "Replace the current workspace plan with ordered steps. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan."
+           "Replace the current workspace plan with ordered steps, or clear it with an empty steps array. Each step has text and status pending, doing, or done. Optional explanation summarizes the plan."
            (tool-object-schema
             (json-object
              "steps"
              (json-object
               "type" "array"
-              "description" "Ordered plan steps from first to last."
+              "description" "Ordered plan steps from first to last; an empty array clears the plan."
               "items"
               (json-object
                "type" "object"
@@ -464,12 +464,7 @@
              "explanation"
              (tool-string-property
               "Optional short explanation of the plan."))
-            '("steps")))
-          (list
-           'plan-clear-tool
-           "plan" "clear"
-           "Clear the current workspace plan."
-           empty-schema)))
+             '("steps")))))
       (default-tools--register registry specification)))
   registry)
 

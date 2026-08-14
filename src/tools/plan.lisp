@@ -14,10 +14,6 @@
   ()
   (:documentation "A tool replacing the current workspace plan."))
 
-(defclass plan-clear-tool (plan-tool)
-  ()
-  (:documentation "A tool clearing the current workspace plan."))
-
 
 ;;;; -- Tool Executions --
 
@@ -59,27 +55,18 @@
                                          (json-get item "text"))
                                :status (json-get item "status")))
                        raw-steps)))))
-        (let ((plan
-                (plan-update (tool-context-configuration context)
-                             steps
-                             :explanation
-                             (and (stringp explanation) explanation))))
-          (tool-success (plan-render plan))))
+         (let* ((configuration (tool-context-configuration context))
+                (plan
+                  (if steps
+                      (plan-update configuration
+                                   steps
+                                   :explanation
+                                   (and (stringp explanation) explanation))
+                      (progn
+                        (plan-clear configuration)
+                        nil))))
+           (tool-success (plan-render plan))))
     (plan-error (condition)
       (error 'tool-error
              :message (format nil "~A" condition)
              :tool-name "plan.update"))))
-
-(defmethod tool-execute ((tool plan-clear-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Clear the current workspace plan."
-  (declare (ignore tool arguments))
-  (handler-case
-      (progn
-        (plan-clear (tool-context-configuration context))
-        (tool-success "Cleared the workspace plan."))
-    (plan-error (condition)
-      (error 'tool-error
-             :message (format nil "~A" condition)
-             :tool-name "plan.clear"))))
