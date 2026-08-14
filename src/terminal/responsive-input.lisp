@@ -368,6 +368,16 @@ offers, so the hint appears only while forcing exit is still worth explaining."
                 nil)))))
   nil)
 
+(-> application-input-controller--queues
+    (application-input-controller)
+    list)
+(defun application-input-controller--queues (controller)
+  "Return CONTROLLER's mutable input deques in scheduler order."
+  (list (application-input-controller-initial-work-items controller)
+        (application-input-controller-work-items controller)
+        (application-input-controller-steering-items controller)
+        (application-input-controller-steering-in-flight-items controller)))
+
 (-> application-input-controller--prepare-shutdown
     (application-input-controller keyword)
     (values boolean boolean))
@@ -397,11 +407,7 @@ second reports whether shutdown was prepared."
         ;; an ordinary restart can restore it for this conversation.
         (application-input-controller--persist-pending controller)
         (mapc #'deque-clear
-              (list
-               (application-input-controller-initial-work-items controller)
-               (application-input-controller-work-items controller)
-               (application-input-controller-steering-items controller)
-               (application-input-controller-steering-in-flight-items controller)))
+              (application-input-controller--queues controller))
         (setf (application-input-controller-stopping-p controller) t
               (application-input-controller-active-work controller) nil
               (application-input-controller-active-work-identifier controller) nil
@@ -499,10 +505,7 @@ second reports whether shutdown was prepared."
 
 The caller must hold CONTROLLER's lock."
   (let ((work-items
-          (make-deque
-           :initial-contents
-           (deque->vector
-            (application-input-controller-work-items controller))))
+          (deque-copy (application-input-controller-work-items controller)))
         (index
           (application-input-controller-follow-up-edit-index controller))
         (work
@@ -510,6 +513,37 @@ The caller must hold CONTROLLER's lock."
     (when (and index work)
       (deque-insert work-items (min index (deque-count work-items)) work))
     (deque->list work-items)))
+
+(-> application-input-controller--state
+    (application-input-controller &optional keyword)
+    t)
+(defun application-input-controller--state (controller &optional key)
+  "Return detached queue projections and transactional controller metadata.
+
+When KEY is present, return that state value. The caller must hold CONTROLLER's
+lock."
+  (let* ((queues
+           (mapcar #'deque->list
+                   (rest (application-input-controller--queues controller))))
+         (state
+           (list
+            :active-work (application-input-controller-active-work controller)
+            :active-work-identifier
+            (application-input-controller-active-work-identifier controller)
+            :work-items (first queues)
+            :steering-items (second queues)
+            :steering-in-flight-items (third queues)
+            :follow-up-edit-index
+            (application-input-controller-follow-up-edit-index controller)
+            :follow-up-edit-work
+            (application-input-controller-follow-up-edit-work controller)
+            :snapshot-identifier
+            (application-input-controller-pending-snapshot-identifier controller)
+            :vault-capture-identifiers
+            (application-input-controller-vault-capture-identifiers controller)
+            :steering-promotion-prefix-count
+            (application-input-controller-steering-promotion-prefix-count controller))))
+    (if key (getf state key) state)))
 
 (-> application-input--pending-form
     ((or string user-message-input))
@@ -824,21 +858,16 @@ The caller must hold CONTROLLER's lock."
           (let* ((pathname
                    (configuration-pending-inputs-path
                     configuration (conversation-pathname conversation)))
-                 (active-work
-                   (application-input-controller-active-work controller))
-                 (active-work-identifier
-                   (application-input-controller-active-work-identifier controller))
-                 (steering-in-flight
-                   (deque->list
-                    (application-input-controller-steering-in-flight-items
-                     controller)))
-                 (steering
-                   (deque->list
-                    (application-input-controller-steering-items controller)))
+                 (state
+                  (application-input-controller--state controller))
                  (work
                    (application-input-controller--virtual-work-items controller))
                  (pending-p
-                   (or active-work steering-in-flight steering work)))
+                   (or (getf state :active-work)
+                       (getf state :steering-in-flight-items)
+                       (getf state :steering-items)
+                       work)))
+            (setf (getf state :work-items) work)
             (if (null pending-p)
                 (progn
                   (when (probe-file pathname)
@@ -855,31 +884,17 @@ The caller must hold CONTROLLER's lock."
                    0))
                 (let ((snapshot-identifier
                         (or
-                         (application-input-controller-pending-snapshot-identifier
-                          controller)
+                         (getf state :snapshot-identifier)
                          (setf
                           (application-input-controller-pending-snapshot-identifier
                            controller)
                           (make-identifier)))))
+                  (setf (getf state :snapshot-identifier) snapshot-identifier)
                   (ensure-directories-exist pathname)
                   (snapshot-write
                    pathname
                    (application-input-controller--pending-state-form
-                    (list
-                     :snapshot-identifier snapshot-identifier
-                     :active-work active-work
-                     :active-work-identifier active-work-identifier
-                     :steering-in-flight-items steering-in-flight
-                     :steering-items steering
-                     :work-items work
-                     :vault-capture-identifiers
-                     (application-input-controller-vault-capture-identifiers
-                      controller)
-                     :steering-promotion-prefix-count
-                     (application-input-controller-steering-promotion-prefix-count
-                      controller)
-                     :legacy-p nil)
-                    (conversation-identifier conversation))
+                    state (conversation-identifier conversation))
                    :mode #o600)))
             t)
         (error (condition)
@@ -949,19 +964,13 @@ The caller must hold CONTROLLER's lock."
                         (deque-clear
                          (application-input-controller-steering-in-flight-items
                           controller))
-                        (loop for input
-                                in (reverse (getf filtered-state :steering-items))
-                              do (deque-push-front steering input))
-                        (loop for entry
-                                in (reverse
-                                    (getf filtered-state
-                                          :steering-in-flight-items))
-                              do (deque-push-front
-                                  steering
-                                  (agent-steering-input-content entry)))
-                        (loop for restored
-                                in (reverse (getf filtered-state :work-items))
-                              do (deque-push-front work restored))
+                        (deque-prepend
+                         steering (getf filtered-state :steering-items))
+                        (deque-prepend
+                         steering
+                         (getf filtered-state :steering-in-flight-items)
+                         :key #'agent-steering-input-content)
+                        (deque-prepend work (getf filtered-state :work-items))
                         (when active-work
                           (deque-push-front work active-work))
                         (application-input-controller--persist-pending controller))
@@ -987,9 +996,8 @@ snapshot after shutdown cleared the process-local queues."
      (mapcar #'user-message-input-text
              (deque->list
               (application-input-controller-steering-items controller)))
-     (loop for work across
-           (deque->vector
-            (application-input-controller-work-items controller))
+     (loop for work in
+           (deque->list (application-input-controller-work-items controller))
            for input = (second work)
            when (typep input '(or string user-message-input))
              collect (user-message-input-text input)))
@@ -1015,20 +1023,10 @@ snapshot after shutdown cleared the process-local queues."
   (not
    (null
     (with-lock-held ((application-input-controller-lock controller))
-       (or (application-input-controller-active-p controller)
-           (not
-            (deque-empty-p
-             (application-input-controller-initial-work-items controller)))
-           (not
-            (deque-empty-p
-             (application-input-controller-work-items controller)))
-           (not
-            (deque-empty-p
-             (application-input-controller-steering-items controller)))
-           (not
-            (deque-empty-p
-             (application-input-controller-steering-in-flight-items controller)))
-           (application-input-controller-follow-up-edit-work controller))))))
+      (or (application-input-controller-active-p controller)
+          (find-if-not #'deque-empty-p
+                       (application-input-controller--queues controller))
+          (application-input-controller-follow-up-edit-work controller))))))
 
 (-> application-input-controller--follow-up-editing-p
     (application-input-controller)
@@ -1486,19 +1484,16 @@ the ordinary FIFO queue."
   (let ((entries nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
-        (let ((queued
-                (application-input-controller-steering-items controller))
-              (in-flight
-                (application-input-controller-steering-in-flight-items
-                 controller)))
-          (loop until (deque-empty-p queued)
-                for entry =
-                  (agent-steering-input-create
-                   :identifier (make-identifier)
-                   :content (deque-pop-front queued))
-                do (deque-push-back in-flight entry)
-                   (push entry entries))
-          (setf entries (nreverse entries)))
+        (multiple-value-bind (ignored-target ignored-evicted moved)
+            (deque-move-all
+             (application-input-controller-steering-items controller)
+             (application-input-controller-steering-in-flight-items controller)
+             :key (lambda (input)
+                    (agent-steering-input-create
+                     :identifier (make-identifier)
+                     :content input)))
+          (declare (ignore ignored-target ignored-evicted))
+          (setf entries (coerce moved 'list)))
         ;; The old snapshot still contains queued steering if this atomic
         ;; replacement fails, while the new snapshot names every in-flight item.
         (application-input-controller--persist-pending controller)))
@@ -2101,10 +2096,10 @@ may execute immediately; other Lisp waits for the idle boundary."
         (let* ((work-items
                  (application-input-controller-work-items controller))
                (index
-                 (loop for position downfrom (1- (deque-count work-items)) to 0
-                       when (application-input-controller--follow-up-work-p
-                             (deque-ref work-items position))
-                         do (return position))))
+                 (deque-position-if
+                  #'application-input-controller--follow-up-work-p
+                  work-items
+                  :from-end t)))
           (when index
             (setf work (deque-remove-at work-items index)
                   (application-input-controller-follow-up-edit-index controller)
@@ -2147,15 +2142,16 @@ may execute immediately; other Lisp waits for the idle boundary."
                    (current-position (min index (deque-count work-items)))
                    (selected-index
                      (or
-                      (loop for position downfrom (1- current-position) to 0
-                            when (application-input-controller--follow-up-work-p
-                                  (deque-ref work-items position))
-                              do (return position))
-                      (loop for position downfrom (1- (deque-count work-items))
-                              to current-position
-                            when (application-input-controller--follow-up-work-p
-                                  (deque-ref work-items position))
-                              do (return position)))))
+                      (deque-position-if
+                       #'application-input-controller--follow-up-work-p
+                       work-items
+                       :end current-position
+                       :from-end t)
+                      (deque-position-if
+                       #'application-input-controller--follow-up-work-p
+                       work-items
+                       :start current-position
+                       :from-end t))))
               (if selected-index
                   (let ((selected-position
                           (if (< selected-index current-position)
@@ -2747,14 +2743,8 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (application-input-controller-active-p controller) t)
            (return))
           ((and (not (application-localgroup-paused-p application))
-                (deque-empty-p
-                 (application-input-controller-initial-work-items controller))
-                (deque-empty-p
-                 (application-input-controller-work-items controller))
-                (deque-empty-p
-                 (application-input-controller-steering-items controller))
-                (deque-empty-p
-                 (application-input-controller-steering-in-flight-items controller))
+                (every #'deque-empty-p
+                       (application-input-controller--queues controller))
                 (null
                  (application-input-controller-follow-up-edit-index controller)))
            (let ((mode (application-localgroup-take-ready-handoff application)))
@@ -2846,42 +2836,36 @@ may execute immediately; other Lisp waits for the idle boundary."
         (reopen-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-stopping-p controller)
-          (let* ((work-items
-                   (application-input-controller-work-items controller))
-                 (in-flight
-                   (application-input-controller-steering-in-flight-items controller))
-                 (steering
-                   (application-input-controller-steering-items controller))
-                 (steering-promotion-prefix-count
-                   (min
-                    (application-input-controller-steering-promotion-prefix-count
-                     controller)
-                    (deque-count work-items)))
-                 (insert-position steering-promotion-prefix-count)
-                 (promoted-count 0))
-            (loop until (deque-empty-p in-flight)
-                  do (deque-insert
-                      work-items
-                      insert-position
-                      (list ':message
-                            (agent-steering-input-content
-                             (deque-pop-front in-flight))))
-                     (incf insert-position)
-                     (incf promoted-count))
-            (loop until (deque-empty-p steering)
-                  do (deque-insert
-                      work-items
-                      insert-position
-                      (list ':message (deque-pop-front steering)))
-                     (incf insert-position)
-                     (incf promoted-count))
-            (when (application-input-controller-follow-up-edit-index controller)
-              (incf
-               (application-input-controller-follow-up-edit-index controller)
-               promoted-count))
-            (setf (application-input-controller-steering-promotion-prefix-count
+        (let* ((work-items
+                 (application-input-controller-work-items controller))
+               (in-flight
+                 (application-input-controller-steering-in-flight-items controller))
+               (steering
+                 (application-input-controller-steering-items controller))
+               (steering-promotion-prefix-count
+                 (min
+                  (application-input-controller-steering-promotion-prefix-count
                    controller)
-                  (+ steering-promotion-prefix-count promoted-count))))
+                  (deque-count work-items)))
+               (promoted-count
+                 (+ (deque-count in-flight) (deque-count steering)))
+               (suffix
+                 (deque-split-at work-items steering-promotion-prefix-count)))
+          (deque-move-all
+           in-flight work-items
+           :key (lambda (entry)
+                  (list ':message (agent-steering-input-content entry))))
+          (deque-move-all
+           steering work-items
+           :key (lambda (input) (list ':message input)))
+          (deque-move-all suffix work-items)
+          (when (application-input-controller-follow-up-edit-index controller)
+            (incf
+             (application-input-controller-follow-up-edit-index controller)
+             promoted-count))
+          (setf (application-input-controller-steering-promotion-prefix-count
+                 controller)
+                (+ steering-promotion-prefix-count promoted-count))))
       (when (and (application-input-controller-turn-cancellation-p controller)
                  (not (eq (application-input-controller-exit-reason controller)
                           ':quit)))
@@ -2946,11 +2930,7 @@ may execute immediately; other Lisp waits for the idle boundary."
   (let ((thread nil))
     (with-lock-held ((application-input-controller-lock controller))
       (mapc #'deque-clear
-            (list
-             (application-input-controller-initial-work-items controller)
-             (application-input-controller-work-items controller)
-             (application-input-controller-steering-items controller)
-             (application-input-controller-steering-in-flight-items controller)))
+            (application-input-controller--queues controller))
       (setf (application-input-controller-stopping-p controller) t
             (application-input-controller-reader-paused-p controller) t
             (application-input-controller-active-p controller) nil
@@ -3152,29 +3132,22 @@ the next application boundary because it does not depend on the provider."
         (with-lock-held ((application-input-controller-lock controller))
           (let ((queued-work
                   (application-input-controller-work-items controller))
-                (local-work (make-deque))
                 (pending (make-deque))
                 (in-flight
                   (application-input-controller-steering-in-flight-items
                    controller))
                 (steering
                   (application-input-controller-steering-items controller)))
-            (loop until (deque-empty-p in-flight)
-                  do (deque-push-back
-                      pending
-                      (list ':message
-                            (agent-steering-input-content
-                             (deque-pop-front in-flight)))))
-            (loop until (deque-empty-p steering)
-                  do (deque-push-back
-                      pending
-                      (list ':message (deque-pop-front steering))))
-            (loop until (deque-empty-p queued-work)
-                  for item = (deque-pop-front queued-work)
-                  do (deque-push-back
-                      (if (eq (first item) ':lisp) local-work pending)
-                      item))
-            (deque-move-all local-work queued-work)
+            (deque-move-all
+             in-flight pending
+             :key (lambda (entry)
+                    (list ':message (agent-steering-input-content entry))))
+            (deque-move-all
+             steering pending
+             :key (lambda (input) (list ':message input)))
+            (deque-move-if
+             (lambda (item) (not (eq (first item) ':lisp)))
+             queued-work pending)
             (loop until (deque-empty-p pending)
                   for item = (deque-pop-front pending)
                   for input =

@@ -661,30 +661,6 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
      (mapcar #'application-recovery-input-vault--copy-work
              (nthcdr prefix-count work-items)))))
 
-(-> application-recovery-input-vault--controller-state
-    (application-input-controller)
-    list)
-(defun application-recovery-input-vault--controller-state (controller)
-  "Return the controller state changed by a vault restore transaction.
-
-The caller must hold CONTROLLER's lock."
-  (list :work-items
-        (deque->list (application-input-controller-work-items controller))
-        :steering-items
-        (deque->list (application-input-controller-steering-items controller))
-        :steering-in-flight-items
-        (deque->list
-         (application-input-controller-steering-in-flight-items controller))
-        :follow-up-edit-index
-        (application-input-controller-follow-up-edit-index controller)
-        :follow-up-edit-work
-        (application-input-controller-follow-up-edit-work controller)
-        :pending-snapshot-identifier
-        (application-input-controller-pending-snapshot-identifier controller)
-        :vault-capture-identifiers
-        (application-input-controller-vault-capture-identifiers controller)
-        :steering-promotion-prefix-count
-        (application-input-controller-steering-promotion-prefix-count controller)))
 
 (-> application-recovery-input-vault--restore-controller-state
     (application-input-controller list)
@@ -707,7 +683,7 @@ The caller must hold CONTROLLER's lock."
         (application-input-controller-follow-up-edit-work controller)
         (getf state :follow-up-edit-work)
         (application-input-controller-pending-snapshot-identifier controller)
-        (getf state :pending-snapshot-identifier)
+        (getf state :snapshot-identifier)
         (application-input-controller-vault-capture-identifiers controller)
         (getf state :vault-capture-identifiers)
         (application-input-controller-steering-promotion-prefix-count controller)
@@ -749,15 +725,13 @@ The caller must hold CONTROLLER's lock."
        :message
        "Recovered input storage is unavailable. Inspect /vault or use /vault-discard before restoring input."))
     (with-lock-held ((application-input-controller-lock controller))
-      (let ((old-state
-              (application-recovery-input-vault--controller-state controller))
+      (let ((old-state (application-input-controller--state controller))
             (vault-deleted-p nil))
         (handler-case
             (progn
-              (loop for work in (reverse restored-work)
-                    do (deque-push-front
-                        (application-input-controller-work-items controller)
-                        work))
+              (deque-prepend
+               (application-input-controller-work-items controller)
+               restored-work)
               (setf
                (application-input-controller-follow-up-edit-index controller)
                (let ((index

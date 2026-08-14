@@ -379,6 +379,7 @@
                 #:deque->list
                 #:deque->vector
                 #:deque-clear
+                #:deque-copy
                 #:deque-count
                 #:deque-delete
                 #:deque-empty-p
@@ -387,30 +388,34 @@
                 #:deque-maximum-count
                 #:deque-maximum-weight
                 #:deque-move-all
+                #:deque-move-if
+                #:deque-position-if
+                #:deque-prepend
                 #:deque-pop-front
                 #:deque-push-front
                 #:deque-push-back
                 #:deque-ref
                 #:deque-remove-at
+                #:deque-split-at
                 #:deque-total-weight
                 #:make-deque
-                 #:fifo-cache
-                 #:fifo-cache-count
-                 #:fifo-cache-count-if
-                 #:fifo-cache-delete-first-if
-                 #:fifo-cache-find-if
-                 #:fifo-cache-get
-                 #:fifo-cache-put
-                 #:fifo-cache-total-weight
-                 #:make-fifo-cache
-                 #:make-priority-queue
-                 #:priority-queue
-                 #:priority-queue->list
-                 #:priority-queue-change-priority
-                 #:priority-queue-cancel
-                 #:priority-queue-peek
-                 #:priority-queue-pop
-                 #:priority-queue-push
+                #:fifo-cache
+                #:fifo-cache-count
+                #:fifo-cache-count-if
+                #:fifo-cache-delete-first-if
+                #:fifo-cache-find-if
+                #:fifo-cache-get
+                #:fifo-cache-put
+                #:fifo-cache-total-weight
+                #:make-fifo-cache
+                #:make-priority-queue
+                #:priority-queue
+                #:priority-queue->list
+                #:priority-queue-change-priority
+                #:priority-queue-cancel
+                #:priority-queue-peek
+                #:priority-queue-pop
+                #:priority-queue-push
                 #:make-ordered-map
                 #:ordered-map
                 #:ordered-map-delete-if

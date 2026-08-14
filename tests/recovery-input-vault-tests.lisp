@@ -549,13 +549,12 @@
            (test-assert
             (= (application-input-controller-vault-restore controller) 4)
             "the active crash capture restores all four inputs")
-            (test-assert
-             (equal (deque->list
-                     (application-input-controller-work-items controller))
-                    '((:message "restored active")
-                      (:message "restored queued")
-                      (:message "late steering")
-                      (:message "newer follow-up")))
+           (test-assert
+            (equal (application-input-controller--state controller :work-items)
+                   '((:message "restored active")
+                     (:message "restored queued")
+                     (:message "late steering")
+                     (:message "newer follow-up")))
             "restoring the active crash capture preserves its exact input order"))
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
@@ -633,11 +632,10 @@
             "restore reports a typed failure when vault deletion fails")
            (test-assert provenance-observed-p
                         "restore publishes capture provenance before deleting the vault")
-            (test-assert
-             (and (probe-file vault-pathname)
-                  (equal (deque->list
-                          (application-input-controller-work-items controller))
-                         '((:message "existing work"))))
+           (test-assert
+            (and (probe-file vault-pathname)
+                 (equal (application-input-controller--state controller :work-items)
+                        '((:message "existing work"))))
             "failed restore leaves the vault and prior in-memory queue intact")
            (multiple-value-bind (form complete-p)
                (snapshot-read pending-pathname)
@@ -915,11 +913,10 @@
            (application-input-controller--handle-submission
             controller "ordinary message")
            (application-input-controller--handle-submission controller "/status")
-            (test-assert
-             (and (deque-empty-p
-                   (application-input-controller-work-items controller))
-                  (deque-empty-p
-                   (application-input-controller-steering-items controller))
+           (test-assert
+            (and (null (application-input-controller--state controller :work-items))
+                 (null (application-input-controller--state
+                        controller :steering-items))
                  (search "Recovered input storage is unavailable"
                          (recording-terminal-output terminal)))
             "disabled recovery storage rejects ordinary messages and commands")
@@ -931,10 +928,9 @@
              '("/vault" "/vault-restore" "/vault-discard"))
             "disabled recovery storage admits every exact vault control")
            (application-input-controller--handle-submission controller "/vault")
-            (test-assert
-             (equal (deque->list
-                     (application-input-controller-work-items controller))
-                    '((:command "/vault")))
+           (test-assert
+            (equal (application-input-controller--state controller :work-items)
+                   '((:command "/vault")))
             "an admitted vault control reaches normal command scheduling"))
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
@@ -987,10 +983,9 @@
                  (= (application-input-controller-follow-up-edit-index controller) 0)
                  (equal (application-input-controller-follow-up-edit-work controller)
                         '(:message "held follow-up"))
-                  (deque-empty-p
-                   (application-input-controller-work-items controller))
-                  (deque-empty-p
-                   (application-input-controller-steering-items controller))
+                 (null (application-input-controller--state controller :work-items))
+                 (null (application-input-controller--state
+                        controller :steering-items))
                  (search "Recovered input storage is unavailable"
                          (recording-terminal-output terminal)))
             "blocked recalled submission leaves the durable held follow-up selected")
@@ -1100,11 +1095,9 @@
               (lambda (controller work)
                 (setf observed-first-work (copy-tree work)
                       observed-work
-                      (deque->list
-                       (application-input-controller-work-items controller))
+                      (application-input-controller--state controller :work-items)
                       observed-steering
-                      (deque->list
-                       (application-input-controller-steering-items controller)))
+                      (application-input-controller--state controller :steering-items))
                 (with-lock-held ((application-input-controller-lock controller))
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
@@ -1238,11 +1231,9 @@
               (lambda (controller work)
                 (setf observed-first-work (copy-tree work)
                       observed-work
-                      (deque->list
-                       (application-input-controller-work-items controller))
+                      (application-input-controller--state controller :work-items)
                       observed-steering
-                      (deque->list
-                       (application-input-controller-steering-items controller)))
+                      (application-input-controller--state controller :steering-items))
                 (labels ((submit (input)
                            (terminal-ui-set-input
                             (application-ui application) input)
@@ -1252,10 +1243,10 @@
                   (submit "/status")
                   (setf ingress-blocked-p
                         (and
-                         (deque-empty-p
-                          (application-input-controller-work-items controller))
-                         (deque-empty-p
-                          (application-input-controller-steering-items controller))))
+                         (null (application-input-controller--state
+                                controller :work-items))
+                         (null (application-input-controller--state
+                                controller :steering-items))))
                   (submit "/vault")
                   (setf vault-inspect-executed-p
                         (not
@@ -1264,12 +1255,11 @@
                                   (recording-terminal-output terminal)))))
                   (submit "/vault-restore")
                   (submit "/vault-discard")
-                   (setf vault-controls-admitted-p
-                         (equal
-                          (deque->list
-                           (application-input-controller-work-items controller))
-                          '((:command "/vault-restore")
-                            (:command "/vault-discard")))))
+                  (setf vault-controls-admitted-p
+                        (equal (application-input-controller--state
+                                controller :work-items)
+                               '((:command "/vault-restore")
+                                 (:command "/vault-discard")))))
                 (with-lock-held ((application-input-controller-lock controller))
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
@@ -1385,11 +1375,9 @@
               (lambda (controller work)
                 (setf observed-first-work (copy-tree work)
                       observed-work
-                      (deque->list
-                       (application-input-controller-work-items controller))
+                      (application-input-controller--state controller :work-items)
                       observed-steering
-                      (deque->list
-                       (application-input-controller-steering-items controller)))
+                      (application-input-controller--state controller :steering-items))
                 (with-lock-held ((application-input-controller-lock controller))
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast

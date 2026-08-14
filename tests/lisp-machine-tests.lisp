@@ -584,40 +584,39 @@
       (lisp-machine-tests--application)
     (let* ((ui (application-ui application))
            (terminal (terminal-ui-terminal ui))
-           (controller (lisp-machine-tests--controller application)))
+           (controller (lisp-machine-tests--controller application))
+           (work-items (application-input-controller-work-items controller)))
       (unwind-protect
            (progn
              (terminal-ui-start ui)
              (terminal-ui-set-input ui "(list 1")
              (application-input-controller--process-event controller ':submit)
-              (test-assert
-               (and (string= (line-editor-text (terminal-ui-editor ui))
-                             (format nil "(list 1~%"))
-                    (deque-empty-p
-                     (application-input-controller-work-items controller)))
-               "Enter continues an incomplete Lisp form without submitting work")
+             (test-assert
+              (and (string= (line-editor-text (terminal-ui-editor ui))
+                            (format nil "(list 1~%"))
+                   (null
+                    (application-input-controller--state controller :work-items)))
+              "Enter continues an incomplete Lisp form without submitting work")
              (terminal-ui-set-input ui "(values 3 4)")
              (application-input-controller--process-event controller ':submit)
-              (test-assert
-               (equal (deque->list
-                       (application-input-controller-work-items controller))
-                      '((:lisp "(values 3 4)")))
-               "a complete Lisp form enters the durable local work queue")
-              (deque-clear
-               (application-input-controller-work-items controller))
-              (setf (application-input-controller-active-p controller) t)
+             (test-assert
+              (equal (application-input-controller--state controller :work-items)
+                     '((:lisp "(values 3 4)")))
+              "a complete Lisp form enters the durable local work queue")
+             (deque-clear work-items)
+             (setf (application-input-controller-active-p controller) t)
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
               controller "(fs.list :path \".\")")
              (let ((output
                      (clinedi:ansi-strip
                       (recording-terminal-output terminal))))
-                (test-assert
-                 (and (deque-empty-p
-                       (application-input-controller-work-items controller))
-                      (search "(fs.list :path \".\")" output)
-                      (not (search "scheduled" output :test #'char-equal)))
-                 "a nonconflicting registered operation runs beside the active turn"))
+               (test-assert
+                (and (null
+                      (application-input-controller--state controller :work-items))
+                     (search "(fs.list :path \".\")" output)
+                     (not (search "scheduled" output :test #'char-equal)))
+                "a nonconflicting registered operation runs beside the active turn"))
              (recording-terminal-reset terminal)
              (setf *lisp-machine-test-value* nil)
              (application-input-controller--handle-submission
@@ -626,25 +625,23 @@
              (let ((output
                      (clinedi:ansi-strip
                       (recording-terminal-output terminal))))
-                (test-assert
-                 (and (eq *lisp-machine-test-value* ':immediate)
-                      (deque-empty-p
-                       (application-input-controller-work-items controller))
-                      (search "⇒ :IMMEDIATE" output))
-                 "eval-now explicitly forces arbitrary local evaluation immediately"))
+               (test-assert
+                (and (eq *lisp-machine-test-value* ':immediate)
+                     (null
+                      (application-input-controller--state controller :work-items))
+                     (search "⇒ :IMMEDIATE" output))
+                "eval-now explicitly forces arbitrary local evaluation immediately"))
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
               controller "(self.eval :form \"(+ 1 2)\")")
-              (test-assert
-               (and (equal (deque->list
-                            (application-input-controller-work-items controller))
-                           '((:lisp "(self.eval :form \"(+ 1 2)\")")))
-                    (search "local evaluation scheduled"
-                            (recording-terminal-output terminal)
-                            :test #'char-equal))
-               "active-image tools wait for the serialized application boundary")
-              (deque-clear
-               (application-input-controller-work-items controller))
+             (test-assert
+              (and (equal (application-input-controller--state controller :work-items)
+                          '((:lisp "(self.eval :form \"(+ 1 2)\")")))
+                   (search "local evaluation scheduled"
+                           (recording-terminal-output terminal)
+                           :test #'char-equal))
+              "active-image tools wait for the serialized application boundary")
+             (deque-clear work-items)
              (recording-terminal-reset terminal)
              (let ((authorization-calls 0))
                (test-call-with-function-replacements
@@ -657,17 +654,15 @@
                 (lambda ()
                   (application-input-controller--handle-submission
                    controller "(shell.run :command \"true\")")))
-                (test-assert
-                 (and (zerop authorization-calls)
-                      (equal (deque->list
-                              (application-input-controller-work-items controller))
-                             '((:lisp "(shell.run :command \"true\")")))
-                      (search "local evaluation scheduled"
-                              (recording-terminal-output terminal)
-                              :test #'char-equal))
-                 "approval-requiring tools wait instead of joining the reader"))
-              (deque-clear
-               (application-input-controller-work-items controller))
+               (test-assert
+                (and (zerop authorization-calls)
+                     (equal (application-input-controller--state controller :work-items)
+                            '((:lisp "(shell.run :command \"true\")")))
+                     (search "local evaluation scheduled"
+                             (recording-terminal-output terminal)
+                             :test #'char-equal))
+                "approval-requiring tools wait instead of joining the reader"))
+             (deque-clear work-items)
              (recording-terminal-reset terminal)
              (let ((previous-reader
                      (application-input-controller-reader-thread controller)))
@@ -683,32 +678,28 @@
              (let ((output
                      (clinedi:ansi-strip
                       (recording-terminal-output terminal))))
-                (test-assert
-                 (and (deque-empty-p
-                       (application-input-controller-work-items controller))
-                      (search "Terminal-owning work cannot pause" output)
-                      (search "aborted" output :test #'char-equal))
-                 "eval-now rejects modal authorization instead of self-joining"))
-              (deque-clear
-               (application-input-controller-work-items controller))
+               (test-assert
+                (and (null
+                      (application-input-controller--state controller :work-items))
+                     (search "Terminal-owning work cannot pause" output)
+                     (search "aborted" output :test #'char-equal))
+                "eval-now rejects modal authorization instead of self-joining"))
+             (deque-clear work-items)
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
               controller "(values :later)")
-              (test-assert
-               (and (equal (deque->list
-                            (application-input-controller-work-items controller))
-                           '((:lisp "(values :later)")))
-                    (deque-empty-p
-                     (application-input-controller-steering-items controller))
-                    (search "local evaluation scheduled"
-                            (recording-terminal-output terminal)
-                            :test #'char-equal))
-               "busy arbitrary Lisp waits for the idle boundary instead of steering")
-              (deque-clear
-               (application-input-controller-work-items controller))
-              (setf (application-input-controller-active-p controller) nil
-                    (application-input-controller-stopping-p controller) t)
-             (recording-terminal-reset terminal)
+             (test-assert
+              (and (equal (application-input-controller--state controller :work-items)
+                          '((:lisp "(values :later)")))
+                   (null
+                    (application-input-controller--state controller :steering-items))
+                   (search "local evaluation scheduled"
+                           (recording-terminal-output terminal)
+                           :test #'char-equal))
+              "busy arbitrary Lisp waits for the idle boundary instead of steering")
+             (deque-clear work-items)
+             (setf (application-input-controller-active-p controller) nil
+                   (application-input-controller-stopping-p controller) t)
              (let ((provider-items-before
                      (copy-list
                       (conversation-input-items

@@ -191,8 +191,7 @@
                    (eq (application-lisp-evaluation-status evaluation) ':ok)
                    "computed READ-FILE prompt executes through local Lisp"))
                 (let* ((work-items
-                         (deque->list
-                          (application-input-controller-work-items controller)))
+                         (application-input-controller--state controller :work-items))
                        (image-input (second (fourth work-items))))
                   (test-assert
                    (equal

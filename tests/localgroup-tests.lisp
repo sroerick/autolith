@@ -380,10 +380,9 @@
             (list :message "remote input"))
            (with-lock-held ((application-input-controller-lock controller))
               (test-assert
-               (equal (deque->list
-                       (application-input-controller-work-items controller))
+               (equal (application-input-controller--state controller :work-items)
                       (list (list ':message "remote input")))
-              "localgroup tell uses the ordinary submitted-message queue"))
+               "localgroup tell uses the ordinary submitted-message queue"))
            (let ((status
                    (getf
                     (rest
@@ -567,10 +566,8 @@
             (task-tests--wait-until
              (lambda ()
                (with-lock-held ((application-input-controller-lock controller))
-                 (equal
-                  (deque->list
-                   (application-input-controller-work-items controller))
-                  (list (list ':message "remote")))))
+                (equal (application-input-controller--state controller :work-items)
+                       (list (list ':message "remote")))))
              2)
             "controlling attachment submission uses the ordinary input queue")
            (localgroup-write-packet
