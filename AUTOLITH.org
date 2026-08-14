@@ -341,11 +341,11 @@ a user-local init.lisp change, or a private image commit.
   Lisp calls are admitted to one shared session job runtime exactly once.
   =async: true= hands off immediately. An ordinary call waits for a reloadable
   ten-second grace and returns normally when already complete, otherwise it hands
-  off the same live job without rerunning it. =job.list=, =job.get=, =job.wait=,
-  and =job.cancel= expose bounded state and terminal results. Shell cancellation
-  terminates and reaps the external process. Lisp cancellation stops the selected
-  named worker, whose next request restarts from the same base image and a clean
-  protocol stream.
+  off the same live job without rerunning it. =job.list=, =job.wait=, and
+  =job.cancel= expose bounded state and terminal results; zero-second waits
+  inspect. Shell cancellation terminates and reaps the external process.
+  Lisp cancellation stops the selected named worker; its next request restarts
+  from the same base image and a clean protocol stream.
 - Scope and location: tracked project work in =src/task/=,
   =src/tools/registry.lisp=, =src/tools/workspace.lisp=,
   =src/workers/lisp.lisp=, =src/workers/scratchpad.lisp=,

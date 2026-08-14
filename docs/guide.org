@@ -677,8 +677,9 @@ and final answers. It excludes reasoning, tools, images, intermediate phases, an
 parent developer policy, and is capped at 32 KiB and one quarter of the child
 window. Detached children see admission-time context only. Root and child threads
 remain separate even when they share a provider prompt-cache hint. =job.list=,
-=job.get=, =job.wait=, and =job.cancel= expose only jobs visible to the caller's
-task tree. Child transcripts and artifacts stay outside normal conversation lists.
+=job.wait=, and =job.cancel= expose only jobs visible to the caller's task tree;
+a zero-second wait inspects without blocking. Child transcripts and artifacts
+stay outside normal conversation lists.
 
 * Generations and recovery
 

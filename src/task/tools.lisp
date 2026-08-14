@@ -547,7 +547,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           do (error 'task-error
                     :message
                     "The mandatory job snapshot exceeds its native result bound."
-                    :tool-name "job.get")))
+                    :tool-name "job.wait")))
 
 (-> task--tool-execution-handoff-result
     (tool-execution-job agent keyword)
@@ -897,7 +897,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            (multiple-value-bind (form content)
                (task--job-list-page snapshots offset limit)
              (task-tool-result content form)))))
-      ((member operation '("get" "wait" "cancel") :test #'string=)
+      ((member operation '("wait" "cancel") :test #'string=)
        (task--validate-tool-arguments
         arguments
         (if (string= operation "wait")
@@ -913,55 +913,48 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                     identifier
                     viewer
                     (tool-canonical-name tool))))
-         (cond
-           ((string= operation "cancel")
-            (multiple-value-bind (accepted-p cancelled-descendants)
-                (session-job-cancel job :user)
-              (let ((snapshot (session-job-snapshot job)))
-                (multiple-value-bind (form content)
-                    (task--job-native-form
-                     job snapshot viewer
-                     :wrapper
-                     (lambda (record)
-                       (list :job-cancel
-                             :id identifier
-                             :accepted-p (and accepted-p t)
-                             :reason :user
-                             :cancelled-descendants cancelled-descendants
-                             :job record)))
-                  (task-tool-result content form)))))
-           ((string= operation "wait")
-            (let ((timeout (or (tool-argument arguments "timeout-seconds")
-                               60)))
-              (unless (and (integerp timeout)
-                           (<= 0 timeout *task-job-wait-maximum-seconds*))
-                (error 'task-error
-                       :message
-                       (format nil
-                               "job.wait timeout-seconds must be an integer from 0 to ~D."
-                               *task-job-wait-maximum-seconds*)
-                       :tool-name "job.wait"))
-              (when (and (plusp timeout)
-                         (typep viewer 'task-child-agent)
-                         (typep job 'task-job))
-                (job-run-inline job))
-              (multiple-value-bind (snapshot terminal-p)
-                  (session-job-await job timeout)
-                (multiple-value-bind (form content)
-                    (task--job-native-form
-                     job snapshot viewer
-                     :wrapper
-                     (lambda (record)
-                       (list :job-wait
-                             :timeout-seconds timeout
-                             :terminal-p terminal-p
-                             :job record)))
-                  (task-tool-result content form)))))
-           (t
-            (let ((snapshot (session-job-snapshot job)))
-              (multiple-value-bind (form content)
-                  (task--job-native-form job snapshot viewer)
-                (task-tool-result content form)))))))
+         (if (string= operation "cancel")
+             (multiple-value-bind (accepted-p cancelled-descendants)
+                 (session-job-cancel job :user)
+               (let ((snapshot (session-job-snapshot job)))
+                 (multiple-value-bind (form content)
+                     (task--job-native-form
+                      job snapshot viewer
+                      :wrapper
+                      (lambda (record)
+                        (list :job-cancel
+                              :id identifier
+                              :accepted-p (and accepted-p t)
+                              :reason :user
+                              :cancelled-descendants cancelled-descendants
+                              :job record)))
+                   (task-tool-result content form))))
+             (let ((timeout (or (tool-argument arguments "timeout-seconds")
+                                0)))
+               (unless (and (integerp timeout)
+                            (<= 0 timeout *task-job-wait-maximum-seconds*))
+                 (error 'task-error
+                        :message
+                        (format nil
+                                "job.wait timeout-seconds must be an integer from 0 to ~D."
+                                *task-job-wait-maximum-seconds*)
+                        :tool-name "job.wait"))
+               (when (and (plusp timeout)
+                          (typep viewer 'task-child-agent)
+                          (typep job 'task-job))
+                 (job-run-inline job))
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job timeout)
+                 (multiple-value-bind (form content)
+                     (task--job-native-form
+                      job snapshot viewer
+                      :wrapper
+                      (lambda (record)
+                        (list :job-wait
+                              :timeout-seconds timeout
+                              :terminal-p terminal-p
+                              :job record)))
+                   (task-tool-result content form)))))))
       (t
        (error 'task-error :message
               (format nil "Unknown job operation ~A." operation) :tool-name
@@ -1073,14 +1066,8 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
-                                           "get" :description
-                                           "Inspect one session job's lifecycle, progress, and result."
-                                           :parameters identifier-schema))
-    (tool-registry-register registry
-                            (make-instance 'task-job-tool :orchestrator
-                                           orchestrator :namespace "job" :name
                                            "wait" :description
-                                           "Wait briefly for one session job and return its current or terminal result."
+                                           "Wait up to a bounded timeout for one session job and return its current or terminal result."
                                            :parameters
                                            (tool-object-schema
                                             (json-object "id"
@@ -1088,7 +1075,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                                                           "The session job identifier.")
                                                          "timeout-seconds"
                                                          (tool-integer-property
-                                                          "Maximum wait in seconds; defaults to 60."))
+                                                          "Maximum wait in seconds; defaults to 0."))
                                             '("id"))))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator

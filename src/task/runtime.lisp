@@ -773,7 +773,7 @@ values from either side of a terminal transition."
   (or (task-orchestrator--find-job orchestrator identifier)
       (error 'task-error
              :message (format nil "No job named ~A exists." identifier)
-             :tool-name "job.get"
+             :tool-name "job.wait"
              :task-id identifier)))
 
 (-> session-job-live-activity (session-job) (option list))

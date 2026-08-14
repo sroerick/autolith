@@ -1207,7 +1207,7 @@ exactly that race."
               (task-orchestrator-list-visible-jobs orchestrator viewer-a))
              (list descendant-a-id))
             "a child sees descendants but not itself, its parent, or siblings")
-           (dolist (operation '("get" "wait" "cancel"))
+           (dolist (operation '("wait" "cancel"))
              (let ((invisible-report
                      (task-tests--job-tool-error-report
                       orchestrator primary-a
@@ -1227,7 +1227,7 @@ exactly that race."
            (test-assert
             (and (eq (job-state foreign) :queued)
                  (null (job-cancellation-reason foreign)))
-            "invisible get, wait, and cancel attempts cannot mutate the job"))
+            "invisible wait and cancel attempts cannot mutate the job"))
       (uiop:delete-directory-tree root :validate t
                                        :if-does-not-exist :ignore)))
   nil)
@@ -1349,16 +1349,19 @@ exactly that race."
                                 '(:task :tool))
                          (string= (getf (second records) :tool) "lisp.eval"))
                     "job.list presents child and tool execution jobs"))
-                 (let* ((get-result
-                          (execute-job-tool
-                           "get" (json-object "id" execution-id)))
-                        (record (getf (tool-result-details get-result) :job)))
-                   (test-assert
-                    (and (tool-result-success-p get-result)
-                         (eq (getf record :type) :tool)
-                         (eq (getf record :state) :running)
-                         (string= (getf record :tool) "lisp.eval"))
-                    "job.get renders a live execution job without task artifacts"))
+                  (let* ((inspect-result
+                           (execute-job-tool
+                            "wait"
+                            (json-object "id" execution-id
+                                         "timeout-seconds" 0)))
+                         (record (getf (rest (tool-result-details inspect-result))
+                                       :job)))
+                    (test-assert
+                     (and (tool-result-success-p inspect-result)
+                          (eq (getf record :type) :tool)
+                          (eq (getf record :state) :running)
+                          (string= (getf record :tool) "lisp.eval"))
+                     "job.wait with zero timeout renders a live execution job"))
                  (let* ((wait-result
                           (execute-job-tool
                            "wait"
@@ -1563,17 +1566,19 @@ exactly that race."
                      (task-tests--wait-until
                       (lambda () (probe-file started-path)) 2))
                 "explicit async returns an inspectable shell job while it runs")
-               (let* ((get-result
-                        (tool-execute
-                         (tool-registry-find registry "job" "get")
-                         context
-                         (json-object "id" identifier)))
-                      (record (getf (tool-result-details get-result) :job)))
-                 (test-assert
-                  (and (tool-result-success-p get-result)
-                       (string= (getf record :id) identifier)
-                       (eq (getf record :state) :running))
-                  "job.get inspects the running shell execution"))
+                (let* ((wait-result
+                         (tool-execute
+                          (tool-registry-find registry "job" "wait")
+                          context
+                          (json-object "id" identifier
+                                       "timeout-seconds" 0)))
+                       (record (getf (rest (tool-result-details wait-result))
+                                     :job)))
+                  (test-assert
+                   (and (tool-result-success-p wait-result)
+                        (string= (getf record :id) identifier)
+                        (eq (getf record :state) :running))
+                   "job.wait with zero timeout inspects the running shell execution"))
                (let* ((cancel-result
                         (tool-execute
                          (tool-registry-find registry "job" "cancel")
