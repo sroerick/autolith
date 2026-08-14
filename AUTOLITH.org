@@ -24,18 +24,20 @@ a user-local init.lisp change, or a private image commit.
   systems. Loading a sibling checkout's ASDF file under the same system name can
   silently retain the pinned Qlot definition and produce a false-positive test
   result against old source.
-- Behavior: before claiming sibling dependency test results, inspect
-  =asdf:system-source-file=. If it does not name the intended checkout, run the
-  documented =asdf:test-system= operation in a pristine host SBCL process from
-  that checkout rather than trusting the worker's loaded system.
+- Behavior: before claiming sibling dependency test results, launch a pristine
+  host SBCL with =CL_SOURCE_REGISTRY= confined to the intended checkout and
+  =:ignore-inherited-configuration=. Verify =asdf:system-source-file= names that
+  checkout before running =asdf:test-system=; loading its ASDF file alone is not
+  sufficient.
 - Scope and location: tracked project workflow note for sibling Common Lisp
   dependency development; no executable behavior changes.
-- Verification: an explicit Structlisp checkout load in a Lisp worker still
-  resolved revision =e9ad866= from Qlot while the checkout was at =66bbfbe=.
-  A pristine noninteractive SBCL process loaded the checkout ASDF file and ran
-  its complete suite successfully.
-- Removal condition: Lisp workers support an isolated source registry or an
-  explicit source-root system load whose resolved source file is verified.
+- Verification: a Lisp worker retained Qlot revision =e9ad866= while Structlisp
+  was at =66bbfbe=. A pristine host process without source-registry isolation
+  later resolved a different sibling checkout. Confining =CL_SOURCE_REGISTRY=
+  to Structlisp revision =68c0322= selected its exact ASDF file and passed the
+  complete suite.
+- Removal condition: sibling verification tools isolate the source registry and
+  reject a resolved system outside the requested source root.
 
 ** Modified Enter terminal compatibility
 
