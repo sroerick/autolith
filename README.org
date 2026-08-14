@@ -52,23 +52,16 @@ nix run github:luciusmagn/autolith
 #+END_SRC
 
 A Linux curl-into-sh installer is also available. Inspect the
-[[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell.
+[[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell, or trust us with your life.
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
-Authenticate ChatGPT with the browser device flow. Bare =--auth= instead uses the
-provider selected by your configuration.
+Authenticate providers either with web flows or API keys:
 
 #+BEGIN_SRC sh
 autolith --auth chatgpt
-#+END_SRC
-
-API-key providers name the provider explicitly. Autolith shows a clearly labeled
-hidden field: paste the key, press Enter, and expect no characters to appear.
-
-#+BEGIN_SRC sh
 autolith --auth anthropic
 autolith --auth fireworks
 autolith --auth opencode
