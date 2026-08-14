@@ -375,6 +375,7 @@
                 #:store-error)
   (:import-from #:structlisp
                 #:deque
+                #:deque-append
                 #:deque->list
                 #:deque->vector
                 #:deque-clear
@@ -382,12 +383,15 @@
                 #:deque-delete
                 #:deque-empty-p
                 #:deque-front
+                #:deque-insert
                 #:deque-maximum-count
                 #:deque-maximum-weight
                 #:deque-move-all
                 #:deque-pop-front
+                #:deque-push-front
                 #:deque-push-back
                 #:deque-ref
+                #:deque-remove-at
                 #:deque-total-weight
                 #:make-deque
                  #:fifo-cache

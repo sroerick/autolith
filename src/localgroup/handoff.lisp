@@ -720,8 +720,8 @@ exit \"$status\""
 (-> localgroup-handoff--primary-ready-p (application-input-controller) boolean)
 (defun localgroup-handoff--primary-ready-p (controller)
   "Return true when CONTROLLER has no work that must precede handoff."
-  (and (null (application-input-controller-work-items controller))
-       (null (application-input-controller-steering-items controller))
+  (and (deque-empty-p (application-input-controller-work-items controller))
+       (deque-empty-p (application-input-controller-steering-items controller))
        (null (application-input-controller-follow-up-edit-work controller))
        (null (application-input-controller-turn-cancellation-p controller))
        (null (application-input-controller-failure controller))

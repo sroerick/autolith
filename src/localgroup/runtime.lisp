@@ -261,9 +261,9 @@
       (with-lock-held ((application-input-controller-lock controller))
         (setf active-p (application-input-controller-active-p controller)
               queued-count
-              (length (application-input-controller-work-items controller))
+              (deque-count (application-input-controller-work-items controller))
               steering-count
-              (length (application-input-controller-steering-items controller))
+              (deque-count (application-input-controller-steering-items controller))
               recalled-p
               (not
                (null

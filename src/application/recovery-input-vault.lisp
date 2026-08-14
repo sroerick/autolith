@@ -668,11 +668,13 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
   "Return the controller state changed by a vault restore transaction.
 
 The caller must hold CONTROLLER's lock."
-  (list :work-items (application-input-controller-work-items controller)
+  (list :work-items
+        (deque->list (application-input-controller-work-items controller))
         :steering-items
-        (application-input-controller-steering-items controller)
+        (deque->list (application-input-controller-steering-items controller))
         :steering-in-flight-items
-        (application-input-controller-steering-in-flight-items controller)
+        (deque->list
+         (application-input-controller-steering-in-flight-items controller))
         :follow-up-edit-index
         (application-input-controller-follow-up-edit-index controller)
         :follow-up-edit-work
@@ -692,13 +694,15 @@ The caller must hold CONTROLLER's lock."
   "Restore CONTROLLER from transaction snapshot STATE.
 
 The caller must hold CONTROLLER's lock."
-  (setf (application-input-controller-work-items controller)
-        (getf state :work-items)
-        (application-input-controller-steering-items controller)
-        (getf state :steering-items)
-        (application-input-controller-steering-in-flight-items controller)
-        (getf state :steering-in-flight-items)
-        (application-input-controller-follow-up-edit-index controller)
+  (let ((work-items (application-input-controller-work-items controller))
+        (steering-items (application-input-controller-steering-items controller))
+        (steering-in-flight
+          (application-input-controller-steering-in-flight-items controller)))
+    (mapc #'deque-clear (list work-items steering-items steering-in-flight))
+    (deque-append work-items (getf state :work-items))
+    (deque-append steering-items (getf state :steering-items))
+    (deque-append steering-in-flight (getf state :steering-in-flight-items)))
+  (setf (application-input-controller-follow-up-edit-index controller)
         (getf state :follow-up-edit-index)
         (application-input-controller-follow-up-edit-work controller)
         (getf state :follow-up-edit-work)
@@ -750,10 +754,11 @@ The caller must hold CONTROLLER's lock."
             (vault-deleted-p nil))
         (handler-case
             (progn
+              (loop for work in (reverse restored-work)
+                    do (deque-push-front
+                        (application-input-controller-work-items controller)
+                        work))
               (setf
-               (application-input-controller-work-items controller)
-               (append restored-work
-                       (application-input-controller-work-items controller))
                (application-input-controller-follow-up-edit-index controller)
                (let ((index
                        (application-input-controller-follow-up-edit-index
@@ -768,8 +773,7 @@ The caller must hold CONTROLLER's lock."
                 controller)
                (remove-duplicates
                 (append
-                 (application-input-controller-vault-capture-identifiers
-                  controller)
+                 (application-input-controller-vault-capture-identifiers controller)
                  capture-identifiers)
                 :test #'string=))
               (application-input-controller--persist-pending

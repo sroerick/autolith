@@ -1333,11 +1333,13 @@
               :main-thread (current-thread)
               :interrupt-clock-function (lambda () now))))
       (setf (application-input-controller application) controller
-            (application-input-controller-active-p controller) t
-            (application-input-controller-work-items controller)
-            (list (list ':message "queued"))
-            (application-input-controller-steering-items controller)
-            (list "steering"))
+            (application-input-controller-active-p controller) t)
+      (deque-append
+       (application-input-controller-work-items controller)
+       (list (list ':message "queued")))
+      (deque-append
+       (application-input-controller-steering-items controller)
+       (list "steering"))
       (terminal-ui-set-input ui "draft survives")
       (application-input-controller--process-event controller event)
       (test-assert (not (application-input-controller-stopping-p controller))
@@ -1348,11 +1350,13 @@
        (string= (line-editor-text (terminal-ui-editor ui)) "draft survives")
        "active-turn stop keys preserve the current draft")
       (test-assert
-       (equal (application-input-controller-work-items controller)
+       (equal (deque->list
+               (application-input-controller-work-items controller))
               (list (list ':message "queued")))
        "active-turn stop keys preserve queued work")
       (test-assert
-       (equal (application-input-controller-steering-items controller)
+       (equal (deque->list
+               (application-input-controller-steering-items controller))
               (list "steering"))
        "active-turn stop keys preserve steering work")
       (test-assert
@@ -5055,7 +5059,8 @@
              (application-input-controller--handle-submission
               controller "/effort high")
              (test-assert
-              (equal (application-input-controller-work-items controller)
+              (equal (deque->list
+                      (application-input-controller-work-items controller))
                      (list (list ':command "/goal pause")
                            (list ':command "/model gpt-5.6-luna")
                            (list ':command "/effort high")))
@@ -5252,10 +5257,10 @@
                   (lambda ()
                     (application-input-controller--handle-submission
                      controller input :steer-p t)))
-                 (let ((observed-input (first (first observed)))
-                       (steering-input
-                         (first
-                          (application-input-controller-steering-items controller))))
+                  (let ((observed-input (first (first observed)))
+                        (steering-input
+                          (deque-front
+                           (application-input-controller-steering-items controller))))
                    (test-assert
                     (and (typep observed-input 'user-message-input)
                          (string= (user-message-input-text observed-input)
@@ -5296,9 +5301,12 @@
           (test-assert
            (and (equal (first observed) '("ordinary during local Lisp"))
                 (null (second observed))
-                (null (application-input-controller-steering-items controller))
-                (equal (application-input-controller-work-items controller)
-                       '((:message "ordinary during local Lisp"))))
+                (deque-empty-p
+                 (application-input-controller-steering-items controller))
+                (equal
+                 (deque->list
+                  (application-input-controller-work-items controller))
+                 '((:message "ordinary during local Lisp"))))
            "terminal prose invokes canonical PROMPT without message steering"))))
     (call-with-controller
      (lambda (controller)
@@ -5310,11 +5318,12 @@
            (test-assert
             (and accepted-p (eq delivery ':queued))
             "late steering intent is accepted as queued work")))
-       (test-assert
-        (equal (application-input-controller-work-items controller)
-               '((:message "first late steer")
-                 (:message "second late steer")
-                 (:message "older follow-up")))
+        (test-assert
+         (equal (deque->list
+                 (application-input-controller-work-items controller))
+                '((:message "first late steer")
+                  (:message "second late steer")
+                  (:message "older follow-up")))
         "late steering intent precedes older follow-ups without reversing FIFO")
        (test-assert
         (= (application-input-controller-steering-promotion-prefix-count controller)
@@ -5324,21 +5333,24 @@
      (lambda (controller)
        (application-input-controller--enqueue controller ':lisp "(+ 3 4)")
        (application-input-controller--next-work controller)
-       (setf (application-input-controller-work-items controller)
-             '((:message "older queued") (:message "newer queued"))
-             (application-input-controller-follow-up-edit-index controller) 1
-             (application-input-controller-follow-up-edit-work controller)
-             '(:message "recalled original"))
+        (deque-append
+         (application-input-controller-work-items controller)
+         '((:message "older queued") (:message "newer queued")))
+        (setf (application-input-controller-follow-up-edit-index controller) 1
+              (application-input-controller-follow-up-edit-work controller)
+              '(:message "recalled original"))
        (test-assert
         (application-input-controller--handle-recalled-submission
          controller "edited recalled")
         "recalled prose is handled during local Lisp")
-       (test-assert
-        (and (null (application-input-controller-steering-items controller))
-             (equal (application-input-controller-work-items controller)
-                    '((:message "older queued")
-                      (:message "edited recalled")
-                      (:message "newer queued")))
+        (test-assert
+         (and (deque-empty-p
+               (application-input-controller-steering-items controller))
+              (equal (deque->list
+                      (application-input-controller-work-items controller))
+                     '((:message "older queued")
+                       (:message "edited recalled")
+                       (:message "newer queued")))
              (null (application-input-controller-follow-up-edit-index controller))
              (null (application-input-controller-follow-up-edit-work controller)))
         "recalled prose preserves its FIFO slot instead of entering steering")))
@@ -5355,13 +5367,14 @@
        (multiple-value-bind (accepted-p delivery)
            (application-input-controller-submit-primary-prompt
             controller "late accepted steer")
-         (test-assert
-          (and accepted-p
-               (eq delivery ':queued)
-               (equal (application-input-controller-work-items controller)
-                      '((:message "older accepted steer")
-                        (:message "late accepted steer")
-                        (:message "older follow-up"))))
+          (test-assert
+           (and accepted-p
+                (eq delivery ':queued)
+                (equal (deque->list
+                        (application-input-controller-work-items controller))
+                       '((:message "older accepted steer")
+                         (:message "late accepted steer")
+                         (:message "older follow-up"))))
           "completion race keeps earlier steering ahead of a late prompt"))))
     (call-with-controller
      (lambda (controller)
@@ -5369,21 +5382,23 @@
        (multiple-value-bind (accepted-p delivery)
            (application-input-controller-submit-primary-prompt
             controller "handoff prompt")
-         (test-assert
-          (and (null accepted-p)
-               (eq delivery ':rejected)
-               (null (application-input-controller-work-items controller)))
-          "localgroup handoff rejects new primary prompts"))
+          (test-assert
+           (and (null accepted-p)
+                (eq delivery ':rejected)
+                (deque-empty-p
+                 (application-input-controller-work-items controller)))
+           "localgroup handoff rejects new primary prompts"))
        (setf (application-input-controller-localgroup-handoff-p controller) nil
              (application-input-controller-stopping-p controller) t)
        (multiple-value-bind (accepted-p delivery)
            (application-input-controller-submit-primary-prompt
             controller "stopping prompt")
-         (test-assert
-          (and (null accepted-p)
-               (eq delivery ':rejected)
-               (null (application-input-controller-work-items controller)))
-          "stopping rejects new primary prompts"))))
+          (test-assert
+           (and (null accepted-p)
+                (eq delivery ':rejected)
+                (deque-empty-p
+                 (application-input-controller-work-items controller)))
+           "stopping rejects new primary prompts"))))
     (call-with-controller
      (lambda (controller)
        (application-input-controller--enqueue
@@ -5416,10 +5431,11 @@
        (application-input-controller--finish-work controller)
        (application-input-controller-submit-primary-prompt
         controller "late prompt after discard")
-       (test-assert
-        (equal (application-input-controller-work-items controller)
-               '((:message "late prompt after discard")
-                 (:message "older follow-up")))
+        (test-assert
+         (equal (deque->list
+                 (application-input-controller-work-items controller))
+                '((:message "late prompt after discard")
+                  (:message "older follow-up")))
         "discarded prefix leaves no phantom slot ahead of a late prompt")))
     (call-with-controller
      (lambda (controller)
@@ -5439,7 +5455,8 @@
                     0)
                (equal (application-input-controller-follow-up-edit-work controller)
                       '(:message "recalled original"))
-               (null (application-input-controller-work-items controller)))
+               (deque-empty-p
+                (application-input-controller-work-items controller)))
           "terminal event keeps recalled prose selected during handoff")
          (setf (application-input-controller-localgroup-handoff-p controller) nil
                (application-input-controller-stopping-p controller) t)
@@ -5450,7 +5467,8 @@
                     0)
                (equal (application-input-controller-follow-up-edit-work controller)
                       '(:message "recalled original"))
-               (null (application-input-controller-work-items controller)))
+               (deque-empty-p
+                (application-input-controller-work-items controller)))
           "terminal event keeps recalled prose selected while stopping"))))
     (call-with-controller
      (lambda (controller)
@@ -5459,12 +5477,14 @@
        (multiple-value-bind (accepted-p delivery)
            (application-input-controller-submit-primary-prompt
             controller "/vault")
-         (test-assert
-          (and (null accepted-p)
-               (eq delivery ':rejected)
-               (null (application-input-controller-steering-items controller))
-               (null (application-input-controller-work-items controller)))
-          "callable prompts cannot bypass unavailable recovery-vault storage"))))
+          (test-assert
+           (and (null accepted-p)
+                (eq delivery ':rejected)
+                (deque-empty-p
+                 (application-input-controller-steering-items controller))
+                (deque-empty-p
+                 (application-input-controller-work-items controller)))
+           "callable prompts cannot bypass unavailable recovery-vault storage"))))
     nil))
 
 (-> test-late-steering-promotion () null)
@@ -5524,7 +5544,9 @@
              (application-input-controller--process-event
               controller ':complete-previous)
              (test-assert
-              (= (length (application-input-controller-work-items controller)) 3)
+              (= (deque-count
+                  (application-input-controller-work-items controller))
+                 3)
               "shift-tab leaves the queue alone before a follow-up is recalled")
              (application-input-controller--process-event controller ':complete)
              (test-assert
@@ -5532,7 +5554,8 @@
                        "newest queued thought")
               "empty Tab recalls the newest queued follow-up")
              (test-assert
-              (equal (application-input-controller-work-items controller)
+              (equal (deque->list
+                      (application-input-controller-work-items controller))
                      '((:message "first queued thought")
                        (:message "middle queued thought")))
               "recalling the newest follow-up preserves earlier FIFO order")
@@ -5546,7 +5569,8 @@
                        "middle queued thought")
               "shift-tab moves to the immediately older follow-up")
              (test-assert
-              (equal (application-input-controller-work-items controller)
+              (equal (deque->list
+                      (application-input-controller-work-items controller))
                      '((:message "first queued thought")
                        (:message "edited newest thought")
                        (:message "arrived while editing")))
@@ -5559,7 +5583,8 @@
                        "first queued thought")
               "repeated shift-tab continues toward older follow-ups")
              (test-assert
-              (equal (application-input-controller-work-items controller)
+              (equal (deque->list
+                      (application-input-controller-work-items controller))
                      '((:command "/status")
                        (:message "edited newest thought")
                        (:message "arrived while editing")))
@@ -5584,8 +5609,9 @@
                :image-pathnames (list image)))
              (application-input-controller--process-event
               controller ':complete-previous)
-             (let ((queued
-                     (application-input-controller-work-items controller)))
+              (let ((queued
+                      (deque->list
+                       (application-input-controller-work-items controller))))
                (test-assert
                 (and (equal (first queued)
                             '(:message "edited first thought"))
@@ -5602,23 +5628,25 @@
               controller ':complete-previous)
              (terminal-ui-set-input ui "edited first again")
              (application-input-controller--process-event controller ':complete)
-             (test-assert
-              (and
-               (equal (first
-                       (application-input-controller-work-items controller))
-                      '(:message "edited first again"))
+              (test-assert
+               (and
+                (equal (deque-front
+                        (application-input-controller-work-items controller))
+                       '(:message "edited first again"))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "Tab returns the edited follow-up to its original FIFO position")
              (application-input-controller--process-event controller ':complete)
              (line-editor-clear (terminal-ui-editor ui))
-             (let ((before
-                     (copy-list
-                      (application-input-controller-work-items controller))))
+              (let ((before
+                      (deque->list
+                       (application-input-controller-work-items controller))))
                (application-input-controller--process-event controller ':complete)
                (test-assert
                 (and
-                 (equal (application-input-controller-work-items controller) before)
+                 (equal (deque->list
+                         (application-input-controller-work-items controller))
+                        before)
                  (equal
                   (application-input-controller-follow-up-edit-work controller)
                   '(:message "arrived while editing")))
@@ -5627,7 +5655,9 @@
                 controller ':complete-previous)
                (test-assert
                 (and
-                 (equal (application-input-controller-work-items controller) before)
+                 (equal (deque->list
+                         (application-input-controller-work-items controller))
+                        before)
                  (equal
                   (application-input-controller-follow-up-edit-work controller)
                   '(:message "arrived while editing")))
@@ -5659,10 +5689,11 @@
              (application-input-controller--finish-work controller)
              (application-input-controller--process-event controller ':complete)
              (test-assert
-              (and
-               (equal (application-input-controller-work-items controller)
-                      '((:message "older follow-up")
-                        (:message "edited newer follow-up")))
+               (and
+                (equal (deque->list
+                        (application-input-controller-work-items controller))
+                       '((:message "older follow-up")
+                         (:message "edited newer follow-up")))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "Tab after turn completion restores the recalled FIFO position"))
@@ -5688,11 +5719,13 @@
              (terminal-ui-set-input ui "edited selected message")
              (application-input-controller--process-event controller ':submit)
              (test-assert
-              (and
-               (equal (application-input-controller-steering-items controller)
-                      '("edited selected message"))
-               (equal (application-input-controller-work-items controller)
-                      '((:message "older follow-up")))
+               (and
+                (equal (deque->list
+                        (application-input-controller-steering-items controller))
+                       '("edited selected message"))
+                (equal (deque->list
+                        (application-input-controller-work-items controller))
+                       '((:message "older follow-up")))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "recalled Enter messages use active-turn steering policy")
@@ -5702,10 +5735,11 @@
              (terminal-ui-set-input ui "/goal pause")
              (application-input-controller--process-event controller ':submit)
              (test-assert
-              (and
-               (equal (application-input-controller-work-items controller)
-                      '((:message "older follow-up")
-                        (:command "/goal pause")))
+               (and
+                (equal (deque->list
+                        (application-input-controller-work-items controller))
+                       '((:message "older follow-up")
+                         (:command "/goal pause")))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "recalled Enter commands use active-turn busy policy"))
@@ -8597,10 +8631,10 @@
               (and (= (length entries) 2)
                    (equal (mapcar #'agent-steering-input-content entries)
                           '("first steering" "second steering"))
-                   (= (length
-                       (application-input-controller-steering-in-flight-items
-                        controller))
-                      2))
+                     (= (deque-count
+                         (application-input-controller-steering-in-flight-items
+                          controller))
+                        2))
               "taking steering durably moves each message in flight")
              (multiple-value-bind (form complete-p)
                  (snapshot-read
@@ -8621,14 +8655,16 @@
            (application-input-controller-stop controller)
            (setf controller nil
                  restored (application-input-controller-create application))
-           (test-assert
-            (equal (application-input-controller-work-items restored)
-                   '((:message "active turn")
-                     (:message "edited follow later")))
-            "active and recalled work restore in original FIFO order")
-           (test-assert
-            (equal (application-input-controller-steering-items restored)
-                   '("second steering"))
+            (test-assert
+             (equal (deque->list
+                     (application-input-controller-work-items restored))
+                    '((:message "active turn")
+                      (:message "edited follow later")))
+             "active and recalled work restore in original FIFO order")
+            (test-assert
+             (equal (deque->list
+                     (application-input-controller-steering-items restored))
+                    '("second steering"))
             "already appended steering is filtered while later steering survives")
            (test-assert
             (equal (application-input-controller--next-work restored)
@@ -8646,16 +8682,17 @@
            (setf restored nil
                  restored-after-append
                  (application-input-controller-create application))
-           (test-assert
-            (equal
-             (application-input-controller-work-items restored-after-append)
-             '((:message "second steering")
-               (:message "edited follow later")))
-            "a durably appended active message is not restored twice")
-           (test-assert
-            (null
-             (application-input-controller-steering-items
-              restored-after-append))
+            (test-assert
+             (equal
+              (deque->list
+               (application-input-controller-work-items restored-after-append))
+              '((:message "second steering")
+                (:message "edited follow later")))
+             "a durably appended active message is not restored twice")
+            (test-assert
+             (deque-empty-p
+              (application-input-controller-steering-items
+               restored-after-append))
             "steering becomes ordinary ordered work when its old turn is durable")
            ;; Reproduce a publisher delayed until ordinary shutdown has persisted
            ;; and cleared the process-local queues.
@@ -8666,11 +8703,12 @@
            (setf restored-after-append nil
                  restored-after-shutdown
                  (application-input-controller-create application))
-           (test-assert
-            (equal
-             (application-input-controller-work-items restored-after-shutdown)
-             '((:message "second steering")
-               (:message "edited follow later")))
+            (test-assert
+             (equal
+              (deque->list
+               (application-input-controller-work-items restored-after-shutdown))
+              '((:message "second steering")
+                (:message "edited follow later")))
             "a delayed publisher cannot erase shutdown pending input")
            (let* ((legacy-conversation
                     (conversation-create configuration
@@ -8695,10 +8733,12 @@
                     :work '((:message "legacy follow-up"))))
              (setf legacy-controller
                    (application-input-controller-create legacy-application))
-             (test-assert
-              (equal (application-input-controller-work-items legacy-controller)
-                     '((:message "legacy steering")
-                       (:message "legacy follow-up")))
+              (test-assert
+               (equal
+                (deque->list
+                 (application-input-controller-work-items legacy-controller))
+                '((:message "legacy steering")
+                  (:message "legacy follow-up")))
               "legacy steering and work migrate into executable FIFO order")
              (test-assert
               (and (probe-file canonical-pathname)
@@ -8745,9 +8785,9 @@
                           :application application
                           :later-state later-state
                           :main-thread (bt:current-thread)))
-           (ran-inputs nil)
-           (presented nil)
-           (original-later-schedule (symbol-function 'later-schedule)))
+         (ran-inputs nil)
+         (presented nil)
+         (original-later-schedule (symbol-function 'later-schedule)))
     (unwind-protect
          (progn
            (setf (provider-rate-limits provider)
@@ -8757,10 +8797,11 @@
                              :resets-at (+ (get-universal-time) 600)))
                  (application-input-controller application) controller)
            (configuration-ensure-directories configuration)
-           (setf (application-input-controller-work-items controller)
-                 (list (list ':message "first")
-                       (list ':message "second")
-                       (list ':message "third")))
+           (deque-append
+            (application-input-controller-work-items controller)
+            (list (list ':message "first")
+                  (list ':message "second")
+                  (list ':message "third")))
            (test-call-with-function-replacements
             (list
              (list
@@ -8776,42 +8817,46 @@
               'application-present
               (lambda (application text)
                 (declare (ignore application))
-                 (push text presented)))
-              (list
-               'later-schedule
-               (lambda (&rest arguments)
-                 (if (string= (getf arguments :input) "third")
-                     (error 'later-error
-                            :message "forced deferred write failure"
-                            :pathname (configuration-later-path configuration)
-                            :operation ':write
-                            :cause nil)
-                     (apply original-later-schedule arguments)))))
+                (push text presented)))
+             (list
+              'later-schedule
+              (lambda (&rest arguments)
+                (if (string= (getf arguments :input) "third")
+                    (error 'later-error
+                           :message "forced deferred write failure"
+                           :pathname (configuration-later-path configuration)
+                           :operation ':write
+                           :cause nil)
+                    (apply original-later-schedule arguments)))))
             (lambda ()
               (let ((work
                       (with-lock-held
                           ((application-input-controller-lock controller))
                         (setf (application-input-controller-active-p controller)
                               t)
-                        (pop (application-input-controller-work-items
-                              controller)))))
+                        (deque-pop-front
+                         (application-input-controller-work-items controller)))))
                 (application-input-controller--run-work controller
                                                         (list ':message
                                                               (second work)))
                 (application-input-controller--finish-work controller))))
-             (test-assert (equal (nreverse ran-inputs) '("first"))
-                          "only the rate-limited turn runs before deferral")
-             (test-assert (equal (application-input-controller-work-items controller)
-                                 '((:message "third")))
-                          "a failed deferred write restores its queued follow-up")
-             (let ((entries (later-state-entries later-state)))
-               (test-assert
-                (and (= (length entries) 1)
-                     (string= (later-entry-input (first entries)) "second"))
-                "successfully persisted follow-ups retain submission order"))
-             (test-assert (some (lambda (text) (search "Deferred 1 queued follow-up" text))
-                                presented)
-                          "the user is told that follow-ups were deferred"))
+           (test-assert (equal (nreverse ran-inputs) '("first"))
+                        "only the rate-limited turn runs before deferral")
+           (test-assert
+            (equal (deque->list
+                    (application-input-controller-work-items controller))
+                   '((:message "third")))
+            "a failed deferred write restores its queued follow-up")
+           (let ((entries (later-state-entries later-state)))
+             (test-assert
+              (and (= (length entries) 1)
+                   (string= (later-entry-input (first entries)) "second"))
+              "successfully persisted follow-ups retain submission order"))
+           (test-assert
+            (some (lambda (text)
+                    (search "Deferred 1 queued follow-up" text))
+                  presented)
+            "the user is told that follow-ups were deferred"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
