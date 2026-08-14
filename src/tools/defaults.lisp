@@ -204,15 +204,19 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, or canonical memory:id/<percent-encoded-stable-id>.")
+                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
-                           "How many lines to return; default 400, maximum 1000."))
+                           "How many lines to return; default 400, maximum 1000.")
+             "query" (tool-string-property
+                      "Optional lexical query for memory collection resources.")
+             "max-results" (tool-integer-property
+                            "Optional memory collection result limit, capped at 50."))
             '("uri"))
            :resource-registry resource-registry)
           (list
@@ -381,70 +385,6 @@
     (default-tools--register registry specification))
   registry)
 
-(-> default-tools--register-memory (tool-registry) tool-registry)
-(defun default-tools--register-memory (registry)
-  "Register persistent memory tools in REGISTRY."
-  (dolist
-      (specification
-       (list
-        (list
-         'memory-remember-tool
-         "memory" "remember"
-         "Create one persistent memory, or completely replace an existing memory by id. Store only durable, useful facts, preferences, decisions, and guidance, never credentials or other secrets."
-         (tool-object-schema
-          (json-object
-           "title" (tool-string-property "A short retrieval-oriented title.")
-           "content" (tool-string-property
-                      "Complete durable memory content, at most 5000 characters.")
-           "scope" (tool-string-property
-                    "global or workspace; defaults to workspace for a new memory and preserves scope on replacement.")
-           "tags" (tool-string-array-property
-                   "Optional short retrieval terms.")
-           "id" (tool-string-property
-                 "An existing memory id to replace; omit to create."))
-          '("title" "content")))
-        (list
-         'memory-list-tool
-         "memory" "list"
-         "List persistent memory metadata, newest first."
-         (tool-object-schema
-          (json-object
-           "scope" (tool-string-property
-                    "relevant, global, workspace, or all; defaults to relevant.")
-           "max-results" (tool-integer-property
-                          "Maximum entries to return; defaults to 20 and is capped at 50."))
-          nil))
-        (list
-         'memory-search-tool
-         "memory" "search"
-         "Search persistent memory titles, bodies, tags, and workspace names in weighted relevance order."
-         (tool-object-schema
-          (json-object
-           "query" (tool-string-property
-                    "Case-insensitive lexical search terms; title and tag matches rank highest.")
-           "scope" (tool-string-property
-                    "relevant, global, workspace, or all; defaults to relevant.")
-           "max-results" (tool-integer-property
-                          "Maximum entries to return; defaults to 20 and is capped at 50."))
-          '("query")))
-        (list
-         'memory-read-tool
-         "memory" "read"
-         "Read one complete active persistent memory by id."
-         (tool-object-schema
-          (json-object
-           "id" (tool-string-property "The exact memory identifier."))
-          '("id")))
-        (list
-         'memory-forget-tool
-         "memory" "forget"
-         "Stop recalling one persistent memory by id. Use only when the user asks to forget it or confirms that it is obsolete."
-         (tool-object-schema
-          (json-object
-           "id" (tool-string-property "The exact memory identifier."))
-          '("id")))))
-    (default-tools--register registry specification))
-  registry)
 
 (-> default-tools--register-papercut (tool-registry) tool-registry)
 (defun default-tools--register-papercut (registry)
@@ -920,7 +860,6 @@
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)
     (default-tools--register-shell registry)
-    (default-tools--register-memory registry)
     (default-tools--register-papercut registry)
     (default-tools--register-agenda registry)
     (default-tools--register-plan registry)

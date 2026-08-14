@@ -105,7 +105,6 @@
     (test-update-state-and-installation-provenance)
     (test-user-init)
     (test-directory-user-init)
-    (test-memory-tools)
     (test-agenda-persistence-and-transport)
     (test-agenda-unbounded-item-count)
     (test-agenda-command)

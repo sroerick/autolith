@@ -90,7 +90,6 @@
                              (:file "tools/registry")
                              (:file "skills/tools")
                              (:file "mcp/tools")
-                             (:file "tools/memory")
                              (:file "tools/papercut")
                              (:file "tools/agenda")
                              (:file "tools/plan")

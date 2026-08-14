@@ -257,7 +257,7 @@
                     (observation
                       (memory-resource-tests--observation first-conversation alias)))
                (test-assert (tool-result-success-p exact)
-                            "exact memory reads preserve scope-independent memory.read semantics")
+                            "exact memory reads remain scope-independent")
                (test-assert
                 (and (search (memory-title other-memory) content)
                      (search (memory-content other-memory) content)
@@ -381,6 +381,7 @@
                               (truename
                                (configuration-working-directory
                                 empty-configuration)))
+                             :query nil
                              :records nil))
                 "empty relevant revision identity includes workspace and exact empty state"))
              (let* ((first-read (read-resource first-context "memory:global"))
@@ -493,28 +494,41 @@
                        (typep (fifo-cache-get states agenda-alias)
                               'agenda-observation-state))
                   "memory observation expiry preserves workspace and agenda states")))
-             (let* ((legacy-list (call first-context "memory" "list"))
-                    (legacy-search
-                      (call first-context "memory" "search"
-                            "query" "response preference"))
-                    (legacy-read
-                      (call first-context "memory" "read"
-                            "id" (memory-identifier global-memory))))
-               (test-assert
-                (and (tool-result-success-p legacy-list)
-                     (search (memory-identifier workspace-memory)
-                             (tool-result-content legacy-list)))
-                "memory.list remains compatible")
-               (test-assert
-                (and (tool-result-success-p legacy-search)
-                     (search (memory-identifier global-memory)
-                             (tool-result-content legacy-search)))
-                "memory.search remains compatible")
-               (test-assert
-                (and (tool-result-success-p legacy-read)
-                     (string= (tool-result-content legacy-read)
-                              (memory-tool--render-memory global-memory)))
-                "memory.read remains compatible"))
+              (let* ((all-read (read-resource first-context "memory:all"))
+                     (search-read
+                       (read-resource first-context "memory:all"
+                                      "query" "response preference"))
+                     (limited-read
+                       (read-resource first-context "memory:all"
+                                      "max-results" 1))
+                     (exact-read
+                       (read-resource
+                        first-context
+                        (memory-resource--item-uri
+                         (memory-identifier global-memory)))))
+                (test-assert
+                 (and (tool-result-success-p all-read)
+                      (search (memory-identifier workspace-memory)
+                              (tool-result-content all-read))
+                      (search (memory-identifier other-memory)
+                              (tool-result-content all-read)))
+                 "memory:all crosses workspace scopes")
+                (test-assert
+                 (and (tool-result-success-p search-read)
+                      (search (memory-identifier global-memory)
+                              (tool-result-content search-read))
+                      (not (search (memory-identifier workspace-memory)
+                                   (tool-result-content search-read))))
+                 "memory collection query preserves weighted lexical search")
+                (test-assert
+                 (and (tool-result-success-p limited-read)
+                      (search "count: 1" (tool-result-content limited-read)))
+                 "memory collection max-results bounds returned entries")
+                (test-assert
+                 (and (tool-result-success-p exact-read)
+                      (search (memory-resource--render-item global-memory)
+                              (tool-result-content exact-read)))
+                 "canonical memory item resources return complete content"))
              (let* ((resource-read
                       (tool-registry-find registry "resource" "read"))
                     (resource-edit

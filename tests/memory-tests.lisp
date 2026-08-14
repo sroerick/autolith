@@ -28,20 +28,6 @@
                  :provider-endpoint
                  (configuration-provider-endpoint configuration)))
 
-(-> memory-tests--call
-    (tool-registry tool-context string &rest t)
-    tool-result)
-(defun memory-tests--call (registry context canonical-name &rest arguments)
-  "Execute CANONICAL-NAME through REGISTRY and CONTEXT."
-  (let ((separator (position #\. canonical-name)))
-    (unless separator
-      (error "A test tool name must contain a namespace: ~A" canonical-name))
-    (tool-registry-execute-call
-     registry
-     (json-object "namespace" (subseq canonical-name 0 separator)
-                  "name" (subseq canonical-name (1+ separator))
-                  "arguments" (json-encode (apply #'json-object arguments)))
-     context)))
 
 (-> test-memory-persistence () null)
 (defun test-memory-persistence ()
@@ -223,63 +209,5 @@
                                     (context-delivery-failures delivery)))
                            "related-memories")
                   "malformed memory data degrades to context diagnostics without reader evaluation")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
-  nil)
-
-(-> test-memory-tools () null)
-(defun test-memory-tools ()
-  "Test model-facing memory schemas and calls through the tool registry."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (registry (make-default-tool-registry))
-         (conversation (conversation-create configuration
-                                            :identifier "memory-tools"))
-         (context (make-instance 'tool-context
-                                 :configuration configuration
-                                 :worker nil
-                                 :conversation conversation)))
-    (unwind-protect
-         (let ((created
-                 (memory-tests--call
-                  registry context "memory.remember"
-                  "title" "Preferred compiler"
-                  "content" "Use SBCL for this repository."
-                  "tags" (json-array "lisp" "toolchain"))))
-           (test-assert (tool-result-success-p created)
-                        "memory.remember creates a durable memory")
-           (test-assert
-            (not (tool-result-success-p
-                  (memory-tests--call
-                   registry context "memory.remember"
-                   "title" "Bad scope"
-                   "content" "This call must fail."
-                   "scope" "planet")))
-            "memory.remember rejects unknown scopes")
-           (let* ((memory (first (memory-list configuration)))
-                  (identifier (memory-identifier memory))
-                  (listed (memory-tests--call
-                           registry context "memory.list"))
-                  (searched (memory-tests--call
-                             registry context "memory.search"
-                             "query" "sbcl toolchain"))
-                  (read (memory-tests--call
-                         registry context "memory.read"
-                         "id" identifier)))
-             (test-assert (search identifier (tool-result-content listed))
-                          "memory.list returns stable identifiers")
-             (test-assert (search identifier (tool-result-content searched))
-                          "memory.search returns matching identifiers")
-             (test-assert (search "Use SBCL" (tool-result-content read))
-                          "memory.read returns complete content")
-             (test-assert
-              (tool-result-success-p
-               (memory-tests--call registry context "memory.forget"
-                                   "id" identifier))
-              "memory.forget appends a tombstone")
-             (test-assert
-              (not (tool-result-success-p
-                    (memory-tests--call registry context "memory.read"
-                                        "id" identifier)))
-              "forgotten memories cannot be read")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

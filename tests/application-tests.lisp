@@ -3188,73 +3188,17 @@
            (progn
              (setf (application-configuration application) configuration
                    (application-conversation application) conversation)
-             (let ((entry
-                     (call-entry
-                      application
-                      "memory"
-                      "remember"
-                      (json-object
-                       "title" "new memory title"
-                       "content" "new memory content"
-                       "tags" (json-array "viewer" "VIEWER" "diff")))))
-               (test-assert
-                (and (find (terminal-span ':success "+ 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 5 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':code "tags: viewer, diff")
-                           entry :test #'equal)
-                     (search "title: new memory title"
-                             (markdown-tests--row-text entry))
-                     (search "new memory content"
-                             (markdown-tests--row-text entry)))
-                "memory.remember creations use numbered green added rows"))
-             (let* ((entry
-                      (call-entry
-                       application
-                       "memory"
-                       "remember"
-                       (json-object
-                        "id" identifier
-                        "title" "old memory title"
-                        "content" "updated memory content"
-                        "tags" (json-array "viewer"))))
-                    (text (markdown-tests--row-text entry)))
-               (test-assert
-                (and (find (terminal-span ':dim "  4 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':failure "- 5 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 5 │ ")
-                           entry :test #'equal)
-                     (search "old memory content" text)
-                     (search "updated memory content" text))
-                "memory.remember replacements use numbered red and green rows"))
-             (let ((entry
-                     (call-entry
-                      application
-                      "memory"
-                      "forget"
-                      (json-object "id" identifier))))
-               (test-assert
-                (and (find (terminal-span ':failure "- 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':failure "- 5 │ ")
-                           entry :test #'equal)
-                     (not (find (terminal-span ':success "+ 1 │ ")
-                                entry :test #'equal)))
-                "memory.forget uses numbered red removed rows"))
              (let* ((item-observation
-                      (make-instance
-                       'memory-observation
-                       :uri uri
-                       :revision "memory-change-item-digest"
-                       :content (memory-tool--render-memory memory)
-                       :identifier identifier
-                       :kind ':item
-                       :snapshot (list :kind ':item
-                                       :identifier identifier
-                                       :record (memory--record memory))))
+                       (make-instance
+                        'memory-observation
+                        :uri uri
+                        :revision "memory-change-item-digest"
+                        :content (memory-resource--render-item memory)
+                        :identifier identifier
+                        :kind ':item
+                        :snapshot (list :kind ':item
+                                        :identifier identifier
+                                        :record (memory--record memory))))
                     (item-state
                       (make-instance
                        'memory-observation-state

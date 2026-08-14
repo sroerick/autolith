@@ -427,25 +427,22 @@ rather than lose or execute unsafe state; the vault commands remain available.
 Persistent memory is an append-only readable =memories.sexp= file under the data
 root, not a database. Workspace scope is the default; global scope is for durable
 cross-workspace preferences and guidance. Autolith ranks relevant memory before a
-normal provider request as bounded request-local evidence, then the model can use
-=memory.search= and =memory.read= for exact content. It does not automatically
+normal provider request as bounded request-local evidence, then the model can read
+complete revisioned observations through =resource.read=. It does not automatically
 summarize every conversation. Memories must never contain credentials, secrets,
 transient progress, or guesses.
 
-=memory.list= shows metadata. =memory.remember= creates or replaces a bounded
-5,000-character memory, and =memory.forget= appends a tombstone. Forgetting is
-not secure erasure from an append-only file. Stop Autolith and deliberately
-rewrite or remove the private file if historical bytes must be erased.
-
 The resource interface provides =memory:relevant=, =memory:workspace=,
-=memory:global=, and =memory:id/<percent-encoded-id>=. Collection reads expose
-bounded metadata and exact item reads expose full content. After reading a
-workspace or global collection, a revision-gated =memory-remember= creates one
-memory. After reading an exact item, =memory-replace= or =memory-forget= changes
-it. Revisions are transient, conversation-local, exact snapshots; stale,
-expired, cross-URI, and cross-workspace operations fail. This serializes one
-Autolith process, not external writers. Child agents cannot resolve memory
-resources.
+=memory:global=, =memory:all=, and
+=memory:id/<percent-encoded-stable-id>=. Collection reads show bounded metadata,
+optionally filtered by =query= and =max-results=, while exact item reads show full
+content. After reading a workspace or global collection, one guarded
+=memory-remember= operation creates a bounded 5,000-character memory. After reading
+an exact item, =memory-replace= or =memory-forget= changes it; forgetting appends a
+tombstone and is not secure erasure from an append-only file. Revisions are
+transient, conversation-local, exact snapshots; stale, expired, cross-URI, and
+cross-workspace operations fail. This serializes one Autolith process, not external
+writers. Child agents cannot resolve memory resources.
 
 Workspace agendas live in atomic mode-0600 =agendas.sexp= state. Each canonical
 workspace has stable-ID =todo=, =doing=, =blocked=, =done=, or =note= items.

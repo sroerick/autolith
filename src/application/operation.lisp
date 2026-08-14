@@ -337,11 +337,6 @@ local-user override."
   (declare (ignore tool))
   ':execute)
 
-(defmethod tool-active-turn-action ((tool memory-tool))
-  "Permit persistent-memory operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
 (defmethod tool-active-turn-action ((tool papercut-tool))
   "Permit papercut reporting during an active turn."
   (declare (ignore tool))

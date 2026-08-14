@@ -23,6 +23,9 @@
 (defparameter *memory-resource-excerpt-limit* 240
   "The maximum memory-body characters shown for one collection entry.")
 
+(defparameter *memory-resource-maximum-results* 50
+  "The largest explicit result count accepted by one memory resource read.")
+
 (defvar *memory-resource-digest-key* (random-data 16)
   "The process-local key identifying exact persistent-memory snapshots.")
 
@@ -89,6 +92,7 @@
     ((string= identifier "relevant") ':relevant)
     ((string= identifier "workspace") ':workspace)
     ((string= identifier "global") ':global)
+    ((string= identifier "all") ':all)
     (t
      nil)))
 
@@ -206,12 +210,37 @@
     (memory-item-resource
      '(:read :edit))
     (memory-collection-resource
-     (if (eq (memory-collection-resource-visibility resource) ':relevant)
+     (if (member (memory-collection-resource-visibility resource)
+                 '(:relevant :all))
          '(:read)
          '(:read :edit)))))
 
 
 ;;;; -- Exact Memory Observations --
+
+(-> memory-resource--scope-label (memory) string)
+(defun memory-resource--scope-label (memory)
+  "Return a concise scope label for MEMORY."
+  (if (eq (memory-scope memory) ':global)
+      "global"
+      (format nil "workspace ~A" (memory-workspace memory))))
+
+(-> memory-resource--render-item (memory) string)
+(defun memory-resource--render-item (memory)
+  "Return complete model-visible MEMORY content and metadata."
+  (format nil
+          "id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~2%~A"
+          (memory-identifier memory)
+          (memory-resource--scope-label memory)
+          (memory--timestamp-string (memory-created-at memory))
+          (memory--timestamp-string (memory-updated-at memory))
+          (if (memory-source-conversation memory)
+              (conversation-identifier-display
+               (memory-source-conversation memory))
+              "unknown")
+          (memory-title memory)
+          (memory-tags memory)
+          (memory-content memory)))
 
 (-> memory-resource--collection-entry (memory) string)
 (defun memory-resource--collection-entry (memory)
@@ -220,7 +249,7 @@
           "uri: ~A~%id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~%excerpt: ~A"
           (memory-resource--item-uri (memory-identifier memory))
           (memory-identifier memory)
-          (memory-tool--scope-label memory)
+          (memory-resource--scope-label memory)
           (memory--timestamp-string (memory-created-at memory))
           (memory--timestamp-string (memory-updated-at memory))
           (if (memory-source-conversation memory)
@@ -256,26 +285,35 @@
     (option non-empty-string))
 (defun memory-resource--collection-workspace-identity (resource context)
   "Return the workspace identity that contributes to RESOURCE's observations."
-  (unless (eq (memory-collection-resource-visibility resource) ':global)
+  (unless (member (memory-collection-resource-visibility resource)
+                  '(:global :all))
     (memory-resource--workspace-identity context)))
 
 (-> memory-resource--collection-observation
-    (memory-collection-resource tool-context)
+    (memory-collection-resource tool-context
+     &key (:query (option string)) (:maximum-results (option integer)))
     memory-observation)
-(defun memory-resource--collection-observation (resource context)
-  "Return RESOURCE's exact scoped collection observation under CONTEXT."
+(defun memory-resource--collection-observation
+    (resource context &key query maximum-results)
+  "Return RESOURCE's exact optionally filtered collection observation."
   (let* ((visibility
            (memory-collection-resource-visibility resource))
          (workspace-identity
            (memory-resource--collection-workspace-identity resource context))
+         (configuration (tool-context-configuration context))
+         (available
+           (if query
+               (memory-search configuration query :visibility visibility)
+               (memory-list configuration :visibility visibility)))
          (memories
-           (memory-list
-            (tool-context-configuration context)
-            :visibility visibility))
+           (if maximum-results
+               (subseq available 0 (min maximum-results (length available)))
+               available))
          (snapshot
            (list :kind ':collection
                  :identifier (memory-resource-identifier resource)
                  :workspace workspace-identity
+                 :query query
                  :records (mapcar #'memory--record memories))))
     (make-instance 'memory-observation
                    :uri        (resource-uri resource)
@@ -287,6 +325,7 @@
                                 memories)
                    :metadata   (list :visibility visibility
                                      :workspace workspace-identity
+                                     :query query
                                      :count (length memories))
                    :identifier (memory-resource-identifier resource)
                    :kind       ':collection
@@ -311,7 +350,7 @@
                      :revision   (resource-readable-snapshot-digest
                                   *memory-resource-digest-key*
                                   snapshot)
-                     :content    (memory-tool--render-memory memory)
+                     :content    (memory-resource--render-item memory)
                      :metadata   (list :scope (memory-scope memory))
                      :identifier identifier
                      :kind       ':item
@@ -657,12 +696,40 @@
     (error 'tool-error
            :message "memory: resources are always read in full and do not accept line windows."
            :tool-name "resource.read"))
-  (let* ((observation (resource-observe resource context))
-         (state
-           (memory-resource--observation-state-for-snapshot
-            (tool-context-conversation context)
-            observation)))
-    (tool-success (memory-resource--read-result state))))
+  (let* ((query (tool-argument arguments "query"))
+         (requested-maximum (tool-argument arguments "max-results")))
+    (when (and query (not (non-empty-string-p query)))
+      (error 'tool-error
+             :message "Memory resource query must be a non-empty string."
+             :tool-name "resource.read"))
+    (when (and requested-maximum
+               (not (and (integerp requested-maximum)
+                         (plusp requested-maximum))))
+      (error 'tool-error
+             :message "Memory resource max-results must be a positive integer."
+             :tool-name "resource.read"))
+    (when (and (typep resource 'memory-item-resource)
+               (or query requested-maximum))
+      (error 'tool-error
+             :message "Exact memory item resources do not accept query or max-results."
+             :tool-name "resource.read"))
+    (let* ((observation
+             (etypecase resource
+               (memory-collection-resource
+                (memory-resource--collection-observation
+                 resource context
+                 :query query
+                 :maximum-results
+                 (and requested-maximum
+                      (min requested-maximum
+                           *memory-resource-maximum-results*))))
+               (memory-item-resource
+                (resource-observe resource context))))
+           (state
+             (memory-resource--observation-state-for-snapshot
+              (tool-context-conversation context)
+              observation)))
+      (tool-success (memory-resource--read-result state)))))
 
 (defmethod resource-tool-edit
     ((resource memory-resource) (tool resource-edit-tool)
