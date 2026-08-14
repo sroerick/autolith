@@ -17,6 +17,11 @@
     (error "Test failed: ~A" description))
   nil)
 
+(-> test-terminal-row-text (list) string)
+(defun test-terminal-row-text (row)
+  "Return ROW's concatenated terminal span text."
+  (apply #'concatenate 'string (mapcar #'terminal-span-text row)))
+
 (-> test-call-with-function-replacements (list function) t)
 (defun test-call-with-function-replacements (replacements function)
   "Call FUNCTION while REPLACEMENTS temporarily replace global functions."

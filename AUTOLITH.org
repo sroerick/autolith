@@ -517,6 +517,34 @@ a user-local init.lisp change, or a private image commit.
   context, applicable syntax highlighting, bounded output, terminal safety, and
   honest structured fallback with less project-specific code.
 
+** Shared terminal Markdown renderer
+
+- Problem: Autolith carried a reusable line-oriented terminal Markdown parser,
+  streaming renderer, semantic span model, table layout, syntax-highlighted code
+  blocks, and their dedicated tests inside the application repository. This
+  duplicated shelf-level behavior and made application tests own parser details.
+- Behavior: Markdown parsing and rendering now come from the COLL-Attribution
+  =cl-termdown= library pinned at revision =340579a=. Autolith uses the
+  qualified renderer type, constructor, and incremental line, partial-line, and
+  inline entry points.
+  Termdown's keyword-and-text semantic spans are directly compatible with the
+  existing terminal style pipeline. Autolith retains transcript-width selection,
+  input sanitization, stream orchestration, and application presentation policy.
+- Scope and location: exact ASDF, Qlot lock, and Nix pins select the library;
+  =src/terminal/markdown.lisp= and =tests/markdown-tests.lisp= are removed. The
+  generic terminal-row text helper now lives in =tests/test-support.lisp=. No
+  Markdown rendering assertion remains in Autolith.
+- Verification: cl-termdown's isolated check passes 62 assertions. Autolith
+  bootstrap materializes the exact revision and rebuilds both installed images.
+  Fresh focused terminal and application suites pass 379 and 775 assertions,
+  respectively; the complete repository check passes 4,372 tests; and the exact
+  Nix package builds with cl-termdown. The integration removes 578 net Autolith
+  source lines, 331 net test lines, and 63 dynamically executed assertions.
+- Removal condition: a replacement terminal renderer provides equivalent bounded
+  incremental Markdown behavior, semantic spans, code highlighting, tables,
+  terminal-width correctness, and isolated tests with less dependency or adapter
+  cost.
+
 ** Callable PROMPT and child response promotion
 
 - Problem: the Lisp-first operation surface had no canonical way to submit exact

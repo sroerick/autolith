@@ -110,6 +110,23 @@ let
     ];
   };
 
+  clTermdown = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-termdown";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "cl-termdown";
+      rev = "340579ac634074791e9c2cc3c35323fec3b7cf66";
+      hash = "sha256-etsARI3MrICmoJNCriaaptUrPVd31eLefPE8Vtfjtz0=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      clinedi
+      colordiff
+      colorlisp
+      serapeum
+    ];
+  };
+
   parenchek = pkgs.sbcl.buildASDFSystem {
     pname = "parenchek";
     version = "0.1.0";
@@ -292,6 +309,7 @@ let
       closer-mop
       colorlisp
       colordiff
+      clTermdown
       dexador
       ironclad
       opticl

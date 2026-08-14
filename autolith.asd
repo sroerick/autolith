@@ -9,6 +9,7 @@
                #:cl-colorist
                #:cl-exec-sandbox
                #:cl-jobpond
+               #:cl-termdown
                #:clifff
                #:clinedi
                #:colorlisp
@@ -125,7 +126,6 @@
                              (:file "terminal/style")
                              (:file "terminal/syntax-highlighting")
                              (:file "terminal/layout")
-                             (:file "terminal/markdown")
                              (:file "terminal/stream")
                              (:file "localgroup/terminal")
                              (:file "terminal/ui")
@@ -221,7 +221,6 @@
                              (:file "localgroup-handoff-tests")
                              (:file "localgroup-handoff-boundary-tests")
                              (:file "layout-tests")
-                             (:file "markdown-tests")
                              (:file "release-script-tests")
                              (:file "release-server-tests")
                              (:file "application-tests")

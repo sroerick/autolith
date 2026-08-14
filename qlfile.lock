@@ -54,6 +54,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-jobpond.git" :ref "ee2e2eb0bd5080c52db55036f853c00671962178")
   :version "git-ee2e2eb0bd5080c52db55036f853c00671962178"))
+("cl-termdown" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "340579ac634074791e9c2cc3c35323fec3b7cf66")
+  :version "git-340579ac634074791e9c2cc3c35323fec3b7cf66"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-exec-sandbox.git" :ref "0a5c7a202ff926b798c94f120ae1821fc19c1db3")

@@ -242,7 +242,6 @@
     (test-localgroup-handoff-cancellation)
     (test-localgroup-fresh-startup-selection)
     (run-layout-tests)
-    (run-markdown-tests)
     (test-release-scripts)
     (test-release-server)
     (task-tests--close-orchestrators)

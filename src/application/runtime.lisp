@@ -1659,10 +1659,10 @@ newly acquired lease."
                       (sanitize-text text))
                      (application--transcript-width application))))
 
-(-> application--markdown-renderer (application) markdown-renderer)
+(-> application--markdown-renderer (application) termdown:markdown-renderer)
 (defun application--markdown-renderer (application)
   "Return a markdown renderer sized to APPLICATION's current terminal width."
-  (markdown-renderer-create
+  (termdown:markdown-renderer-create
    :width (max 24
                (1- (terminal-columns
                     (terminal-ui-terminal (application-ui application)))))))
@@ -1675,7 +1675,7 @@ newly acquired lease."
                                     (sanitize-text text))))
     (loop for line in (or (uiop:split-string trimmed :separator '(#\Newline))
                           (list ""))
-          append (loop for row in (markdown-render-line renderer line)
+          append (loop for row in (termdown:markdown-render-line renderer line)
                        append (append row
                                       (list (terminal-span
                                              ':plain
@@ -1861,7 +1861,7 @@ newly acquired lease."
                    5))))
     (cons
      (list (terminal-span ':hint "◇ reasoning summary"))
-     (loop for row in (markdown-render-inline safe-summary body-width)
+     (loop for row in (termdown:markdown-render-inline safe-summary body-width)
            collect (append (list (terminal-span ':dim "  │ ")) row)))))
 
 (-> application--reasoning-preview-rows (application string) list)
@@ -2730,13 +2730,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                          while newline
                          do (setf rows
                                   (append rows
-                                          (markdown-render-line
+                                          (termdown:markdown-render-line
                                            stream-renderer
                                            (subseq stream-pending 0 newline)))
                                   stream-pending
                                   (subseq stream-pending (1+ newline))))
                    (multiple-value-bind (overflow-rows tail-rows retained)
-                       (markdown-render-partial stream-renderer stream-pending)
+                       (termdown:markdown-render-partial stream-renderer stream-pending)
                      (setf stream-pending retained)
                      (terminal-ui-stream-update
                       ui
@@ -2749,7 +2749,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                  (terminal-ui-stream-update
                   ui
                   :rows (append (when (plusp (length stream-pending))
-                                  (markdown-render-line stream-renderer
+                                  (termdown:markdown-render-line stream-renderer
                                                         stream-pending))
                                 (list nil))
                   :tail nil)

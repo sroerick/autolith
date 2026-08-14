@@ -2171,7 +2171,7 @@
      '((:name "a" :argument nil :description "first")
        (:name "considerably-longer" :argument nil :description "second")))
     (let* ((rows (terminal-ui--choice-rows selector 50))
-           (texts (mapcar #'markdown-tests--row-text rows)))
+           (texts (mapcar #'test-terminal-row-text rows)))
       (test-assert (= (search "first" (first texts))
                       (search "second" (second texts)))
                    "picker descriptions share one content-aware value column")))
@@ -2196,7 +2196,7 @@
                   (terminal-span ':timestamp-time "09:15")
                   (terminal-span ':plain " · second")))))
     (let* ((rows (terminal-ui--choice-rows selector 70))
-           (texts (mapcar #'markdown-tests--row-text rows))
+           (texts (mapcar #'test-terminal-row-text rows))
            (first-time
              (find "14:30" (first rows)
                    :key #'terminal-span-text

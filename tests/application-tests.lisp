@@ -2246,14 +2246,6 @@
                      \"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}"))))
       (test-assert (equal (first entry) (terminal-span :brand "● autolith"))
                    "assistant items present a styled autolith header"))
-    (let ((entry (response-item-entry
-                  application
-                  (json-decode
-                   "{\"type\":\"message\",\"role\":\"assistant\",
-                     \"content\":[{\"type\":\"output_text\",
-                                   \"text\":\"see **bold** move\"}]}"))))
-      (test-assert (find (terminal-span :strong "bold") entry :test #'equal)
-                   "assistant bodies render markdown emphasis"))
     (let ((item
             (json-object
              "type" "reasoning"
@@ -2261,7 +2253,7 @@
                         (json-object
                          "type" "summary_text"
                          "text" (format nil
-                                        "**<thought>** Checked the safe path.~%Compared fallback behavior.~C[31m"
+                                        "<thought> Checked the safe path.~%Compared fallback behavior.~C[31m"
                                         *terminal-escape-character*)))
              "content" (json-array
                         (json-object "type" "reasoning_text"
@@ -2273,17 +2265,15 @@
                 :columns 40
                 :reasoning-traces-p t))
              (entry (response-item-entry visible-application item))
-             (text (markdown-tests--row-text entry)))
+             (text (test-terminal-row-text entry)))
         (test-assert
          (equal (first entry) (terminal-span :hint "◇ reasoning summary"))
          "trace mode labels provider-visible reasoning summaries")
         (test-assert
          (and (find (terminal-span :dim "  │ ") entry :test #'equal)
-              (find (terminal-span :strong "<thought>") entry :test #'equal)
               (search "Checked the safe path." text)
-              (search "Compared fallback behavior." text)
-              (not (search "**" text)))
-         "trace mode renders inline Markdown beside a subdued rail")
+              (search "Compared fallback behavior." text))
+         "trace mode presents provider summaries beside a subdued rail")
         (test-assert
          (every (lambda (line)
                   (<= (text-cell-width line) 39))
@@ -2301,7 +2291,7 @@
                (application--reasoning-summary-entry
                 narrow-application
                 "A deliberately long reasoning summary for a narrow terminal."))
-             (text (markdown-tests--row-text entry)))
+             (text (test-terminal-row-text entry)))
         (test-assert
          (and (> (count (terminal-span :dim "  │ ") entry :test #'equal) 1)
               (every (lambda (line)
@@ -2364,7 +2354,7 @@
               :columns 80
               :compact-view-p nil))
            (entry (response-item-entry wide-application call))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (null (application--provider-call-equivalent-form call))
                    "trailing JSON data cannot be presented as a Lisp form")
       (test-assert
@@ -2406,7 +2396,7 @@
                "namespace" "resource"
                "name" "read"
                "arguments" (json-encode (json-object "uri" uri)))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ resource.read"))
             (not (search "(resource.read" text))
@@ -2470,7 +2460,7 @@
                                  (json-object
                                   "form" source
                                   "restart" "CONTINUE")))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ self.eval"))
             (find (terminal-span :syntax-function "self.eval")
@@ -2499,7 +2489,7 @@
                     "name" "eval"
                     "arguments" (json-encode
                                  (json-object "form" "(+ 1 2)")))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ lisp.eval"))
             (find (terminal-span :syntax-function "lisp.eval")
@@ -2520,7 +2510,7 @@
                                   "command" "printf hello && printf world"
                                   "directory" "/tmp/work"
                                   "timeout-seconds" 30)))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (and (search "$ printf" text)
                         (search "directory" text)
                         (search "/tmp/work" text)
@@ -2537,7 +2527,7 @@
       (test-assert (equal (first entry) (terminal-span :tool "▸ web search"))
                    "web search calls present a styled search header")
       (test-assert (search "live lisp images"
-                           (markdown-tests--row-text entry))
+                           (test-terminal-row-text entry))
                    "web search entries show their query"))
     (let* ((entry (conversation-record-entry
                    application
@@ -2546,7 +2536,7 @@
                          :cpu-microseconds 1234
                          :real-microseconds 567890
                          :output "wrote file")))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (and (search "cpu 0.001s" text)
                         (search "real 0.568s" text))
                    "tool results show CPU and real elapsed time"))
@@ -2555,7 +2545,7 @@
                    (list :tool-result :seq 3 :time 0 :call-id 2
                          :tool "shell.run" :status :ok
                          :output (format nil "exit 3~%command output"))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (and (search "exit 3" text)
                         (search "command output" text))
                    "shell.run results separate exit status from command output"))
@@ -2564,7 +2554,7 @@
                    (list :tool-result :seq 4 :time 0 :call-id 3
                          :tool "self.eval" :status :ok
                          :output (format nil "Output:~%hello~%Values:~%42~%"))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (equal (first entry) (terminal-span :success "✓ self.eval"))
                    "successful tool results present a success header")
       (test-assert (and (search "output" text)
@@ -2580,7 +2570,7 @@
                                          "Symbol: FOO~%Package: AUTOLITH~%~
                                           Function binding: yes~%~
                                           Lambda list: (X)~%Describe:~%details"))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (and (search "Symbol" text)
                         (search "FOO" text)
                         (find (terminal-span :strong "Describe")
@@ -2595,7 +2585,7 @@
                                          "Output:~%Symbol: CAR~%~
                                           Documentation: list head~%~
                                           Values:~%"))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (and (search "description" text)
                         (search "Symbol" text)
                         (search "CAR" text)
@@ -2610,7 +2600,7 @@
                                             CONTINUE  Try again.~%~
                                             USE-VALUE  Supply a value.~%~
                                           Retry the identical call with a restart."))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert (equal (first entry)
                           (terminal-span :failure "✗ self.eval failed"))
                    "failed tool results present a failure header")
@@ -2664,7 +2654,7 @@
                   "content" (format nil "(defun new-source () 2)~%~%"))))))
            (assert-unavailable-workspace-entry (entry assertion)
              "Assert ENTRY never invents an unavailable workspace preimage."
-             (let ((text (markdown-tests--row-text entry)))
+             (let ((text (test-terminal-row-text entry)))
                 (test-assert
                  (and (find (terminal-span :failure "- 4 │ ")
                             entry :test #'equal)
@@ -2722,7 +2712,7 @@
                 application "shell" "run"
                 :arguments
                 (json-object "command" "printf '%s\\n' highlighted")))
-             (text (markdown-tests--row-text entry)))
+             (text (test-terminal-row-text entry)))
         (test-assert
          (and (find (terminal-span :success "│ ") entry :test #'equal)
               (find (terminal-span :syntax-function "printf")
@@ -2796,7 +2786,7 @@
                    (fifo-cache-put states empty-revision empty-state)))
              (let* ((entry
                       (workspace-replacement-entry application uri revision))
-                    (text (markdown-tests--row-text entry)))
+                    (text (test-terminal-row-text entry)))
                 (test-assert
                  (and (find (terminal-span :failure "- 4 │ ")
                             entry :test #'equal)
@@ -2861,7 +2851,7 @@
                            "op" "delete-lines"
                            "start-line" 7
                            "end-line" 7)))))
-                     (text (markdown-tests--row-text entry)))
+                     (text (test-terminal-row-text entry)))
                 (test-assert
                  (and (find (terminal-span :failure "- 7 │ ")
                             entry :test #'equal)
@@ -2957,7 +2947,7 @@
                           (json-object
                            "op" "replace-empty"
                            "content" (string #\Newline))))))
-                     (text (markdown-tests--row-text entry)))
+                     (text (test-terminal-row-text entry)))
                 (test-assert
                  (and (find (terminal-span :success "+ 1 │ ")
                             entry :test #'equal)
@@ -3053,7 +3043,7 @@
                              "op" "agenda-update"
                              "id" (agenda-item-identifier item)
                              "text" "resource agenda text")))))
-                       (text (markdown-tests--row-text entry)))
+                       (text (test-terminal-row-text entry)))
                   (test-assert
                    (and (find (terminal-span ':dim "  1 │ ")
                               entry :test #'equal)
@@ -3085,7 +3075,7 @@
                              "op" "agenda-update"
                              "id" (agenda-item-identifier item)
                              "text" "second invalid agenda text")))))
-                       (text (markdown-tests--row-text entry)))
+                       (text (test-terminal-row-text entry)))
                   (test-assert
                    (and (not (find (terminal-span ':success "+ 2 │ ")
                                    entry :test #'equal))
@@ -3219,7 +3209,7 @@
                             "title" "old memory title"
                             "content" "resource memory content"
                             "tags" (json-array "viewer"))))))
-                      (text (markdown-tests--row-text entry)))
+                      (text (test-terminal-row-text entry)))
                  (test-assert
                   (and (find (terminal-span ':dim "  4 │ ")
                              entry :test #'equal)
@@ -3242,7 +3232,7 @@
                           "operations"
                           (json-array
                            (json-object "op" "memory-forget")))))
-                      (text (markdown-tests--row-text entry)))
+                      (text (test-terminal-row-text entry)))
                  (test-assert
                   (and (find (terminal-span ':failure "- 1 │ ")
                              entry :test #'equal)
@@ -3267,7 +3257,7 @@
                             "op" "memory-remember"
                             "title" "resource-created memory"
                             "content" "resource-created content")))))
-                      (text (markdown-tests--row-text entry)))
+                      (text (test-terminal-row-text entry)))
                  (test-assert
                   (and (find (terminal-span ':success "+ 1 │ ")
                              entry :test #'equal)
@@ -3290,7 +3280,7 @@
                             "op" "memory-remember"
                             "title" "global resource memory"
                             "content" "global resource content")))))
-                      (text (markdown-tests--row-text entry)))
+                      (text (test-terminal-row-text entry)))
                  (test-assert
                   (and (find (terminal-span ':success "+ 1 │ ")
                              entry :test #'equal)
@@ -3317,7 +3307,7 @@
                             "op" "memory-remember"
                             "title" "second invalid memory"
                             "content" "second invalid content")))))
-                      (text (markdown-tests--row-text entry)))
+                      (text (test-terminal-row-text entry)))
                  (test-assert
                   (and (not (find (terminal-span ':success "+ 1 │ ")
                                   entry :test #'equal))
@@ -3358,7 +3348,7 @@
                    "id" "agenda-7"
                    "status" "done"
                    "text" "Finish the release")))))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ resource.edit"))
             (search "(resource.edit" text)
@@ -3381,7 +3371,7 @@
                  "targets" (json-array "first" "second")
                   "content" (format nil "untrusted~C[31m text"
                                     *terminal-escape-character*))))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (search "options.timeout" text)
             (search "targets[1]" text)
@@ -3399,7 +3389,7 @@
                      (json-object
                       "content" "dynamic result"
                       "details" (json-object "count" 2))))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (search "dynamic result" text)
             (search "details.count" text)
@@ -3433,7 +3423,7 @@
                              "status" "in_progress")
                 (json-object "step" "Run the full checks"
                              "status" "pending")))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (equal (first entry) (terminal-span :tool "▸ plan.update"))
             (search "(plan.update" text)
@@ -3459,7 +3449,7 @@
                 (json-object
                  "step" "Wrap a deliberately long active plan step cleanly"
                  "status" "doing")))))
-           (text (markdown-tests--row-text entry)))
+           (text (test-terminal-row-text entry)))
       (test-assert
        (and (> (count #\Newline text) 2)
             (every (lambda (line)
@@ -3468,14 +3458,14 @@
        "plan steps wrap beneath their markers within narrow transcripts"))
     (let* ((application (application-tests--ui-application :columns 40))
            (malformed
-             (markdown-tests--row-text
+             (test-terminal-row-text
               (call-entry application nil :source "{")))
            (empty
-             (markdown-tests--row-text
+             (test-terminal-row-text
               (call-entry application
                           (json-object "steps" (json-array)))))
            (string-steps
-             (markdown-tests--row-text
+             (test-terminal-row-text
               (call-entry application
                           (json-object "steps" "not an array"))))
            (oversized-steps
@@ -3484,7 +3474,7 @@
               :initial-element
               (json-object "step" "bounded plan step" "status" "pending")))
            (oversized
-             (markdown-tests--row-text
+             (test-terminal-row-text
               (call-entry application
                           (json-object "steps" oversized-steps)))))
       (test-assert
@@ -3567,9 +3557,9 @@
                   (compact-entry (call batch))
                   (expanded-entry (call-for expanded batch))
                   (compact-text
-                    (markdown-tests--row-text compact-entry))
+                    (test-terminal-row-text compact-entry))
                   (expanded-text
-                    (markdown-tests--row-text expanded-entry)))
+                    (test-terminal-row-text expanded-entry)))
               (test-assert
                (and (equal (first compact-entry)
                            (terminal-span :tool "▸ task.run"))
@@ -3614,7 +3604,7 @@
                        "async" false))
                     (flat-entry (call-for expanded flat))
                     (flat-text
-                      (markdown-tests--row-text flat-entry)))
+                      (test-terminal-row-text flat-entry)))
                (test-assert
                 (and (search "task 1" flat-text)
                      (search "One-child context." flat-text)
@@ -3627,14 +3617,14 @@
              (let* ((malformed-json-entry
                       (call nil :source "{not-json"))
                     (malformed-json-text
-                      (markdown-tests--row-text malformed-json-entry))
+                      (test-terminal-row-text malformed-json-entry))
                     (malformed-batch-entry
                       (call
                        (json-object
                         "context" "Still readable."
                         "tasks" "not-an-array")))
                     (malformed-batch-text
-                      (markdown-tests--row-text malformed-batch-entry))
+                      (test-terminal-row-text malformed-batch-entry))
                     (malformed-item-entry
                       (call-for
                        expanded
@@ -3646,7 +3636,7 @@
                                   "name" "valid"
                                   "task" "Continue rendering.")))))
                     (malformed-item-text
-                      (markdown-tests--row-text malformed-item-entry)))
+                      (test-terminal-row-text malformed-item-entry)))
                (test-assert
                 (and (search "arguments unavailable" malformed-json-text)
                      (search "invalid task batch" malformed-batch-text)
@@ -3658,7 +3648,7 @@
              (let* ((narrow-entry
                       (call-for narrow batch))
                     (narrow-text
-                      (markdown-tests--row-text narrow-entry)))
+                      (test-terminal-row-text narrow-entry)))
                (test-assert
                 (and
                  (every
@@ -3677,7 +3667,7 @@
                        expanded
                        (json-object "task" many-lines)))
                     (bounded-text
-                      (markdown-tests--row-text bounded-entry)))
+                      (test-terminal-row-text bounded-entry)))
                (test-assert
                 (and (search "start-marker" bounded-text)
                      (search "more row" bounded-text)
@@ -4520,7 +4510,7 @@
                   (preview (terminal-ui-preview-rows ui))
                   (preview-text
                     (format nil "~{~A~^~%~}"
-                            (mapcar #'markdown-tests--row-text preview))))
+                            (mapcar #'test-terminal-row-text preview))))
              (test-assert
               (and (search "◇ reasoning summary" preview-text)
                    (search "  │ " preview-text)
@@ -7743,25 +7733,22 @@
                           :execution-id "execution-1"
                           :child-name "shared-diff-final-review"
                           :steering-id "steering-1"
-                          :text "Use **careful** context."
+                          :text "Use careful context."
                           :time timestamp))
                   (entry
                     (application--child-response-entry application payload))
-                   (records-before
+                  (records-before
                      (copy-tree
                       (application-tests--conversation-records conversation)))
                   (stale-listener
                     (application-task-presentation-listener application)))
-             (test-assert
-              (and (find
-                    (terminal-span ':child-name "shared-diff-final-review")
-                    entry
-                    :test #'equal)
-                   (find (terminal-span ':strong "careful")
-                         entry
-                         :test #'equal)
-                   (not (application-turn-timestamps-p application)))
-              "child response entries retain semantic name and markdown spans")
+              (test-assert
+               (and (find
+                     (terminal-span ':child-name "shared-diff-final-review")
+                     entry
+                     :test #'equal)
+                    (not (application-turn-timestamps-p application)))
+               "child response entries retain semantic child names")
              (application-connect-task-presentation application)
              (test-assert
               (and (= (length (task-orchestrator-listeners orchestrator)) 1)
@@ -8252,7 +8239,7 @@
                                                             'recording-terminal
                                                             :columns 80)))))
            (test-assert (search "No rate limit data yet"
-                                (markdown-tests--row-text
+                                (test-terminal-row-text
                                  (application-status-entry application)))
                         "status explains missing rate limit data")
            (conversation-append-provider-metadata
@@ -8277,7 +8264,7 @@
                        :secondary (list :used-percent 45.5
                                         :window-minutes 10080
                                         :resets-at nil)))
-           (let ((text (markdown-tests--row-text
+           (let ((text (test-terminal-row-text
                         (application-status-entry application))))
              (test-assert (search "3.8K total (3.0K input + 800 output)" text)
                           "status sums token usage across requests")
