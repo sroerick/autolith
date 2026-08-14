@@ -1631,11 +1631,6 @@ model."
   (declare (ignore tool))
   (application--lisp-call-entry application call "form"))
 
-(defmethod application-tool-call-entry
-    ((tool lisp-compile-tool) (application application) (call hash-table))
-  "Present a lisp.compile form as bounded Lisp source."
-  (declare (ignore tool))
-  (application--lisp-call-entry application call "form"))
 
 (defmethod application-tool-call-entry
     ((tool self-eval-tool) (application application) (call hash-table))

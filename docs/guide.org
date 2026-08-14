@@ -531,9 +531,9 @@ except when deliberately testing a compatible development build.
 
 ** Lisp workers and live changes
 
-=lisp.*= runs named, heap-isolated SBCL workers. =lisp.eval=, =lisp.compile=,
-=lisp.load-system=, =lisp.run-tests=, and =lisp.scratchpad-run= accept
-=async: true=. Without it, Autolith waits ten seconds, then returns the same
+=lisp.*= runs named, heap-isolated SBCL workers. =lisp.eval= optionally compiles
+before execution; it, =lisp.load-system=, =lisp.run-tests=, and
+=lisp.scratchpad-run= accept =async: true=. Without it, Autolith waits ten seconds, then returns the same
 still-running job rather than starting another. =lisp.start= creates a pristine
 or compatible-image worker, =lisp.reset= replaces one, =lisp.stop= forgets it,
 =lisp.repls= shows the pool, and =lisp.images= lists immutable saved workers.

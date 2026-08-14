@@ -2687,7 +2687,6 @@
            (source (format nil "(defun highlighted-source ()~%  42)")))
       (dolist (specification
                '(("lisp" "eval" "form")
-                 ("lisp" "compile" "form")
                  ("self" "eval" "form")
                  ("self" "exercise" "form")
                  ("self" "redefine" "definition")

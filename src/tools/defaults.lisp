@@ -21,10 +21,12 @@
 
 (-> default-tools--required-form-schema (string) json-object)
 (defun default-tools--required-form-schema (description)
-  "Return a closed schema containing FORM, a named REPL, and async policy."
+  "Return a closed schema containing FORM, compilation mode, REPL, and async policy."
   (let ((properties
           (json-object
            "form" (tool-string-property description)
+           "compile" (tool-boolean-property
+                      "Compile before executing; defaults to false.")
            "repl" (tool-string-property
                    "The persistent REPL name; defaults to default.")
            "async" (tool-boolean-property
@@ -457,13 +459,7 @@
           (list
            'lisp-eval-tool
            "lisp" "eval"
-           "Evaluate one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
-           (default-tools--required-form-schema
-            "One readable Common Lisp form."))
-          (list
-           'lisp-compile-tool
-           "lisp" "compile"
-           "Compile and execute one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
+           "Evaluate or compile and execute one Common Lisp form in a named persistent REPL, optionally as an inspectable job."
            (default-tools--required-form-schema
             "One readable Common Lisp form."))
           (list

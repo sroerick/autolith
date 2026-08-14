@@ -1669,7 +1669,7 @@
                   :current-tool "lisp.eval"
                   :current-tool-duration-ms 60000
                   :recent-tools
-                  '("search.files" "search.glob" "resource.read" "lisp.compile")
+                  '("search.files" "search.glob" "resource.read" "lisp.load-system")
                   :request-count 2
                   :duration-ms 65000
                   :assignment "Locate the scheduler."
@@ -1756,7 +1756,7 @@
                    (text-cell-width
                     (subseq review-line 0 review-detail-position)))
                 (search
-                 "explorer · … › resource.read › lisp.compile › lisp.eval 01:00"
+                 "explorer · … › resource.read › lisp.load-system › lisp.eval 01:00"
                  text)
                 (search "reviewer · blocking · lisp.eval 01:00" text)
                 (search

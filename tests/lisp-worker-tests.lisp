@@ -387,16 +387,23 @@
                    (lisp-worker-pool-start pool "cancel" "pristine")
                    scratch-worker
                    (lisp-worker-pool-start pool "scratch-async" "pristine"))
-             (test-assert
-              (every #'async-schema-p
-                     '("eval" "compile" "load-system" "run-tests"
-                       "scratchpad-run"))
-              "only execution-oriented Lisp tools advertise asynchronous jobs")
+              (test-assert
+               (every #'async-schema-p
+                      '("eval" "load-system" "run-tests" "scratchpad-run"))
+               "only execution-oriented Lisp tools advertise asynchronous jobs")
               (test-assert
                (notany #'async-schema-p
                        '("describe" "source" "reset" "start" "stop" "repls"
                          "images" "save-image"))
                "Lisp inspection and lifecycle tools stay synchronous")
+              (let* ((eval-tool (tool-registry-find registry "lisp" "eval"))
+                     (properties (json-get (tool-parameters eval-tool) "properties"))
+                     (compile-property (json-get properties "compile")))
+                (test-assert
+                 (and (null (tool-registry-find registry "lisp" "compile"))
+                      (json-object-p compile-property)
+                      (string= (json-get compile-property "type") "boolean"))
+                 "lisp.eval owns compilation mode and lisp.compile is absent"))
              (let* ((*tool-execution-blocking-grace-seconds* 5)
                     (result
                       (run-lisp "eval"
@@ -434,12 +441,13 @@
                        (equal (worker-values beta "(boundp '*async-once*)")
                               '("NIL")))
                   "the handed-off evaluation runs once in its selected named REPL")))
-             (let* ((result
-                      (run-lisp
-                       "compile"
-                       "form" "(progn (sleep 1) (+ 2 3))"
-                       "repl" "beta"
-                       "async" t))
+              (let* ((result
+                       (run-lisp
+                        "eval"
+                        "form" "(progn (sleep 1) (+ 2 3))"
+                        "compile" t
+                        "repl" "beta"
+                        "async" t))
                     (details (tool-result-details result))
                     (job (handoff-job result)))
                (test-assert

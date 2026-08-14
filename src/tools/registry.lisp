@@ -61,9 +61,6 @@
   ()
   (:documentation "Evaluate one Common Lisp form in the worker."))
 
-(defclass lisp-compile-tool (lisp-tool)
-  ()
-  (:documentation "Compile and execute one Common Lisp form in the worker."))
 
 (defclass lisp-load-system-tool (lisp-tool)
   ()

@@ -318,9 +318,11 @@ request restarts immediately from a clean protocol stream."
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Evaluate the required form once through CONTEXT's isolated worker."
+  "Evaluate or compile and execute the required form through CONTEXT's worker."
   (declare (ignore tool))
-  (let ((form (tool-argument arguments "form" :required t)))
+  (let ((form (tool-argument arguments "form" :required t))
+        (compile-p
+          (tool-boolean-argument arguments "compile" :tool-name "lisp.eval")))
     (lisp-tool-invoke-execution
      context arguments
      :tool-name "lisp.eval"
@@ -328,22 +330,9 @@ request restarts immediately from a clean protocol stream."
      :operation-function
      (lambda (worker)
        (worker-response-tool-result
-        (lisp-worker-request worker :eval (list :form form)))))))
-
-(defmethod tool-execute ((tool lisp-compile-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Compile and execute the required form once through CONTEXT's worker."
-  (declare (ignore tool))
-  (let ((form (tool-argument arguments "form" :required t)))
-    (lisp-tool-invoke-execution
-     context arguments
-     :tool-name "lisp.compile"
-     :summary form
-     :operation-function
-     (lambda (worker)
-       (worker-response-tool-result
-        (lisp-worker-request worker :compile (list :form form)))))))
+        (lisp-worker-request worker
+                             (if compile-p ':compile ':eval)
+                             (list :form form)))))))
 
 (defmethod tool-execute ((tool lisp-load-system-tool)
                          (context tool-context)
