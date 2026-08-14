@@ -607,14 +607,14 @@
              (setf (application-input-controller-active-p controller) t)
              (recording-terminal-reset terminal)
              (application-input-controller--handle-submission
-              controller "(fs.list :path \".\")")
+              controller "(resource.read :uri \"workspace:.\")")
              (let ((output
                      (clinedi:ansi-strip
                       (recording-terminal-output terminal))))
                (test-assert
                 (and (null
                       (application-input-controller--state controller :work-items))
-                     (search "(fs.list :path \".\")" output)
+                     (search "(resource.read :uri \"workspace:.\")" output)
                      (not (search "scheduled" output :test #'char-equal)))
                 "a nonconflicting registered operation runs beside the active turn"))
              (recording-terminal-reset terminal)

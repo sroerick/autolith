@@ -1565,37 +1565,6 @@ model."
          (list (list :label "line count" :value (princ-to-string count)))))))))
 
 (defmethod application-tool-call-entry
-    ((tool fs-list-tool) (application application) (call hash-table))
-  "Present an fs.list path without raw JSON."
-  (declare (ignore tool))
-  (application--simple-call-entry application call "path"))
-
-(defmethod application-tool-call-entry
-    ((tool fs-write-tool) (application application) (call hash-table))
-  "Present an fs.write destination and syntax-highlighted added content."
-  (declare (ignore tool))
-  (let* ((arguments (application--function-call-arguments call))
-         (path (or (and arguments (json-get arguments "path")) ""))
-         (content (and arguments (json-get arguments "content"))))
-    (application--tool-entry
-     application
-     :style ':tool
-     :header "▸ fs.write"
-     :rows
-     (append
-      (list (list (terminal-span ':code path)))
-      (if (stringp content)
-          (append
-           (list (application--tool-section-row
-                  (format nil "content · ~:D character~:P" (length content))))
-           (or (change-viewer-render
-                :added-content content
-                :added-start-line 1
-                :source-path path)
-               (list (list (terminal-span ':dim "(empty content)")))))
-          (list (application--tool-section-row "content unavailable")))))))
-
-(defmethod application-tool-call-entry
     ((tool lisp-scratchpad-write-tool)
      (application application)
      (call hash-table))
@@ -2141,20 +2110,6 @@ re-emitting untrusted serialized JSON."
                       (format nil "id ~A"
                               (papercut-short-identifier papercut)))
          :rows rows))
-      (call-next-method)))
-
-(defmethod application-tool-result-entry
-    ((tool fs-list-tool) (application application) record)
-  "Present fs.list output as bounded aligned text."
-  (if (application--tool-result-success-p record)
-      (application--tool-result-entry
-       application
-       record
-       :rows (application--preview-rows
-              (or (getf (rest record) :output) "")
-              ':code
-              *application-tool-output-lines*
-              :gutter "│ "))
       (call-next-method)))
 
 (defmethod application-tool-result-entry

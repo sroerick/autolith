@@ -119,7 +119,7 @@
 ;;;; -- Recovered Diagnosis --
 
 (defparameter *application-recovery-diagnostic-tool-names*
-  '("fs.list" "resource.read"
+  '("resource.read"
     "search.files" "search.glob" "search.content" "search.multi-content"
     "self.inspect" "self.source" "self.status" "self.diff"
     "self.generations")

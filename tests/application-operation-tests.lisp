@@ -463,7 +463,7 @@
                         "interactive commands appear as canonical Lisp operations")
            (test-assert (member "update" names :test #'string=)
                         "the attended release update is a canonical Lisp operation")
-           (test-assert (member "fs.list" names :test #'string=)
+           (test-assert (member "resource.read" names :test #'string=)
                         "model tools appear in the same user operation registry")
            (test-assert (member "lisp.paren-check" names :test #'string=)
                         "the built-in source checker is a canonical Lisp operation")
@@ -489,7 +489,7 @@
             "operation lookup resolves command symbols case-insensitively")
            (test-assert
             (eq (application-operation-kind
-                 (application-operation-find application "FS.LIST"))
+                 (application-operation-find application "RESOURCE.READ"))
                 ':tool)
             "operation lookup resolves dotted tool names case-insensitively")
            (let* ((provider (terminal-ui-completion-function
@@ -497,10 +497,11 @@
                   (entries (and provider (funcall provider)))
                   (entry-names (mapcar (lambda (entry) (getf entry :name))
                                        entries))
-                  (fs-entry (find-if
-                             (lambda (entry)
-                               (string= (getf entry :name) "(fs.list"))
-                             entries))
+                  (resource-entry
+                    (find-if
+                     (lambda (entry)
+                       (string= (getf entry :name) "(resource.read"))
+                     entries))
                   (paren-entry
                     (find-if
                      (lambda (entry)
@@ -526,7 +527,8 @@
              (test-assert (member "(read-file" entry-names :test #'string=)
                           "completion offers bounded computed prompt input")
              (test-assert
-              (and fs-entry (search ":path" (or (getf fs-entry :argument) "")))
+              (and resource-entry
+                   (search ":uri" (or (getf resource-entry :argument) "")))
               "completion exposes dotted tool names with Lisp keyword arguments")
              (test-assert
               (and paren-entry
@@ -537,8 +539,9 @@
                    (search ":|odd key)| VALUE"
                            (or (getf test-entry :argument) "")))
               "completion escapes punctuation and whitespace in property names")
-             (test-assert (not (member "/fs.list" entry-names :test #'string=))
-                          "slash compatibility does not invent tool spellings")
+             (test-assert
+              (not (member "/resource.read" entry-names :test #'string=))
+              "slash compatibility does not invent tool spellings")
              (test-assert
               (not (find-if (lambda (name)
                               (uiop:string-prefix-p "(yield.submit" name))
@@ -560,13 +563,13 @@
                        ("(goal \"pause\")" :hold)
                        ("(quit)" :cancel)
                        ("(update)" :hold)
-                       ("(fs.list :path \".\")" :execute)
+                       ("(resource.read :uri \"workspace:.\")" :execute)
                        ("(lisp.paren-check :path \".\")" :execute)
                        ("(shell.run :command \"true\")" :hold)
                        ("(test-operation.echo :text \"hello\")" :hold)
                        ("(self.status)" :execute)
                        ("(self.eval :form \"(+ 1 2)\")" :hold)
-                       ("(fs.list :path (progn (setf *print-base* 8) \".\"))"
+                       ("(resource.read :uri (progn (setf *print-base* 8) \"workspace:.\"))"
                         :hold)
                        ("(eval-now (setf *print-base* 8))" :execute)))
              (destructuring-bind (source expected) case
@@ -666,7 +669,7 @@
                    (null (tool-context-agent context)))
               "local operation execution receives the primary application context"))
            (application-operation-install-bindings application)
-           (dolist (name '(trace papercut-close fs.list test-operation.echo))
+           (dolist (name '(trace papercut-close resource.read test-operation.echo))
              (test-assert (fboundp name)
                           (format nil "canonical operation ~S has a Lisp function binding"
                                   name)))
@@ -681,7 +684,7 @@
                    (equal (application-lisp-evaluation-values evaluation)
                           '(":FINISHED"))
                    (search "(help)" output)
-                   (search "(fs.list" output)
+                   (search "(resource.read" output)
                    (search "Slash commands remain compatibility spellings."
                            output))
               "nested help shows canonical command and tool operations"))

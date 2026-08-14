@@ -1224,7 +1224,7 @@
               :terminal terminal
               :clock-function (lambda () clock))))
     (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status active-ui "running fs.list")
+      (terminal-ui-set-status active-ui "running resource.read")
       (terminal-ui-set-compacting active-ui t)
       (terminal-ui-set-local-activity active-ui "evaluating local Lisp")
       (terminal-ui-set-agent-activities
@@ -1259,7 +1259,7 @@
                           "READ  ∙ "
                           "* evaluating local Lisp"
                           "agent-one"
-                          "running fs.list"
+                          "running resource.read"
                           "◇ reasoning activity"
                           "stream tail"
                           "notice row"
@@ -2131,20 +2131,20 @@
          (completions
            '((:name "/help" :argument nil :description "show this reference")
              (:name "(help)" :argument nil :description "show this reference")
-             (:name "(fs.list" :argument ":path PATH)"
-              :description "list one directory")))
+             (:name "(resource.read" :argument ":uri URI)"
+              :description "read one resource")))
          (ui (terminal-ui-create :terminal terminal :completions completions)))
     (with-terminal-ui (active-ui ui)
       (let ((editor (terminal-ui-editor active-ui)))
         (recording-terminal-reset terminal)
-        (terminal-ui-process-event active-ui '(:insert "(f"))
+        (terminal-ui-process-event active-ui '(:insert "(r"))
         (let ((painted (recording-terminal-output terminal)))
-          (test-assert (search "(fs.list :path PATH)" painted)
+          (test-assert (search "(resource.read :uri URI)" painted)
                        "typing an opening parenthesis suggests registered tools")
           (test-assert (not (search "(help)" painted))
                        "parenthesized completion filters unrelated operations"))
         (terminal-ui-process-event active-ui :complete)
-        (test-assert (string= (line-editor-text editor) "(fs.list ")
+        (test-assert (string= (line-editor-text editor) "(resource.read ")
                      "tool completion inserts the canonical Lisp function name")
         (terminal-ui--cancel-completion active-ui)
         (terminal-ui-set-input active-ui "(h")
@@ -2157,7 +2157,7 @@
         (terminal-ui-set-input active-ui " (h")
         (test-assert (null (terminal-ui--matching-completions active-ui))
                      "leading whitespace preserves prose without Lisp completion")
-        (terminal-ui-set-input active-ui "(fs.list :path")
+        (terminal-ui-set-input active-ui "(resource.read :uri")
         (test-assert (null (terminal-ui--matching-completions active-ui))
                      "operation completion stops after the function name"))))
   nil)

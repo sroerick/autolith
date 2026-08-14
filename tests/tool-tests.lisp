@@ -394,7 +394,7 @@
 
 (-> test-workspace-tools () null)
 (defun test-workspace-tools ()
-  "Test workspace listing, image inspection, writes, and bounded shell commands."
+  "Test workspace image inspection and bounded shell commands."
   (let* ((registry (make-default-tool-registry))
          (configuration (test-configuration))
          (root (test-configuration-root configuration)))
@@ -417,54 +417,8 @@
                                       :command-authorization-function
                                       (lambda (command directory)
                                         (declare (ignore command directory))
-                                        ':full-access))))
+                                        ':full-access)))))
 
-                    (write-text (path text)
-                      "Replace PATH with UTF-8 TEXT for one workspace-tool case."
-                      (with-open-file (stream path
-                                              :direction :output
-                                              :if-exists :supersede
-                                              :if-does-not-exist :create
-                                              :external-format :utf-8)
-                        (write-string text stream))))
-              (let ((sample (merge-pathnames "sample.txt" root)))
-                (with-open-file (stream sample
-                                        :direction :output
-                                        :if-does-not-exist :create)
-                  (loop for index from 1 to 10
-                        do (format stream "line ~D~%" index))))
-             (ensure-directories-exist (merge-pathnames "nested/" root))
-             (let ((result (run "fs" "list" "path" (namestring root))))
-               (test-assert (tool-result-success-p result)
-                            "fs.list lists directories")
-               (test-assert (search "d           nested/"
-                                    (tool-result-content result))
-                            "fs.list marks subdirectories")
-               (test-assert (search "sample.txt" (tool-result-content result))
-                            "fs.list shows files with their sizes"))
-             (let ((*workspace-tool-readable-roots*
-                     (list root (configuration-source-root configuration))))
-               (test-assert
-                (not (tool-result-success-p
-                      (run "fs" "list"
-                           "path" (namestring (user-homedir-pathname)))))
-                "restricted workspace reads reject absolute paths outside their roots"))
-             (let ((escape (merge-pathnames "outside-link" root)))
-               (unwind-protect
-                    (progn
-                      (sb-posix:symlink
-                       (namestring (user-homedir-pathname))
-                       (namestring escape))
-                      (let ((*workspace-tool-readable-roots*
-                              (list root
-                                    (configuration-source-root configuration))))
-                        (test-assert
-                         (not (tool-result-success-p
-                               (run "fs" "list"
-                                    "path" (namestring escape))))
-                         "restricted workspace reads reject symlink escapes")))
-                 (when (probe-file escape)
-                   (sb-posix:unlink (namestring escape)))))
              (let* ((image-path (merge-pathnames "tool-image.png" root))
                     (image (test-conversation--write-tiny-png image-path))
                     (result (run "fs" "view-image"
@@ -588,66 +542,7 @@
                             "shell.run stops runaway commands")
                (test-assert (search "stopped after 1"
                                     (tool-result-content result))
-                            "shell.run explains its timeout"))
-             (let ((target (merge-pathnames "written.txt" root)))
-               (test-assert (tool-result-success-p
-                             (run "fs" "write"
-                                  "path" (namestring target)
-                                  "content" (format nil "alpha beta~%alpha")))
-                            "fs.write creates new files")
-               (test-assert (search "alpha beta"
-                                    (uiop:read-file-string target))
-                             "fs.write stores the supplied content"))
-             (test-assert (not (tool-result-success-p
-                                (run "fs" "write"
-                                     "path" (namestring
-                                             (merge-pathnames
-                                              "bin/autolith"
-                                              (configuration-source-root
-                                               configuration)))
-                                     "content" "overwritten")))
-                          "fs.write refuses the stable launcher")
-             (let ((repo-root (merge-pathnames "fake-repo/" root))
-                   (outside-root (merge-pathnames "elsewhere/" root)))
-               (ensure-directories-exist repo-root)
-               (ensure-directories-exist outside-root)
-               (labels ((write-via (working-directory path)
-                          "Write PATH through a context whose workspace is WORKING-DIRECTORY."
-                          (tool-registry-execute-call
-                           registry
-                           (json-object
-                            "namespace" "fs"
-                            "name" "write"
-                            "arguments" (json-encode
-                                         (json-object "path" path
-                                                      "content" "note")))
-                           (make-instance
-                            'tool-context
-                            :configuration (make-instance
-                                            'configuration
-                                            :source-root repo-root
-                                            :working-directory
-                                            working-directory)
-                            :worker nil
-                            :conversation conversation))))
-                 (test-assert
-                  (tool-result-success-p
-                   (write-via repo-root
-                              (namestring (merge-pathnames "note.txt"
-                                                           repo-root))))
-                  "Autolith develops its own repository from inside it")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (write-via outside-root
-                                   (namestring (merge-pathnames "reach.txt"
-                                                                repo-root)))))
-                  "other workspaces cannot reach into Autolith's repository")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (write-via repo-root
-                                   (namestring (merge-pathnames "bin/autolith"
-                                                                repo-root)))))
-                  "launcher artifacts stay read-only even while developing")))))
+                             "shell.run explains its timeout"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   (tool-test--grok-web-run)
   nil)

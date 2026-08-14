@@ -17,6 +17,9 @@
 (defparameter *workspace-file-resource-maximum-line-count* 1000
   "The largest line window accepted by one resource.read call.")
 
+(defparameter *workspace-file-resource-maximum-directory-entries* 1000
+  "The most directory entries inspected for one workspace resource snapshot.")
+
 (defparameter *workspace-file-resource-maximum-result-characters* 7600
   "The maximum characters constructed for one resource tool result.")
 
@@ -36,7 +39,12 @@
   (:documentation "Resolve workspace: URIs through the ordinary workspace path boundary."))
 
 (defclass workspace-file-observation (resource-observation)
-  ((stored-lines
+  ((kind
+    :initarg :kind
+    :reader workspace-file-observation-kind
+    :type (member :file :directory :missing)
+    :documentation "Whether the observation represents a file, directory, or missing path.")
+   (stored-lines
     :initarg :lines
     :initform nil
     :reader workspace-file-observation-stored-lines
@@ -146,16 +154,15 @@
 (defun workspace-file--canonical-uri (context path)
   "Return PATH's stable canonical workspace URI under CONTEXT."
   (let* ((working-directory
-           (or (ignore-errors
-                 (truename
-                  (configuration-working-directory
-                   (tool-context-configuration context))))
-               (configuration-working-directory
-                (tool-context-configuration context))))
-         (canonical-path (or (ignore-errors (truename path)) path))
+           (workspace-tool--canonical-path
+            (configuration-working-directory
+             (tool-context-configuration context))))
+         (canonical-path (workspace-tool--canonical-path path))
          (identifier
            (if (uiop:subpathp canonical-path working-directory)
-               (enough-namestring canonical-path working-directory)
+               (let ((relative
+                       (enough-namestring canonical-path working-directory)))
+                 (if (zerop (length relative)) "." relative))
                (namestring canonical-path))))
     (format nil "workspace:~A"
             (workspace-file--encode-identifier identifier))))
@@ -171,14 +178,54 @@
 
 (defmethod resource-capabilities
     ((resource workspace-file-resource) (context tool-context))
-  "Return workspace file operations allowed by CONTEXT for RESOURCE."
-  (if (workspace-tool-protected-path-p
-       context (workspace-file-resource-pathname resource))
-      '(:read)
-      '(:read :edit)))
+  "Return workspace path operations allowed by CONTEXT for RESOURCE."
+  (let ((path (workspace-file-resource-pathname resource)))
+    (cond
+      ((member (workspace-file--path-kind path) '(:directory :other))
+       '(:read))
+      ((workspace-tool-protected-path-p context path)
+       '(:read))
+      (t
+       '(:read :edit)))))
 
 
 ;;;; -- Snapshot Observation --
+
+(-> workspace-file--path-kind
+    (pathname)
+    (member :file :directory :missing :other))
+(defun workspace-file--path-kind (path)
+  "Return the exact filesystem kind currently present at PATH."
+  (labels ((mode->kind (mode)
+             "Return the resource kind represented by POSIX MODE."
+             (cond
+               ((sb-posix:s-isreg mode)
+                ':file)
+               ((sb-posix:s-isdir mode)
+                ':directory)
+               (t
+                ':other)))
+
+           (inspection-error (condition)
+             "Signal a model-facing failure for an unexpected inspection CONDITION."
+             (error 'tool-error
+                    :message (format nil "Could not inspect workspace resource ~A: ~A"
+                                     path condition)
+                    :tool-name "resource.read")))
+    (handler-case
+        (mode->kind
+         (sb-posix:stat-mode (sb-posix:stat (namestring path))))
+      (sb-posix:syscall-error (condition)
+        (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
+            (handler-case
+                (progn
+                  (sb-posix:lstat (namestring path))
+                  ':other)
+              (sb-posix:syscall-error (link-condition)
+                (if (= (sb-posix:syscall-errno link-condition) sb-posix:enoent)
+                    ':missing
+                    (inspection-error link-condition))))
+            (inspection-error condition))))))
 
 (-> workspace-file--read-content
     (pathname &optional (option tool-context))
@@ -194,6 +241,101 @@
    (and context
         (lambda ()
           (workspace-tool-path context (namestring path))))))
+
+(-> workspace-file--directory-entry-row (pathname string) (option string))
+(defun workspace-file--directory-entry-row (directory name)
+  "Return one non-opening directory row for NAME beneath DIRECTORY.
+
+Return NIL when NAME disappears during enumeration."
+  (handler-case
+      (let* ((metadata
+               (sb-posix:lstat
+                (concatenate 'string (namestring directory) name)))
+             (mode (sb-posix:stat-mode metadata)))
+        (cond
+          ((sb-posix:s-isdir mode)
+           (format nil "d           ~A/" name))
+          ((sb-posix:s-isreg mode)
+           (format nil "f ~9D  ~A" (sb-posix:stat-size metadata) name))
+          ((sb-posix:s-islnk mode)
+           (format nil "l ~9D  ~A" (sb-posix:stat-size metadata) name))
+          (t
+           (format nil "o           ~A" name))))
+    (sb-posix:syscall-error (condition)
+      (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
+          nil
+          (error 'tool-error
+                 :message (format nil "Could not inspect directory entry ~A beneath ~A: ~A"
+                                  name directory condition)
+                 :tool-name "resource.read")))))
+
+(-> workspace-file--directory-content (pathname) string)
+(defun workspace-file--directory-content (path)
+  "Return a bounded sorted directory listing without opening its entries."
+  (let ((handle nil)
+        (entries nil)
+        (entry-count 0)
+        (truncated-p nil))
+    (labels ((next-name ()
+               "Return the next non-dot entry name from HANDLE."
+               (loop for entry = (sb-posix:readdir handle)
+                     until (sb-alien:null-alien entry)
+                     for name = (sb-posix:dirent-name entry)
+                     unless (member name '("." "..") :test #'string=)
+                       return name)))
+      (handler-case
+          (unwind-protect
+               (progn
+                 (setf handle (sb-posix:opendir (namestring path)))
+                 (loop for name = (next-name)
+                       while name
+                       do (if (>= entry-count
+                                  *workspace-file-resource-maximum-directory-entries*)
+                              (progn
+                                (setf truncated-p t)
+                                (return))
+                              (progn
+                                (incf entry-count)
+                                (let ((row
+                                        (workspace-file--directory-entry-row
+                                         path name)))
+                                  (when row
+                                    (push (list name row) entries)))))))
+            (when handle
+              (sb-posix:closedir handle)))
+        (sb-posix:syscall-error (condition)
+          (error 'tool-error
+                 :message (format nil "Could not list workspace directory ~A: ~A"
+                                  path condition)
+                 :tool-name "resource.read"))))
+    (setf entries
+          (sort entries
+                (lambda (left right)
+                  (let ((left-directory-p
+                          (char= (char (second left) 0) #\d))
+                        (right-directory-p
+                          (char= (char (second right) 0) #\d)))
+                    (if (eq left-directory-p right-directory-p)
+                        (string< (first left) (first right))
+                        left-directory-p)))))
+    (let* ((marker (format nil "[directory listing truncated]~%"))
+           (limit *workspace-file-resource-maximum-result-characters*)
+           (row-budget (max 0 (- limit (length marker))))
+           (used 0))
+      (with-output-to-string (stream)
+        (dolist (entry entries)
+          (let ((row (format nil "~A~%" (second entry))))
+            (if (> (+ used (length row)) row-budget)
+                (progn
+                  (setf truncated-p t)
+                  (return))
+                (progn
+                  (write-string row stream)
+                  (incf used (length row))))))
+        (when truncated-p
+          (write-string
+           (subseq marker 0 (min limit (length marker)))
+           stream))))))
 
 (-> workspace-file--line-ending (string) string)
 (defun workspace-file--line-ending (content)
@@ -222,36 +364,48 @@
   (and (plusp (length content))
        (char= (char content (1- (length content))) #\Newline)))
 
+(-> workspace-file--snapshot-revision
+    ((member :file :directory :missing) string)
+    string)
+(defun workspace-file--snapshot-revision (kind content)
+  "Return a revision distinguishing snapshot KIND and exact CONTENT."
+  (resource-snapshot-digest
+   *workspace-file-resource-digest-key*
+   (format nil "~(~A~)~C~A" kind #\Null content)))
+
 (-> workspace-file--observe-path
     (workspace-file-resource tool-context)
     workspace-file-observation)
 (defun workspace-file--observe-path (resource context)
-  "Return a complete exact observation of RESOURCE's current file content."
-  (let ((path (workspace-file-resource-pathname resource)))
-    (unless (uiop:file-exists-p path)
+  "Return a complete observation of RESOURCE's current filesystem state."
+  (let* ((path (workspace-file-resource-pathname resource))
+         (kind (workspace-file--path-kind path)))
+    (when (eq kind ':other)
       (error 'tool-error
-             :message (format nil "Resource ~A does not name an existing file."
+             :message (format nil "Resource ~A is not a regular file or directory."
                               (resource-uri resource))
              :tool-name "resource.read"))
-    (when (uiop:directory-exists-p path)
-      (error 'tool-error
-             :message (format nil "Resource ~A names a directory, not a file."
-                              (resource-uri resource))
-             :tool-name "resource.read"))
-    (let ((content (workspace-file--read-content path context)))
+    (let ((content
+            (case kind
+              (:file
+               (workspace-file--read-content path context))
+              (:directory
+               (workspace-file--directory-content path))
+              (:missing
+               ""))))
       (make-instance 'workspace-file-observation
                      :uri             (resource-uri resource)
-                     :revision        (resource-snapshot-digest
-                                       *workspace-file-resource-digest-key*
-                                       content)
+                     :revision        (workspace-file--snapshot-revision
+                                       kind content)
                      :content         content
-                     :metadata        (list ':pathname path)
+                     :metadata        (list ':pathname path ':kind kind)
+                     :kind            kind
                      :line-ending     (workspace-file--line-ending content)
                      :final-newline-p (workspace-file--final-newline-p content)))))
 
 (defmethod resource-observe
     ((resource workspace-file-resource) (context tool-context))
-  "Observe RESOURCE as a complete exact UTF-8 snapshot under CONTEXT."
+  "Observe RESOURCE as a complete exact filesystem snapshot under CONTEXT."
   (workspace-file--observe-path resource context))
 
 
@@ -392,9 +546,10 @@
   (let* ((observation (resource-observation-state-observation state))
          (ranges (workspace-file-observation-state-visible-ranges state))
          (elisions (workspace-file--elisions total-lines ranges truncated-p)))
-    (format nil "URI: ~A~%Revision: ~A~%Visible lines: ~A of ~D~%Elided: ~A~%Content:~%~A"
+    (format nil "URI: ~A~%Revision: ~A~%Kind: ~(~A~)~%Visible lines: ~A of ~D~%Elided: ~A~%Content:~%~A"
             (resource-observation-uri observation)
             (resource-observation-state-alias state)
+            (workspace-file-observation-kind observation)
             (workspace-file--format-ranges ranges)
             total-lines
             (if elisions (format nil "~{~A~^; ~}" elisions) "none")
@@ -464,9 +619,12 @@
          (error 'tool-error
                 :message "Operation replace-empty contains unsupported fields."
                 :tool-name "resource.edit"))
-       (unless (zerop (length (workspace-file-observation-lines observation)))
+       (unless (or (eq (workspace-file-observation-kind observation) ':missing)
+                   (and (eq (workspace-file-observation-kind observation) ':file)
+                        (zerop (length
+                                (workspace-file-observation-lines observation)))))
          (error 'tool-error
-                :message "Operation replace-empty is valid only for an observed empty file."
+                :message "Operation replace-empty is valid only for an observed missing resource or empty file."
                 :tool-name "resource.edit"))
        (let ((content (workspace-file--operation-content operation "content" t)))
          (list :kind ':replace-empty
@@ -642,9 +800,20 @@
   (sb-posix:rename (namestring source) (namestring target))
   nil)
 
+(-> workspace-file--link-new-target (pathname pathname) null)
+(defun workspace-file--link-new-target (source target)
+  "Atomically publish SOURCE as absent TARGET without overwriting a race."
+  (sb-posix:link (namestring source) (namestring target))
+  (delete-file source)
+  nil)
+
 (defparameter *workspace-file-resource-publish-function*
   #'workspace-file--rename-overwriting-target
-  "The function atomically publishing a prepared workspace-file replacement.")
+  "The function atomically replacing an observed workspace file.")
+
+(defparameter *workspace-file-resource-create-function*
+  #'workspace-file--link-new-target
+  "The function atomically publishing an observed missing workspace file.")
 
 (-> workspace-file--write-temporary
     (pathname pathname (simple-array (unsigned-byte 8) (*)))
@@ -665,43 +834,72 @@
                              (sb-posix:stat (namestring target))))))
   nil)
 
+(-> workspace-file--same-observation-p
+    (workspace-file-observation workspace-file-observation)
+    boolean)
+(defun workspace-file--same-observation-p (left right)
+  "Return true when LEFT and RIGHT represent the same exact filesystem state."
+  (and (eq (workspace-file-observation-kind left)
+           (workspace-file-observation-kind right))
+       (string= (resource-observation-revision left)
+                (resource-observation-revision right))
+       (string= (resource-observation-content left)
+                (resource-observation-content right))))
+
+(-> workspace-file--signal-stale
+    (workspace-file-resource workspace-file-observation
+     &optional (option workspace-file-observation))
+    nil)
+(defun workspace-file--signal-stale (resource expected &optional actual)
+  "Signal that RESOURCE no longer matches EXPECTED, optionally reporting ACTUAL."
+  (error 'resource-revision-stale
+         :uri (resource-uri resource)
+         :expected-revision (resource-observation-revision expected)
+         :actual-revision (and actual
+                               (resource-observation-revision actual))))
+
 (-> workspace-file--publish
     (workspace-file-resource tool-context workspace-file-observation string)
     workspace-file-observation)
 (defun workspace-file--publish (resource context base-observation content)
-  "Atomically publish CONTENT after an immediate exact BASE-OBSERVATION check."
+  "Atomically publish CONTENT after an immediate exact BASE-OBSERVATION check.
+
+Autolith mutations are serialized. Existing-file replacement uses portable
+POSIX rename, which cannot conditionally reject an unrelated external writer in
+the final check-to-rename window. Missing-file publication rejects that race."
   (let ((path (workspace-file-resource-pathname resource)))
     (when (workspace-tool-protected-path-p context path)
       (error 'tool-error
              :message (workspace-tool-protection-notice context path)
              :tool-name "resource.edit"))
+    (ensure-directories-exist path)
     (let ((octets (workspace-file--replacement-octets content))
           (temporary (workspace-file--temporary-path path)))
       (unwind-protect
            (progn
              (workspace-file--write-temporary temporary path octets)
-             (unless (uiop:file-exists-p path)
-               (error 'resource-revision-stale
-                      :uri (resource-uri resource)
-                      :expected-revision
-                      (resource-observation-revision base-observation)
-                      :actual-revision nil))
              (let ((current (workspace-file--observe-path resource context)))
-               (unless (and
-                        (string= (resource-observation-revision current)
-                                 (resource-observation-revision base-observation))
-                        (string= (resource-observation-content current)
-                                 (resource-observation-content base-observation)))
-                 (error 'resource-revision-stale
-                        :uri (resource-uri resource)
-                        :expected-revision
-                        (resource-observation-revision base-observation)
-                        :actual-revision
-                        (resource-observation-revision current))))
-             (funcall *workspace-file-resource-publish-function* temporary path)
+               (unless (workspace-file--same-observation-p
+                        current base-observation)
+                 (workspace-file--signal-stale
+                  resource base-observation current)))
+             (handler-case
+                 (funcall
+                  (if (eq (workspace-file-observation-kind base-observation)
+                          ':missing)
+                      *workspace-file-resource-create-function*
+                      *workspace-file-resource-publish-function*)
+                  temporary path)
+               (sb-posix:syscall-error (condition)
+                 (if (and (eq (workspace-file-observation-kind base-observation)
+                              ':missing)
+                          (= (sb-posix:syscall-errno condition) sb-posix:eexist))
+                     (workspace-file--signal-stale resource base-observation)
+                     (error condition))))
              (let ((published (workspace-file--observe-path resource context)))
-               (unless (string= content
-                                (resource-observation-content published))
+               (unless (and (eq (workspace-file-observation-kind published) ':file)
+                            (string= content
+                                     (resource-observation-content published)))
                  (error 'tool-error
                         :message
                         "Atomic workspace resource publication did not produce the exact requested content."
@@ -738,21 +936,11 @@
             (error 'tool-error
                    :message "resource.edit does not rewrite files with mixed LF and CRLF line endings because doing so could change untouched lines. Normalize the complete file deliberately before applying structured edits."
                    :tool-name "resource.edit"))
-          (unless (uiop:file-exists-p (workspace-file-resource-pathname resource))
-            (error 'resource-revision-stale
-                   :uri (resource-uri resource)
-                   :expected-revision base-revision
-                   :actual-revision nil))
           (let ((current (workspace-file--observe-path resource context)))
-            (unless (and
-                     (string= (resource-observation-revision current)
-                              (resource-observation-revision base-observation))
-                     (string= (resource-observation-content current)
-                              (resource-observation-content base-observation)))
-              (error 'resource-revision-stale
-                     :uri (resource-uri resource)
-                     :expected-revision base-revision
-                     :actual-revision (resource-observation-revision current)))
+            (unless (workspace-file--same-observation-p
+                     current base-observation)
+              (workspace-file--signal-stale
+               resource base-observation current))
             (let* ((normalized
                      (workspace-file--normalize-operations operations state))
                    (new-lines

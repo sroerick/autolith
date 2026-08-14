@@ -142,7 +142,7 @@
        "replace-empty"
        (json-object
         "content" (tool-string-property
-                   "Non-empty complete content for an observed empty file."))
+                   "Non-empty complete content for an observed missing resource or empty file."))
        '("content"))
       (operation-schema
        "agenda-add"
@@ -187,7 +187,7 @@
 
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
-  "Register the default resource and filesystem tools in REGISTRY."
+  "Register the default resource and image-inspection tools in REGISTRY."
   (let ((resource-registry (tool-registry-resource-registry registry)))
     (resource-registry-register
      resource-registry
@@ -204,11 +204,11 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
+                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -222,7 +222,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: files accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. memory:relevant is read-only. Stale or expired revisions require a reread. Successful workspace-file edits may append a non-fatal unmatched or mismatched delimiter warning for recognized Common Lisp, Scheme, and Clojure files."
+           "Edit a model-addressable resource at an exact observed revision. workspace: files and missing targets accept structured original-line operations; agenda:current accepts one agenda operation; memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful workspace-file edits may append a non-fatal unmatched or mismatched delimiter warning for recognized Common Lisp, Scheme, and Clojure files."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -232,7 +232,7 @@
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files accept non-overlapping original-line operations."
+                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))
@@ -245,27 +245,7 @@
             (json-object
              "path" (tool-string-property
                      "The image path, absolute or workspace-relative."))
-            '("path")))
-          (list
-           'fs-list-tool
-           "fs" "list"
-           "List one workspace directory's entries with kinds and byte sizes."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The directory path; defaults to the workspace."))
-            nil))
-          (list
-           'fs-write-tool
-           "fs" "write"
-           "Create or replace one workspace file with the supplied content. Successful writes to recognized Common Lisp, Scheme, and Clojure files may append a non-fatal unmatched or mismatched delimiter warning."
-           (tool-object-schema
-            (json-object
-             "path" (tool-string-property
-                     "The file path, absolute or workspace-relative.")
-             "content" (tool-string-property
-                        "The complete new file content."))
-             '("path" "content")))))
+            '("path")))))
       (default-tools--register registry specification)))
   registry)
 

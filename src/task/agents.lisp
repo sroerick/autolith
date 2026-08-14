@@ -333,7 +333,7 @@
     :description "Fast read-only codebase research and compressed handoff context."
     :instructions
     "Investigate rapidly and return source-grounded findings. Stay read-only. Search broadly, read only relevant sections, cite paths and line ranges, explain how the pieces connect, and finish with a concise handoff."
-    :tools '("resource.read" "fs.list" "search.*" "web_search")
+    :tools '("resource.read" "search.*" "web_search")
     :models '("@smol")
     :reasoning-effort :medium
     :source :bundled)
@@ -351,7 +351,7 @@
     :description "Code review specialist for correctness, security, and regression analysis."
     :instructions
     "Review the requested change as a senior maintainer. Prioritize concrete correctness, security, data-loss, concurrency, and compatibility defects. Verify claims against source and tests. Return actionable findings ordered by severity, with paths and line ranges, and avoid stylistic noise."
-    :tools '("resource.read" "fs.list" "shell.run" "search.*" "web_search")
+    :tools '("resource.read" "shell.run" "search.*" "web_search")
     :spawns '("scout")
     :models '("@slow")
     :reasoning-effort :high
@@ -362,7 +362,7 @@
     :description "Source-verifying researcher for external libraries, APIs, and standards."
     :instructions
     "Research external behavior from authoritative documentation and source. Prefer installed dependency source and primary references over memory. State versions and uncertainty, quote exact APIs where useful, and return a concise implementation-ready answer."
-    :tools '("resource.read" "fs.list" "shell.run" "lisp.*" "search.*"
+    :tools '("resource.read" "shell.run" "lisp.*" "search.*"
              "web_search")
     :models '("@smol")
     :reasoning-effort :low

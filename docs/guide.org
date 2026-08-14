@@ -21,7 +21,7 @@ not inside a fullscreen interface.
 
 #+BEGIN_SRC lisp
 (help)
-(fs.list :path ".")
+(resource.read :uri "workspace:.")
 (prompt (read-file "review-notes.org"))
 #+END_SRC
 
@@ -226,7 +226,7 @@ surface:
 
 #+BEGIN_SRC lisp
 (help)
-(fs.list :path ".")
+(resource.read :uri "workspace:.")
 (eval-now (setf *print-pretty* nil))
 #+END_SRC
 
@@ -461,18 +461,28 @@ deleting history. Unique prefixes work; ambiguous ones fail rather than guess.
 
 * Tools and permissions
 
-For an existing workspace file, =resource.read= returns a bounded numbered
-window, canonical URI, and opaque revision. =resource.edit= applies
-non-overlapping line operations against exactly that observation:
-=replace-lines=, =insert-before=, =insert-after=, =delete-lines=, or
-=replace-empty=. It rejects unseen, stale, and expired input before atomically
-replacing the file. Mixed LF and CRLF content needs a deliberate complete-file
-normalization first. When an exact before-and-after projection exists, file,
-memory, and agenda mutation results share a line-numbered syntax-highlighted
-diff. Otherwise Autolith presents the structured operation without guessing.
+For a workspace file, =resource.read= returns a bounded numbered window,
+canonical URI, and opaque revision. Directory URIs return sorted entry kinds and
+byte sizes. Missing paths return an observed missing state; =replace-empty= can
+then create the file and its parent directories. Directory resources are
+read-only.
 
-=fs.list= lists one directory. =fs.view-image= visually attaches a local image.
-=fs.write= creates or fully replaces a file. =shell.run= runs one authorized
+=resource.edit= applies non-overlapping line operations against exactly the
+observed file or missing state: =replace-lines=, =insert-before=,
+=insert-after=, =delete-lines=, or =replace-empty=. It rejects unseen, stale,
+and expired input before atomic publication. Mixed LF and CRLF content needs
+deliberate normalization first. When an exact before-and-after projection
+exists, file, memory, and agenda mutation results share a line-numbered
+syntax-highlighted diff. Otherwise Autolith presents the structured operation
+without guessing.
+
+Autolith serializes its own workspace edits and validates the exact observed
+state immediately before atomic replacement. Portable POSIX has no conditional
+rename, so an unrelated external writer in the final rename window can still be
+overwritten. Missing-file creation uses no-overwrite publication and rejects
+that race instead.
+
+=fs.view-image= visually attaches a local image. =shell.run= runs one authorized
 external command with bounded combined output. It defaults to 60 seconds but has
 no product timeout ceiling when you request a longer positive duration. Invalid
 output bytes display safely as replacement characters.

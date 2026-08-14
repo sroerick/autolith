@@ -990,8 +990,7 @@
            (test-assert
             (conversation-record-entry application failed-read)
             "compact presentation retains failed routine results")
-           (dolist (tool-name '("fs.write" "shell.run" "lisp.eval"
-                                "self.eval"))
+           (dolist (tool-name '("shell.run" "lisp.eval" "self.eval"))
              (test-assert
               (conversation-record-entry
                application
@@ -2398,20 +2397,20 @@
             (char= (char header (1- (length header))) #\…))
        "provider-controlled tool names are sanitized and width-bounded"))
     (let* ((*application-provider-form-characters* 10)
-           (path "/tmp/provider-form-fallback")
+           (uri "workspace:provider-form-fallback")
            (entry
              (response-item-entry
               application
               (json-object
                "type" "function_call"
-               "namespace" "fs"
-               "name" "list"
-               "arguments" (json-encode (json-object "path" path)))))
+               "namespace" "resource"
+               "name" "read"
+               "arguments" (json-encode (json-object "uri" uri)))))
            (text (markdown-tests--row-text entry)))
       (test-assert
-       (and (equal (first entry) (terminal-span :tool "▸ fs.list"))
-            (not (search "(fs.list" text))
-            (search path text))
+       (and (equal (first entry) (terminal-span :tool "▸ resource.read"))
+            (not (search "(resource.read" text))
+            (search uri text))
        "simple tool calls retain their detail when Lisp rendering is bounded out"))
     (let ((*application-provider-form-characters* 10))
       (test-assert
@@ -2419,9 +2418,9 @@
         (application--provider-call-equivalent-form
          (json-object
           "type" "function_call"
-          "namespace" "fs"
-          "name" "list"
-          "arguments" "{\"path\":\"a path beyond the bound\"}")))
+          "namespace" "resource"
+          "name" "read"
+          "arguments" "{\"uri\":\"workspace:a path beyond the bound\"}")))
        "equivalent provider forms stop before exceeding their output bound"))
     (let* ((form
              (application--provider-call-equivalent-form
@@ -2439,12 +2438,12 @@
               (string= (symbol-name (first expression)) "x|y.z\\q"))
          "hostile provider names remain one escaped readable function symbol")))
     (labels ((render (source)
-               "Render SOURCE as one ordinary fs.list provider call."
+               "Render SOURCE as one ordinary resource.read provider call."
                (application--provider-call-equivalent-form
                 (json-object
                  "type" "function_call"
-                 "namespace" "fs"
-                 "name" "list"
+                 "namespace" "resource"
+                 "name" "read"
                  "arguments" source))))
       (test-assert
        (and (let ((*application-provider-form-source-characters* 1))
@@ -2454,9 +2453,9 @@
             (let ((*application-provider-form-depth* 1))
               (null (render "{\"value\":{\"a\":{\"b\":1}}}")))
             (let ((*application-provider-form-string-characters* 3))
-              (null (render "{\"path\":\"four\"}")))
+              (null (render "{\"uri\":\"four\"}")))
             (let ((*application-provider-form-key-characters* 2))
-              (null (render "{\"path\":\"x\"}")))
+              (null (render "{\"uri\":\"x\"}")))
             (null (render "{\"x\\ny\":1}")))
        "provider forms enforce source, item, depth, string, and key boundaries"))
     (let* ((source (format nil "~{form-line-~D~^~%~}"
@@ -2543,7 +2542,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 2 :time 0 :call-id 1
-                         :tool "fs.write" :status :ok
+                         :tool "shell.run" :status :ok
                          :cpu-microseconds 1234
                          :real-microseconds 567890
                          :output "wrote file")))
@@ -2720,8 +2719,7 @@
               (find (terminal-span :syntax-number "2") entry :test #'equal))
          "self.set syntax-highlights its value form beside a green ruler"))
       (dolist (specification
-               '(("fs" "write" "src/highlighted.lisp")
-                 ("lisp" "scratchpad-write" "highlighted.lisp")))
+               '(("lisp" "scratchpad-write" "highlighted.lisp")))
         (destructuring-bind (namespace name path) specification
           (let* ((entry
                    (call-entry
@@ -2785,6 +2783,7 @@
            (observation
              (make-instance
               'workspace-file-observation
+              :kind ':file
               :uri uri
               :revision "snapshot-digest"
               :content (format nil "~{~A~%~}" (coerce lines 'list))
@@ -2806,6 +2805,7 @@
            (empty-observation
              (make-instance
               'workspace-file-observation
+              :kind ':file
               :uri empty-uri
               :revision "empty-snapshot-digest"
               :content ""
@@ -5153,7 +5153,7 @@
           (string= (second observed) "diagnose")
           (third observed)
           (equal (fourth observed)
-                 '("fs.list" "resource.read"
+                 '("resource.read"
                    "search.files" "search.glob" "search.content"
                    "search.multi-content"
                    "self.inspect" "self.source" "self.status" "self.diff"

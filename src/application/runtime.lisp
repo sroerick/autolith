@@ -1784,10 +1784,6 @@ newly acquired lease."
                           (subseq canonical-name 0 separator)
                           (subseq canonical-name (1+ separator))))))
 
-(defmethod tool-compact-result-visible-p ((tool fs-write-tool))
-  "Keep successful file creations visible in compact presentation."
-  t)
-
 (defmethod tool-compact-result-visible-p ((tool shell-run-tool))
   "Keep successful external commands visible in compact presentation."
   t)

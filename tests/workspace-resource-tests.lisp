@@ -113,7 +113,7 @@
 
 (-> test-workspace-file-resources () null)
 (defun test-workspace-file-resources ()
-  "Test revision-gated workspace file resources and model-facing tools."
+  "Test revision-gated workspace files, directories, missing paths, and tools."
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (workspace (merge-pathnames "workspace/" root))
@@ -350,6 +350,14 @@
                   (equal (truename (workspace-file-resource-pathname resource))
                          (truename spaced-path))
                   "workspace resolution reuses workspace-relative path semantics")))
+              (multiple-value-bind (result uri revision)
+                  (read-resource first-context "workspace:.")
+                (test-assert
+                 (and (tool-result-success-p result)
+                      (string= uri "workspace:.")
+                      (non-empty-string-p revision)
+                      (search "Kind: directory" (tool-result-content result)))
+                 "workspace:. reads the workspace root as a canonical directory resource"))
              (let ((*workspace-tool-readable-roots* (list workspace)))
                (test-assert
                 (handler-case
@@ -370,18 +378,67 @@
                        (namestring (user-homedir-pathname))
                        (namestring escape))
                       (let ((*workspace-tool-readable-roots* (list workspace)))
-                        (test-assert
-                         (handler-case
-                             (progn
-                               (resource-registry-resolve
-                                (tool-registry-resource-registry registry)
-                                "workspace:escape"
-                                first-context)
-                               nil)
-                           (tool-error () t))
-                         "workspace resource resolution rejects symlink escapes")))
+                        (dolist (uri '("workspace:escape"
+                                       "workspace:escape/new.txt"))
+                          (test-assert
+                           (handler-case
+                               (progn
+                                 (resource-registry-resolve
+                                  (tool-registry-resource-registry registry)
+                                  uri
+                                  first-context)
+                                 nil)
+                             (tool-error () t))
+                           (format nil
+                                   "workspace resource resolution rejects symlink escape ~A"
+                                   uri)))))
                  (when (probe-file escape)
                    (sb-posix:unlink (namestring escape)))))
+              (let* ((protected-target
+                       (merge-pathnames
+                        "recovery/"
+                        (configuration-source-root configuration)))
+                     (protected-link
+                       (merge-pathnames "protected-link" workspace))
+                     (missing-name
+                       (format nil "missing-~A.txt" (make-identifier)))
+                     (missing-target
+                       (merge-pathnames missing-name protected-target)))
+                (unwind-protect
+                     (progn
+                       (sb-posix:symlink
+                        (namestring protected-target)
+                        (namestring protected-link))
+                       (multiple-value-bind (read-result uri revision)
+                           (read-resource
+                            first-context
+                            (format nil "workspace:protected-link/~A"
+                                    missing-name))
+                         (test-assert
+                          (and (tool-result-success-p read-result)
+                               (search "Kind: missing"
+                                       (tool-result-content read-result)))
+                          "resource.read observes a missing descendant through a protected symlink")
+                         (let ((edit-result
+                                 (edit-resource
+                                  first-context uri revision
+                                  (list
+                                   (workspace-resource-tests--operation
+                                    "replace-empty"
+                                    "content" "forbidden")))))
+                           (test-assert
+                            (and (not (tool-result-success-p edit-result))
+                                 (search
+                                  "stable launcher or recovery artifact"
+                                  (tool-result-content edit-result)))
+                            "resource.edit protects a missing descendant through a symlink")
+                           (test-assert
+                            (not (probe-file missing-target))
+                            "protected symlink edits do not create the missing target"))))
+                  (when (probe-file missing-target)
+                    (delete-file missing-target))
+                  (when (probe-file protected-link)
+                    (sb-posix:unlink (namestring protected-link)))))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
                (workspace-resource-tests--write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
@@ -807,72 +864,84 @@
                     (condition (make-condition-variable))
                     (publish-entered-p nil)
                     (release-publish-p nil)
-                    (resource-result nil)
-                    (write-result nil)
-                    (resource-thread nil)
-                    (write-thread nil)
+                    (first-result nil)
+                    (second-result nil)
+                    (first-thread nil)
+                    (second-thread nil)
                     (original-publish *workspace-file-resource-publish-function*))
                (workspace-resource-tests--write-text path (format nil "before~%"))
-               (multiple-value-bind (read-result uri revision)
+               (multiple-value-bind (first-read first-uri first-revision)
                    (read-resource first-context "workspace:serialized.txt")
-                 (declare (ignore read-result))
-                 (unwind-protect
-                      (progn
-                        (setf *workspace-file-resource-publish-function*
-                              (lambda (source target)
-                                (with-lock-held (gate)
-                                  (setf publish-entered-p t)
-                                  (condition-notify condition)
-                                  (loop until release-publish-p
-                                        do (condition-wait condition gate)))
-                                (funcall original-publish source target))
-                              resource-thread
-                              (make-thread
-                               (lambda ()
-                                 (setf resource-result
-                                       (edit-resource
-                                        first-context uri revision
-                                        (list
-                                         (workspace-resource-tests--operation
-                                          "replace-lines"
-                                          "start-line" 1
-                                          "end-line" 1
-                                          "content" "resource")))))
-                               :name "workspace resource serialized edit"))
-                        (with-lock-held (gate)
-                          (loop until publish-entered-p
-                                unless (condition-wait condition gate :timeout 2)
-                                  do (error "Timed out waiting for resource publication.")))
-                        (setf write-thread
-                              (make-thread
-                               (lambda ()
-                                 (setf write-result
-                                       (call second-context "fs" "write"
-                                             "path" (namestring path)
-                                             "content" (format nil "fs~%"))))
-                               :name "workspace serialized fs write"))
-                        (sleep 0.05)
-                        (test-assert (null write-result)
-                                     "native fs writes wait for revision-gated publication")
-                        (with-lock-held (gate)
-                          (setf release-publish-p t)
-                          (condition-notify condition))
-                        (join-thread resource-thread)
-                        (join-thread write-thread)
-                        (test-assert
-                         (and (tool-result-success-p resource-result)
-                              (tool-result-success-p write-result)
-                              (string= (workspace-file--read-content path)
-                                       (format nil "fs~%")))
-                         "serialized native mutations do not lose a concurrent fs write"))
-                   (setf *workspace-file-resource-publish-function* original-publish)
-                   (with-lock-held (gate)
-                     (setf release-publish-p t)
-                     (condition-notify condition))
-                   (when (and resource-thread (thread-alive-p resource-thread))
-                     (join-thread resource-thread))
-                   (when (and write-thread (thread-alive-p write-thread))
-                     (join-thread write-thread)))))
+                 (declare (ignore first-read))
+                 (multiple-value-bind (second-read second-uri second-revision)
+                     (read-resource second-context "workspace:serialized.txt")
+                   (declare (ignore second-read))
+                   (unwind-protect
+                        (progn
+                          (setf *workspace-file-resource-publish-function*
+                                (lambda (source target)
+                                  (with-lock-held (gate)
+                                    (setf publish-entered-p t)
+                                    (condition-notify condition)
+                                    (loop until release-publish-p
+                                          do (condition-wait condition gate)))
+                                  (funcall original-publish source target))
+                                first-thread
+                                (make-thread
+                                 (lambda ()
+                                   (setf first-result
+                                         (edit-resource
+                                          first-context first-uri first-revision
+                                          (list
+                                           (workspace-resource-tests--operation
+                                            "replace-lines"
+                                            "start-line" 1
+                                            "end-line" 1
+                                            "content" "resource")))))
+                                 :name "first serialized resource edit"))
+                          (with-lock-held (gate)
+                            (loop until publish-entered-p
+                                  unless (condition-wait condition gate :timeout 2)
+                                    do (error "Timed out waiting for resource publication.")))
+                          (setf second-thread
+                                (make-thread
+                                 (lambda ()
+                                   (setf second-result
+                                         (edit-resource
+                                          second-context second-uri second-revision
+                                          (list
+                                           (workspace-resource-tests--operation
+                                            "replace-lines"
+                                            "start-line" 1
+                                            "end-line" 1
+                                            "content" "second")))))
+                                 :name "second serialized resource edit"))
+                          (sleep 0.05)
+                          (test-assert
+                           (null second-result)
+                           "resource edits wait for revision-gated publication")
+                          (with-lock-held (gate)
+                            (setf release-publish-p t)
+                            (condition-notify condition))
+                          (join-thread first-thread)
+                          (join-thread second-thread)
+                          (test-assert
+                           (and (tool-result-success-p first-result)
+                                (not (tool-result-success-p second-result))
+                                (search "stale"
+                                        (tool-result-content second-result)
+                                        :test #'char-equal)
+                                (string= (workspace-file--read-content path)
+                                         (format nil "resource~%")))
+                           "serialized resource edits reject a stale concurrent replacement"))
+                     (setf *workspace-file-resource-publish-function* original-publish)
+                     (with-lock-held (gate)
+                       (setf release-publish-p t)
+                       (condition-notify condition))
+                     (when (and first-thread (thread-alive-p first-thread))
+                       (join-thread first-thread))
+                     (when (and second-thread (thread-alive-p second-thread))
+                       (join-thread second-thread))))))
              (let* ((path (merge-pathnames "serialized-read.txt" workspace))
                     (coordination
                       (make-instance 'workspace-resource-tests-coordination))
@@ -882,100 +951,108 @@
                       (gethash "workspace"
                                (resource-registry-resolvers resource-registry)))
                     (read-result nil)
-                    (write-result nil)
-                    (write-started-p nil)
+                    (edit-result nil)
+                    (edit-started-p nil)
                     (read-thread nil)
-                    (write-thread nil))
+                    (edit-thread nil))
                (workspace-resource-tests--write-text path (format nil "before~%"))
-               (unwind-protect
-                    (progn
-                      (resource-registry-register
-                       resource-registry
-                       (make-instance
-                        'workspace-resource-tests-coordinated-resolver
-                        :scheme       "workspace"
-                        :coordination coordination))
-                      (with-recursive-lock-held
-                          ((conversation-resource-observation-lock
-                            first-conversation))
-                        (setf read-thread
-                              (make-thread
-                               (lambda ()
-                                 (setf read-result
-                                       (read-resource
-                                        first-context
-                                        "workspace:serialized-read.txt")))
-                               :name "serialized resource read"))
-                        (with-lock-held
-                            ((workspace-resource-tests-coordination-lock
-                              coordination))
-                          (loop until
-                                (workspace-resource-tests-coordination-observed-p
-                                 coordination)
-                                unless
-                                (condition-wait
-                                 (workspace-resource-tests-coordination-condition
-                                  coordination)
-                                 (workspace-resource-tests-coordination-lock
-                                  coordination)
-                                 :timeout 2)
-                                  do (error
-                                      "Timed out waiting for resource observation.")))
-                        (setf write-thread
-                              (make-thread
-                               (lambda ()
-                                 (with-lock-held
-                                     ((workspace-resource-tests-coordination-lock
-                                       coordination))
-                                   (setf write-started-p t)
-                                   (condition-notify
-                                    (workspace-resource-tests-coordination-condition
-                                     coordination)))
-                                 (setf write-result
-                                       (call second-context "fs" "write"
-                                             "path" (namestring path)
-                                             "content" (format nil "fs~%"))))
-                               :name "serialized read fs write"))
-                        (with-lock-held
-                            ((workspace-resource-tests-coordination-lock
-                              coordination))
-                          (loop until write-started-p
-                                unless
-                                (condition-wait
-                                 (workspace-resource-tests-coordination-condition
-                                  coordination)
-                                 (workspace-resource-tests-coordination-lock
-                                  coordination)
-                                 :timeout 2)
-                                  do (error
-                                      "Timed out waiting for concurrent fs.write.")))
-                        (sleep 0.05)
-                        (test-assert
-                         (null write-result)
-                         "fs.write waits while resource.read installs observation state"))
-                      (join-thread read-thread)
-                      (join-thread write-thread)
-                      (let ((revision
-                              (workspace-resource-tests--field
-                               (tool-result-content read-result) "Revision: ")))
-                        (test-assert
-                         (and (tool-result-success-p read-result)
-                              (tool-result-success-p write-result)
-                              (with-recursive-lock-held
-                                  ((conversation-resource-observation-lock
-                                    first-conversation))
-                                (workspace-file--find-observation-state
-                                 first-conversation
-                                 "workspace:serialized-read.txt"
-                                 revision))
-                              (string= (workspace-file--read-content path)
-                                       (format nil "fs~%")))
-                         "resource.read installs its exact observation before fs.write proceeds")))
-                 (resource-registry-register resource-registry previous-resolver)
-                 (when (and read-thread (thread-alive-p read-thread))
-                   (join-thread read-thread))
-                 (when (and write-thread (thread-alive-p write-thread))
-                   (join-thread write-thread))))
+               (multiple-value-bind (edit-read edit-uri edit-revision)
+                   (read-resource second-context "workspace:serialized-read.txt")
+                 (declare (ignore edit-read))
+                 (unwind-protect
+                      (progn
+                        (resource-registry-register
+                         resource-registry
+                         (make-instance
+                          'workspace-resource-tests-coordinated-resolver
+                          :scheme       "workspace"
+                          :coordination coordination))
+                        (with-recursive-lock-held
+                            ((conversation-resource-observation-lock
+                              first-conversation))
+                          (setf read-thread
+                                (make-thread
+                                 (lambda ()
+                                   (setf read-result
+                                         (read-resource
+                                          first-context
+                                          "workspace:serialized-read.txt")))
+                                 :name "serialized resource read"))
+                          (with-lock-held
+                              ((workspace-resource-tests-coordination-lock
+                                coordination))
+                            (loop until
+                                  (workspace-resource-tests-coordination-observed-p
+                                   coordination)
+                                  unless
+                                  (condition-wait
+                                   (workspace-resource-tests-coordination-condition
+                                    coordination)
+                                   (workspace-resource-tests-coordination-lock
+                                    coordination)
+                                   :timeout 2)
+                                    do (error
+                                        "Timed out waiting for resource observation.")))
+                          (setf edit-thread
+                                (make-thread
+                                 (lambda ()
+                                   (with-lock-held
+                                       ((workspace-resource-tests-coordination-lock
+                                         coordination))
+                                     (setf edit-started-p t)
+                                     (condition-notify
+                                      (workspace-resource-tests-coordination-condition
+                                       coordination)))
+                                   (setf edit-result
+                                         (edit-resource
+                                          second-context edit-uri edit-revision
+                                          (list
+                                           (workspace-resource-tests--operation
+                                            "replace-lines"
+                                            "start-line" 1
+                                            "end-line" 1
+                                            "content" "edited")))))
+                                 :name "serialized read resource edit"))
+                          (with-lock-held
+                              ((workspace-resource-tests-coordination-lock
+                                coordination))
+                            (loop until edit-started-p
+                                  unless
+                                  (condition-wait
+                                   (workspace-resource-tests-coordination-condition
+                                    coordination)
+                                   (workspace-resource-tests-coordination-lock
+                                    coordination)
+                                   :timeout 2)
+                                    do (error
+                                        "Timed out waiting for concurrent resource.edit.")))
+                          (sleep 0.05)
+                          (test-assert
+                           (null edit-result)
+                           "resource.edit waits while resource.read installs observation state"))
+                        (join-thread read-thread)
+                        (join-thread edit-thread)
+                        (let ((revision
+                                (workspace-resource-tests--field
+                                 (tool-result-content read-result) "Revision: ")))
+                          (test-assert
+                           (and (tool-result-success-p read-result)
+                                (tool-result-success-p edit-result)
+                                (with-recursive-lock-held
+                                    ((conversation-resource-observation-lock
+                                      first-conversation))
+                                  (workspace-file--find-observation-state
+                                   first-conversation
+                                   "workspace:serialized-read.txt"
+                                   revision))
+                                (string= (workspace-file--read-content path)
+                                         (format nil "edited~%")))
+                           "resource.read installs its exact observation before resource.edit proceeds")))
+                   (resource-registry-register resource-registry previous-resolver)
+                   (when (and read-thread (thread-alive-p read-thread))
+                     (join-thread read-thread))
+                   (when (and edit-thread (thread-alive-p edit-thread))
+                    (join-thread edit-thread)))))
              (let* ((protected-root (merge-pathnames "protected-source/" root))
                     (recovery-path (merge-pathnames "recovery/core.bin"
                                                     protected-root))
@@ -1054,14 +1131,174 @@
                                 (eq (json-get variant "additionalProperties") false)))
                          variants)
                   "every resource edit operation schema requires its fields and rejects extras")))
-             (let ((path (merge-pathnames "complete-write.txt" workspace)))
-               (workspace-resource-tests--write-text path "old")
-               (test-assert
-                (tool-result-success-p
-                 (call first-context "fs" "write"
-                       "path" (namestring path)
-                       "content" "complete"))
-                "existing fs.write remains available for complete replacement")))))
+              (let* ((directory (merge-pathnames "listing/" workspace))
+                     (subdirectory (merge-pathnames "nested/" directory))
+                     (file (merge-pathnames "alpha.txt" directory))
+                     (extra-file (merge-pathnames "beta.txt" directory))
+                     (fifo (merge-pathnames "named-pipe" directory)))
+                (ensure-directories-exist (merge-pathnames "marker" subdirectory))
+                (workspace-resource-tests--write-text file "abc")
+                (multiple-value-bind (result uri revision)
+                    (read-resource first-context "workspace:listing")
+                  (let ((content (tool-result-content result)))
+                    (test-assert
+                     (and (tool-result-success-p result)
+                          (search "Kind: directory" content)
+                          (search "d           nested/" content)
+                          (search "f         3  alpha.txt" content)
+                          (< (search "nested/" content)
+                             (search "alpha.txt" content)))
+                     "resource.read returns sorted directory kinds and byte sizes"))
+                  (test-assert
+                   (not (tool-result-success-p
+                         (edit-resource
+                          first-context uri revision
+                          (list
+                           (workspace-resource-tests--operation
+                            "replace-empty" "content" "no")))))
+                   "workspace directory resources are read-only"))
+                (unwind-protect
+                     (progn
+                       (sb-posix:mkfifo (namestring fifo) #o600)
+                       (let ((result nil)
+                             (thread nil))
+                         (unwind-protect
+                              (progn
+                                (setf thread
+                                      (make-thread
+                                       (lambda ()
+                                         (setf result
+                                               (read-resource
+                                                first-context
+                                                "workspace:listing")))
+                                       :name "bounded FIFO directory resource read"))
+                                (multiple-value-bind (value join-status)
+                                    (sb-thread:join-thread thread
+                                                           :timeout 2
+                                                           :default ':timed-out)
+                                  (declare (ignore value))
+                                  (test-assert
+                                   (and (not (eq join-status ':timeout))
+                                        result
+                                        (tool-result-success-p result)
+                                        (search "o           named-pipe"
+                                                (tool-result-content result)))
+                                   "directory reads classify FIFOs without opening or blocking")))
+                           (when (and thread (thread-alive-p thread))
+                             (sb-thread:terminate-thread thread))
+                           (when thread
+                             (ignore-errors
+                               (sb-thread:join-thread
+                                thread :timeout 0.2 :default nil)))))
+                       (workspace-resource-tests--write-text extra-file "extra")
+                       (let* ((*workspace-file-resource-maximum-directory-entries* 2)
+                              (*workspace-file-resource-maximum-result-characters* 96)
+                              (resource
+                                (resource-registry-resolve
+                                 (tool-registry-resource-registry registry)
+                                 "workspace:listing"
+                                 first-context))
+                              (observation (resource-observe resource first-context))
+                              (content (resource-observation-content observation)))
+                         (test-assert
+                          (and (<= (length content) 96)
+                               (search "[directory listing truncated]" content))
+                          "directory snapshots bound enumeration and retained content")))
+                  (when (probe-file fifo)
+                    (sb-posix:unlink (namestring fifo)))))
+             (let ((path (merge-pathnames "created/nested.txt" workspace)))
+               (multiple-value-bind (result uri revision)
+                   (read-resource first-context "workspace:created/nested.txt")
+                 (test-assert
+                  (and (tool-result-success-p result)
+                       (search "Kind: missing" (tool-result-content result))
+                       (null (probe-file path)))
+                  "resource.read establishes a revision for a missing path")
+                 (let ((edit-result
+                         (edit-resource
+                          first-context uri revision
+                          (list
+                           (workspace-resource-tests--operation
+                            "replace-empty" "content" (format nil "created~%"))))))
+                   (test-assert
+                    (and (tool-result-success-p edit-result)
+                         (search "Kind: file" (tool-result-content edit-result))
+                         (string= (workspace-file--read-content path)
+                                  (format nil "created~%")))
+                    "replace-empty creates an observed missing file and its parents"))))
+             (dolist (race
+                      (list
+                       (list ':file
+                             (lambda (path)
+                               (workspace-resource-tests--write-text path "racer"))
+                             nil)
+                       (list ':directory
+                             (lambda (path)
+                               (ensure-directories-exist
+                                (merge-pathnames
+                                 "marker"
+                                 (uiop:ensure-directory-pathname path))))
+                             nil)
+                       (list ':other
+                             (lambda (path)
+                               (sb-posix:mkfifo (namestring path) #o600))
+                             (lambda (path)
+                               (sb-posix:unlink (namestring path))))))
+               (destructuring-bind (kind creator cleanup) race
+                 (let* ((name (format nil "missing-race-~(~A~)" kind))
+                        (path (merge-pathnames name workspace))
+                        (uri (format nil "workspace:~A" name)))
+                   (multiple-value-bind (read-result canonical revision)
+                       (read-resource first-context uri)
+                     (declare (ignore read-result))
+                     (unwind-protect
+                          (progn
+                            (funcall creator path)
+                            (let ((result
+                                    (edit-resource
+                                     first-context canonical revision
+                                     (list
+                                      (workspace-resource-tests--operation
+                                       "replace-empty" "content" "agent")))))
+                              (test-assert
+                               (not (tool-result-success-p result))
+                               (format nil
+                                       "resource.edit rejects a missing-to-~(~A~) race"
+                                       kind))))
+                       (when cleanup
+                         (funcall cleanup path)))))))
+             (let* ((path (merge-pathnames "create-race.txt" workspace))
+                    (original-create *workspace-file-resource-create-function*))
+               (multiple-value-bind (read-result uri revision)
+                   (read-resource first-context "workspace:create-race.txt")
+                 (declare (ignore read-result))
+                 (let ((*workspace-file-resource-create-function*
+                         (lambda (source target)
+                           (workspace-resource-tests--write-text target "racer")
+                           (funcall original-create source target))))
+                   (let ((result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "replace-empty" "content" "agent")))))
+                     (test-assert
+                      (and (not (tool-result-success-p result))
+                           (string= (workspace-file--read-content path) "racer"))
+                      "missing resource publication never overwrites a post-check race")))))
+             (test-assert
+              (= (length
+                  (remove-duplicates
+                   (mapcar (lambda (kind)
+                             (workspace-file--snapshot-revision kind ""))
+                           '(:file :directory :missing))
+                   :test #'string=))
+                 3)
+              "workspace revisions distinguish missing, empty-file, and directory states")
+             (test-assert
+              (and (null (tool-registry-find registry "fs" "list"))
+                   (null (tool-registry-find registry "fs" "write")))
+              "redundant fs.list and fs.write tools are absent"))))
       (tool-registry-close-runtime-state registry)
       (uiop:delete-directory-tree root
                                   :validate t

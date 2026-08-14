@@ -90,7 +90,7 @@ local action or a computed prompt.
 
 #+BEGIN_SRC lisp
 (describe 'application)
-(fs.list :path ".")
+(resource.read :uri "workspace:.")
 (prompt (read-file "review-notes.org"))
 #+END_SRC
 

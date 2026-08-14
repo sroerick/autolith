@@ -11,13 +11,6 @@
   ()
   (:documentation "Attach one local image to the model for visual inspection."))
 
-(defclass fs-list-tool (workspace-tool)
-  ()
-  (:documentation "List one workspace directory with entry kinds and sizes."))
-
-(defclass fs-write-tool (workspace-tool)
-  ()
-  (:documentation "Create or replace one workspace file with supplied content."))
 
 (defclass shell-run-tool (workspace-tool)
   ()
@@ -27,13 +20,6 @@
   "Permit native workspace image inspection inside child agents."
   t)
 
-(defmethod tool-child-safe-p ((tool fs-list-tool))
-  "Permit bounded workspace directory listings inside child agents."
-  t)
-
-(defmethod tool-child-safe-p ((tool fs-write-tool))
-  "Permit workspace writes through the ordinary child capability boundary."
-  t)
 
 (defmethod tool-child-safe-p ((tool shell-run-tool))
   "Permit authorized workspace commands inside child agents."
@@ -58,15 +44,78 @@
 
 ;;;; -- Path Resolution --
 
+(-> workspace-tool--canonical-path (pathname) pathname)
+(defun workspace-tool--canonical-path (path)
+  "Resolve existing symlinks in PATH and its nearest existing ancestor.
+
+Signal when an existing path cannot be resolved instead of treating permission
+or filesystem failures as absence."
+  (labels ((resolve-existing (candidate)
+             "Return CANDIDATE's truename and whether it is absent."
+             (handler-case
+                 (values (truename candidate) nil)
+               (file-error (condition)
+                 (handler-case
+                     (progn
+                       (sb-posix:lstat (namestring candidate))
+                       (error 'tool-error
+                              :message (format nil "Could not resolve workspace path ~A: ~A"
+                                               candidate condition)
+                              :tool-name "resource"))
+                   (sb-posix:syscall-error (inspection-condition)
+                     (if (= (sb-posix:syscall-errno inspection-condition)
+                            sb-posix:enoent)
+                         (values nil t)
+                         (error 'tool-error
+                                :message
+                                (format nil "Could not inspect workspace path ~A: ~A"
+                                        candidate inspection-condition)
+                                :tool-name "resource")))))))
+
+           (canonical-directory (directory)
+             "Return DIRECTORY with every existing ancestor resolved."
+             (multiple-value-bind (canonical missing-p)
+                 (resolve-existing directory)
+               (if (not missing-p)
+                   canonical
+                   (let* ((components (pathname-directory directory))
+                          (leaf (first (last components))))
+                     (unless (stringp leaf)
+                       (error 'tool-error
+                              :message (format nil "Could not resolve workspace path ~A."
+                                               path)
+                              :tool-name "resource"))
+                     (let ((parent
+                             (make-pathname
+                              :directory (butlast components)
+                              :name nil
+                              :type nil
+                              :version nil
+                              :defaults directory)))
+                       (merge-pathnames
+                        (make-pathname :directory (list ':relative leaf)
+                                       :name nil
+                                       :type nil)
+                        (canonical-directory parent))))))))
+    (multiple-value-bind (canonical missing-p)
+        (resolve-existing path)
+      (if (not missing-p)
+          canonical
+          (merge-pathnames
+           (make-pathname :name (pathname-name path)
+                          :type (pathname-type path)
+                          :version (pathname-version path))
+           (canonical-directory (uiop:pathname-directory-pathname path)))))))
+
 (-> workspace-tool--read-path-allowed-p (pathname list) boolean)
 (defun workspace-tool--read-path-allowed-p (path roots)
   "Return true when PATH resolves beneath one of the readable ROOTS."
-  (let ((candidate (or (ignore-errors (truename path)) path)))
+  (let ((candidate (workspace-tool--canonical-path path)))
     (not
      (null
       (some (lambda (root)
               (uiop:subpathp candidate
-                             (or (ignore-errors (truename root)) root)))
+                             (workspace-tool--canonical-path root)))
             roots)))))
 
 (-> workspace-tool-path (tool-context (option string)) pathname)
@@ -74,21 +123,22 @@
   "Return PATH resolved against CONTEXT's working directory.
 
 When *WORKSPACE-TOOL-READABLE-ROOTS* is non-NIL, reject paths outside those
-roots after resolving existing symlinks."
+roots after resolving existing symlinks and the nearest existing parent."
   (let* ((working-directory (configuration-working-directory
                              (tool-context-configuration context)))
          (resolved (if (non-empty-string-p path)
                        (merge-pathnames (pathname path) working-directory)
-                       working-directory)))
+                       working-directory))
+         (canonical (workspace-tool--canonical-path resolved)))
     (when (and *workspace-tool-readable-roots*
                (not (workspace-tool--read-path-allowed-p
-                     resolved *workspace-tool-readable-roots*)))
+                     canonical *workspace-tool-readable-roots*)))
       (error 'tool-error
              :message
              (format nil "Path ~A is outside the readable workspace and source roots."
-                     resolved)
-             :tool-name "fs"))
-    resolved))
+                     canonical)
+             :tool-name "resource"))
+    canonical))
 
 (-> workspace-tool-protected-path-p (tool-context pathname) boolean)
 (defun workspace-tool-protected-path-p (context path)
@@ -101,7 +151,12 @@ development agent on its own repository. From any other workspace Autolith
 never reaches into its own source, and live self-modification persists
 through private image commits instead."
   (let* ((configuration (tool-context-configuration context))
-         (source-root (configuration-source-root configuration)))
+         (path (workspace-tool--canonical-path path))
+         (source-root (workspace-tool--canonical-path
+                       (configuration-source-root configuration)))
+         (working-directory
+           (workspace-tool--canonical-path
+            (configuration-working-directory configuration))))
     (cond
       ((not (uiop:subpathp path source-root))
        nil)
@@ -110,8 +165,7 @@ through private image commits instead."
            (string= (enough-namestring path source-root)
                     "script/build-recovery"))
        t)
-      ((uiop:subpathp (configuration-working-directory configuration)
-                      source-root)
+      ((uiop:subpathp working-directory source-root)
        nil)
       (t
        t))))
@@ -119,8 +173,11 @@ through private image commits instead."
 (-> workspace-tool-protection-notice (tool-context pathname) string)
 (defun workspace-tool-protection-notice (context path)
   "Explain why PATH is refused by the workspace write tools."
-  (let ((source-root (configuration-source-root
-                      (tool-context-configuration context))))
+  (let* ((configuration (tool-context-configuration context))
+         (path (workspace-tool--canonical-path path))
+         (source-root
+           (workspace-tool--canonical-path
+            (configuration-source-root configuration))))
     (if (or (uiop:subpathp path (merge-pathnames "bin/" source-root))
             (uiop:subpathp path (merge-pathnames "recovery/" source-root))
             (string= (enough-namestring path source-root)
@@ -181,74 +238,6 @@ through private image commits instead."
              (image-attachment-mime-type attachment))
      :image-attachments (list attachment))))
 
-(defmethod tool-execute ((tool fs-list-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Return the requested directory's entries with kinds and byte sizes."
-  (let ((path (workspace-tool-path context (tool-argument arguments "path"))))
-    (if (not (uiop:directory-exists-p path))
-        (tool-failure (format nil "~A is not a directory." path))
-        (let ((directories (sort (mapcar (lambda (directory)
-                                           (first (last (pathname-directory
-                                                         directory))))
-                                         (uiop:subdirectories path))
-                                 #'string<))
-              (files (sort (uiop:directory-files path)
-                           #'string<
-                           :key #'namestring)))
-          (tool-success
-           (format nil "~A~%~{~A~%~}~{~A~%~}"
-                   path
-                   (loop for name in directories
-                         collect (format nil "d           ~A/" name))
-                   (loop for file in files
-                         collect (format nil "f ~9D  ~A"
-                                         (handler-case
-                                             (with-open-file (stream file
-                                                              :element-type
-                                                              '(unsigned-byte 8))
-                                               (file-length stream))
-                                           (error ()
-                                             0))
-                                         (file-namestring file)))))))))
-
-(defmethod tool-execute ((tool fs-write-tool)
-                         (context tool-context)
-                         (arguments hash-table))
-  "Create or replace the requested file with the supplied content."
-  (let ((path (workspace-tool-path
-               context
-               (tool-argument arguments "path" :required t)))
-        (content (tool-argument arguments "content" :required t)))
-    (unless (stringp content)
-      (error 'tool-error
-             :message "fs.write requires string content."
-             :tool-name "fs.write"))
-    (with-recursive-lock-held (*workspace-file-mutation-lock*)
-      (cond
-        ((workspace-tool-protected-path-p context path)
-         (tool-failure (workspace-tool-protection-notice context path)))
-        ((uiop:directory-exists-p path)
-         (tool-failure (format nil "~A is a directory." path)))
-        (t
-         (let* ((existed-p (and (probe-file path) t))
-                (result-content
-                  (lisp-source-edit-result-content
-                   (format nil
-                           "~:[Created~;Replaced~] ~A with ~:D character~:P."
-                           existed-p
-                           path
-                           (length content))
-                   path
-                   content)))
-           (ensure-directories-exist path)
-           (with-open-file (stream path
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
-             (write-string content stream))
-           (tool-success result-content)))))))
 
 (-> workspace-tool-run-shell-command
     (string pathname t (integer 1) (integer 0))
