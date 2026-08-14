@@ -2436,6 +2436,9 @@ may execute immediately; other Lisp waits for the idle boundary."
   "Return the modal choices for COMMAND in DIRECTORY."
   (declare (ignore command))
   (list
+   (list :name "pick"
+         :argument nil
+         :description "pick for me; allow safe inspection or ask about the rest")
    (list :name "once"
          :argument nil
          :description "allow once inside the workspace sandbox")
@@ -2453,6 +2456,44 @@ may execute immediately; other Lisp waits for the idle boundary."
    (list :name "deny"
          :argument nil
          :description "do not run the command")))
+
+(-> application--apply-classified-command-permission
+    (application string keyword string)
+    keyword)
+(defun application--apply-classified-command-permission
+    (application command decision reason)
+  "Apply one classifier DECISION for COMMAND and explain REASON."
+  (ecase decision
+    (:sandboxed
+     (application-present
+      application
+      (format nil "Picked sandbox for ~A: ~A."
+              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
+              reason))
+     ':sandboxed)
+    (:deny
+     (application-present
+      application
+      (format nil "Refused ~A: ~A."
+              (text-cell-prefix (sanitize-text command :single-line-p t) 40)
+              reason))
+     ':deny)
+    (:ask
+     (application--ask-command-permission application command
+                                          (uiop:getcwd)))))
+
+(-> application--auto-command-permission
+    (application string pathname)
+    keyword)
+(defun application--auto-command-permission (application command directory)
+  "Classify COMMAND and allow, refuse, or ask without granting full access."
+  (declare (ignore directory))
+  (multiple-value-bind (decision reason)
+      (permissions-classify-command command)
+    (if (eq decision ':ask)
+        (application--ask-command-permission application command directory)
+        (application--apply-classified-command-permission
+         application command decision reason))))
 
 (-> application--ask-command-permission
     (application string pathname)
@@ -2481,6 +2522,14 @@ may execute immediately; other Lisp waits for the idle boundary."
                           command directory)
                   :resize-callback #'application-pending-terminal-size)))))
         (cond
+          ((or (string= (or choice "") "pick")
+               (string= (or choice "") "auto"))
+           (multiple-value-bind (decision reason)
+               (permissions-classify-command command)
+             (if (eq decision ':ask)
+                 ':deny
+                 (application--apply-classified-command-permission
+                  application command decision reason))))
           ((string= (or choice "") "once")
            ':sandboxed)
           ((string= (or choice "") "always")
@@ -2501,13 +2550,21 @@ may execute immediately; other Lisp waits for the idle boundary."
 
 (-> application-authorize-command (application string pathname) keyword)
 (defun application-authorize-command (application command directory)
-  "Return the session, saved, or interactively selected permission for COMMAND."
+  "Return the session, saved, classified, or interactively selected permission."
   (with-lock-held ((application-command-authorization-lock application))
     (case (application-permission-mode application)
       (:full-access
        ':full-access)
       (:sandboxed
        ':sandboxed)
+      (:auto
+       (if (permissions-allowed-p
+            (application-permission-state application)
+            command
+            directory)
+           ':sandboxed
+           (application--auto-command-permission
+            application command directory)))
       (:ask
        (if (permissions-allowed-p
             (application-permission-state application)

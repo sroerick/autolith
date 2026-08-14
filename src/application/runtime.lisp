@@ -106,7 +106,7 @@
     :initarg :permission-mode
     :initform :ask
     :accessor application-permission-mode
-    :type (member :ask :sandboxed :full-access)
+    :type (member :ask :auto :sandboxed :full-access)
     :documentation "The command approval behavior for this process session.")
    (command-authorization-lock
     :initform (make-lock "Autolith command authorization")
@@ -829,7 +829,7 @@ newly acquired lease."
 
 (-> application-create
     (configuration &key (:conversation-id (option string))
-                        (:permission-mode (member :ask :sandboxed :full-access)))
+                        (:permission-mode (member :ask :auto :sandboxed :full-access)))
     application)
 (defun application-create
     (configuration &key conversation-id (permission-mode ':ask))
@@ -1005,7 +1005,7 @@ newly acquired lease."
 (-> application-reconnect
     (application &key (:conversation-id (option string))
                       (:immutable-p boolean)
-                      (:permission-mode (member :ask :sandboxed :full-access)))
+                      (:permission-mode (member :ask :auto :sandboxed :full-access)))
     application)
 (defun application-reconnect
     (application &key conversation-id

@@ -1363,6 +1363,7 @@ to TERMINAL-UI-SELECT."
   "Return a user-facing description of command permission MODE."
   (ecase mode
     (:ask "ask before unrecognized commands")
+    (:auto "pick for me; allow safe inspection and ask about the rest")
     (:sandboxed "allow commands inside the workspace sandbox")
     (:full-access "let commands run with full user privileges")))
 
@@ -1376,6 +1377,11 @@ to TERMINAL-UI-SELECT."
            :description (if (eq current ':ask)
                             "current; prompt unless this exact command was saved"
                             "prompt unless this exact command was saved"))
+     (list :name "auto"
+           :argument nil
+           :description (if (eq current ':auto)
+                            "current; pick for me and save that choice"
+                            "pick for me; allow safe inspection and ask about the rest"))
      (list :name "sandbox"
            :argument nil
            :description (if (eq current ':sandboxed)
@@ -1402,6 +1408,16 @@ to TERMINAL-UI-SELECT."
                                (command-permission-directory rule)))))
         "No exact command approvals are saved.")))
 
+(-> application--set-durable-permission-mode (application keyword) null)
+(defun application--set-durable-permission-mode (application mode)
+  "Set APPLICATION's session permission MODE and persist ask or auto."
+  (setf (application-permission-mode application) mode)
+  (when (member mode '(:ask :auto) :test #'eq)
+    (preferences-set-permission-mode
+     (application-configuration application)
+     mode))
+  nil)
+
 (-> application-permissions-command (application (option string)) null)
 (defun application-permissions-command (application argument)
   "Apply ARGUMENT to APPLICATION's session command permissions."
@@ -1410,10 +1426,16 @@ to TERMINAL-UI-SELECT."
       ((null choice)
        nil)
       ((string= choice "ask")
-       (setf (application-permission-mode application) ':ask)
+       (application--set-durable-permission-mode application ':ask)
        (application-present
         application
         "Commands will ask before running unless the exact command was saved."))
+      ((or (string= choice "auto")
+           (string= choice "pick"))
+       (application--set-durable-permission-mode application ':auto)
+       (application-present
+        application
+        "Commands will pick for me: safe inspection runs in the sandbox, and the rest asks."))
       ((string= choice "sandbox")
        (setf (application-permission-mode application) ':sandboxed)
        (application-present
@@ -1434,7 +1456,7 @@ to TERMINAL-UI-SELECT."
        (application-present application "Saved command approvals were cleared."))
       (t
        (error 'configuration-error
-              :message "Usage: /permissions [ask|sandbox|full|list|clear]."))))
+              :message "Usage: /permissions [ask|auto|sandbox|full|list|clear]."))))
   nil)
 
 (-> application--later-list (application) string)
@@ -1838,9 +1860,9 @@ to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
-     :argument "[ask|sandbox|full|list|clear]"
+     :argument "[ask|auto|sandbox|full|list|clear]"
      :description "choose command access for this session"
-     :tip "chooses how shell commands are authorized for this session."
+     :tip "chooses how shell commands are authorized, including pick-for-me auto mode."
      :busy-behavior :hold
      :terminal-behavior :exclusive-without-arguments
      :call-lambda-list (&optional (choice nil choice-supplied-p))
@@ -1854,7 +1876,7 @@ to TERMINAL-UI-SELECT."
                     application
                     :title "command permissions"
                     :items (application--permission-mode-items application)
-                    :usage "Usage: /permissions [ask|sandbox|full|list|clear]"
+                    :usage "Usage: /permissions [ask|auto|sandbox|full|list|clear]"
                     :empty-notice "No command permission modes exist.")))))
     (application-permissions-command application choice))
   ':continue)

@@ -47,9 +47,12 @@
              (test-assert
               (not (preference-state-turn-timestamps-p preferences))
               "missing preferences default turn timestamps to hidden")
-             (test-assert
-              (not (preference-state-simple-technical-english-p preferences))
-              "missing preferences default Simple Technical English to disabled"))
+               (test-assert
+                (not (preference-state-simple-technical-english-p preferences))
+                "missing preferences default Simple Technical English to disabled")
+               (test-assert
+                (null (preference-state-permission-mode preferences))
+                "missing preferences have no saved command-permission mode"))
            (ensure-directories-exist pathname)
            (snapshot-write
             pathname
@@ -214,10 +217,21 @@
              (test-assert
               (string= (preference-state-model preferences) "gpt-5.6-luna")
               "changing the response style preserves the selected model"))
-           (preferences-set-simple-technical-english configuration nil)
-           (test-assert
-            (not (preferences-simple-technical-english-p configuration))
-            "Simple Technical English can be disabled durably")
+             (preferences-set-permission-mode configuration ':auto)
+             (test-assert
+              (eq (preferences-permission-mode configuration) ':auto)
+              "auto command-permission mode survives a preference reload")
+             (preferences-set-simple-technical-english configuration nil)
+             (test-assert
+              (eq (preferences-permission-mode configuration) ':auto)
+              "other preference setters preserve auto command-permission mode")
+             (test-assert
+              (not (preferences-simple-technical-english-p configuration))
+              "Simple Technical English can be disabled durably")
+             (preferences-set-permission-mode configuration ':ask)
+             (test-assert
+              (eq (preferences-permission-mode configuration) ':ask)
+              "ask command-permission mode can replace auto durably")
            (with-open-file (stream pathname
                                    :direction :output
                                    :if-exists :supersede

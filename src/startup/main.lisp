@@ -492,24 +492,28 @@
        autolith --version
        autolith --recovery [--generation ID | --list]")
 
-(-> main--permission-mode (list) (member :ask :sandboxed :full-access))
-(defun main--permission-mode (arguments)
-  "Return the session command-authorization mode selected by ARGUMENTS."
-  (let ((count (count "--permissions" arguments :test #'string=)))
-    (when (> count 1)
-      (error 'configuration-error
-             :message "The --permissions option may appear only once."))
-    (if (zerop count)
-        ':ask
+(-> main--permission-mode
+      (list)
+      (option (member :ask :auto :sandboxed :full-access)))
+  (defun main--permission-mode (arguments)
+    "Return the explicit session command-authorization mode from ARGUMENTS."
+    (let ((count (count "--permissions" arguments :test #'string=)))
+      (when (> count 1)
+        (error 'configuration-error
+               :message "The --permissions option may appear only once."))
+      (unless (zerop count)
         (let ((selection
                 (nth (1+ (position "--permissions" arguments :test #'string=))
                      arguments)))
           (cond ((or (not (non-empty-string-p selection))
                      (uiop:string-prefix-p "-" selection))
                  (error 'configuration-error
-                        :message "The --permissions option requires ask, sandbox, or full."))
+                        :message "The --permissions option requires ask, auto, sandbox, or full."))
                 ((string-equal selection "ask")
                  ':ask)
+                ((or (string-equal selection "auto")
+                     (string-equal selection "pick"))
+                 ':auto)
                 ((string-equal selection "sandbox")
                  ':sandboxed)
                 ((string-equal selection "full")
@@ -517,7 +521,7 @@
                 (t
                  (error 'configuration-error
                         :message (format nil
-                                         "Unknown --permissions mode ~S. The choices are ask, sandbox, and full."
+                                         "Unknown --permissions mode ~S. The choices are ask, auto, sandbox, and full."
                                          selection))))))))
 
 (-> main--auth-selection (list) (option string))
@@ -612,7 +616,7 @@
     (&key (:configuration configuration)
           (:conversation-id (option string))
           (:immutable-p boolean)
-          (:permission-mode (member :ask :sandboxed :full-access))
+            (:permission-mode (member :ask :auto :sandboxed :full-access))
           (:fresh-conversation-p boolean))
     application)
 (defun main--connect-application
@@ -650,13 +654,17 @@
       (configuration-create :defer-provider-validation-p t)
       (rest arguments)))
     (t
-     (let* ((immutable-p (not (null (member "--immutable" arguments
-                                            :test #'string=))))
-            (permission-mode (main--permission-mode arguments))
-            (configuration
-              (configuration-create
-               :immutable-p immutable-p
-               :defer-provider-validation-p t))
+       (let* ((immutable-p (not (null (member "--immutable" arguments
+                                              :test #'string=))))
+              (explicit-permission-mode (main--permission-mode arguments))
+              (configuration
+                (configuration-create
+                 :immutable-p immutable-p
+                 :defer-provider-validation-p t))
+              (permission-mode
+                (or explicit-permission-mode
+                    (preferences-permission-mode configuration)
+                    ':ask))
             (handoff-record
               (localgroup-handoff-selection configuration arguments))
             (fresh-handoff-p

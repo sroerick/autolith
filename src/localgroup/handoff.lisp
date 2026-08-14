@@ -334,6 +334,7 @@ exit \"$status\""
   "Return APPLICATION's command-line permission mode."
   (ecase (application-permission-mode application)
     (:ask "ask")
+    (:auto "auto")
     (:sandboxed "sandbox")
     (:full-access "full")))
 
