@@ -727,15 +727,41 @@
               :message "Usage: /compact on or /compact off."))))
   nil)
 
+(-> application--credentialed-provider-names (application) list)
+(defun application--credentialed-provider-names (application)
+  "Return effective provider names whose stored credentials load successfully."
+  (let ((configuration (application-configuration application)))
+    (loop for registration in (provider-registrations)
+          when (handler-case
+                   (progn
+                     (credential-manager-load
+                      (provider-credential-manager
+                       (funcall (provider-registration-factory registration)
+                                configuration)))
+                     t)
+                 (serious-condition ()
+                   nil))
+            collect (provider-registration-name registration))))
+
+(-> application--offered-provider-p (string (option string) list) boolean)
+(defun application--offered-provider-p (provider-name current-provider credentialed)
+  "Return true when PROVIDER-NAME is credentialed or serves the current model."
+  (or (and current-provider (string= provider-name current-provider))
+      (and (member provider-name credentialed :test #'string=) t)))
+
 (-> application--model-items (application) list)
 (defun application--model-items (application)
-  "Return picker items for the configured provider's models."
-  (let ((current (configuration-model
-                  (application-configuration application))))
+  "Return picker items for every credentialed provider's models."
+  (let* ((current (configuration-model
+                   (application-configuration application)))
+         (current-provider (provider-model-provider-name current))
+         (credentialed
+           (application--credentialed-provider-names application)))
     (loop for model in (provider-model-identifiers)
           for provider-name = (provider-model-provider-name model)
           for metadata = (provider-model-for model)
-          when (string= provider-name (provider-model-provider-name current))
+          when (application--offered-provider-p
+                provider-name current-provider credentialed)
             collect (list :name model
                         :argument nil
                         :group provider-name
@@ -751,9 +777,12 @@
 
 (-> application--models-description (application) string)
 (defun application--models-description (application)
-  "Return a readable listing of the configured provider's models."
-  (let ((current (configuration-model
-                  (application-configuration application))))
+  "Return a readable listing of every credentialed provider's models."
+  (let* ((current (configuration-model
+                   (application-configuration application)))
+         (current-provider (provider-model-provider-name current))
+         (credentialed
+           (application--credentialed-provider-names application)))
     (if (null (provider-model-identifiers))
         "No registered provider models exist."
         (format nil
@@ -761,8 +790,8 @@
                 (loop for model in (provider-model-identifiers)
                       for provider-name = (provider-model-provider-name model)
                       for metadata = (provider-model-for model)
-                        when (string= provider-name
-                                      (provider-model-provider-name current))
+                        when (application--offered-provider-p
+                              provider-name current-provider credentialed)
                           collect
                       (format nil "- ~A / ~A~:[~; (current)~]~@[ - ~A~]"
                               provider-name
