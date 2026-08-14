@@ -724,6 +724,7 @@
                      (list "gpt-5.6-sol"
                            "gpt-5.6-luna"
                            "gpt-5.6-terra"
+                           "grok-4.6"
                            "grok-4.5"
                            "accounts/fireworks/models/kimi-k3"
                            "accounts/fireworks/models/qwen3p7-plus"
