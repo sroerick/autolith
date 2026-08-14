@@ -1,23 +1,22 @@
-#+TITLE: Autolith Guide
-#+SUBTITLE: Install it, talk to it, keep control
+#+TITLE: New User Guide
 #+STARTUP: content
 
-* Start here
+* Intro
 
 Autolith is a terminal agent running in a live Common Lisp image. It works on
-Linux x86-64 and macOS arm64 with SBCL. It owns its prompt, conversation files,
-authentication, tool loop, and recovery path. It talks to provider APIs directly;
-it never invokes or depends on the Codex executable.
+Linux x86-64 and macOS. 
 
-The normal interaction is simple:
+You can launch autolith by typing its name into your favorite terminal:
 
 #+BEGIN_SRC sh
 autolith
 #+END_SRC
 
-Type prose to ask the primary agent. Type a Lisp form when you want an exact
-local action. Autolith keeps completed output in ordinary terminal scrollback,
-not inside a fullscreen interface.
+If you haven't authenticated already, you can check out the [[file:../README.org][README]] for how
+to do that.
+
+Autolith's prompt window can also evuluate lisp forms directly:
+
 
 #+BEGIN_SRC lisp
 (help)
@@ -25,90 +24,56 @@ not inside a fullscreen interface.
 (prompt (read-file "review-notes.org"))
 #+END_SRC
 
-This guide covers the user-visible interface. See [[file:architecture.org][Architecture]] for
-runtime and file boundaries, [[file:skills.org][Skills]] for reusable task instructions,
-and [[file:mcp.org][MCP]] for Model Context Protocol setup.
+This can be frequently helpful since you can use the exact same tools
+the clanker can, and the same machinery is exposed to you.
 
 * Install and update
 
 ** Nix
 
-Nix is the simplest complete installation. It supplies the runtime and native
-dependencies:
+Nix is the simplest way to install Autolith:
 
 #+BEGIN_SRC sh
 nix run github:luciusmagn/autolith
 #+END_SRC
 
-The first launch builds machine-local recovery and active images without a
-checkout, compiler, Quicklisp, or network access. Images live under
-=${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/= and are keyed by the
-exact package identity, so an upgrade does not reuse an old core. Your private
-live mutations remain in the normal Autolith data and state roots across Nix
-restarts and upgrades.
-
-Nix validates its build closure and probes both base images. Saved SBCL cores
-are intentionally machine-local state, not reproducible Nix store outputs. A
-Nix launch may show a cached update advisory, but it never changes your flake or
-profile.
+The first launch builds Lisp images Autolith needs to launch.
+These images live under =${XDG_DATA_HOME:-~/.local/share}/autolith/nix/images/=}.
 
 ** Linux binary release
 
-Linux x86-64 releases need Git, OpenSSL, and Bubblewrap. The installer downloads
-a versioned archive and SHA-256 record, verifies it, installs atomically below
-=${XDG_DATA_HOME:-~/.local/share}/autolith/installation/=, and links =autolith=
-into =~/.local/bin/=.
+It is possible to install autolith on Linux x86_64 via a shell installer:
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
 Read [[https://sh.lambda-symbolics.com/autolith][the installer]] before piping it to a shell, or use Nix if that
-tradeoff is unwelcome. A release bundles pinned SBCL 2.6.6, matching SBCL source,
-locked Lisp dependencies, fff, and the command-sandbox helper. It does not need
-a checkout, Quicklisp, Cargo, or a compiler. First launch builds the local
-pristine recovery and active images from those inputs.
+tradeoff is unwelcome. You need OpenSSL and bubblewrap installed on your system
 
 The launcher uses the installation layout, rather than an environment marker
-alone, to distinguish binary, Nix, and source starts. Source checkouts never
-contact the release service.
+alone, to distinguish binary, Nix, and source starts.
 
-A selected binary release reads its previous update result at startup. A newer,
-nondismissed release offers =Not now=, =Update now=, and =Skip this version=.
-Not now affects one start; Skip suppresses only that tag. Autolith refreshes its
-private readable update cache in the background no more than once every 20
-hours. Failure is nonfatal and never starts an installation.
+Autolith automatically checks for updates at most once every 20 hours, but
+if you like, you can update it from cli or from inside a session:
 
-Use either command to check a selected binary release again and update it:
+CLI:
 
 #+BEGIN_SRC sh
 autolith --update
 #+END_SRC
 
+Session:
+
 #+BEGIN_SRC lisp
 (update)
 #+END_SRC
 
-=/update= remains compatible. The stable launcher verifies the newest archive,
-selects it atomically, and restarts with the original arguments. Custom
-installation roots and command links are preserved. Source and Nix starts tell
-you how to update externally. Re-running the installer also updates and leaves
-older releases in the installation root.
-
 Release archives are built and checked by the installer host. GitHub publishes
 release metadata after the host checksum is available. See
-[[file:release-service.org][Release service]] for that flow.
+[[file:release-service.org][Release service]].
 
 ** Source checkout
-
-Development supports Linux x86-64 and macOS arm64. You need Quicklisp, =curl=,
-=tar=, a SHA-256 utility, Rust with Cargo, a C compiler, CMake, and =pkg-config=.
-The tracked =sbcl.version= gives the minimum supported SBCL, currently 2.6.6.
-Autolith accepts =AUTOLITH_SBCL= or a system SBCL only when its official release
-version is new enough and its matching source archive is listed in
-=sbcl-source-releases.sha256=. Linux setup can install the verified official
-x86-64 runtime beneath the data root; it never replaces system Lisp. On macOS,
-install a supported release SBCL first.
 
 For a fresh macOS machine:
 
@@ -119,6 +84,8 @@ sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
   --eval '(quicklisp-quickstart:install)' --quit
 #+END_SRC
 
+The linux setup is the same, except, you have to also have bubblewrap installed.
+
 With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 
 #+BEGIN_SRC sh
@@ -126,71 +93,14 @@ With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 ./script/check
 #+END_SRC
 
-Bootstrap materializes =qlfile.lock= dependencies in =.qlot/=, builds the
-Linux-only command helper where applicable, builds native fff, and creates
-read-only active and recovery images. It downloads and hash-verifies the exact
-selected SBCL source beneath
-=${XDG_DATA_HOME:-~/.local/share}/autolith/runtimes/<version>/source/= for
-inspection only. It never patches that tree.
-
-A launch probes the preloaded image against SBCL, OS, architecture, source, and
-lockfile hashes. A valid image skips normal loading. An interactive stale or
-missing image offers to run bootstrap; declining loads source. Noninteractive
-launches load source directly. Pass =--from-source= to deliberately skip image
-validation and prompts. The loader and check script prefer project dependencies,
-then user Quicklisp. If OpenSSL is outside normal loader paths, expose it to
-CFFI; Autolith also recognizes =~/.guix-profile/lib/=.
-
-To put this checkout on =PATH=:
+To put a checkout into =PATH=:
 
 #+BEGIN_SRC sh
 mkdir -p ~/.local/bin
 ln -sfn "$PWD/bin/autolith" ~/.local/bin/autolith
 #+END_SRC
 
-Version 0.32.0 reads state upgraded through 0.31.1. If an older installation
-still has =overlays/*.lisp= live modifications, start 0.31.1 first, repair any
-replay failure, then use =self.persist-definition= or =self.commit=. Legacy
-single-file conversations remain readable and become the oldest chunk when
-compacted.
-
-* Authenticate
-
-For the built-in ChatGPT device flow, run:
-
-#+BEGIN_SRC sh
-autolith --auth
-#+END_SRC
-
-Or use =/auth= inside Autolith. It prints a verification URL and one-time code,
-tries to open a browser, polls the device endpoint, completes PKCE, and stores
-only Autolith's own credentials.
-
-Autolith stores ChatGPT credentials in
-=${XDG_STATE_HOME:-~/.local/state}/autolith/auth.sexp= with mode 0600. API-key
-credentials use =api-keys.sexp= or a provider-specific file beside it, including
-=opencode-auth.sexp=. Every credential file is unencrypted plaintext with mode
-0600, which limits filesystem access but does not encrypt keys. The last
-successful provider model lists are cached in =provider-models.sexp=.
-
-On first use, Autolith may read =~/.codex/auth.json= only if its private store is
-absent. It copies a bounded access token and account ID, never a refresh token,
-never writes that file, never reads it again after private state exists, and
-never launches Codex. Run =--auth= to obtain renewable Autolith credentials.
-
-For an API-key provider, run =autolith --auth PROVIDER= or =/auth PROVIDER=.
-The key prompt intentionally shows no characters. Paste or type the key, then
-press Enter. Do not put keys in =init.lisp=, conversations, memories, journals,
-private replay scripts, or saved images.
-
-OpenCode uses =autolith --auth opencode= and stores the entered key in
-=opencode-auth.sexp=. =OPENCODE_API_KEY= overrides that saved key when set.
-Run =/models= to discover its current catalog; local identifiers use the
-=opencode/= prefix so names shared with ChatGPT or Grok cannot change provider
-routing. =AUTOLITH_OPENCODE_PROVIDER_ENDPOINT= overrides chat requests and
-=AUTOLITH_OPENCODE_MODELS_ENDPOINT= independently overrides discovery. The
-public model catalog cannot validate an API key, so a rejected key is reported
-on the first chat request.
+This is assuming you have .local/bin/ in PATH.
 
 * Talk to Autolith
 
@@ -202,8 +112,15 @@ Ordinary text is a prompt to the primary agent. It is equivalent to:
 (prompt :to 'autolith "Review this change")
 #+END_SRC
 
-=autolith= is reserved, case-insensitively, for the primary agent. =prompt= can
-also compute text or attach local images:
+=autolith= is reserved, case-insensitively, for the primary agent.
+
+As a shortcut, if you want to submit something to the main agent, you don't need to include the =:to= parameter:
+
+#+BEGIN_SRC lisp
+(prompt "Shut yourself down homie")
+#+END_SRC
+
+=prompt= can also compute text or attach local images:
 
 #+BEGIN_SRC lisp
 (prompt (read-file "request.org"))
@@ -211,18 +128,10 @@ also compute text or attach local images:
 (prompt :to 'test-review "Run focused tests and report failures.")
 #+END_SRC
 
-A child target must already be visible and running. Autolith resolves its unique
-display name, then visible job ID; it never spawns or revives a child from a
-prompt. Accepted steering goes to that child's bounded FIFO mailbox. Its first
-later nonblank durable answer is promoted once to the primary terminal with the
-child name and timestamp. Tool traffic and hidden reasoning are not promoted or
-copied into the primary transcript.
+If you message a sub-agent, it can respond to you in the main conversation thread
+if it wants to.
 
-Start a draft with =(= to evaluate one explicit top-level Common Lisp form in
-the active image. The prompt turns red and ColorLisp highlights the whole form.
-Autolith displays output, values, conditions, and available restarts directly;
-images cannot accompany explicit Lisp. Registered operations use the same
-surface:
+Start a message with =(= to evaluate it as Common Lisp in the active image:
 
 #+BEGIN_SRC lisp
 (help)
@@ -230,125 +139,17 @@ surface:
 (eval-now (setf *print-pretty* nil))
 #+END_SRC
 
-=/command= remains compatibility syntax and shows the preferred Lisp call after
-use. Completion after =(= lists public operations, not every image symbol, but
-arbitrary entered Lisp is still legal. User calls and provider calls share an
-operation name while retaining their own authority and approval rules.
-
-Local Lisp and commands are not ordinary provider messages. Completed outcomes
-are persisted as bounded user-operation records when possible, then supplied as
-bounded request-local evidence on later model turns. A failed append does not
-hide an already applied effect. During an active turn, nonconflicting registered
-operations may run now; operations needing exclusive terminal access,
-authorization, agent boundaries, or active-image mutation wait until idle.
-Arbitrary Lisp also waits unless wrapped in =(eval-now FORM)=. That only changes
-scheduling, never authority.
+Parenthetical (commands) are the canonical form now, but there is a
+/command syntactic sugar to help you with the transition.
 
 Use =//= to send a message beginning with a literal slash.
 
-** Everyday commands
-
-Type =/= for a picker. Arrows move, Tab cycles and previews, Enter runs or first
-fills a required argument, ordinary typing continues editing, and Escape restores
-the earlier prefix. These spellings are available:
-
-#+BEGIN_EXAMPLE
-/help  /new  /resume [ID]  /conversations  /history
-/vault  /vault-restore  /vault-discard  /cwd [PATH]
-/auth [PROVIDER]  /model [MODEL]  /models  /effort [EFFORT]
-/trace on|off  /timestamps on|off  /ste on|off  /hurry-up on|off
-/permissions  /later INPUT  /goal [OBJECTIVE]  /agenda
-/papercuts  /papercut ID  /papercut-close ID
-/checkpoint  /generations  /rollback [ID]  /info  /status
-/compact [on|off]  /quit
-#+END_EXAMPLE
-
-=(info)= or =/info= prints the current model, effort, web search, trace,
-timestamps, compact view, Simple Technical English, hurry-up, and command
-permission settings. It does not change them.
-
-=/resume=, =/rollback=, =/model=, and =/effort= have searchable vertical
-pickers and also accept an explicit argument. Resume groups current-directory
-conversations before others, newest activity first. Model and effort pickers
-start at the current selection; type to filter, Backspace to edit, and Ctrl-U to
-clear. =autolith resume [ID]= opens the same resume path.
-
-=/cwd PATH= changes this process workspace. Relative paths start at the current
-workspace; =~/= expands; spaces need no quoting. It refreshes request
-instructions, workspace tools, search, memories, agendas, and current and future
-Lisp REPL path contexts without changing a conversation's recorded origin.
-
-=/goal OBJECTIVE= sets a durable conversation goal and includes it as transient
-context. After each message, Autolith may continue for up to eight turns until
-the model emits =[GOAL-COMPLETE]=. =/goal= shows it. Use =/goal pause=,
-=/goal resume=, =/goal clear=, or =/goal update NEW-OBJECTIVE= to manage it.
-Updates retain pause state and restart the budget.
-
-=/model= selects a configured-provider model, then its effort. =/models= lists
-effective providers and models. =/effort= selects the active model effort.
-Choices are =none=, =low=, =medium=, =high=, =xhigh=, =max=, and =ultra=;
-=ultra= is sent as provider =max=. Model and effort become global defaults,
-subject to =AUTOLITH_MODEL= and =AUTOLITH_REASONING_EFFORT= at startup. A resumed
-conversation restores its own latest choices.
-
-=/trace on= requests bounded model reasoning summaries. It never displays raw or
-encrypted reasoning. =/timestamps on= adds local times beside transcript headers.
-=/ste on= requests practical Simple Technical English: direct, concrete language
-without changing code, identifiers, diagnostics, or needed technical detail.
-These three global preferences persist in =preferences.sexp=; none rewrites
-history. =/compact on= is the default concise tool presentation. =/compact off=
-shows complete routine results. With no argument, =/compact= forces context
-compaction.
-
-=/hurry-up on= is session-only. It asks for direct critical-path work and admits
-at most two child agents, with at most two live at once. Existing children keep
-running. =/later INPUT= durably waits for the next usable provider rate-limit
-reset; =/later= lists entries and =/later cancel ID= removes one.
-
-=/permissions= also lets you review or clear saved exact command approvals.
-
-** The terminal stays out of your way
-
-Autolith uses the primary screen and ordinary scrollback. Only a bounded live
-region repaints: activity, transient notices, queue previews, and the full-width
-composer. Clinedi provides Unicode-aware multiline editing. Input wraps to the
-actual terminal width, preserves explicit newlines, and keeps its cursor visible.
-Model and pasted text are sanitized. =NO_COLOR= disables styling.
-
-Enter submits. Shift-Enter, Ctrl-Enter, and Alt-Enter insert a newline. Up and
-Down follow visual input rows before history. Autolith enables CSI-u and
-modifyOtherKeys while active, then restores terminal keyboard reporting on exit.
-Interactive terminals receive invisible OSC 133 prompt and execution markers;
-redirected output receives none.
-
-Paste or drag PNG, JPEG, GIF, or WebP paths into the composer to attach images.
-Autolith replaces each with an =[Image #N]= label, preserves attachments through
-editing, history, queueing, and steering, removes an attachment when its label
-is deleted, and renumbers surviving labels at submission. =-i FILE= or
-=--image FILE= preloads images; comma-separated paths work too. Images are
-validated and resized to provider high-detail limits. Conversation logs retain
-portable descriptors while private binary data remains under the data root.
-
-You can keep typing while Autolith streams or runs tools. Enter steers the active
-turn at its next tool boundary. Tab queues a later follow-up; an empty draft
-recalls the newest queued follow-up. Shift-Tab cycles recalled follow-ups while
-preserving FIFO position. When idle, Tab submits an unrecalled draft like Enter.
-
-Escape cancels only the current turn and lets queued work continue. During active
-work, Ctrl-C cancels and holds queued follow-ups and unconsumed steering until
-new input resumes them. A second Ctrl-C in the brief 2.5-second pending-cancel
-window forces exit with status 130. Idle Ctrl-C clears a draft, or exits at an
-empty prompt. Autolith shows the force-exit hint only when cancellation lingers.
-
-The live status line is animated, not a literal execution trace. It shows model,
-effort, branch, active elapsed time, and no-update time after 30 seconds. The
-optional =COMPACTING= bar is indeterminate and never claims a percentage. Child
-activity is bounded, ordered by creation, and never enters conversation history
-or exposes hidden reasoning.
+The clanker sees both your source input and its evaluated result apart
+from any other effects it may have.
 
 ** Local sessions
 
-Every interactive process publishes a private authenticated local endpoint.
+Every running Autolith session publishes a private authenticated local endpoint.
 Inspect them with:
 
 #+BEGIN_SRC sh
@@ -356,212 +157,23 @@ autolith localgroup status
 autolith localgroup status --sexp
 #+END_SRC
 
-=idle= is strict: the process is at input with no active, queued, steering,
-recalled, cancelling, failed, stopping, paused, handoff, or live-child work.
-Control a session with:
+=idle= means that the process is at input with no active work of any kind.
+
+Control a sessions with the following commands:
 
 #+BEGIN_SRC sh
-autolith localgroup tell SESSION-ID "message"
-autolith localgroup pause SESSION-ID
+autolith localgroup tell   SESSION-ID "message"
+autolith localgroup pause  SESSION-ID
 autolith localgroup attach SESSION-ID
 autolith localgroup attach SESSION-ID --read-only
 autolith localgroup attach SESSION-ID --take-over
 autolith localgroup detach SESSION-ID
-autolith localgroup kill SESSION-ID
+autolith localgroup kill   SESSION-ID
 #+END_SRC
 
-=tell= uses normal input and resumes a paused session. =pause= cancels active
-work and holds queued primary work. =kill= requests graceful shutdown. A
-read-only attachment receives bounded replay and live output without input
-authority. Ordinary attach needs no existing controller; =--take-over= replaces
-one. =/detach= safely hands a foreground session to a detached replacement after
-queued work and live children finish. It retains the session ID, draft,
-conversation, workspace, and permission mode. If startup fails, the old process
-continues. Discovery records are private, mode 0600 files in a mode 0700
-=localgroup/= directory under the state root.
-
-* Conversations, memory, and recovery
-
-A fresh conversation exists only in memory until its first durable record. Empty
-starts do not appear in =/resume= or =/conversations=. Durable conversations are
-append-only readable forms below
-=${XDG_DATA_HOME:-~/.local/share}/autolith/conversations/=. A truncated final
-form is ignored after a crash; a complete malformed record is rejected. An
-interrupted provider call without its tool result becomes an explicit
-unknown-outcome failure on load. Autolith never assumes the tool had no effects.
-
-Conversation IDs are short case-sensitive Bitcoin Base58 values such as
-=K-8vQ2mp=. The hyphen is visual, so =K8vQ2mp= works too. UUID-era IDs and resume
-commands migrate transactionally and remain aliases.
-
-Conversations use deterministic chunks, for example
-=conversations/K8vQ2mp/00000000000000000001.sexp=. Compaction begins a chunk
-with a durable summary. Normal resume shows at most 250 entries by default and,
-when needed, one preceding chunk. Recovery reads only the active chunk.
-=/history= pages backward across chunks without deleting stored history or model
-context. Change the visible page size in =init.lisp=:
-
-#+BEGIN_SRC lisp
-(setf *application-history-page-size* 400)
-#+END_SRC
-
-Autolith compacts when provider usage reaches 80 percent of a model context
-window, or when =/compact= is called. =AUTOLITH_COMPACTION_THRESHOLD= accepts 1
-through 95 percent. =AUTOLITH_CONTEXT_WINDOW= supplies an unlisted model window.
-Long turns continue until completion, interruption, or unrecoverable failure;
-there is no eight-batch ceiling. =/status= shows context and provider rate limits.
-Set =AUTOLITH_WEB_SEARCH= to =cached=, =live=, =indexed=, or =disabled=;
-=cached= is the default.
-
-On exit from a durable conversation, Autolith prints the exact =autolith resume
-ID= command to reopen it. Empty conversations have no resume instruction.
-
-If an active image crashes, pending active work, recalled input, steering, queued
-follow-ups, and commands are captured in a conversation vault. Recovery never
-submits it automatically. Use =/vault= to inspect sanitized previews,
-=/vault-restore= to put captured work before newer queued work in exact order, or
-=/vault-discard= to remove this conversation's vault. Corrupt or truncated vault
-or pending state is preserved byte-for-byte. Recovery blocks ordinary submission
-rather than lose or execute unsafe state; the vault commands remain available.
-
-Persistent memory is an append-only readable =memories.sexp= file under the data
-root, not a database. Workspace scope is the default; global scope is for durable
-cross-workspace preferences and guidance. Autolith ranks relevant memory before a
-normal provider request as bounded request-local evidence, then the model can read
-complete revisioned observations through =resource.read=. It does not automatically
-summarize every conversation. Memories must never contain credentials, secrets,
-transient progress, or guesses.
-
-The resource interface provides =memory:relevant=, =memory:workspace=,
-=memory:global=, =memory:all=, and
-=memory:id/<percent-encoded-stable-id>=. Collection reads show bounded metadata,
-optionally filtered by =query= and =max-results=, while exact item reads show full
-content. After reading a workspace or global collection, one guarded
-=memory-remember= operation creates a bounded 5,000-character memory. After reading
-an exact item, =memory-replace= or =memory-forget= changes it; forgetting appends a
-tombstone and is not secure erasure from an append-only file. Revisions are
-transient, conversation-local, exact snapshots; stale, expired, cross-URI, and
-cross-workspace operations fail. This serializes one Autolith process, not external
-writers. Child agents cannot resolve memory resources.
-
-Workspace agendas live in atomic mode-0600 =agendas.sexp= state. Each canonical
-workspace has stable-ID =todo=, =doing=, =blocked=, =done=, or =note= items and
-may attach up to 16 active memory IDs. =agenda:current= gives the complete current
-agenda and a transient exact revision; =resource.edit= accepts exactly one guarded
-add, update, or remove operation. =agenda.transport= can list, view, copy, or move
-saved agendas, preserving matching attachments and handling moved repositories.
-Agenda revisions and locks are same-process aids, not interprocess compare-and-swap.
-Child agents cannot resolve agenda resources.
-
-Use =papercut.report= for a concrete Autolith limitation, broken tool, repeated
-friction, or blocker. It is prominent user-facing reporting, not progress
-updates or a substitute for a final answer. =/papercuts= lists active reports,
-=/papercut ID= expands one, and =/papercut-close ID= appends a closure without
-deleting history. Unique prefixes work; ambiguous ones fail rather than guess.
-
-* Tools and permissions
-
-For a workspace file, =resource.read= returns a bounded numbered window,
-canonical URI, and opaque revision. Directory URIs return sorted entry kinds and
-byte sizes. Missing paths return an observed missing state; =replace-empty= can
-then create the file and its parent directories. Directory resources are
-read-only.
-
-Conversation scratchpads use the same resource protocol under =scratchpad:.=
-and child URIs such as =scratchpad:program.lisp=. They are rooted outside the
-workspace, isolated by conversation, safe for child agents, and retain bounded
-UTF-8 reads, line edits, missing-file creation, and delimiter warnings.
-=scratchpad-delete= removes one exactly observed file, directory, or the root;
-it refuses truncated directory observations. The root itself cannot be created
-as a file. =lisp.scratchpad-run= remains the execution boundary for loading one
-scratchpad file into a named worker.
-
-=resource.edit= applies non-overlapping line operations against exactly an
-observed workspace or scratchpad file or missing state: =replace-lines=,
-=insert-before=, =insert-after=, =delete-lines=, or =replace-empty=. It rejects
-unseen, stale, and expired input before atomic publication. Mixed LF and CRLF
-content needs deliberate normalization first. When an exact before-and-after
-projection exists, file, memory, and agenda mutation results share a line-numbered
-syntax-highlighted diff. Successful resource mutations remain visible in
-compact transcripts. Otherwise Autolith presents the structured operation
-without guessing.
-
-Autolith serializes its own file edits and validates the exact observed state
-immediately before atomic replacement. Portable POSIX has no conditional
-rename, so an unrelated external writer in the final rename window can still
-be overwritten. Missing-file creation uses no-overwrite publication and
-rejects that race instead. Scratchpad deletion likewise validates immediately
-before removal; POSIX provides no portable compare-and-delete for a final
-external-writer race.
-
-=fs.view-image= visually attaches a local image. =shell.run= runs one authorized
-external command with bounded combined output. It defaults to 60 seconds but has
-no product timeout ceiling when you request a longer positive duration. Invalid
-output bytes display safely as replacement characters.
-
-After writing Common Lisp, Scheme, or Clojure files, Autolith advises about
-unmatched or mismatched delimiters without rolling back the edit.
-=lisp.paren-check= runs the same bounded checker on one recognized file or a
-safely contained directory tree. It reports exact retained locations and
-honest incomplete-scan counts.
-
-Unknown shell commands ask before execution. A one-time or saved approval runs
-with an isolated network and read-only host except the workspace and temporary
-directories. A permanent approval matches exact command text and canonical
-working directory in private =permissions.sexp=. =/permissions= switches between
-=ask=, session =sandbox=, and session =full=, lists approvals, or clears them.
-Start with =autolith --permissions MODE= to choose the session mode. =ask= is the
-default. =sandbox= is an accidental-damage boundary; =full= grants normal user
-privileges. Linux uses Bubblewrap, namespaces, =no_new_privs=, and seccomp;
-macOS uses a generated Seatbelt profile. Neither makes Autolith a hostile-code
-sandbox.
-
-Use =search.*= before shell searching a workspace. =search.files= fuzzy matches
-paths, =search.glob= accepts one glob, and =search.content= accepts either one
-plain, regex, or fuzzy query or several literal patterns in one pass. The tools
-share a warm fff index and return compact, workspace-relative, paginated results.
-=AGENTS.md= is discovered from a Git root
-down to the workspace on every request. An optional root =AUTOLITH.org= supplies
-bounded advisory project context; it is never executable or policy override.
-
-Every tool result records real and CPU elapsed time when it executed. Real time
-includes authorization and waits; rejected and crash-repaired results invent no
-timing. Native fff is private to Autolith. Leave =AUTOLITH_FFF_LIBRARY= unset
-except when deliberately testing a compatible development build.
-
-** Lisp workers and live changes
-
-=lisp.*= runs named, heap-isolated SBCL workers. =lisp.eval= optionally compiles
-before execution; it, =lisp.load-system=, =lisp.run-tests=, and
-=lisp.scratchpad-run= accept =async: true=. Without it, Autolith waits ten seconds, then returns the same
-still-running job rather than starting another. =lisp.start= creates a pristine
-or compatible-image worker, =lisp.reset= replaces one, =lisp.stop= forgets it,
-=lisp.repls= shows the pool, and =lisp.images= lists immutable saved workers.
-=lisp.source= maps live SBCL definitions to hash-verified matching source without
-modifying it. =lisp.save-image= safely publishes a boot-probed worker image with
-a required note. Workers never share heap objects with one another or the active
-agent.
-
-=self.*= inspects the active image and can evaluate, redefine, set, exercise,
-discard, persist, commit, checkpoint, list generations, or request rollback.
-Use =--immutable= to expose only inspection and generation-status operations;
-this restricts self tools, not filesystem, shell, or worker authority.
-
-Live changes are explicit and reconstructible. =self.redefine= and =self.set=
-journal changes. =self.diff= shows effective pending changes. =self.exercise=
-records focused evidence, and =self.discard= restores the preceding live state.
-=self.commit= checks pending changes, writes a complete replay snapshot, probes
-it in a clean pinned source process, stores it in private mutation-history Git,
-and atomically selects it. =self.persist-definition= does that transaction for
-one definition. Durable self-modification never patches the tracked repository.
-
-The selected replay and private history live under the state and data roots,
-including =current-image-commit.sexp=, =mutation-history/=, and
-=image-commits/=. Normal startup restores a selected missing replay from private
-history when possible. Autolith's source is writable through workspace tools only
-when its own repository is the workspace, like any other project. Stable launcher
-and recovery artifacts stay read-only. =self.commit= never commits a workspace
-repository.
+=tell= uses input to tell something to a session and resumes a paused session.
+=pause= cancels active work and holds queued primary work.
+=kill= requests graceful shutdown.
 
 * Configure Autolith
 
@@ -724,26 +336,3 @@ manifest's ordered =reconstruct.lisp= in package =AUTOLITH=:
 (load #P"/path/from/generation/manifest/reconstruct.lisp")
 #+END_SRC
 
-* Security and development
-
-Autolith is not a security sandbox. It executes model-generated Lisp and commands
-with the privileges of the user who runs it. Tool policy, process boundaries,
-append-only records, Git, and generations reduce accidental damage. They do not
-contain malicious code.
-
-Credentials are excluded from source, conversations, memories, journals,
-manifests, crash capsules, tool output, and saved cores. Provider objects retain
-credential paths rather than token values, and checkpointing is rejected while a
-credential request scope is active.
-
-For development, run the full suite from the repository root:
-
-#+BEGIN_SRC sh
-./script/check
-#+END_SRC
-
-It covers providers and device auth, append-only persistence and crash recovery,
-tools and permissions, workers and images, self-mutation replay, terminals,
-conversations, generations, recovery, and installed-image startup. Release smoke
-tests additionally exercise the live provider boundary, checkpoint publication,
-automatic fatal recovery, and retained-core boot.
