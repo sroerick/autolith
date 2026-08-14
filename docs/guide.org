@@ -84,7 +84,8 @@ sbcl --no-sysinit --no-userinit --load /tmp/quicklisp.lisp \
   --eval '(quicklisp-quickstart:install)' --quit
 #+END_SRC
 
-The linux setup is the same, except, you have to also have bubblewrap installed.
+The linux setup is the same, except you have to also have bubblewrap installed,
+and naturally, use your distros package manager (or nix).
 
 With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 
@@ -179,12 +180,18 @@ autolith localgroup kill   SESSION-ID
 
 Autolith loads optional
 =${XDG_CONFIG_HOME:-~/.config}/autolith/init.lisp= after tracked code and a
-selected private image commit, before provider requests. It reloads on retained
-generation reconnect. The file is ordinary Common Lisp in package =AUTOLITH=
-with your full privileges. It is not copied into private replay or the pristine
-recovery image.
+selected private image commit, before provider requests. It reloads on
+retained generation reconnect.
 
-You can add bounded request-local context:
+The file is ordinary Common Lisp in package =AUTOLITH=, with your full
+privileges. It is not copied into private replay or the pristine recovery
+image.
+
+** Context
+
+Autolith has a concept of *ephemeral notes*, which can be used to
+add temporary additional information to the context that will
+eventually disappear:
 
 #+BEGIN_SRC lisp
 (define-context-contributor release-advice (request)
@@ -192,138 +199,152 @@ You can add bounded request-local context:
   (when (search "release" (or (request-context-latest-user-text request) "")
                 :test #'char-equal)
     (make-context-contribution
-     :identifier "release-check"
+     :identifier  "release-check"
      :instruction "Verify release artifacts before publishing."
-     :lifetime ':turn
-     :priority 40)))
+     :lifetime    ':turn
+     :priority    40)))
 #+END_SRC
 
-Contributors receive a read-only request snapshot and return none, one, or many
-contributions. Contributions stack unless they explicitly deduplicate,
-supersede, or conflict. Priority governs bounded admission, not a global winner.
-They are provider-request-only and never conversation or memory content.
-=/context= shows registrations, active and omitted contributions, and bounded
-failures. =define-context-contributor= also participates in live mutation replay.
+- A contributor sees a read-only request snapshot
+- It can return none, one, or many contributions
+- Notes stack unless they deduplicate, supersede, or conflict
+- Priority only comes into play when the advice budget is full
+- You can use =(context)= 
 
-Register a non-secret OpenAI-compatible provider like this:
+Note that these are provider-request-only, and don't not count as a conversation turn,
+and do not get attached to your messages.
+
+** Providers
+
+Register a OpenAI-compatible provider:
 
 #+BEGIN_SRC lisp
 (register-openai-compatible-provider
- :name "my-provider"
- :description "My OpenAI-compatible provider"
- :endpoint "https://api.example.com/v1/chat/completions"
+ :name            "my-provider"
+ :description     "My OpenAI-compatible provider"
+ :endpoint        "https://api.example.com/v1/chat/completions"
  :models-endpoint "https://api.example.com/v1/models")
 #+END_SRC
 
-Authenticate it with =autolith --auth my-provider= or =/auth my-provider=. The
-explicit authentication path does not need remote model discovery first. After
-saving a key, static metadata or the last good cache keeps models available;
-=/models= triggers discovery. You may supply non-secret =:headers= and static
-=:models= metadata for descriptions, windows, efforts, or providers without a
-model-list endpoint. Use =/mcp reload= after changing =init.lisp=. Built-in and
-compatible providers share safe bounded streaming and normalized tool behavior;
-malformed events become typed provider failures.
+Authenticate with =autolith --auth my-provider= or =(auth "my-provider")=.
 
-You can define an interactive command too:
+After a key is saved, static metadata or the last good cache keeps models
+available. =(models)= triggers discovery. You can also pass non-secret
+=:headers= and static =:models= for descriptions, windows, efforts, or
+providers that have no model-list endpoint.
+
+** Commands
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
-    (:name "/my-version"
-     :argument "[LABEL]"
-     :description "show a labeled local integration version"
-     :tip "shows the version supplied by init.lisp."
-     :busy-behavior :inspect
-     :terminal-behavior :shared
-     :call-lambda-list (&optional (label "integration"))
+    (:name                "/my-version"
+     :argument            "[LABEL]"
+     :description         "show a labeled local integration version"
+     :tip                 "shows the version supplied by init.lisp."
+     :busy-behavior       :inspect
+     :terminal-behavior   :shared
+     :call-lambda-list    (&optional (label "integration"))
      :slash-argument-mode :first)
     (application &optional (label "integration"))
   (application-present application (format nil "~A 3" label))
   :continue)
 #+END_SRC
 
-Callable commands have stable definition names even if slash aliases change.
-Interactive arity errors open the restart debugger, where =supply-arguments=
-accepts one Lisp form producing replacement arguments. Programmatic calls keep
-normal Common Lisp arity rules. Commands declare busy behavior =:inspect=,
-=:execute=, =:hold=, or =:cancel=, plus terminal sharing or exclusivity.
+- Interactive arity errors open the restart debugger. =supply-arguments=
+  takes one Lisp form of replacement arguments.
+- Programmatic calls keep ordinary Common Lisp arity rules.
+- Busy behavior is =:inspect=, =:execute=, =:hold=, or =:cancel=.
+- Terminal behavior is =:shared=, =:exclusive=, or
+  =:exclusive-without-arguments=.
 
-Child roles may live in =.autolith/agents/=, then
-=${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=, then bundled roles. Higher
-precedence malformed roles are reported rather than silently replaced. A role is
-one bounded UTF-8 =*.sexp= property list with =:name=, =:description=, and
-=:instructions= plus optional =:tools=, =:spawns=, =:models=,
-=:reasoning-effort=, =:output=, and =:blocking-p=. Its reader rejects evaluation,
-extra forms, unknown or duplicate keys, shared structure, and malformed values.
-Roles cannot directly grant =self.*=, =task.*=, =job.*=, or =yield.*=.
+** Child roles
 
-A role may optionally restrict tools, delegation, models, or effort, request
-blocking behavior, and require a native structured result schema. For example:
+Roles load from these directories. First match wins:
+
+- =.autolith/agents/=
+- =${XDG_CONFIG_HOME:-~/.config}/autolith/agents/=
+- bundled roles
+
+A higher-precedence malformed role is reported, not silently replaced.
+
+A role is one bounded UTF-8 =*.sexp= property list:
+
+- required: =:name=, =:description=, =:instructions=
+- optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=, =:output=,
+  =:blocking-p=
+
+Roles cannot grant =self.*=, =task.*=, =job.*=, or =yield.*=.
+
+- =:tools= may be =nil=, =:all=, or canonical tool names and namespace
+  patterns.
+- =:spawns= may be =nil=, =:all=, or role names. Task depth still applies.
+- =:output= is the native schema DSL. There, =nil= is JSON false and
+  =:null= is JSON null.
+
+Example:
 
 #+BEGIN_SRC lisp
-(:name "reviewer"
- :description "Review a change for regressions."
- :instructions "Report concrete, evidence-backed findings."
- :tools ("resource.read" "search.*")
- :spawns nil
- :models ("@parent")
+(:name             "reviewer"
+ :description      "Review a change for regressions."
+ :instructions     "Report concrete, evidence-backed findings."
+ :tools            ("resource.read" "search.*")
+ :spawns           nil
+ :models           ("@parent")
  :reasoning-effort :high
  :blocking-p t)
 #+END_SRC
 
-=:tools= may be =nil=, =:all=, or canonical tool names and namespace patterns.
-=:spawns= may be =nil=, =:all=, or role names, still subject to task depth.
-=:output= uses the native schema DSL for object, array, scalar, null, enum, and
-required-property validation. In that DSL and result values, =nil= means JSON
-false and =:null= means JSON null when the distinction matters.
+=task.agents= shows effective roles. =task.run= starts one task or an
+independent batch. Nonblocking work detaches by default. =blocking: true=
+waits. A role with =:blocking-p t= always waits. Each child must finish
+with one =yield.submit= of =success=, =failed=, or =aborted=.
 
-=task.agents= shows effective roles. =task.run= starts one flat task or an
-independent batch. Nonblocking work detaches by default; =blocking: true= waits,
-and a role with =:blocking-p t= always waits. The old inverse =async= is accepted
-but cannot accompany =blocking=. Each child must finish with one =yield.submit=
-of =success=, =failed=, or =aborted=. The default pool admits eight concurrent
-children, configurable by =AUTOLITH_TASK_MAX_CONCURRENCY= up to 32. Child jobs
-have no deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
-
-Codex child requests can receive a bounded filtered snapshot of parent user text
-and final answers. It excludes reasoning, tools, images, intermediate phases, and
-parent developer policy, and is capped at 32 KiB and one quarter of the child
-window. Detached children see admission-time context only. Root and child threads
-remain separate even when they share a provider prompt-cache hint. =job.list=,
-=job.wait=, and =job.cancel= expose only jobs visible to the caller's task tree;
-a zero-second wait inspects without blocking. Child transcripts and artifacts
-stay outside normal conversation lists.
+The default pool admits eight concurrent children.
+=AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
+deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.
 
 * Generations and recovery
 
-=/checkpoint= requires a clean Git worktree and passing =./script/check=. It
-commits pending reconstructible mutations, forks a saver without stopping the
-active parent, boot-probes the result, then atomically publishes a manifest, core,
-and replay script. =/generations= lists retained images. =/rollback ID= selects a
-compatible image and exits through recovery.
+=(checkpoint)= requires a clean Git worktree and a passing =./script/check=.
+It saves pending reconstructible mutations and publishes a retained image
+without stopping the active session.
 
-You can inspect or boot retained generations directly:
+- =(generations)= lists retained images.
+- =(rollback ID)= selects a compatible image and exits through recovery.
+
+Inspect or boot retained generations from the CLI:
 
 #+BEGIN_SRC sh
 autolith --recovery --list
 autolith --recovery --generation GENERATION-ID
 #+END_SRC
 
-Recovery normally starts the separately built pristine core, not the damaged
-active core. It validates its provenance and handshake, then falls back to source
-if the pristine image is absent or invalid. Automatic recovery first tries a
-selected generation from the current source revision, then other compatible
-newest-first generations from that revision, then a private clean checkout of
-current committed source. Explicit generation selection may intentionally use an
-older revision. Worker images are never recovery candidates.
+Recovery starts the separately built pristine core, not the damaged active
+core. If that image is missing or invalid, it falls back to source.
+
+Automatic recovery tries, in order:
+
+- the selected generation from the current source revision
+- other compatible generations from that revision, newest first
+- a private clean checkout of current committed source
+
+Explicit generation selection may use an older revision.
 
 A fatal active failure publishes a private crash capsule and restores the
-terminal. Recovery restores its conversation and terminal sequence without
-duplicating scrollback. With a valid capsule, it queues one read-only diagnosis
-turn before ordinary input. That turn can inspect bounded crash context,
-workspace and tracked source files, indexed source, and active state, but has no
-shell, MCP, hosted provider, image, write, mutation, checkpoint, or rollback
-tools. It asks before applying any repair. A manually started recovery image does
-not queue diagnosis.
+terminal. Recovery restores the conversation without duplicating scrollback.
+With a valid capsule, it queues one read-only diagnosis turn before ordinary
+input.
+
+That turn can inspect:
+
+- bounded crash context
+- workspace and tracked source
+- indexed source
+- active state
+
+It has no shell, MCP, hosted provider, image, write, mutation, checkpoint,
+or rollback tools. It asks before any repair. A manually started recovery
+image does not queue diagnosis.
 
 Saved cores require their recorded SBCL version, OS build, and architecture.
 Source remains authoritative. To reconstruct without a core, check out the
@@ -335,4 +356,3 @@ manifest's ordered =reconstruct.lisp= in package =AUTOLITH=:
 (asdf:load-system :autolith)
 (load #P"/path/from/generation/manifest/reconstruct.lisp")
 #+END_SRC
-
