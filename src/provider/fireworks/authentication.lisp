@@ -1,6 +1,6 @@
 (in-package #:autolith)
 
-;;;; -- Fireworks API Key Credential Source --
+;;;; -- Fireworks API Key Authentication --
 
 ;;; Fireworks authenticates with a static account API key rather than an
 ;;; OAuth token family. The key rides in the generic oauth-credentials
@@ -16,52 +16,19 @@
 (defparameter *fireworks-environment-variable* "FIREWORKS_API_KEY"
   "The environment variable holding the Fireworks account API key.")
 
-(defclass fireworks-environment-credential-source (credential-source)
+(defclass fireworks-environment-credential-source
+    (environment-api-key-credential-source)
   ()
+  (:default-initargs
+   :environment-variable *fireworks-environment-variable*
+   :account-id *fireworks-account-label*)
   (:documentation
    "A read-only adapter loading the Fireworks API key from the environment."))
-
-(defmethod credential-source-pathname
-    ((source fireworks-environment-credential-source))
-  "Report a conventional key path because the environment has no pathname."
-  (declare (ignore source))
-  (merge-pathnames "fireworks-auth.sexp"
-                   (environment-directory
-                    "XDG_STATE_HOME"
-                    (merge-pathnames ".local/state/autolith/"
-                                     (user-homedir-pathname)))))
-
-(defmethod credential-source-label
-    ((source fireworks-environment-credential-source))
-  "Name the Fireworks environment source in user-visible failures."
-  (declare (ignore source))
-  "the FIREWORKS_API_KEY environment variable")
-
-(defmethod credential-source-load
-    ((source fireworks-environment-credential-source))
-  "Load the Fireworks API key from FIREWORKS_API_KEY, or return NIL."
-  (let ((key (uiop:getenv *fireworks-environment-variable*)))
-    (when (non-empty-string-p key)
-      (make-instance 'oauth-credentials
-                     :access-token key
-                     :refresh-token nil
-                     :id-token nil
-                     :account-id *fireworks-account-label*
-                     :expires-at nil
-                     :source-path (credential-source-pathname source)))))
-
-(defmethod credential-source-save
-    ((source fireworks-environment-credential-source)
-     (credentials oauth-credentials))
-  "Reject writes to the Fireworks environment source."
-  (declare (ignore credentials))
-  (error 'authentication-error
-         :message "The FIREWORKS_API_KEY environment source is read-only."))
 
 
 ;;;; -- Fireworks Credential Manager --
 
-(defclass fireworks-credential-manager (credential-manager)
+(defclass fireworks-credential-manager (static-api-key-credential-manager)
   ()
   (:documentation
    "The static API key credential manager behind the Fireworks provider."))
@@ -91,83 +58,33 @@
                  :bootstrap-source
                  (make-instance 'fireworks-environment-credential-source)))
 
-(defmethod credential-manager-load ((manager fireworks-credential-manager))
-  "Prefer the current environment key, then load the saved interactive key."
-  (let ((environment
-          (credential-source-load
-           (credential-manager-bootstrap-source manager))))
-    (credential-manager-accept-account
-     manager
-     (or environment
-         (credential-source-load
-          (credential-manager-primary-source manager))
-         (error 'credentials-unavailable
-                :message
-                (format nil "No Fireworks API key is available; ~A."
-                        (credential-manager-login-hint manager))
-                :searched-paths
-                (list (credential-source-pathname
-                       (credential-manager-primary-source manager))))))))
-
-(defmethod credential-manager-refreshable-p
-    ((manager fireworks-credential-manager))
-  "Static Fireworks API keys cannot refresh."
-  (declare (ignore manager))
-  nil)
-
-(defmethod credential-manager-refresh-exchange
-    ((manager fireworks-credential-manager)
-     (credentials oauth-credentials)
-     (refresh-token string))
-  "Refuse to refresh a static Fireworks API key; this path is unreachable."
-  (declare (ignore credentials refresh-token))
-  (error 'token-refresh-failed
-         :message (format nil "Fireworks API keys never refresh; ~A."
-                          (credential-manager-login-hint manager))
-         :status nil
-         :response nil))
-
 
 ;;;; -- Fireworks API Key Validation --
 
 (-> fireworks-validate-api-key (string) null)
 (defun fireworks-validate-api-key (key)
   "Probe the Fireworks Responses API with KEY, signaling on rejection."
-  (handler-case
-      (let ((request
-              (json-object
-               "model" *default-fireworks-model*
-               "input" "Reply with the single word: ok"
-               "store" false
-               "stream" false)))
-        (dexador:post
-         (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
-             *fireworks-responses-endpoint*)
-         :headers (list (cons "Authorization" (format nil "Bearer ~A" key))
-                        (cons "Content-Type" "application/json")
-                        (cons "Accept" "application/json")
-                        (cons "User-Agent" (provider-user-agent)))
-         :content (json-encode-utf8 request)
-         :force-string t
-         :keep-alive nil
-         :connect-timeout 30
-         :read-timeout 60))
-    (dexador.error:http-request-unauthorized ()
-      (error 'authentication-error
-             :message "Fireworks rejected the entered API key."))
-    (http-request-failed (condition)
-      (error 'authentication-error
-             :message (format nil
-                              "The Fireworks API key validation failed (HTTP ~D)."
-                              (response-status condition))))
-    (error (condition)
-      (if (typep condition 'authentication-error)
-          (error condition)
-          (error 'authentication-error
-                 :message
-                 "The Fireworks API key could not be validated; check the network."))))
-  nil)
-
+  (api-key-validate-probe
+   "Fireworks"
+   (lambda ()
+     (let ((request
+             (json-object
+              "model" *default-fireworks-model*
+              "input" "Reply with the single word: ok"
+              "store" false
+              "stream" false)))
+       (dexador:post
+        (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
+            *fireworks-responses-endpoint*)
+        :headers (list (cons "Authorization" (format nil "Bearer ~A" key))
+                       (cons "Content-Type" "application/json")
+                       (cons "Accept" "application/json")
+                       (cons "User-Agent" (provider-user-agent)))
+        :content (json-encode-utf8 request)
+        :force-string t
+        :keep-alive nil
+        :connect-timeout 30
+        :read-timeout 60)))))
 
 (-> fireworks-api-key-login
     (fireworks-credential-manager &key
@@ -182,33 +99,8 @@
        (input *standard-input*)
        input-file-descriptor)
   "Prompt for a Fireworks API key, validate it, and save it to MANAGER's store."
-  (call-with-secret-use
-   (lambda ()
-     (let ((key
-             (string-trim
-              '(#\Space #\Tab #\Newline #\Return)
-               (or (api-key-read-hidden
-                    "Fireworks"
-                    :input input
-                    :input-file-descriptor input-file-descriptor
-                    :stream stream
-                    :note
-                    (format nil "~A overrides the stored key when set."
-                            *fireworks-environment-variable*))
-                  ""))))
-       (unless (non-empty-string-p key)
-         (error 'authentication-error
-                :message "No Fireworks API key was entered."))
-       (fireworks-validate-api-key key)
-       (credential-source-save
-        (credential-manager-primary-source manager)
-        (make-instance 'oauth-credentials
-                       :access-token key
-                       :refresh-token nil
-                       :id-token nil
-                       :account-id *fireworks-account-label*
-                       :expires-at nil
-                       :source-path
-                       (credential-source-pathname
-                        (credential-manager-primary-source manager))))
-       "Fireworks authentication was saved by Autolith."))))
+  (api-key-login manager
+                 :stream stream
+                 :input input
+                 :input-file-descriptor input-file-descriptor
+                 :validate #'fireworks-validate-api-key))

@@ -356,3 +356,187 @@ never retains the resulting credential after this call."
            t))
         t)
     (credentials-unavailable () nil)))
+
+
+;;;; -- Environment API-Key Credential Sources --
+
+(defclass environment-api-key-credential-source (credential-source)
+  ((environment-variable
+    :initarg :environment-variable
+    :reader environment-api-key-credential-source-environment-variable
+    :type non-empty-string
+    :documentation
+    "The environment variable holding this provider's static API key.")
+   (account-id
+    :initarg :account-id
+    :reader environment-api-key-credential-source-account-id
+    :type non-empty-string
+    :documentation
+    "The synthetic account identifier pinned for this static API key."))
+  (:documentation
+   "A read-only adapter loading one static provider API key from the environment."))
+
+(-> environment-api-key-credential-source--pathname (string) pathname)
+(defun environment-api-key-credential-source--pathname (account-id)
+  "Return the conventional reporting path for ACCOUNT-ID's environment source."
+  (merge-pathnames (format nil "~A-auth.sexp" account-id)
+                   (environment-directory
+                    "XDG_STATE_HOME"
+                    (merge-pathnames ".local/state/autolith/"
+                                     (user-homedir-pathname)))))
+
+(defmethod credential-source-pathname
+    ((source environment-api-key-credential-source))
+  "Report a conventional key path because the environment has no pathname."
+  (environment-api-key-credential-source--pathname
+   (environment-api-key-credential-source-account-id source)))
+
+(defmethod credential-source-label
+    ((source environment-api-key-credential-source))
+  "Name the environment source in user-visible failures."
+  (format nil "the ~A environment variable"
+          (environment-api-key-credential-source-environment-variable source)))
+
+(defmethod credential-source-load
+    ((source environment-api-key-credential-source))
+  "Load SOURCE's API key from its environment variable, or return NIL."
+  (let ((key (uiop:getenv
+              (environment-api-key-credential-source-environment-variable
+               source))))
+    (when (non-empty-string-p key)
+      (make-instance 'oauth-credentials
+                     :access-token key
+                     :refresh-token nil
+                     :id-token nil
+                     :account-id
+                     (environment-api-key-credential-source-account-id source)
+                     :expires-at nil
+                     :source-path (credential-source-pathname source)))))
+
+(defmethod credential-source-save
+    ((source environment-api-key-credential-source)
+     (credentials oauth-credentials))
+  "Reject writes to the environment source."
+  (declare (ignore credentials))
+  (error 'authentication-error
+         :message
+         (format nil "The ~A environment source is read-only."
+                 (environment-api-key-credential-source-environment-variable
+                  source))))
+
+
+;;;; -- Static API-Key Credential Manager --
+
+(defclass static-api-key-credential-manager (api-key-credential-manager)
+  ()
+  (:documentation
+   "A static API-key manager that prefers the current environment key."))
+
+(defmethod credential-manager-load ((manager static-api-key-credential-manager))
+  "Prefer the current environment key, then load the saved interactive key."
+  (let ((environment
+          (credential-source-load
+           (credential-manager-bootstrap-source manager))))
+    (credential-manager-accept-account
+     manager
+     (or environment
+         (credential-source-load
+          (credential-manager-primary-source manager))
+         (error 'credentials-unavailable
+                :message
+                (format nil "No ~A API key is available; ~A."
+                        (credential-manager-provider-label manager)
+                        (credential-manager-login-hint manager))
+                :searched-paths
+                (list (credential-source-pathname
+                       (credential-manager-primary-source manager))))))))
+
+(-> api-key-credential-manager-persist-key
+    (api-key-credential-manager non-empty-string)
+    oauth-credentials)
+(defun api-key-credential-manager-persist-key (manager key)
+  "Save KEY to MANAGER's primary store using that store's credential shape."
+  (let ((source (credential-manager-primary-source manager)))
+    (if (typep source 'api-key-credential-source)
+        (api-key-credential-manager-save-key manager key)
+        (let ((bootstrap (credential-manager-bootstrap-source manager)))
+          (credential-source-save
+           source
+           (make-instance
+            'oauth-credentials
+            :access-token key
+            :refresh-token nil
+            :id-token nil
+            :account-id
+            (if (typep bootstrap 'environment-api-key-credential-source)
+                (environment-api-key-credential-source-account-id bootstrap)
+                (string-downcase (credential-manager-provider-label manager)))
+            :expires-at nil
+            :source-path (credential-source-pathname source)))))))
+
+(-> api-key-validate-probe (string function) null)
+(defun api-key-validate-probe (label thunk)
+  "Run THUNK and translate network rejection into an authentication error for LABEL."
+  (handler-case
+      (progn
+        (funcall thunk)
+        nil)
+    (dexador.error:http-request-unauthorized ()
+      (error 'authentication-error
+             :message (format nil "~A rejected the entered API key." label)))
+    (http-request-failed (condition)
+      (error 'authentication-error
+             :message (format nil
+                              "The ~A API key validation failed (HTTP ~D)."
+                              label
+                              (response-status condition))))
+    (error (condition)
+      (if (typep condition 'authentication-error)
+          (error condition)
+          (error 'authentication-error
+                 :message
+                 (format nil
+                         "The ~A API key could not be validated; check the network."
+                         label))))))
+
+(-> api-key-login
+    (api-key-credential-manager &key
+                                (:stream stream)
+                                (:input stream)
+                                (:input-file-descriptor (option integer))
+                                (:validate (option function)))
+    string)
+(defun api-key-login
+    (manager
+     &key
+       (stream *standard-output*)
+       (input *standard-input*)
+       input-file-descriptor
+       validate)
+  "Prompt for MANAGER's API key, optionally validate it, and persist it."
+  (call-with-secret-use
+   (lambda ()
+     (let* ((label (credential-manager-provider-label manager))
+            (bootstrap (credential-manager-bootstrap-source manager))
+            (note
+              (when (typep bootstrap 'environment-api-key-credential-source)
+                (format nil "~A overrides the stored key when set."
+                        (environment-api-key-credential-source-environment-variable
+                         bootstrap))))
+            (key
+              (string-trim
+               '(#\Space #\Tab #\Newline #\Return)
+               (or (api-key-read-hidden
+                    label
+                    :input input
+                    :input-file-descriptor input-file-descriptor
+                    :stream stream
+                    :note note)
+                   ""))))
+       (unless (non-empty-string-p key)
+         (error 'authentication-error
+                :message (format nil "No ~A API key was entered." label)))
+       (when validate
+         (funcall validate key))
+       (api-key-credential-manager-persist-key manager key)
+       (format nil "~A authentication was saved by Autolith." label)))))
