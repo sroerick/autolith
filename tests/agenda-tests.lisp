@@ -280,7 +280,7 @@
 
 (-> test-agenda-tools () null)
 (defun test-agenda-tools ()
-  "Test agenda tool dispatch and transport inspection."
+  "Test agenda transport dispatch and inspection."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (target (merge-pathnames "transport-target/" root))
@@ -293,15 +293,31 @@
     (unwind-protect
          (progn
            (ensure-directories-exist (merge-pathnames "marker" target))
-           (let ((conversation (conversation-create configuration
-                                                    :identifier "agenda-tools")))
-             (labels ((run (name &rest arguments)
-                        "Execute agenda NAME with alternating ARGUMENTS."
+           (test-assert
+            (and (null (tool-registry-find registry "agenda" "list"))
+                 (null (tool-registry-find registry "agenda" "add"))
+                 (null (tool-registry-find registry "agenda" "update"))
+                 (null (tool-registry-find registry "agenda" "remove"))
+                 (typep (tool-registry-find registry "agenda" "transport")
+                        'agenda-transport-tool))
+            "the default registry exposes only nonredundant agenda transport")
+           (with-recursive-lock-held (*agenda-lock*)
+             (let ((state (agenda-load configuration)))
+               (agenda-add
+                :configuration configuration
+                :state state
+                :text "finish agenda integration"
+                :status ':doing
+                :memory-identifiers (list (memory-identifier memory)))))
+           (let ((conversation
+                   (conversation-create configuration :identifier "agenda-tools")))
+             (labels ((run (&rest arguments)
+                        "Execute agenda.transport with alternating ARGUMENTS."
                         (tool-registry-execute-call
                          registry
                          (json-object
                           "namespace" "agenda"
-                          "name" name
+                          "name" "transport"
                           "arguments" (json-encode
                                        (apply #'json-object arguments)))
                          (make-instance 'tool-context
@@ -310,73 +326,30 @@
                                         :conversation conversation))))
                (test-assert
                 (tool-result-success-p
-                 (run "add" "text" "finish agenda integration"
-                            "status" "doing"
-                            "memory-ids"
-                            (json-array (memory-identifier memory))))
-                "agenda.add creates a current-workspace item")
-               (let* ((state (agenda-load configuration))
-                      (item (first (workspace-agenda-items
-                                    (agenda-current configuration state))))
-                      (identifier (agenda-item-identifier item)))
-                 (test-assert
-                  (tool-result-success-p
-                   (run "update" "id" identifier "status" "blocked"))
-                  "agenda.update changes an item by stable id")
-                 (test-assert
-                 (search "[blocked]"
-                          (tool-result-content (run "list")))
-                  "agenda.list returns complete updated item data")
-                 (test-assert
-                  (search (memory-identifier memory)
-                          (tool-result-content (run "list")))
-                  "agenda.update preserves attached memories when omitted")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (run "update"
-                             "id" identifier
-                             "memory-ids" (json-array "missing-memory"))))
-                  "agenda.update rejects unknown memory identifiers")
-                 (test-assert
-                  (tool-result-success-p
-                   (run "update" "id" identifier
-                                 "memory-ids" (json-array)))
-                  "agenda.update accepts an empty array to detach memories")
-                 (test-assert
-                  (not (search (memory-identifier memory)
-                               (tool-result-content (run "list"))))
-                  "detaching removes the memory id from agenda output")
-                 (test-assert
-                  (tool-result-success-p
-                   (run "transport"
-                        "operation" "copy"
-                        "source-directory"
-                        (namestring
-                         (configuration-working-directory configuration))
-                        "target-directory" (namestring target)))
-                  "agenda.transport copies an agenda to another workspace")
-                 (test-assert
-                  (search "finish agenda integration"
-                          (tool-result-content
-                           (run "transport"
-                                "operation" "view"
-                                "source-directory" (namestring target))))
-                  "agenda.transport views another workspace's complete agenda")
-                 (test-assert
-                  (and (search (namestring
-                                (configuration-working-directory configuration))
-                               (tool-result-content
-                                (run "transport" "operation" "workspaces")))
-                       (search (namestring target)
-                               (tool-result-content
-                                (run "transport" "operation" "workspaces"))))
-                  "agenda.transport enumerates every stored workspace key")
-                 (test-assert
-                  (tool-result-success-p (run "remove" "id" identifier))
-                  "agenda.remove deletes a current-workspace item")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (run "transport" "operation" "rename")))
-                  "agenda.transport rejects unsupported operations")))))
+                 (run "operation" "copy"
+                      "source-directory"
+                      (namestring
+                       (configuration-working-directory configuration))
+                      "target-directory" (namestring target)))
+                "agenda.transport copies an agenda to another workspace")
+               (test-assert
+                (search "finish agenda integration"
+                        (tool-result-content
+                         (run "operation" "view"
+                              "source-directory" (namestring target))))
+                "agenda.transport views another workspace's complete agenda")
+               (test-assert
+                (and (search (namestring
+                              (configuration-working-directory configuration))
+                             (tool-result-content
+                              (run "operation" "workspaces")))
+                     (search (namestring target)
+                             (tool-result-content
+                              (run "operation" "workspaces"))))
+                "agenda.transport enumerates every stored workspace key")
+               (test-assert
+                (not (tool-result-success-p
+                      (run "operation" "rename")))
+                "agenda.transport rejects unsupported operations"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)

@@ -406,71 +406,24 @@
 
 (-> default-tools--register-agenda (tool-registry) tool-registry)
 (defun default-tools--register-agenda (registry)
-  "Register workspace agenda tools in REGISTRY."
-  (let ((empty-schema (tool-object-schema (json-object) nil)))
-    (dolist
-        (specification
-         (list
-          (list
-           'agenda-list-tool
-           "agenda" "list"
-           "Read the current workspace's complete agenda."
-           empty-schema)
-          (list
-           'agenda-add-tool
-           "agenda" "add"
-           "Add one short task, thought, or note to the current workspace agenda."
-           (tool-object-schema
-            (json-object
-             "text" (tool-string-property
-                     "The complete item text, at most 500 characters.")
-             "status" (json-object
-                       "type" "string"
-                       "enum" #("todo" "doing" "blocked" "done" "note")
-                       "description" "The item status; defaults to todo.")
-             "memory-ids" (tool-string-array-property
-                           "Optional active persistent-memory ids to attach."))
-            '("text")))
-          (list
-           'agenda-update-tool
-           "agenda" "update"
-           "Change one current-workspace agenda item by stable id."
-           (tool-object-schema
-            (json-object
-             "id" (tool-string-property "The exact agenda item identifier.")
-             "text" (tool-string-property
-                     "Optional complete replacement text, at most 500 characters.")
-             "status" (json-object
-                       "type" "string"
-                       "enum" #("todo" "doing" "blocked" "done" "note")
-                       "description" "Optional replacement item status.")
-             "memory-ids" (tool-string-array-property
-                           "Optional complete replacement memory-id list; an empty array detaches all memories."))
-            '("id")))
-          (list
-           'agenda-remove-tool
-           "agenda" "remove"
-           "Remove one current-workspace agenda item by stable id."
-           (tool-object-schema
-            (json-object
-             "id" (tool-string-property "The exact agenda item identifier."))
-            '("id")))
-          (list
-           'agenda-transport-tool
-           "agenda" "transport"
-           "Enumerate or inspect workspace agendas, or copy or move one agenda to an existing workspace directory. Move rekeys an agenda after its repository changes location."
-           (tool-object-schema
-            (json-object
-             "operation" (json-object
-                          "type" "string"
-                          "enum" #("workspaces" "view" "copy" "move")
-                          "description" "workspaces lists known keys; view reads one; copy merges into a target while retaining the source; move merges and removes the source key.")
-             "source-directory" (tool-string-property
-                                 "The source workspace key. Required for view, copy, and move; it may name a repository path that no longer exists.")
-             "target-directory" (tool-string-property
-                                 "An existing destination workspace for copy or move; defaults to the current workspace."))
-            '("operation")))))
-      (default-tools--register registry specification)))
+  "Register workspace agenda transport in REGISTRY."
+  (default-tools--register
+   registry
+   (list
+    'agenda-transport-tool
+    "agenda" "transport"
+    "Enumerate or inspect workspace agendas, or copy or move one agenda to an existing workspace directory. Move rekeys an agenda after its repository changes location."
+    (tool-object-schema
+     (json-object
+      "operation" (json-object
+                   "type" "string"
+                   "enum" #("workspaces" "view" "copy" "move")
+                   "description" "workspaces lists known keys; view reads one; copy merges into a target while retaining the source; move merges and removes the source key.")
+      "source-directory" (tool-string-property
+                          "The source workspace key. Required for view, copy, and move; it may name a repository path that no longer exists.")
+      "target-directory" (tool-string-property
+                          "An existing destination workspace for copy or move; defaults to the current workspace."))
+     '("operation"))))
   registry)
 
 (-> default-tools--register-plan (tool-registry) tool-registry)

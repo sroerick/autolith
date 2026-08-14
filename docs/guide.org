@@ -445,14 +445,13 @@ cross-workspace operations fail. This serializes one Autolith process, not exter
 writers. Child agents cannot resolve memory resources.
 
 Workspace agendas live in atomic mode-0600 =agendas.sexp= state. Each canonical
-workspace has stable-ID =todo=, =doing=, =blocked=, =done=, or =note= items.
-=agenda.list=, =agenda.add=, =agenda.update=, and =agenda.remove= are the simple
-interface. Items may attach up to 16 active memory IDs. =agenda:current= gives
-the complete current agenda and a transient exact revision; =resource.edit=
-accepts exactly one guarded add, update, or remove operation. =agenda.transport=
-can list, view, copy, or move saved agendas, preserving matching attachments and
-handling moved repositories. Agenda revisions and locks are same-process aids,
-not interprocess compare-and-swap. Child agents cannot resolve agenda resources.
+workspace has stable-ID =todo=, =doing=, =blocked=, =done=, or =note= items and
+may attach up to 16 active memory IDs. =agenda:current= gives the complete current
+agenda and a transient exact revision; =resource.edit= accepts exactly one guarded
+add, update, or remove operation. =agenda.transport= can list, view, copy, or move
+saved agendas, preserving matching attachments and handling moved repositories.
+Agenda revisions and locks are same-process aids, not interprocess compare-and-swap.
+Child agents cannot resolve agenda resources.
 
 Use =papercut.report= for a concrete Autolith limitation, broken tool, repeated
 friction, or blocker. It is prominent user-facing reporting, not progress

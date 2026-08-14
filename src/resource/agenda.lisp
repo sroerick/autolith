@@ -89,6 +89,41 @@
       nil))
 
 
+;;;; -- Presentation --
+
+(-> agenda-resource--render-item (agenda-item) string)
+(defun agenda-resource--render-item (item)
+  "Return complete model-visible data for agenda ITEM."
+  (format nil "~A  [~(~A~)]  ~A~@[  memories: ~{~A~^, ~}~]"
+          (agenda-item-identifier item)
+          (agenda-item-status item)
+          (agenda-item-text item)
+          (agenda-item-memory-identifiers item)))
+
+(-> agenda-resource--render-record ((option workspace-agenda)) string)
+(defun agenda-resource--render-record (record)
+  "Return the complete model-visible agenda RECORD."
+  (if (and record (workspace-agenda-items record))
+      (format nil "workspace: ~A~%~{~A~^~%~}"
+              (workspace-agenda-directory record)
+              (mapcar #'agenda-resource--render-item
+                      (workspace-agenda-items record)))
+      "The workspace agenda is empty."))
+
+(-> agenda-resource--render-workspaces (agenda-state) string)
+(defun agenda-resource--render-workspaces (state)
+  "Return every known agenda directory and item count."
+  (if (agenda-state-records state)
+      (format nil "~{~A~^~%~}"
+              (mapcar
+               (lambda (record)
+                 (format nil "~D item~:P  ~A"
+                         (length (workspace-agenda-items record))
+                         (workspace-agenda-directory record)))
+               (agenda-state-records state)))
+      "No workspace agendas are stored."))
+
+
 ;;;; -- Exact Agenda Observation --
 
 (-> agenda-resource--snapshot (non-empty-string (option workspace-agenda)) list)
@@ -110,7 +145,7 @@
                    :revision  (resource-readable-snapshot-digest
                                *agenda-resource-digest-key*
                                snapshot)
-                   :content   (agenda-tool--render-record record)
+                   :content   (agenda-resource--render-record record)
                    :directory configuration-directory
                    :snapshot  snapshot)))
 
@@ -198,6 +233,72 @@
     state))
 
 
+;;;; -- Agenda Operation Arguments --
+
+(-> agenda-resource--status (json-object &key (:required boolean))
+    (option agenda-status))
+(defun agenda-resource--status (arguments &key required)
+  "Return the validated agenda status in ARGUMENTS."
+  (multiple-value-bind (value present-p)
+      (gethash "status" arguments)
+    (when (and required (not present-p))
+      (error 'tool-error
+             :message "An agenda status is required."
+             :tool-name "resource.edit"))
+    (cond
+      ((not present-p)
+       nil)
+      ((not (stringp value))
+       (error 'tool-error
+              :message "Agenda status must be a string."
+              :tool-name "resource.edit"))
+      ((string-equal value "todo") ':todo)
+      ((string-equal value "doing") ':doing)
+      ((string-equal value "blocked") ':blocked)
+      ((string-equal value "done") ':done)
+      ((string-equal value "note") ':note)
+      (t
+       (error 'tool-error
+              :message "Agenda status must be todo, doing, blocked, done, or note."
+              :tool-name "resource.edit")))))
+
+(-> agenda-resource--string-argument
+    (json-object string string &key (:required boolean))
+    (option string))
+(defun agenda-resource--string-argument
+    (arguments name tool-name &key required)
+  "Return the optional string NAME in ARGUMENTS for TOOL-NAME."
+  (multiple-value-bind (value present-p)
+      (gethash name arguments)
+    (when (and required (not present-p))
+      (error 'tool-error
+             :message (format nil "~A requires ~A." tool-name name)
+             :tool-name tool-name))
+    (when (and present-p (not (non-empty-string-p value)))
+      (error 'tool-error
+             :message (format nil "~A must be a non-empty string." name)
+             :tool-name tool-name))
+    value))
+
+(-> agenda-resource--memory-identifiers
+    (json-object string)
+    (values list boolean))
+(defun agenda-resource--memory-identifiers (arguments tool-name)
+  "Return TOOL-NAME's memory-ids array and whether it was supplied."
+  (multiple-value-bind (value present-p)
+      (gethash "memory-ids" arguments)
+    (cond
+      ((not present-p)
+       (values nil nil))
+      ((and (vectorp value)
+            (every #'non-empty-string-p value))
+       (values (coerce value 'list) t))
+      (t
+       (error 'tool-error
+              :message "memory-ids must be an array of non-empty strings."
+              :tool-name tool-name)))))
+
+
 ;;;; -- Agenda Operations --
 
 (-> agenda-resource--validate-operation-fields
@@ -244,12 +345,12 @@
         '("op" "text" "status" "memory-ids")
         '("op" "text"))
        (multiple-value-bind (memory-identifiers memory-identifiers-supplied-p)
-           (agenda-tool--memory-identifiers operation "resource.edit")
+           (agenda-resource--memory-identifiers operation "resource.edit")
          (declare (ignore memory-identifiers-supplied-p))
          (list :kind ':add
-               :text (agenda-tool--string-argument
+               :text (agenda-resource--string-argument
                       operation "text" "resource.edit" :required t)
-               :status (or (agenda-tool--status operation) ':todo)
+               :status (or (agenda-resource--status operation) ':todo)
                :memory-identifiers memory-identifiers)))
       ((string= name "agenda-update")
        (agenda-resource--validate-operation-fields
@@ -257,14 +358,14 @@
         '("op" "id" "text" "status" "memory-ids")
         '("op" "id"))
        (let ((identifier
-               (agenda-tool--string-argument
+               (agenda-resource--string-argument
                 operation "id" "resource.edit" :required t))
              (text
-               (agenda-tool--string-argument
+               (agenda-resource--string-argument
                 operation "text" "resource.edit"))
-             (status (agenda-tool--status operation)))
+             (status (agenda-resource--status operation)))
          (multiple-value-bind (memory-identifiers memory-identifiers-supplied-p)
-             (agenda-tool--memory-identifiers operation "resource.edit")
+             (agenda-resource--memory-identifiers operation "resource.edit")
            (unless (or text status memory-identifiers-supplied-p)
              (error 'tool-error
                     :message "agenda-update requires text, status, or memory-ids."
@@ -281,7 +382,7 @@
         operation '("op" "id") '("op" "id"))
        (list :kind ':remove
              :identifier
-             (agenda-tool--string-argument
+             (agenda-resource--string-argument
               operation "id" "resource.edit" :required t)))
       (t
        (error 'tool-error

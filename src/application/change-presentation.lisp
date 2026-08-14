@@ -2,18 +2,6 @@
 
 ;;;; -- Mutable State Change Presentation --
 
-(-> application--resource-operation-with-name
-    ((option json-object) non-empty-string)
-    json-object)
-(defun application--resource-operation-with-name (arguments name)
-  "Return a shallow copy of ARGUMENTS carrying resource operation NAME."
-  (let ((operation (json-object "op" name)))
-    (when arguments
-      (maphash (lambda (key value)
-                 (setf (gethash key operation) value))
-               arguments))
-    operation))
-
 (-> application--single-resource-operation-p (t) boolean)
 (defun application--single-resource-operation-p (operations)
   "Return whether OPERATIONS is exactly one JSON operation vector."
@@ -161,53 +149,6 @@
           :removed-start-line old-start-line
           :added-start-line new-start-line))))
 
-(-> application--agenda-call-entry
-    (application json-object non-empty-string)
-    list)
-(defun application--agenda-call-entry (application call operation-name)
-  "Present one agenda mutation CALL through the shared change viewer."
-  (let* ((arguments (application--function-call-arguments call))
-         (operation
-           (application--resource-operation-with-name arguments operation-name))
-         (identifier (json-get operation "id")))
-    (multiple-value-bind (record record-read-p)
-        (application--agenda-current-record application)
-      (let ((change-rows
-              (and (or record-read-p (string= operation-name "agenda-add"))
-                   (application--agenda-operation-change-rows operation record))))
-        (application--tool-entry
-         application
-         :style ':tool
-         :header (format nil "▸ ~A" (function-call-canonical-name call))
-         :rows
-         (or (and change-rows
-                  (append
-                   (when (non-empty-string-p identifier)
-                     (append
-                      (application--tool-field-rows
-                       application
-                       (list (list :label "id" :value identifier :style ':code)))
-                      (list nil)))
-                   change-rows))
-             (application--generic-argument-rows application arguments)))))))
-
-(defmethod application-tool-call-entry
-    ((tool agenda-add-tool) (application application) (call hash-table))
-  "Present agenda.add as a numbered added item document."
-  (declare (ignore tool))
-  (application--agenda-call-entry application call "agenda-add"))
-
-(defmethod application-tool-call-entry
-    ((tool agenda-update-tool) (application application) (call hash-table))
-  "Present agenda.update as a numbered before-and-after item document."
-  (declare (ignore tool))
-  (application--agenda-call-entry application call "agenda-update"))
-
-(defmethod application-tool-call-entry
-    ((tool agenda-remove-tool) (application application) (call hash-table))
-  "Present agenda.remove as a numbered removed item document."
-  (declare (ignore tool))
-  (application--agenda-call-entry application call "agenda-remove"))
 
 
 ;;; Memory changes

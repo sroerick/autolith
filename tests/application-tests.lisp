@@ -2978,7 +2978,7 @@
 
 (-> test-agenda-change-tool-presentation () null)
 (defun test-agenda-change-tool-presentation ()
-  "Test native and revision-gated agenda mutations use the shared change viewer."
+  "Test revision-gated agenda mutations use the shared change viewer."
   (labels ((call-entry (application namespace name arguments)
              "Render one function call into APPLICATION's transcript."
              (response-item-entry
@@ -3012,69 +3012,13 @@
                        record (agenda-current configuration state))))
              (setf (application-configuration application) configuration
                    (application-conversation application) conversation)
-             (let ((entry
-                     (call-entry
-                      application
-                      "agenda"
-                      "add"
-                      (json-object "text" "new agenda item"
-                                   "status" "doing"))))
-               (test-assert
-                (and (find (terminal-span ':success "+ 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 2 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 3 │ ")
-                           entry :test #'equal)
-                     (search "status: doing" (markdown-tests--row-text entry))
-                     (search "text: new agenda item"
-                             (markdown-tests--row-text entry)))
-                "agenda.add uses numbered green added rows"))
-             (let ((entry
-                     (call-entry
-                      application
-                      "agenda"
-                      "update"
-                      (json-object "id" (agenda-item-identifier item)
-                                   "text" "updated agenda text"
-                                   "status" "doing"))))
-               (test-assert
-                (and (find (terminal-span ':failure "- 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':failure "- 2 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':success "+ 2 │ ")
-                           entry :test #'equal)
-                     (search "text: old agenda text"
-                             (markdown-tests--row-text entry))
-                     (search "text: updated agenda text"
-                             (markdown-tests--row-text entry)))
-                "agenda.update uses numbered red and green item rows"))
-             (let ((entry
-                     (call-entry
-                      application
-                      "agenda"
-                      "remove"
-                      (json-object "id" (agenda-item-identifier item)))))
-               (test-assert
-                (and (find (terminal-span ':failure "- 1 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':failure "- 2 │ ")
-                           entry :test #'equal)
-                     (find (terminal-span ':failure "- 3 │ ")
-                           entry :test #'equal)
-                     (not (find (terminal-span ':success "+ 1 │ ")
-                                entry :test #'equal)))
-                "agenda.remove uses numbered red removed rows"))
              (let* ((directory (workspace-agenda-directory record))
                     (observation
                       (make-instance
                        'agenda-observation
                        :uri "agenda:current"
                        :revision "agenda-change-digest"
-                       :content (agenda-tool--render-record record)
+                       :content (agenda-resource--render-record record)
                        :directory directory
                        :snapshot (agenda-resource--snapshot directory record)))
                     (observation-state

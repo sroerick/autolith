@@ -308,108 +308,49 @@
                       (search "The workspace agenda is empty."
                               (tool-result-content remove-result))
                       "agenda-remove returns a fresh empty observation"))))
-               (let* ((empty-alias (revision (read-agenda first-context)))
-                      (legacy-add
-                        (call first-context "agenda" "add"
-                              "text" "legacy mutation")))
-                 (test-assert (tool-result-success-p legacy-add)
-                              "legacy agenda.add remains compatible")
-                 (test-assert
-                  (not (tool-result-success-p
-                        (edit-agenda
-                         first-context empty-alias
-                         (agenda-resource-tests--operation
-                          "agenda-add" "text" "stale resource mutation"))))
-                  "an agenda alias is stale while the exact snapshot differs")
-                 (let* ((legacy-item
-                          (agenda-resource-tests--current-item configuration))
-                        (legacy-update
-                          (call first-context "agenda" "update"
-                                "id" (agenda-item-identifier legacy-item)
-                                "status" "done"))
-                        (legacy-list (call first-context "agenda" "list")))
-                   (test-assert
-                    (and (tool-result-success-p legacy-update)
-                         (tool-result-success-p legacy-list))
-                    "legacy agenda list and update remain compatible")
-                   (test-assert
-                    (not (tool-result-success-p
-                          (edit-agenda
-                           first-context empty-alias
-                           (agenda-resource-tests--operation
-                            "agenda-add" "text" "still stale mutation"))))
-                    "an old alias stays stale through a different nonmatching snapshot")
-                   (let ((legacy-remove
-                           (call first-context "agenda" "remove"
-                                 "id" (agenda-item-identifier legacy-item))))
-                     (test-assert (tool-result-success-p legacy-remove)
-                                  "legacy agenda.remove remains compatible")))
-                 (let ((returned-alias (revision (read-agenda first-context))))
-                   (test-assert
-                    (string= returned-alias empty-alias)
-                    "the exact returning agenda snapshot reuses its content alias"))
-                 (let ((aba-edit
+                (let* ((empty-alias (revision (read-agenda first-context)))
+                       (temporary-item
+                         (with-recursive-lock-held (*agenda-lock*)
+                           (let ((state (agenda-load configuration)))
+                             (agenda-add
+                              :configuration configuration
+                              :state state
+                              :text "temporary ABA mutation"
+                              :status ':todo
+                              :memory-identifiers nil)))))
+                  (test-assert
+                   (not (tool-result-success-p
                          (edit-agenda
                           first-context empty-alias
                           (agenda-resource-tests--operation
-                           "agenda-add" "text" "content-addressed ABA"))))
-                   (test-assert
-                    (tool-result-success-p aba-edit)
-                    "an old alias is valid again when the exact agenda snapshot returns")
-                   (let ((aba-item
-                           (agenda-resource-tests--current-item configuration)))
-                     (test-assert
-                      (tool-result-success-p
-                       (edit-agenda
-                        first-context (revision aba-edit)
-                        (agenda-resource-tests--operation
-                         "agenda-remove" "id"
-                         (agenda-item-identifier aba-item))))
-                      "the ABA regression cleans up through its refreshed revision"))))
-             (let ((ready-lock (make-lock "agenda legacy concurrency ready"))
-                   (ready-condition (make-condition-variable))
-                   (ready 0)
-                   (results (make-array 2 :initial-element nil))
-                   (threads nil))
-               (with-recursive-lock-held (*agenda-lock*)
-                 (dotimes (index 2)
-                   (let ((result-index index))
-                     (push
-                      (make-thread
-                       (lambda ()
-                         (with-lock-held (ready-lock)
-                           (incf ready)
-                           (condition-notify ready-condition))
-                         (setf (aref results result-index)
-                               (call first-context "agenda" "add"
-                                     "text" (format nil "concurrent legacy ~D"
-                                                    result-index))))
-                       :name (format nil "agenda legacy concurrency ~D"
-                                     result-index))
-                      threads)))
-                 (with-lock-held (ready-lock)
-                   (loop until (= ready 2)
-                         do (condition-wait ready-condition ready-lock)))
-                 (sleep 0.02)
-                 (test-assert
-                  (every #'null results)
-                  "legacy agenda mutations wait for the shared recursive lock"))
-               (dolist (thread threads)
-                 (join-thread thread))
-               (test-assert
-                (every (lambda (result)
-                         (and result (tool-result-success-p result)))
-                       results)
-                "concurrent legacy agenda mutations complete successfully")
-               (with-recursive-lock-held (*agenda-lock*)
-                 (let* ((state (agenda-load configuration))
-                        (record (agenda-current configuration state))
-                        (texts (mapcar #'agenda-item-text
-                                       (workspace-agenda-items record))))
-                   (test-assert
-                    (and (member "concurrent legacy 0" texts :test #'string=)
-                         (member "concurrent legacy 1" texts :test #'string=))
-                    "shared agenda locking prevents concurrent legacy lost updates"))))
+                           "agenda-add" "text" "stale resource mutation"))))
+                   "an agenda alias is stale while the exact snapshot differs")
+                  (with-recursive-lock-held (*agenda-lock*)
+                    (agenda-remove configuration
+                                   (agenda-load configuration)
+                                   (agenda-item-identifier temporary-item)))
+                  (let ((returned-alias (revision (read-agenda first-context))))
+                    (test-assert
+                     (string= returned-alias empty-alias)
+                     "the exact returning agenda snapshot reuses its content alias"))
+                  (let ((aba-edit
+                          (edit-agenda
+                           first-context empty-alias
+                           (agenda-resource-tests--operation
+                            "agenda-add" "text" "content-addressed ABA"))))
+                    (test-assert
+                     (tool-result-success-p aba-edit)
+                     "an old alias is valid again when the exact agenda snapshot returns")
+                    (let ((aba-item
+                            (agenda-resource-tests--current-item configuration)))
+                      (test-assert
+                       (tool-result-success-p
+                        (edit-agenda
+                         first-context (revision aba-edit)
+                         (agenda-resource-tests--operation
+                          "agenda-remove" "id"
+                          (agenda-item-identifier aba-item))))
+                       "the ABA regression cleans up through its refreshed revision"))))
              (let* ((resource-edit
                       (tool-registry-find registry "resource" "edit"))
                     (operation-schema
