@@ -705,12 +705,14 @@
             :mode #o600)
            (setf
             (symbol-function 'application-input-controller--persist-pending)
-            (lambda (writer-controller &key (error-p nil))
-              (incf persist-call-count)
-              (if (= persist-call-count 2)
-                  (error "forced final pending publication failure")
-                  (funcall original-persist
-                           writer-controller :error-p error-p)))
+              (lambda (writer-controller &key (error-p nil) (sync-vault-p t))
+                (incf persist-call-count)
+                (if (= persist-call-count 2)
+                    (error "forced final pending publication failure")
+                    (funcall original-persist
+                             writer-controller
+                             :error-p error-p
+                             :sync-vault-p sync-vault-p)))
             (symbol-function 'application-recovery-input-vault--write-captures)
             (lambda (writer-application captures)
               (if captures
@@ -1414,6 +1416,103 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
   nil)
 
+(-> test-recovery-input-vault-live-primary-submit () null)
+(defun test-recovery-input-vault-live-primary-submit ()
+  "Test accepted primary follow-ups are vaulted immediately and removed when consumed."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (conversation
+           (conversation-create configuration :identifier "recovery-vault-live-submit"))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (pending-pathname
+           (configuration-pending-inputs-path
+            configuration (conversation-pathname conversation)))
+         (controller nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (conversation-append-user-message conversation "seed")
+           (terminal-ui-start ui)
+           (setf controller
+                 (application-input-controller-create
+                  application
+                  :load-pending-p nil
+                  :start-reader-p nil))
+           (multiple-value-bind (accepted-p delivery)
+               (application-input-controller-submit-primary-prompt
+                controller "live follow-up")
+             (test-assert (and accepted-p (eq delivery ':queued))
+                          "a primary follow-up is accepted as queued work"))
+           (let* ((captures
+                    (application-recovery-input-vault-captures application))
+                  (capture (first captures)))
+             (test-assert
+              (and (probe-file pending-pathname)
+                   (= (length captures) 1)
+                   (equal (application-recovery-input-vault--capture-work capture)
+                          '((:message "live follow-up"))))
+              "accepted primary follow-up is persisted and vaulted immediately"))
+           (with-lock-held ((application-input-controller-lock controller))
+             (deque-clear (application-input-controller-work-items controller))
+             (application-input-controller--persist-pending controller))
+           (test-assert
+            (and (not (probe-file pending-pathname))
+                 (null (application-recovery-input-vault-captures application)))
+            "consuming accepted pending input removes the live vault capture"))
+      (when controller
+        (ignore-errors (application-input-controller-stop controller)))
+      (ignore-errors (terminal-ui-stop ui))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+(-> test-recovery-input-vault-capture-message () null)
+(defun test-recovery-input-vault-capture-message ()
+  "Test child-steer captures persist and survive reload."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application
+           (recovery-input-vault-tests--application
+            configuration "recovery-vault-capture-message"))
+         (conversation (application-conversation application))
+         (identifier nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (setf identifier
+                 (application-recovery-input-vault-capture-message
+                  application "child steer"))
+           (let* ((captures
+                    (application-recovery-input-vault-captures application))
+                  (capture (first captures)))
+             (test-assert
+              (and (non-empty-string-p identifier)
+                   (= (length captures) 1)
+                   (string= (getf capture :id) identifier)
+                   (equal (application-recovery-input-vault--capture-work capture)
+                          '((:message "child steer"))))
+              "a child-steer capture is written with the accepted message"))
+           (let* ((reloaded
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation conversation))
+                  (captures
+                    (application-recovery-input-vault-captures reloaded))
+                  (capture (first captures)))
+             (test-assert
+              (and (= (length captures) 1)
+                   (string= (getf capture :id) identifier)
+                   (equal (application-recovery-input-vault--capture-work capture)
+                          '((:message "child steer"))))
+              "a child-steer capture survives reload from disk")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+  nil)
+
 (-> run-recovery-input-vault-tests () boolean)
 (defun run-recovery-input-vault-tests ()
   "Run focused recovery input vault tests and return true on success."
@@ -1431,4 +1530,6 @@
   (test-recovery-input-vault-recovery-startup)
   (test-recovery-input-vault-corrupt-startup)
   (test-recovery-input-vault-ordinary-startup)
+  (test-recovery-input-vault-live-primary-submit)
+  (test-recovery-input-vault-capture-message)
   t)

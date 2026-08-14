@@ -473,7 +473,77 @@ OTHER-CONVERSATION-P permits a valid legacy record for another conversation."
          (format nil "Could not publish the recovery input vault at ~A."
                  (namestring pathname))
          :cause condition))))
+    nil)
+
+
+(-> application-recovery-input-vault--replace-capture (application string list) null)
+(defun application-recovery-input-vault--replace-capture
+    (application identifier capture)
+  "Replace or remove APPLICATION's vault capture IDENTIFIER."
+  (let ((remaining
+          (remove identifier
+                  (application-recovery-input-vault--read-captures application)
+                  :key (lambda (existing)
+                         (getf existing :id))
+                  :test #'string=)))
+    (application-recovery-input-vault--write-captures
+     application
+     (if capture
+         (append remaining (list capture))
+         remaining)))
   nil)
+
+(-> application-recovery-input-vault-sync-pending
+    (application list &key (:create-p boolean))
+    null)
+(defun application-recovery-input-vault-sync-pending
+    (application state &key (create-p t))
+  "Mirror live pending STATE into APPLICATION's vault, or remove that capture.
+
+When CREATE-P is false, only an existing capture for the snapshot is updated."
+  (let ((identifier (getf state :snapshot-identifier)))
+    (when (non-empty-string-p identifier)
+      (let ((existing
+              (find identifier
+                    (application-recovery-input-vault--read-captures application)
+                    :key (lambda (capture)
+                           (getf capture :id))
+                    :test #'string=)))
+        (when (or create-p existing)
+          (application-recovery-input-vault--replace-capture
+           application
+           identifier
+           (unless (zerop
+                    (application-input-controller--pending-state-input-count state))
+             (application-recovery-input-vault--capture-state
+              state
+              (or (getf existing :captured-at) (get-universal-time)))))))))
+  nil)
+
+(-> application-recovery-input-vault-capture-message
+    (application (or string user-message-input) &key (:identifier string))
+    string)
+(defun application-recovery-input-vault-capture-message
+    (application input &key identifier)
+  "Persist INPUT as one vault capture and return its identifier."
+  (let* ((capture-identifier
+           (or identifier (make-identifier)))
+         (state
+           (list :snapshot-identifier capture-identifier
+                 :active-work nil
+                 :active-work-identifier nil
+                 :steering-in-flight-items nil
+                 :steering-items nil
+                 :work-items (list (list ':message (user-message-input-copy input)))
+                 :vault-capture-identifiers nil
+                 :steering-promotion-prefix-count 0
+                   :legacy-p nil)))
+      (application-recovery-input-vault--replace-capture
+       application
+       capture-identifier
+       (application-recovery-input-vault--capture-state
+        state (get-universal-time)))
+      capture-identifier))
 
 
 ;;;; -- Recovery Import Transaction --
@@ -711,10 +781,18 @@ The caller must hold CONTROLLER's lock."
            (application-recovery-input-vault--pending-path application))
          (captures
            (application-recovery-input-vault-captures application))
+         (current-snapshot
+           (application-input-controller-pending-snapshot-identifier controller))
+         (restore-captures
+           (remove current-snapshot captures
+                   :key (lambda (capture)
+                          (getf capture :id))
+                   :test #'equal))
          (capture-identifiers
            (mapcar (lambda (capture) (getf capture :id)) captures))
          (restored-work
-           (mapcan #'application-recovery-input-vault--capture-work captures))
+           (mapcan #'application-recovery-input-vault--capture-work
+                   restore-captures))
          (restored-count (length restored-work)))
     (when (zerop restored-count)
       (return-from application-input-controller-vault-restore 0))
@@ -750,8 +828,8 @@ The caller must hold CONTROLLER's lock."
                  (application-input-controller-vault-capture-identifiers controller)
                  capture-identifiers)
                 :test #'string=))
-              (application-input-controller--persist-pending
-               controller :error-p t)
+                (application-input-controller--persist-pending
+                 controller :error-p t :sync-vault-p nil)
               (application-recovery-input-vault--write-captures application nil)
               (setf vault-deleted-p t
                     (application-input-controller-vault-capture-identifiers
@@ -761,8 +839,8 @@ The caller must hold CONTROLLER's lock."
                        (member identifier capture-identifiers :test #'string=))
                      (application-input-controller-vault-capture-identifiers
                       controller)))
-              (application-input-controller--persist-pending
-               controller :error-p t))
+                (application-input-controller--persist-pending
+                 controller :error-p t :sync-vault-p nil))
           (error (condition)
             (application-recovery-input-vault--restore-controller-state
              controller old-state)
@@ -780,8 +858,8 @@ The caller must hold CONTROLLER's lock."
               ;; old queue until the deleted vault is durable again.
               (when vault-restored-p
                 (handler-case
-                    (application-input-controller--persist-pending
-                     controller :error-p t)
+                      (application-input-controller--persist-pending
+                       controller :error-p t :sync-vault-p nil)
                   (error (rollback-condition)
                     (push rollback-condition rollback-failures))))
               (when rollback-failures
@@ -807,9 +885,11 @@ The caller must hold CONTROLLER's lock."
                    :message
                    "Could not publish restored recovery input. The prior controller state was restored."
                    :cause condition)))))))
-    (setf (application-recovery-input-vault-failure application) nil)
-    (application-input-controller--publish-counts controller)
-    restored-count))
+      (with-lock-held ((application-input-controller-lock controller))
+        (setf (application-input-controller-live-vault-sync-p controller) nil))
+      (setf (application-recovery-input-vault-failure application) nil)
+      (application-input-controller--publish-counts controller)
+      restored-count))
 
 
 ;;;; -- Vault Inspection and Discard --
@@ -1018,8 +1098,8 @@ The caller must hold CONTROLLER's lock."
                (application-input-controller-pending-persistence-enabled-p
                 controller)
                t)
-              (application-input-controller--persist-pending
-               controller :error-p t))
+                (application-input-controller--persist-pending
+                 controller :error-p t :sync-vault-p nil))
           (error (condition)
             (setf
              (application-input-controller-pending-persistence-enabled-p

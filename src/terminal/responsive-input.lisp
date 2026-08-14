@@ -160,6 +160,12 @@
     :type boolean
     :documentation
     "Whether this controller may replace its conversation's pending snapshot.")
+   (live-vault-sync-p
+    :initform nil
+    :accessor application-input-controller-live-vault-sync-p
+    :type boolean
+    :documentation
+    "Whether this session accepted new input that should create a live vault capture.")
    (queued-work-paused-p
     :initform nil
     :accessor application-input-controller-queued-work-paused-p
@@ -836,10 +842,10 @@ lock."
           (or (getf state :steering-promotion-prefix-count) 0))))
 
 (-> application-input-controller--persist-pending
-    (application-input-controller &key (:error-p boolean))
+    (application-input-controller &key (:error-p boolean) (:sync-vault-p boolean))
     boolean)
 (defun application-input-controller--persist-pending
-    (controller &key (error-p nil))
+    (controller &key (error-p nil) (sync-vault-p t))
   "Atomically publish CONTROLLER's accepted but unprocessed input."
   (block nil
     (unless (application-input-controller-pending-persistence-enabled-p controller)
@@ -850,7 +856,10 @@ lock."
                   (application-configuration application)))
            (conversation
              (and (slot-boundp application 'conversation)
-                  (application-conversation application))))
+                  (application-conversation application)))
+           (old-snapshot-identifier
+             (application-input-controller-pending-snapshot-identifier
+              controller)))
       (unless (and (typep configuration 'configuration)
                    (typep conversation 'conversation))
         (return nil))
@@ -881,7 +890,11 @@ lock."
                    nil
                    (application-input-controller-steering-promotion-prefix-count
                     controller)
-                   0))
+                   0)
+                  (when (and sync-vault-p
+                             (non-empty-string-p old-snapshot-identifier))
+                    (application-recovery-input-vault--replace-capture
+                     application old-snapshot-identifier nil)))
                 (let ((snapshot-identifier
                         (or
                          (getf state :snapshot-identifier)
@@ -895,7 +908,13 @@ lock."
                    pathname
                    (application-input-controller--pending-state-form
                     state (conversation-identifier conversation))
-                   :mode #o600)))
+                   :mode #o600)
+                  (when sync-vault-p
+                    (application-recovery-input-vault-sync-pending
+                     application state
+                     :create-p
+                     (application-input-controller-live-vault-sync-p
+                      controller)))))
             t)
         (error (condition)
           (when error-p
@@ -971,9 +990,10 @@ lock."
                          (getf filtered-state :steering-in-flight-items)
                          :key #'agent-steering-input-content)
                         (deque-prepend work (getf filtered-state :work-items))
-                        (when active-work
-                          (deque-push-front work active-work))
-                        (application-input-controller--persist-pending controller))
+                          (when active-work
+                            (deque-push-front work active-work))
+                          (application-input-controller--persist-pending
+                           controller :sync-vault-p nil))
                       (when (equal source-pathname legacy-pathname)
                         (when (probe-file pathname)
                           (delete-file legacy-pathname)))))))
@@ -1154,7 +1174,8 @@ snapshot after shutdown cleared the process-local queues."
         (setf resumed-p
               (application-input-controller-queued-work-paused-p controller)
               (application-input-controller-queued-work-paused-p controller) nil
-              queued-p t)
+              queued-p t
+              (application-input-controller-live-vault-sync-p controller) t)
         (deque-push-back
          (application-input-controller-work-items controller)
          (list kind (user-message-input-copy input)))
@@ -1187,7 +1208,8 @@ snapshot after shutdown cleared the process-local queues."
                   (application-input-controller-queued-work-paused-p controller) nil
                   (application-input-controller-follow-up-edit-index controller) nil
                   (application-input-controller-follow-up-edit-work controller) nil
-                  queued-p t)
+                  queued-p t
+                  (application-input-controller-live-vault-sync-p controller) t)
             (if index
                 (deque-insert items (min index (deque-count items)) work)
                 (deque-push-back items work)))
@@ -1280,10 +1302,11 @@ the ordinary FIFO queue."
       (setf delivery
             (application-input-controller--admit-primary-prompt-locked
              controller input :prefer-steering-p prefer-steering-p))
-      (when delivery
-        (setf resumed-p
-              (application-input-controller-queued-work-paused-p controller)
-              (application-input-controller-queued-work-paused-p controller) nil)
+        (when delivery
+          (setf resumed-p
+                (application-input-controller-queued-work-paused-p controller)
+                (application-input-controller-queued-work-paused-p controller) nil
+                (application-input-controller-live-vault-sync-p controller) t)
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))))
     (when resumed-p
@@ -1453,27 +1476,36 @@ the ordinary FIFO queue."
                 :content-characters (length (user-message-input-text input))
                 :image-count (length
                               (user-message-input-image-pathnames input)))))
-      (let* ((job (application-prompt--find-child application target))
-             (snapshot (task-job-snapshot job)))
-        (unless (eq (getf snapshot :state) ':running)
-          (application-prompt--child-admission-error
-           job target ':not-running))
-        (multiple-value-bind (entry reason)
-            (task-job-enqueue-steering
-             job input :promote-response-p t)
-          (unless entry
-            (application-prompt--child-admission-error job target reason))
-          (list :prompt
-                :accepted-p t
-                :target ':child
-                :child-name (task-job-display-name job)
-                :job-id (session-job-identifier job)
-                :execution-id (task-job-execution-identifier job)
-                :steering-id (agent-steering-input-identifier entry)
-                :delivery ':steering
-                :content-characters (length (user-message-input-text input))
-                :image-count (length
-                              (user-message-input-image-pathnames input)))))))
+        (let* ((controller (application-input-controller application))
+               (job (application-prompt--find-child application target))
+               (snapshot (task-job-snapshot job)))
+          (unless (and controller
+                       (application-input-controller--prompt-storage-ready-p
+                        controller))
+            (prompt--error
+             ':storage-unavailable
+             "Recovered input storage is unavailable. Use /vault to inspect it or /vault-discard to discard the preserved input before submitting more work."
+             :target target))
+          (unless (eq (getf snapshot :state) ':running)
+            (application-prompt--child-admission-error
+             job target ':not-running))
+          (application-recovery-input-vault-capture-message application input)
+          (multiple-value-bind (entry reason)
+              (task-job-enqueue-steering
+               job input :promote-response-p t)
+            (unless entry
+              (application-prompt--child-admission-error job target reason))
+            (list :prompt
+                  :accepted-p t
+                  :target ':child
+                  :child-name (task-job-display-name job)
+                  :job-id (session-job-identifier job)
+                  :execution-id (task-job-execution-identifier job)
+                  :steering-id (agent-steering-input-identifier entry)
+                  :delivery ':steering
+                  :content-characters (length (user-message-input-text input))
+                  :image-count (length
+                                (user-message-input-image-pathnames input)))))))
 
 
 (-> application-input-controller--take-steering
