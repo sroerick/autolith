@@ -298,13 +298,10 @@
                 #:ipv4-addr-p
                 #:ipv6-addr-p
                 #:uri
-                #:uri-fragment
                 #:uri-host
                 #:uri-path
                 #:uri-port
-                #:uri-query
                 #:uri-scheme
-                #:uri-userinfo
                 #:url-decode
                 #:url-encode-params)
   (:import-from #:serapeum

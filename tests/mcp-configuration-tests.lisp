@@ -656,40 +656,40 @@
                 (1+ *mcp-child-tool-name-maximum-characters*)
                 :initial-element #\t))))
             "individual MCP child tool names are bounded")
-           (dolist
-               (url
-                 '("http://localhost:3000/mcp"
-                   "http://localhost.:3000/mcp"
-                   "http://127.0.0.2:3000/mcp"
-                   "http://[::1]:3000/mcp"
-                   "http://[0:0:0:0:0:0:0:1]:3000/mcp"
-                   "https://example.test/mcp"
-                   "https://[2001:db8::1]:65535/mcp"))
-             (test-assert
-              (not
-               (test-mcp-configuration--server-signals-p
-                (test-mcp-configuration--http-server-form url)))
-              (format nil "secure or loopback MCP URL ~S is accepted" url)))
-           (dolist
-               (url
-                 '("http://example.test/mcp"
-                   "http://localhost.example/mcp"
-                   "http://127.0.0.1.example/mcp"
-                   "https://user@example.test/mcp"
-                   "https://example.test/mcp?token=secret"
-                   "https://example.test/mcp?"
-                   "https://example.test/mcp#fragment"
-                   "https://example.test/mcp#"
-                   "https://-example.test/mcp"
-                   "https://example..test/mcp"
-                   "https://exa_mple.test/mcp"
-                   "https://127.999.1.1/mcp"
-                   "https://[:::]/mcp"
-                   "https://[192.0.2.1::]/mcp"
-                   "https://example.test:/mcp"
-                   "https://example.test:+1/mcp"
-                   "https://example.test:0/mcp"
-                   "https://example.test:65536/mcp"))
+            (dolist
+                (url
+                  '("http://localhost:3000/mcp"
+                    "http://localhost.:3000/mcp"
+                    "http://127.0.0.2:3000/mcp"
+                    "http://[::1]:3000/mcp"
+                    "http://[0:0:0:0:0:0:0:1]:3000/mcp"
+                    "https://example.test/mcp"
+                    "https://[2001:db8::1]:65535/mcp"
+                    "https://user@example.test/mcp"
+                    "https://example.test/mcp?token=secret"
+                    "https://example.test/mcp?"
+                    "https://example.test/mcp#fragment"
+                    "https://example.test/mcp#"))
+              (test-assert
+               (not
+                (test-mcp-configuration--server-signals-p
+                 (test-mcp-configuration--http-server-form url)))
+               (format nil "secure or loopback MCP URL ~S is accepted" url)))
+            (dolist
+                (url
+                  '("http://example.test/mcp"
+                    "http://localhost.example/mcp"
+                    "http://127.0.0.1.example/mcp"
+                    "https://-example.test/mcp"
+                    "https://example..test/mcp"
+                    "https://exa_mple.test/mcp"
+                    "https://127.999.1.1/mcp"
+                    "https://[:::]/mcp"
+                    "https://[192.0.2.1::]/mcp"
+                    "https://example.test:/mcp"
+                    "https://example.test:+1/mcp"
+                    "https://example.test:0/mcp"
+                    "https://example.test:65536/mcp"))
              (test-assert
               (test-mcp-configuration--server-signals-p
                (test-mcp-configuration--http-server-form url))

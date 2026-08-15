@@ -727,19 +727,6 @@ bound policy takes effect without reloading this file."
            :pathname pathname
            :server-name server-name
            :field :url))
-        (when (uri-userinfo uri)
-          (mcp-configuration--error
-           "An MCP HTTP URL must not contain user credentials."
-           :pathname pathname
-           :server-name server-name
-           :field :url))
-        (when (or (uri-query uri)
-                  (uri-fragment uri))
-          (mcp-configuration--error
-           "An MCP HTTP URL must not contain a query or fragment."
-           :pathname pathname
-           :server-name server-name
-           :field :url))
         (unless (or (string-equal scheme "https")
                     (and (string-equal scheme "http")
                          (mcp-configuration--loopback-host-p host)))
