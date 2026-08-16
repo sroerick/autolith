@@ -168,11 +168,14 @@ The current date is ~A.~@[~2%~A~]"
 
 (-> system-prompt--hosted-web-search-guidance (configuration) string)
 (defun system-prompt--hosted-web-search-guidance (configuration)
-  "Return guidance for the available web.run local tool."
-  (declare (ignore *system-prompt-hosted-web-search-p*))
-  (if (not (string= (configuration-web-search-mode configuration) "disabled"))
-      "WEB SEARCH IS AVAILABLE. Use web.run when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless web.run returns a result."
-      ""))
+  "Return guidance for the request's available web search vehicle."
+  (cond
+    (*system-prompt-hosted-web-search-p*
+     "WEB SEARCH IS AVAILABLE. Use the hosted web_search and x_search tools when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless a search returned results.")
+    ((not (string= (configuration-web-search-mode configuration) "disabled"))
+     "WEB SEARCH IS AVAILABLE. Use web.run when current, changing, or web-only information would materially improve the answer. Do not claim that you searched unless web.run returns a result.")
+    (t
+     "")))
 
 (-> system-prompt--self-introduction (configuration) string)
 (defun system-prompt--self-introduction (configuration)

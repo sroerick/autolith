@@ -127,18 +127,31 @@ the request builder then omits the reasoning object."))
   (declare (ignore provider configuration))
   nil)
 
-(-> provider-responses-hosted-tool
+(-> provider-responses-hosted-tools
     (responses-api-provider configuration)
-    (option json-object))
-(defgeneric provider-responses-hosted-tool (provider configuration)
+    list)
+(defgeneric provider-responses-hosted-tools (provider configuration)
   (:documentation
-   "Return PROVIDER's optional hosted tool declaration for CONFIGURATION."))
+   "Return PROVIDER's server-executed hosted tool declarations for CONFIGURATION."))
 
-(defmethod provider-responses-hosted-tool
+(defmethod provider-responses-hosted-tools
     ((provider responses-api-provider) (configuration configuration))
-  "Expose no hosted tool unless a concrete provider opts in."
+  "Expose no hosted tools unless a concrete provider opts in."
   (declare (ignore provider configuration))
   nil)
+
+(-> provider-responses-request-namespaces
+    (responses-api-provider vector)
+    vector)
+(defgeneric provider-responses-request-namespaces (provider tool-namespaces)
+  (:documentation
+   "Return TOOL-NAMESPACES filtered to the local tools PROVIDER can serve."))
+
+(defmethod provider-responses-request-namespaces
+    ((provider responses-api-provider) (tool-namespaces vector))
+  "Serve every local tool namespace unless a concrete provider excludes one."
+  (declare (ignore provider))
+  tool-namespaces)
 
 (-> provider-responses-request-fields
     (responses-api-provider conversation)
@@ -172,28 +185,25 @@ the request builder then omits the reasoning object."))
      &key goal-context compaction-p)
   "Build a standard stateless Responses API request for CONVERSATION.
 
-Concrete providers specialize the reasoning effort, optional hosted tool, and
-extra request fields. The second value is the context delivery consumed only
-after a completed response."
+Concrete providers specialize the reasoning effort, hosted tools, served
+namespaces, and extra request fields. The second value is the context
+delivery consumed only after a completed response."
   (let* ((configuration (provider-configuration provider))
-         (hosted-tool
+         (hosted-tools
            (and (not compaction-p)
-                (provider-responses-hosted-tool provider configuration)))
+                (provider-responses-hosted-tools provider configuration)))
          (effective-namespaces
-           (cond
-             (compaction-p
-              #())
-             (hosted-tool
-              (concatenate 'vector
-                           tool-namespaces
-                           (vector hosted-tool)))
-             (t
-              tool-namespaces)))
+           (if compaction-p
+               #()
+               (concatenate 'vector
+                            (provider-responses-request-namespaces
+                             provider tool-namespaces)
+                            (coerce hosted-tools 'vector))))
          (prefix
            (append
             (list (responses-lite-developer-message
                    (let ((*system-prompt-hosted-web-search-p*
-                           (not (null hosted-tool))))
+                           (not (null hosted-tools))))
                      (system-prompt configuration))))
             (when (and goal-context (not compaction-p))
               (list (responses-lite-developer-message goal-context)))))

@@ -1256,11 +1256,25 @@ because durable configuration records are projected in order."
         (setf (gethash "type" item) "compaction"))))
   item)
 
+(-> backend-search-call-item-p (t) boolean)
+(defun backend-search-call-item-p (item)
+  "Return true when ITEM is a server-executed backend search call."
+  (and (json-object-p item)
+       (let ((type (json-get item "type")))
+         (and (stringp type)
+              (not (null (member type '("web_search_call" "custom_tool_call")
+                                 :test #'string=)))))
+       t))
+
 (-> conversation-family-private-item-p (t) boolean)
 (defun conversation-family-private-item-p (item)
-  "Return true when ITEM can only be read by its producing model family."
+  "Return true when ITEM can only be read by its producing model family.
+
+Backend search calls carry provider-specific server identifiers and state
+that only the executing family accepts on replay."
   (or (reasoning-item-p item)
-      (native-compaction-item-p item)))
+      (native-compaction-item-p item)
+      (backend-search-call-item-p item)))
 
 (-> conversation-input-item-family (conversation json-object) (option keyword))
 (defun conversation-input-item-family (conversation item)

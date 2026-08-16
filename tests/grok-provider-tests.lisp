@@ -104,7 +104,25 @@
             (null (gethash "status" reasoning))
             (string= (json-get reasoning "encrypted_content")
                      "opaque-ciphertext"))
-       "Grok keeps replayable reasoning identifiers and drops status")))
+       "Grok keeps replayable reasoning identifiers and drops status"))
+    (let ((search-call (json-object
+                        "type" "web_search_call"
+                        "id" "ws-item-1"
+                        "status" "completed"
+                        "action" (json-object "type" "search"))))
+      (provider-normalize-output-item provider search-call)
+      (test-assert
+       (and (string= (json-get search-call "id") "ws-item-1")
+            (string= (json-get search-call "status") "completed"))
+       "Grok replays backend search calls verbatim"))
+    (test-assert
+     (and (conversation-family-private-item-p
+           (json-object "type" "web_search_call" "id" "ws-1"))
+          (conversation-family-private-item-p
+           (json-object "type" "custom_tool_call" "id" "x-1"))
+          (not (conversation-family-private-item-p
+                (json-object "type" "function_call" "call_id" "c-1"))))
+     "backend search calls stay private to their producing family"))
   (let* ((namespaced (json-object
                       "type" "function_call"
                       "call_id" "call-1"
@@ -164,12 +182,58 @@
                         (string= (or (json-get item "type") "")
                                  "additional_tools"))
                       input)
-              "the Responses Lite additional_tools item never rides to Grok"))
+              "the Responses Lite additional_tools item never rides to Grok")
+             (test-assert
+              (search "hosted web_search"
+                      (json-get
+                       (aref (json-get (aref input 0) "content") 0)
+                       "text"))
+              "the system prompt describes the hosted search tools"))
            (let ((tools (json-get request "tools")))
-             (test-assert (= (length tools) 1)
-                          "Grok tools ride in the flat request tools array")
+             (test-assert (= (length tools) 3)
+                          "Grok tools ride beside the backend search tools")
              (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
-                          "Grok tools carry dotted wire names"))
+                          "Grok tools carry dotted wire names")
+             (test-assert (string= (json-get (aref tools 1) "type") "web_search")
+                          "the Grok request hosts backend web search")
+             (test-assert (string= (json-get (aref tools 2) "type") "x_search")
+                          "the Grok request hosts backend x search"))
+           (let* ((web-namespaces
+                    (json-array
+                     (aref schemas 0)
+                     (json-object
+                      "type" "namespace"
+                      "name" "web"
+                      "description" "Web."
+                      "tools" (json-array
+                               (json-object
+                                "type" "function"
+                                "name" "run"
+                                "description" "Search the web."
+                                "strict" false
+                                "parameters" (json-object "type" "object"))))))
+                  (web-request
+                    (provider-request-object provider conversation
+                                             web-namespaces))
+                  (web-tools (json-get web-request "tools")))
+             (test-assert
+              (notany (lambda (tool)
+                        (string= (or (json-get tool "name") "") "web.run"))
+                      web-tools)
+              "backend search replaces the dead local web.run tool"))
+           (let* ((disabled-request
+                    (provider-request-object
+                     (grok-provider-create
+                      (configuration--clone configuration
+                                            :web-search-mode "disabled"))
+                     conversation
+                     schemas))
+                  (disabled-tools (json-get disabled-request "tools")))
+             (test-assert
+              (and (= (length disabled-tools) 1)
+                   (equalp (json-get disabled-request "include")
+                           (json-array "reasoning.encrypted_content")))
+              "disabled web search omits backend tools and citation includes"))
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "high")
             "default Ultra reasoning clamps to Grok's high effort")
@@ -208,8 +272,9 @@
                         "the Grok request enables event streaming")
            (test-assert
             (equalp (json-get request "include")
-                    (json-array "reasoning.encrypted_content"))
-            "the Grok request retains encrypted reasoning for replay")
+                    (json-array "reasoning.encrypted_content"
+                                "no_inline_citations"))
+            "the Grok request retains encrypted reasoning without citations")
            (let* ((goal-request
                     (provider-request-object
                      provider conversation schemas

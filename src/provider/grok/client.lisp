@@ -134,11 +134,30 @@ remain expressible."
   (declare (ignore provider))
   (configuration-grok-wire-effort configuration))
 
-(defmethod provider-responses-hosted-tool
+(defmethod provider-responses-hosted-tools
     ((provider grok-subscription-provider) (configuration configuration))
-  "Return Grok's hosted tool declaration when one is enabled."
+  "Return Grok's backend web_search and x_search tools unless disabled.
+
+The Grok proxy executes search server-side. Grok Build reference commit
+5163763e splices these bare entries into the request tools array whenever
+backend search is enabled."
   (declare (ignore provider))
-  (provider-web-search-tool configuration))
+  (unless (string= (configuration-web-search-mode configuration) "disabled")
+    (list (json-object "type" "web_search")
+          (json-object "type" "x_search"))))
+
+(defmethod provider-responses-request-namespaces
+    ((provider grok-subscription-provider) (tool-namespaces vector))
+  "Exclude the local web namespace, which Grok serves through backend search.
+
+The standalone search endpoint behind web.run no longer exists on the Grok
+proxy, so the local tool could only fail."
+  (declare (ignore provider))
+  (remove-if (lambda (entry)
+               (and (json-object-p entry)
+                    (json-string= (json-get entry "type") "namespace")
+                    (json-string= (json-get entry "name") "web")))
+             tool-namespaces))
 
 (defmethod provider-responses-reasoning-summary
     ((provider grok-subscription-provider) (configuration configuration))
@@ -148,29 +167,39 @@ remain expressible."
 
 (defmethod provider-responses-request-fields
     ((provider grok-subscription-provider) (conversation conversation))
-  "Add Grok's encrypted reasoning and prompt-cache request fields.
+  "Add Grok's encrypted reasoning, citation, and prompt-cache request fields.
 
-The conversation identifier doubles as the prompt cache key, matching Grok
-Build reference commit 5163763e."
-  (declare (ignore provider))
-  (let ((cache-key (conversation-prompt-cache-key conversation)))
+The no_inline_citations include suppresses inline citation markup during
+backend search, and the conversation identifier doubles as the prompt cache
+key, both matching Grok Build reference commit 5163763e."
+  (let ((configuration (provider-configuration provider))
+        (cache-key (conversation-prompt-cache-key conversation)))
     (append
-     (list "include" (json-array "reasoning.encrypted_content"))
+     (list "include"
+           (if (string= (configuration-web-search-mode configuration)
+                        "disabled")
+               (json-array "reasoning.encrypted_content")
+               (json-array "reasoning.encrypted_content"
+                           "no_inline_citations")))
      (when (non-empty-string-p cache-key)
        (list "prompt_cache_key" cache-key)))))
 
 (defmethod provider-normalize-output-item
     ((provider grok-subscription-provider) (item hash-table))
-  "Keep reasoning identifiers and drop output-only status before replay.
+  "Keep replayable server state and drop output-only status before replay.
 
-Grok Build reference commit 5163763e replays reasoning items with their
-server identifiers and encrypted content while omitting status, and replays
-function calls through call_id alone, so normalization drops status from
-every item and keeps only the reasoning item identifier."
-  (remhash "status" item)
-  (if (reasoning-item-p item)
-      item
-      (call-next-method)))
+Grok Build reference commit 5163763e replays backend search calls verbatim,
+replays reasoning items with their server identifiers and encrypted content
+while omitting status, and replays function calls through call_id alone."
+  (cond
+    ((backend-search-call-item-p item)
+     item)
+    ((reasoning-item-p item)
+     (remhash "status" item)
+     item)
+    (t
+     (remhash "status" item)
+     (call-next-method))))
 
 
 ;;;; -- Grok Doom-Loop Recovery --
