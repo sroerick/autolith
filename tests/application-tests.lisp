@@ -2671,11 +2671,11 @@
                 (test-assert
                  (and (find (terminal-span :failure "- 4 │ ")
                             entry :test #'equal)
-                      (= 2 (count (terminal-span :success "+ │ ")
-                                  entry :test #'equal))
-                      (not (find (terminal-span :success "+ 4 │ ")
-                                 entry :test #'equal))
-                      (not (find (terminal-span :success "+ 5 │ ")
+                      (find (terminal-span :success "+ 4 │ ")
+                            entry :test #'equal)
+                      (find (terminal-span :success "+ 5 │ ")
+                            entry :test #'equal)
+                      (not (find (terminal-span :success "+ │ ")
                                  entry :test #'equal))
                       (find (terminal-span :syntax-function "new-source")
                             entry :test #'equal)
@@ -2941,13 +2941,13 @@
                           "line" 4
                           "content" "overlap insertion"))))))
                 (test-assert
-                 (and (find (terminal-span :success "+ │ ")
+                 (and (find (terminal-span :success "+ 3 │ ")
                             entry :test #'equal)
-                      (not (find (terminal-span :success "+ 3 │ ")
-                                 entry :test #'equal))
-                      (not (find (terminal-span :success "+ 4 │ ")
+                      (find (terminal-span :success "+ 4 │ ")
+                            entry :test #'equal)
+                      (not (find (terminal-span :success "+ │ ")
                                  entry :test #'equal)))
-                 "invalid overlapping workspace edits never invent added coordinates"))
+                 "invalid workspace edits keep their declared target coordinates"))
               (let* ((entry
                        (call-entry
                         application "resource" "edit"

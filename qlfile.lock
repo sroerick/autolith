@@ -76,8 +76,8 @@
   :version "git-05a3313d52e2a2c643219a750dd5045df56c1cd7"))
 ("colordiff" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/colordiff.git" :ref "929457427d42dc0eebe847b49889c60c5259490f")
-  :version "git-929457427d42dc0eebe847b49889c60c5259490f"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/colordiff.git" :ref "e224fd4148c399998ba893e71b7da0cc8a2c658a")
+  :version "git-e224fd4148c399998ba893e71b7da0cc8a2c658a"))
 ("parenchek" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/parenchek.git" :ref "a7dc0a7e2c6250056c294ab39d5d2872dba71592")

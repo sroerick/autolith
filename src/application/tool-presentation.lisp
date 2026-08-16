@@ -1397,11 +1397,28 @@ model."
     (option list))
 (defun application--workspace-resource-operation-change-rows
     (application operation &key uri revision path new-start-line)
-  "Return source-change rows for one workspace resource edit OPERATION."
-  (let ((name (json-get operation "op"))
-        (start (json-get operation "start-line"))
-        (end (json-get operation "end-line"))
-        (content (json-get operation "content")))
+  "Return source-change rows for one workspace resource edit OPERATION.
+
+When exact resulting coordinates are unavailable, added rows fall back to
+OPERATION's own declared target line so they stay numbered."
+  (let* ((name (json-get operation "op"))
+         (start (json-get operation "start-line"))
+         (end (json-get operation "end-line"))
+         (line (json-get operation "line"))
+         (content (json-get operation "content"))
+         (new-start-line
+           (or new-start-line
+               (cond
+                 ((and (stringp name)
+                       (string= name "insert-after")
+                       (integerp line))
+                  (1+ line))
+                 ((integerp line)
+                  line)
+                 ((integerp start)
+                  start)
+                 (t
+                  nil)))))
     (cond
       ((and (stringp name)
             (member name '("replace-lines" "delete-lines") :test #'string=)
