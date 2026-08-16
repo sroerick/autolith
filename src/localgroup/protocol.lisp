@@ -259,8 +259,8 @@ session identifiers remain accepted for discovery and detached handoff."
    :input t
    :output t
    :element-type 'character
-   :external-format :utf-8
-   :buffering :full))
+   :external-format ':utf-8
+   :buffering ':full))
 
 (-> localgroup-connect (integer) (values sb-bsd-sockets:socket stream))
 (defun localgroup-connect (port)

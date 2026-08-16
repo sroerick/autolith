@@ -108,8 +108,8 @@
        (list "git" "-c" (format nil "safe.directory=~A" canonical)
              "-C" canonical)
        arguments)
-      :output :string
-      :error-output :output))))
+      :output ':string
+      :error-output ':output))))
 
 (-> release-server--source-identity
     (pathname)
@@ -381,16 +381,16 @@
   "Return BODY's exact encoded byte length."
   (etypecase body
     (null 0)
-    (string (length (sb-ext:string-to-octets body :external-format :utf-8)))
+    (string (length (sb-ext:string-to-octets body :external-format ':utf-8)))
     (pathname
-     (with-open-file (stream body :direction :input
+     (with-open-file (stream body :direction ':input
                                   :element-type '(unsigned-byte 8))
        (file-length stream)))))
 
 (-> release-server--write-octets (stream string) null)
 (defun release-server--write-octets (stream text)
   "Write UTF-8 TEXT to a binary HTTP STREAM."
-  (write-sequence (sb-ext:string-to-octets text :external-format :utf-8)
+  (write-sequence (sb-ext:string-to-octets text :external-format ':utf-8)
                   stream)
   nil)
 
@@ -432,7 +432,7 @@
         (string
          (release-server--write-octets stream body))
         (pathname
-         (with-open-file (file body :direction :input
+         (with-open-file (file body :direction ':input
                                     :element-type '(unsigned-byte 8))
            (let ((buffer (make-array 65536 :element-type '(unsigned-byte 8))))
              (loop for count = (read-sequence buffer file)
@@ -464,7 +464,7 @@
                       (= (aref octets (- length 2)) 13)
                       (= (aref octets (1- length)) 10))
              (return
-               (sb-ext:octets-to-string octets :external-format :latin-1)))))))
+               (sb-ext:octets-to-string octets :external-format ':latin-1)))))))
 
 (-> release-server--parse-request-head (string) (values string string))
 (defun release-server--parse-request-head (head)
@@ -499,7 +499,7 @@
                       :input t
                       :output t
                       :element-type '(unsigned-byte 8)
-                      :buffering :full))
+                      :buffering ':full))
                (multiple-value-bind (method target)
                    (release-server--parse-request-head
                     (release-server--read-request-head stream))

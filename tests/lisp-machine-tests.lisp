@@ -132,7 +132,7 @@
                (tool-registry-close-runtime-state
                 (application-tool-registry application)))
              (uiop:delete-directory-tree
-              root :validate t :if-does-not-exist :ignore)))
+              root :validate t :if-does-not-exist ':ignore)))
     (let ((selector-calls 0))
       (test-assert
        (handler-case
@@ -557,7 +557,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -739,7 +739,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-application-prompt-marker-reader-order () null)
@@ -798,7 +798,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-application-prompt-marker-lifecycle () null)
@@ -946,7 +946,7 @@
              (application-tool-registry application)))
           (uiop:delete-directory-tree root
                                       :validate t
-                                      :if-does-not-exist :ignore)))))
+                                      :if-does-not-exist ':ignore)))))
   nil)
 
 (-> run-lisp-machine-tests () null)

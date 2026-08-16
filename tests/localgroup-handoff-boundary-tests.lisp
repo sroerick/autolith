@@ -116,7 +116,7 @@
         (application-release-conversation-lease application))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-fresh-startup-selection () null)
@@ -194,5 +194,5 @@
         (application-release-conversation-lease application))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

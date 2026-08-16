@@ -12,8 +12,8 @@
       (unless (probe-file builder)
         (error "cl-exec-sandbox helper builder is missing at ~A." builder))
       (uiop:run-program (list "/usr/bin/env" "bash" (namestring builder))
-                        :output :interactive
-                        :error-output :interactive))))
+                        :output ':interactive
+                        :error-output ':interactive))))
 
 #-linux
 (format t "~&Skipping the Linux-only cl-exec-sandbox helper on this platform.~%")

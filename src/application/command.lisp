@@ -223,7 +223,7 @@
      :documentation "Whether the handler receives normalized Lisp arguments.")
     (slash-argument-mode
      :initarg :slash-argument-mode
-     :initform :legacy
+     :initform ':legacy
      :reader application-command-slash-argument-mode
      :type (member :legacy :none :first :remainder :tokens)
      :documentation "How slash compatibility text becomes semantic arguments.")

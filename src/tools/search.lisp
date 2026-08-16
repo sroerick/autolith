@@ -68,8 +68,8 @@
     (and (probe-file manifest)
          (handler-case
              (with-open-file (stream manifest
-                                     :direction :input
-                                     :external-format :utf-8)
+                                     :direction ':input
+                                     :external-format ':utf-8)
                (let ((*read-eval* nil)
                      (expected (list :fff-library
                                      :version 1

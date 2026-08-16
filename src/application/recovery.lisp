@@ -49,10 +49,10 @@
                              (configuration-state-root configuration))
           (ensure-directories-exist pointer-pathname)
           (with-open-file (stream temporary-pathname
-                                  :direction :output
-                                  :if-exists :supersede
-                                  :if-does-not-exist :create
-                                  :external-format :utf-8)
+                                  :direction ':output
+                                  :if-exists ':supersede
+                                  :if-does-not-exist ':create
+                                  :external-format ':utf-8)
             (write-line (namestring capsule-pathname) stream)
             (finish-output stream))
           (sb-posix:chmod (namestring temporary-pathname) #o600)
@@ -108,7 +108,7 @@
            (let ((journal (configuration-journal-path configuration)))
              (if (probe-file journal)
                  (with-open-file (stream journal
-                                         :direction :input
+                                         :direction ':input
                                          :element-type '(unsigned-byte 8))
                    (file-length stream))
                  0))))
@@ -136,7 +136,7 @@
   "Return true when PATHNAME names a file no larger than LIMIT bytes."
   (handler-case
       (with-open-file (stream pathname
-                              :direction :input
+                              :direction ':input
                               :element-type '(unsigned-byte 8))
         (<= (file-length stream) limit))
     (error ()
@@ -223,8 +223,8 @@
                         pointer-pathname
                         *application-recovery-pointer-byte-limit*))
               (with-open-file (stream pointer-pathname
-                                      :direction :input
-                                      :external-format :utf-8)
+                                      :direction ':input
+                                      :external-format ':utf-8)
                 (let ((capsule (read-line stream nil nil))
                       (trailing-line (read-line stream nil nil)))
                   (when (and (stringp capsule)

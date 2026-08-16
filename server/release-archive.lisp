@@ -178,10 +178,10 @@
 (defun release-archive--write-record (pathname &key version tag commit)
   "Write the strict VERSION, TAG, and COMMIT release record to PATHNAME."
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (format stream "version=~A~%tag=~A~%commit=~A~%" version tag commit))
   nil)
 
@@ -206,7 +206,7 @@
        :error-output nil))
     (uiop:delete-directory-tree temporary-root
                                 :validate t
-                                :if-does-not-exist :ignore))
+                                :if-does-not-exist ':ignore))
   nil)
 
 (-> release-archive--identity-git-command (pathname list) list)

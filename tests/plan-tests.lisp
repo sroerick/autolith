@@ -111,5 +111,5 @@
                      (string= (tool-result-content result) "No active plan.")
                      (null (plan-load configuration-a)))
                 "an empty plan.update clears the durable workspace plan"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

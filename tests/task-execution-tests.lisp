@@ -70,7 +70,7 @@
                 nil))
             "tool registry dispatch propagates job-aborted as control flow"))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-orchestration () null)
@@ -113,7 +113,7 @@
                       :description "Inspect only owned asynchronous work."
                       :instructions "Do not delegate."
                       :spawns nil
-                      :source :test))
+                      :source ':test))
                    (non-spawning-registry
                      (task-child-tool-registry
                       registry non-spawning-definition orchestrator 1)))
@@ -140,21 +140,21 @@
                      :description "Use one available local tool."
                      :instructions "Read one file."
                      :tools '("resource.read")
-                     :source :test))
+                     :source ':test))
                   (hosted-definition
                     (task-agent-definition-create
                      :name "hosted-grant"
                      :description "Use hosted provider search."
                      :instructions "Search one authoritative source."
                      :tools '("web_search")
-                     :source :test))
+                     :source ':test))
                   (missing-definition
                     (task-agent-definition-create
                      :name "missing-grant"
                      :description "Request one unavailable local tool."
                      :instructions "Exercise fail-closed grant validation."
                      :tools '("missing.operation")
-                     :source :test)))
+                     :source ':test)))
              (test-assert
               (handler-case
                   (progn
@@ -188,8 +188,8 @@
                      :name "extension-boundary"
                      :description "Exercise extension capability defaults."
                      :instructions "Use only explicitly child-safe extensions."
-                     :tools :all
-                     :source :test))
+                     :tools ':all
+                     :source ':test))
                   (orchestrator (task-tests--orchestrator)))
              (tool-registry-register
               parent-registry
@@ -375,7 +375,7 @@
                      :name "inheritance"
                      :description "Exercise configuration inheritance."
                      :instructions "Preserve inherited runtime configuration."
-                     :tools :all
+                     :tools ':all
                      :models '("@parent")
                      :source ':test))
                   (child-configuration
@@ -401,7 +401,7 @@
                      :output '(:type :object
                                :properties (("answer" (:type :string)))
                                :required ("answer"))
-                     :source :test))
+                     :source ':test))
                   (completion (make-instance 'task-completion))
                   (orchestrator (task-tests--orchestrator))
                   (parent (agent-create
@@ -447,7 +447,7 @@
                 (task-yield-error ()
                   t))
               "yield validation rejects data outside the output contract")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -551,5 +551,5 @@
                           (subseq results 0 2))
                    (null (getf (rest (third results)) :cpu-microseconds)))
               "executed child calls retain timings while rejected calls omit them")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

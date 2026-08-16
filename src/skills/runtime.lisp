@@ -551,7 +551,7 @@ stall discovery."
                             descriptor
                             :input t
                             :element-type 'character
-                            :external-format :utf-8
+                            :external-format ':utf-8
                             :pathname pathname
                             :auto-close t)))
                      (setf descriptor nil)

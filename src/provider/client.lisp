@@ -48,7 +48,7 @@
     :documentation "Portable provider usage metadata, if supplied.")
    (turn-completion
     :initarg :turn-completion
-    :initform :unspecified
+    :initform ':unspecified
     :reader provider-completed-event-turn-completion
     :type turn-completion
     :documentation "Whether the provider explicitly ended or continued the turn."))
@@ -100,7 +100,7 @@
     :documentation "The routing token to replay within the current user turn.")
    (turn-completion
     :initarg :turn-completion
-    :initform :unspecified
+    :initform ':unspecified
     :reader provider-result-turn-completion
     :type turn-completion
     :documentation "Whether the provider explicitly ended or continued the turn."))

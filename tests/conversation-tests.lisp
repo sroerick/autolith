@@ -7,8 +7,8 @@
   "Write the valid one-pixel test PNG to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
+                          :direction ':output
+                          :if-exists ':supersede
                           :element-type '(unsigned-byte 8))
     (write-sequence
      (base64-string-to-usb8-array *test-conversation-tiny-png*)
@@ -191,7 +191,7 @@
                 (image-input-error (condition)
                   (eq (image-input-error-stage condition) ':loading)))
               "conversation replay rejects a missing image artifact")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-compaction () null)
@@ -232,7 +232,7 @@
                           "the bridge item explains its provenance")
              (test-assert (zerop (conversation-last-total-tokens reloaded))
                           "replay resets usage tracked before the summary")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-native-compaction () null)
@@ -293,7 +293,7 @@
                    (= (length (conversation-input-items-for-family reloaded ':grok))
                       1))
               "native checkpoint replay preserves each family projection")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -400,9 +400,9 @@
                      (not (conversation-picker-search-materialized-p loaded)))
                 "the newest chunk restores all cumulative resumable state alone")
                (with-open-file (stream initial-chunk
-                                       :direction :output
-                                       :if-exists :append
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':append
+                                       :external-format ':utf-8)
                  (write-string "(:interrupted" stream))
                (let ((search-pathname
                        (conversation-picker-search-pathname identity)))
@@ -455,7 +455,7 @@
                    (not (find identity (conversation-list configuration)
                               :test #'equal)))
               "conversation deletion removes deterministic chunks behind the identity")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -580,7 +580,7 @@
                     (conversation-create configuration :identifier "4Pn7wTx"))
                   (segment (conversation-log-pathname publication))
                   (record
-                    (list :message :seq 1 :time 1000 :role :user :content "one"))
+                    (list :message :seq 1 :time 1000 :role ':user :content "one"))
                   (forms
                     (list (conversation--header-record publication)
                           record)))
@@ -594,7 +594,7 @@
               (not
                (conversation--published-segment-p publication segment record 1))
               "post-publication recovery rejects any header-state disagreement")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-legacy-storage () null)
@@ -614,7 +614,7 @@
              (uiop:delete-directory-tree
               (conversation-storage-directory-pathname identity)
               :validate t
-              :if-does-not-exist :ignore))
+              :if-does-not-exist ':ignore))
            (let ((legacy (conversation-load identity)))
              (test-assert
               (and (equal (conversation-log-pathname legacy) identity)
@@ -642,7 +642,7 @@
                         (mapcar (lambda (record) (getf (rest record) :seq)) records)
                         '(1 2)))
                   "newest-chunk resume and full scans preserve mixed legacy history")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-ephemeral-tool-projection () null)
@@ -760,7 +760,7 @@
               "replay after compaction contains only the durable summary bridge")))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-ephemeral-append-interruption () null)
@@ -815,7 +815,7 @@
               (null (conversation-ephemeral-input-entries conversation)))
              "request-local cleanup removes the interrupted provider item")))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-origin-directory () null)
@@ -854,7 +854,7 @@
              (test-assert
               (not (find legacy (conversation-list configuration) :test #'equal))
               "header-only legacy conversations stay out of saved listings")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-model-selection () null)
@@ -909,7 +909,7 @@
                             "legacy conversations load without a model")
                (test-assert (null (conversation-reasoning-effort loaded))
                             "legacy conversations load without an effort"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-interrupted-tool-call () null)
@@ -975,7 +975,7 @@
                           "type")
                          "function_call_output")
                 "reloaded history keeps the repaired provider ordering"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-late-duplicate-tool-output () null)
@@ -1102,7 +1102,7 @@
                 (conversation-invariant-error ()
                   t))
               "duplicate tolerance requires the call before the repair")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-malformed-tool-projections () null)
@@ -1143,7 +1143,7 @@
               (conversation-invariant-error ()
                 t))
             "replay rejects a tool result with competing wire projections"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-private-storage () null)
@@ -1184,7 +1184,7 @@
               (conversation-error ()
                 t))
             "public identifier loading cannot reach a private transcript"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-concurrent-appends () null)
@@ -1229,7 +1229,7 @@
       (dolist (thread threads)
         (when (thread-alive-p thread)
           (join-thread thread)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation--descriptor-read-byte (integer) integer)
@@ -1315,8 +1315,8 @@
           "--eval" "(asdf:load-system :autolith)"
           "--eval" form
           "--quit")
-    :output :string
-    :error-output :output
+    :output ':string
+    :error-output ':output
     :ignore-error-status t)))
 
 (-> test-conversation--call-with-child-lease/fork
@@ -1413,7 +1413,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                   (namestring release-path))
                  "--quit")
            :output output-path
-           :error-output :output))
+           :error-output ':output))
     (unwind-protect
          (progn
            (loop with deadline = (+ (get-internal-real-time)
@@ -1428,9 +1428,9 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
            (funcall function))
       (ignore-errors
         (with-open-file (stream release-path
-                                :direction :output
-                                :if-exists :supersede
-                                :if-does-not-exist :create)
+                                :direction ':output
+                                :if-exists ':supersede
+                                :if-does-not-exist ':create)
           (write-line "release" stream)))
       (let ((status (uiop:wait-process process)))
         (test-assert (zerop status)
@@ -1552,7 +1552,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                        configuration identifier))
                      "the process-local guard retains the kernel lease"))
                (conversation-lease-release lease))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-inherited-reference () null)
@@ -1745,7 +1745,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                (conversation-invariant-error ()
                  t))
              "replay wraps malformed inherited-reference JSON")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-persistence () null)
@@ -1804,9 +1804,9 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                 (last (conversation-input-items conversation)))
             "provider projection appends retain their constant-time tail")
            (with-open-file (stream (conversation-log-pathname conversation)
-                                   :direction :output
-                                   :if-exists :append
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':append
+                                   :external-format ':utf-8)
              (write-string "(:incomplete" stream))
            (let ((loaded (conversation-load-by-id configuration "test-turn")))
              (test-assert (= (length (conversation-input-items loaded)) 3)
@@ -1830,7 +1830,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                      (string= (getf (rest (first (last records))) :content)
                               "after interrupted write"))
                 "the next conversation append atomically repairs its tail"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-working-seconds () null)
@@ -1849,13 +1849,13 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
             (list :conversation :version 1 :id "worked" :created-at 1000))
            (dolist (record
                     (list
-                     (list :message :seq 1 :time 1000 :role :user
+                     (list :message :seq 1 :time 1000 :role ':user
                            :content "start" :wire-json message-json)
                      (list :provider-item :seq 2 :time 1030
                            :wire-json reasoning-json)
                      (list :provider-item :seq 3 :time 1090
                            :wire-json reasoning-json)
-                     (list :message :seq 4 :time 1500 :role :user
+                     (list :message :seq 4 :time 1500 :role ':user
                            :content "next" :wire-json message-json)
                      (list :provider-item :seq 5 :time 1520
                            :wire-json reasoning-json)))
@@ -1910,7 +1910,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
              (test-assert
               (= (conversation-working-seconds reloaded) 110)
               "replay reproduces the accumulated working seconds exactly")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-picker-metadata-stability () null)
@@ -1926,7 +1926,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
             pathname
             (list :conversation :version 1 :id "metadata-race" :created-at 1000))
            (log-append pathname
-                       (list :message :seq 1 :time 1000 :role :user
+                       (list :message :seq 1 :time 1000 :role ':user
                              :content "first"))
            (let ((map-records-function (symbol-function 'conversation--map-records)))
              (test-assert
@@ -1942,7 +1942,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                                  function
                                  :start-position start-position)
                       (log-append pathname
-                                  (list :message :seq 2 :time 1010 :role :user
+                                  (list :message :seq 2 :time 1010 :role ':user
                                         :content "second"))))))
                 (lambda ()
                   (conversation-picker-metadata-scan pathname))))
@@ -2002,7 +2002,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                       (conversation-picker-metadata-source-segment metadata)
                       (namestring (conversation-log-pathname conversation))))
                 "rebuilt picker metadata records the exact active segment"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-picker-search () null)
@@ -2119,9 +2119,9 @@ assistant needle"))
                         expected))
                   "a malformed search sidecar rebuilds both chunks once"))
                (with-open-file (stream search-pathname
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :external-format ':utf-8)
                  (write-string "(:conversation-picker-search" stream))
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
@@ -2241,9 +2241,9 @@ assistant needle"))
                     "a later find rebuilds search after the post-append crash")))
                (delete-file search-pathname)
                (with-open-file (stream (conversation-log-pathname loaded)
-                                       :direction :output
-                                       :if-exists :append
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':append
+                                       :external-format ':utf-8)
                  (write-string "(:provider-item" stream))
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
@@ -2270,7 +2270,7 @@ assistant needle"))
                          (conversation-picker-search-read pathname))
                         expected))
                   "tail repair republishes the complete searchable history"))))
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -2368,7 +2368,7 @@ assistant needle"))
                           "cleanup failure leaves undeleted artifacts recoverable")))
       (when lease
         (conversation-lease-release lease))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-cross-family-reasoning () null)
@@ -2421,5 +2421,5 @@ assistant needle"))
                              collect (json-get item "encrypted_content"))
                      '("grok-private-blob"))
               "replay restores each item's producing family")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -452,9 +452,9 @@
                 "exact memory resources remain denied to task child agents"))
              (let ((sample (merge-pathnames "sample.lisp" first-workspace)))
                (with-open-file (stream sample
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create)
                  (write-line "(in-package #:autolith)" stream))
                 (read-resource first-context "workspace:sample.lisp")
                 (read-resource first-context "agenda:current"))
@@ -549,10 +549,10 @@
                      (search "memory:relevant is read-only"
                              (tool-description resource-edit)))
                 "resource.edit advertises guarded memory mutation"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
       (uiop:delete-directory-tree empty-root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-memory-resource-mutations () null)
@@ -824,7 +824,7 @@
              (let* ((workspace-read
                       (read-resource context "memory:workspace"))
                     (global-read (read-resource context "memory:global"))
-                    (item (first (memory-list configuration :visibility :all)))
+                    (item (first (memory-list configuration :visibility ':all)))
                     (item-uri (format nil "memory:~A"
                                       (memory-identifier item)))
                     (item-read (read-resource context item-uri))
@@ -972,5 +972,5 @@
                      (search "memory:relevant is read-only"
                              (tool-description edit-tool)))
                 "resource.edit advertises three closed memory operation variants")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil))

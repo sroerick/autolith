@@ -274,8 +274,8 @@ its protocol-level close operation."
   (loop for attempt from 1 to attempts
         do (handler-case
                (with-open-file (stream pathname
-                                       :direction :input
-                                       :external-format :utf-8)
+                                       :direction ':input
+                                       :external-format ':utf-8)
                  (let ((value (yason:parse stream)))
                    (unless (json-object-p value)
                      (error "Credential root is not a JSON object."))

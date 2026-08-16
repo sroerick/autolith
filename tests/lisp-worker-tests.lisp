@@ -7,9 +7,9 @@
   "Write a sparse file large enough to pass saved-core shape validation."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
                           :element-type '(unsigned-byte 8))
     (file-position stream (minimum-lisp-image-core-size))
     (write-byte 0 stream))
@@ -67,7 +67,7 @@
                  (test-assert nil "the pristine image name is reserved"))
              (lisp-image-error ()
                (test-assert t "the pristine image name is reserved"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-lisp-worker-protocol () null)
@@ -133,7 +133,7 @@
                  (search "src/code/list.lisp" (getf (rest source) :output)))
             "a launched worker can read its matching implementation source"))
       (lisp-worker-stop worker)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((source-root (asdf:system-source-directory :autolith))
          (launcher (merge-pathnames "bin/autolith" source-root))
          (output
@@ -149,7 +149,7 @@
                     (namestring launcher)
                     "--worker")
               :input input
-              :output :string
+              :output ':string
               :error-output *error-output*))))
     (let ((*read-eval* nil))
       (with-input-from-string (stream output)
@@ -190,7 +190,7 @@
                             (namestring launcher)
                             "--worker")
                       :input input
-                      :output :string
+                      :output ':string
                       :error-output *error-output*))))
              (let ((*read-eval* nil))
                (with-input-from-string (stream output)
@@ -204,7 +204,7 @@
                     "the stable launcher preserves inherited matching source"))))))
       (uiop:delete-directory-tree temporary-root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (pool (lisp-worker-pool-create configuration)))
@@ -315,7 +315,7 @@
            (test-assert (not (search "beta" (lisp-worker-pool-render pool)))
                         "stopping one REPL leaves it out of the pool"))
       (lisp-worker-pool-stop-all pool)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-lisp-execution-jobs () null)
@@ -562,7 +562,7 @@
         (ignore-errors (lisp-worker-pool-stop-all pool))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -718,10 +718,10 @@
                                              (lisp-scratchpad-root context))))
                (ensure-directories-exist (merge-pathnames "secret.txt" outside))
                (with-open-file (stream (merge-pathnames "secret.txt" outside)
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
                  (write-string "secret" stream))
                (sb-posix:symlink (namestring outside) (namestring escape))
                (test-assert
@@ -740,9 +740,9 @@
                     (path (merge-pathnames "program.lisp"
                                            (lisp-scratchpad-root context))))
                (with-open-file (stream path
-                                       :direction :output
-                                       :if-exists :append
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':append
+                                       :external-format ':utf-8)
                  (write-string "; changed" stream))
                (let ((stale
                        (edit-resource
@@ -810,7 +810,7 @@
         (ignore-errors (lisp-worker-pool-stop-all pool))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-lisp-worker-image-snapshot () null)
@@ -863,5 +863,5 @@
                         (lisp-worker-pool-render pool))
                 "the pool identifies which REPL uses the modified image"))))
       (lisp-worker-pool-stop-all pool)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

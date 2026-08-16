@@ -47,8 +47,8 @@
               '(#\Space #\Tab #\Newline #\Return)
               (uiop:run-program
                (append (list "git" "-C" (namestring source-root)) arguments)
-               :output :string
-               :error-output :output)))
+               :output ':string
+               :error-output ':output)))
 
            (source-blob (relative-pathname)
              "Return the Git object identity of one current source file."
@@ -98,8 +98,8 @@
                              "--end-runtime-options"
                              (namestring source-root)
                              "--probe")
-                       :output :string
-                       :error-output :output))
+                       :output ':string
+                       :error-output ':output))
                     (*read-eval* nil)
                     (stream (make-string-input-stream output))
                     (end-marker (gensym "RECOVERY-PROBE-END-"))
@@ -131,10 +131,10 @@
                        (format nil ".manifest.~D.tmp" (sb-posix:getpid))
                        directory)))
                (with-open-file (stream temporary
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
                  (let ((*print-circle* t)
                        (*print-pretty* nil)
                        (*print-readably* t))
@@ -175,9 +175,9 @@
                  (namestring script-path)
                  "--child"
                  (namestring temporary))
-           :input :interactive
-           :output :interactive
-           :error-output :interactive)
+           :input ':interactive
+           :output ':interactive
+           :error-output ':interactive)
           (unless (probe-file temporary)
             (error "The recovery child did not publish its temporary core."))
           (probe-core temporary sbcl-command)

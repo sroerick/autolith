@@ -7,10 +7,10 @@
   "Write a strict release record carrying TAG to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (format stream "version=~A~%tag=~A~%commit=~A~%"
             (subseq tag 1)
             tag
@@ -166,5 +166,5 @@
                        (= (update-state-last-success-at state) 201)
                        (string= (update-state-latest-tag state) "v101.2.3"))
                   "failed refresh retains the last valid release cache")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

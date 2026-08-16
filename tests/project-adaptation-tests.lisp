@@ -14,7 +14,7 @@
           (list :message
                 :seq (conversation-next-sequence conversation)
                 :time (+ (conversation-created-at conversation) seconds-after)
-                :role :user
+                :role ':user
                 :content "later project work")))
     (log-append (conversation-log-pathname conversation) record)
     (conversation--note-activity conversation record)
@@ -114,9 +114,9 @@
                       configuration)))
                (setf *project-adaptation-test-read-eval-p* nil)
                (with-open-file (stream state-pathname
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create)
                  (write-string
                   "#.(setf autolith::*project-adaptation-test-read-eval-p* t)"
                   stream))
@@ -181,9 +181,9 @@
                (project-adaptation-tests--append-late-turn
                 malformed *project-adaptation-substantial-seconds*)
                (with-open-file (stream (conversation-log-pathname malformed)
-                                       :direction :output
-                                       :if-exists :append
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':append
+                                       :external-format ':utf-8)
                  (write-char #\( stream))
                (test-assert
                 (project-adaptation--substantial-conversation-p
@@ -212,10 +212,10 @@
                       "legacy-incomplete.sexp"
                       (configuration-conversation-root configuration))))
                (with-open-file (stream legacy-pathname
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
                  (write (list :conversation
                               :version 1
                               :id "legacy-incomplete"
@@ -227,7 +227,7 @@
                  (dotimes (index *project-adaptation-fallback-user-turns*)
                    (write (list :message
                                 :seq (1+ index)
-                                :role :user
+                                :role ':user
                                 :content "legacy turn")
                           :stream stream
                           :readably t)
@@ -327,9 +327,9 @@
                       (uiop:read-file-string notes))
               "the generated ledger explains its non-executable boundary")
              (with-open-file (stream notes
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :external-format ':utf-8)
                (write-string "adaptation-marker" stream))
              (project-adaptation-notes-create project-root)
              (test-assert
@@ -385,5 +385,5 @@
                             "project advice never creates conversation history"))))
       (uiop:delete-directory-tree temporary-root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

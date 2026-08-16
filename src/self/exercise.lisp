@@ -40,7 +40,7 @@
              :lineage *active-image-lineage-identifier*
              :mutation mutation-identifier
              :proposed source
-             :result :pending))
+             :result ':pending))
       (handler-case
           (multiple-value-bind (result-values output)
               (self-capture-evaluation
@@ -54,7 +54,7 @@
                    :lineage *active-image-lineage-identifier*
                    :mutation mutation-identifier
                    :proposed source
-                   :result :passed
+                   :result ':passed
                    :values result-values
                    :output (bounded-string output :limit 2000)))
             (format nil "Exercise ~A passed for mutation ~A.~2%~A"
@@ -70,7 +70,7 @@
                  :lineage *active-image-lineage-identifier*
                  :mutation mutation-identifier
                  :proposed source
-                 :result :failed
+                 :result ':failed
                  :condition (bounded-string condition :limit 2000)))
           (error condition))))))
 

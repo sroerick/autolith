@@ -337,7 +337,7 @@
 (defun memory-find (configuration identifier)
   "Return active memory IDENTIFIER, regardless of its scope."
   (find identifier
-        (memory-list configuration :visibility :all)
+        (memory-list configuration :visibility ':all)
         :test #'string=
         :key #'memory-identifier))
 

@@ -13,10 +13,10 @@
   "Write one readable FORM to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (let ((*print-readably* t))
       (prin1 form stream)
       (terpri stream)
@@ -85,10 +85,10 @@
   "Write executable CONTENT to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string content stream)
     (finish-output stream))
   (uiop:run-program (list "chmod" "755" (namestring pathname))
@@ -182,7 +182,7 @@
             "recovery rejects duplicate current migration destinations"))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-session-handoff () null)
@@ -327,7 +327,7 @@
        crash-pointer-name previous-crash-pointer)
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-status-boundary () null)
@@ -380,7 +380,7 @@ exit 64
             "the stable launcher does not enter recovery for active status 64"))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-generation-revision-boundary () null)
@@ -597,7 +597,7 @@ exit 64
                  "retained fallback never tries a cross-revision generation")))))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-recovery-tests () null)

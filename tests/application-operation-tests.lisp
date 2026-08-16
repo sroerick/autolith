@@ -117,7 +117,7 @@
             :name "prompt-child"
             :description "Exercise named child prompting."
             :instructions "Accept ordered steering."
-            :source :test)))
+            :source ':test)))
     (labels ((mark-state (job state)
                (with-lock-held ((cl-jobpond::job--lock job))
                  (setf (job-state job) state))
@@ -151,10 +151,10 @@
                     :start-reader-p nil))
               (let ((path (merge-pathnames "prompt-content.txt" root)))
                 (with-open-file (stream path
-                                        :direction :output
-                                        :if-exists :supersede
-                                        :if-does-not-exist :create
-                                        :external-format :utf-8)
+                                        :direction ':output
+                                        :if-exists ':supersede
+                                        :if-does-not-exist ':create
+                                        :external-format ':utf-8)
                   (write-string "computed prompt text" stream))
                 (test-conversation--write-tiny-png prompt-image)
                 (let ((*application-operation-application* application))
@@ -447,7 +447,7 @@
         (ignore-errors (terminal-ui-stop ui))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 (-> run-application-operation-tests () boolean)
@@ -589,10 +589,10 @@
               "eval-now rejects noninteractive evaluator callers"))
            (let ((path (merge-pathnames "operation-check.lisp" root)))
              (with-open-file (stream path
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string "(defun operation-check () 42)" stream))
              (let ((evaluation
                      (application-lisp-evaluate
@@ -746,4 +746,4 @@
               "malformed local tool argument plists fail through the Lisp condition boundary"))
            t)
       (ignore-errors (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))

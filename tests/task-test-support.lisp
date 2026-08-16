@@ -131,7 +131,7 @@
     (:abort
      (error 'job-aborted
             :message "Deliberate post-claim task abort."
-            :reason :test-cancel))
+            :reason ':test-cancel))
     (otherwise
      (write-string ":TASK-TEST-PUBLICATION-BARRIER" stream))))
 
@@ -363,17 +363,17 @@
   (declare (ignore tool context arguments))
   (error 'job-aborted
          :message "Task test was cancelled."
-         :reason :test-cancel))
+         :reason ':test-cancel))
 
 (-> task-tests--write-text (pathname string) pathname)
 (defun task-tests--write-text (pathname contents)
   "Write CONTENTS to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string contents stream))
   pathname)
 
@@ -395,10 +395,10 @@
   "Write exactly one readable native FORM to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (let ((*print-readably* t)
           (*print-pretty* t)
           (*print-circle* t))

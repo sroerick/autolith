@@ -263,8 +263,8 @@
       (return-from release-updater--read-state nil))
     (handler-case
         (with-open-file (stream pathname
-                                :direction :input
-                                :external-format :utf-8)
+                                :direction ':input
+                                :external-format ':utf-8)
           (let ((*read-eval* nil)
                 (eof (list)))
             (let ((state (read stream nil eof))
@@ -298,10 +298,10 @@
     (unwind-protect
          (progn
            (with-open-file (stream temporary
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (let ((*print-pretty* t)
                    (*print-readably* t))
                (write state :stream stream)
@@ -619,7 +619,7 @@ checked-out commit are rejected."
        :error-output nil))
     (uiop:delete-directory-tree deployment
                                 :validate t
-                                :if-does-not-exist :ignore))
+                                :if-does-not-exist ':ignore))
   nil)
 
 (-> release-updater--check-deployment

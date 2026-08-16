@@ -733,7 +733,7 @@ reports an operating-system failure."
   (let ((source (or (conversation-storage-active-pathname pathname)
                     pathname)))
     (with-open-file (stream source
-                            :direction :input
+                            :direction ':input
                             :element-type '(unsigned-byte 8))
       (values (namestring source)
               (file-length stream)
@@ -2554,7 +2554,7 @@ record count."
 (defun conversation--peek-segment-header (pathname)
   "Return exact physical PATHNAME's leading conversation header, or NIL."
   (handler-case
-      (with-open-file (stream pathname :direction :input :external-format :utf-8)
+      (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
         (let* ((*read-eval* nil)
                (end-marker (cons nil nil))
                (form (read stream nil end-marker)))
@@ -2970,7 +2970,7 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
                    (uiop:delete-directory-tree
                     chunk-directory
                     :validate t
-                    :if-does-not-exist :ignore)))
+                    :if-does-not-exist ':ignore)))
              (error (condition)
                (error 'conversation-invariant-error
                       :message
@@ -2989,7 +2989,7 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
                      (funcall *conversation-delete-directory-tree-function*
                               root
                               :validate t
-                              :if-does-not-exist :ignore))))
+                              :if-does-not-exist ':ignore))))
              (error (condition)
                (error 'conversation-invariant-error
                       :message

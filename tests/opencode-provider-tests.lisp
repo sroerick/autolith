@@ -114,7 +114,7 @@
       (opencode-provider-test--restore-environment
        *opencode-models-environment-variable* saved-models)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--credential-source () null)
@@ -187,7 +187,7 @@
                      "saved-opencode-key")
             "the saved interactive key is the environment fallback"))
       (opencode-provider-test--restore-environment "OPENCODE_API_KEY" saved)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--login () null)
@@ -232,7 +232,7 @@
             (setf stored
                   (credential-source-load
                    (credential-manager-primary-source manager)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and read-secret-use-active-p
           save-secret-use-active-p
@@ -271,7 +271,7 @@
                (authentication-error ()
                  t))
              "OpenCode rejects an empty entered key")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (test-assert (not (secret-use-active-p))
                "OpenCode releases secret-use scope after login failure")
   nil)
@@ -330,7 +330,7 @@
            (test-assert (not discovery-called-p)
                         "named OpenCode authentication does not require discovery"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--provider-shape () null)
@@ -352,7 +352,7 @@
                         "the OpenCode provider manages OpenCode credentials")
            (test-assert (eq (provider-family provider) ':opencode)
                         "the OpenCode provider serves the OpenCode family"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--with-configuration () null)
@@ -439,7 +439,7 @@
         (uiop:delete-directory-tree
          (test-configuration-root configuration)
          :validate t
-         :if-does-not-exist :ignore))))
+         :if-does-not-exist ':ignore))))
   nil)
 
 (-> opencode-provider-test--request-model () null)
@@ -473,7 +473,7 @@
               (configuration-error ()
                 t))
             "OpenCode rejects an unnamespaced local model identifier"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--discovery () null)
@@ -611,7 +611,7 @@
                      :status 401
                      :headers nil
                      :uri "https://models.invalid/v1/models"
-                     :method :get))))
+                     :method ':get))))
            (test-assert
             (handler-case
                 (progn
@@ -632,7 +632,7 @@
                      :status 503
                      :headers nil
                      :uri "https://models.invalid/v1/models"
-                     :method :get))))
+                     :method ':get))))
            (test-assert
             (handler-case
                 (progn
@@ -659,7 +659,7 @@
       (opencode-provider-test--restore-environment
        *opencode-models-environment-variable* saved-endpoint)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--legacy-registry-snapshot () null)
@@ -729,7 +729,7 @@
                  (list static-model dynamic-model))
                 "re-registration retains legacy-restored dynamic models")))
         (provider--registry-restore registry-snapshot)
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> opencode-provider-test--static-authentication-rejection () null)
@@ -760,7 +760,7 @@
             "a rejected OpenCode key produces an actionable authentication error")
            (test-assert (equal refresh-flags '(nil))
                         "a static OpenCode key is attempted exactly once"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> opencode-provider-test--builtin-registration () null)
@@ -801,7 +801,7 @@
             "provider-family-create :opencode returns an OpenCode provider")
            (test-assert (eq (provider-family provider) ':opencode)
                         "the family-created provider serves :opencode"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-opencode-provider () null)

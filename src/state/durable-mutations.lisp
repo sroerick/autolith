@@ -239,8 +239,8 @@
   (let ((pathname (configuration-journal-path configuration)))
     (if (probe-file pathname)
         (with-open-file (stream pathname
-                                :direction :input
-                                :external-format :utf-8)
+                                :direction ':input
+                                :external-format ':utf-8)
           (let ((*read-eval* nil)
                 (end-marker (cons nil nil))
                 (records nil))
@@ -489,8 +489,8 @@ Historical journals may name tracked src/ files or retired overlay paths."
    (append (list "git" "-C"
                  (namestring (configuration-source-root configuration)))
            arguments)
-   :output :string
-   :error-output :output
+   :output ':string
+   :error-output ':output
    :ignore-error-status ignore-error-status))
 
 (-> self-validate-commit-title (string) string)

@@ -7,11 +7,11 @@
   "Replace PATH with exact UTF-8 TEXT for a workspace resource test."
   (ensure-directories-exist path)
   (with-open-file (stream path
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
                           :element-type '(unsigned-byte 8))
-    (write-sequence (sb-ext:string-to-octets text :external-format :utf-8)
+    (write-sequence (sb-ext:string-to-octets text :external-format ':utf-8)
                     stream))
   nil)
 
@@ -191,13 +191,13 @@
                         (lambda ()
                           (with-open-file
                               (stream path
-                                      :direction :output
-                                      :if-exists :append
+                                      :direction ':output
+                                      :if-exists ':append
                                       :element-type '(unsigned-byte 8))
                             (write-sequence
                              (sb-ext:string-to-octets
                               "after"
-                              :external-format :utf-8)
+                              :external-format ':utf-8)
                              stream))))
                        nil)
                    (tool-error ()
@@ -451,9 +451,9 @@
                     "resource.read rejects oversized exact snapshots with bounded guidance"))))
              (let ((invalid (merge-pathnames "invalid-utf8.txt" workspace)))
                (with-open-file (stream invalid
-                                       :direction :output
-                                       :if-exists :supersede
-                                       :if-does-not-exist :create
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
                                        :element-type '(unsigned-byte 8))
                  (write-byte #xFF stream))
                (let ((result
@@ -1302,5 +1302,5 @@
       (tool-registry-close-runtime-state registry)
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

@@ -157,9 +157,9 @@ the library that reads a generation owns only the fields every host shares."
                (string-trim
                 '(#\Space #\Tab #\Newline #\Return)
                 (uiop:run-program '("stty" "-g")
-                                  :input :interactive
-                                  :output :string
-                                  :error-output :output))))
+                                  :input ':interactive
+                                  :output ':string
+                                  :error-output ':output))))
          (and (plusp (length settings)) settings))
      (error ()
        nil))))
@@ -171,14 +171,14 @@ the library that reads a generation owns only the fields every host shares."
     (when settings
       (ignore-errors
         (uiop:run-program (list "stty" settings)
-                          :input :interactive
+                          :input ':interactive
                           :output nil
                           :error-output nil)))
     (ignore-errors
       (with-open-file (stream #P"/dev/tty"
-                              :direction :output
+                              :direction ':output
                               :if-does-not-exist nil
-                              :external-format :utf-8)
+                              :external-format ':utf-8)
         (when stream
           (format stream "~C[?2004l~C[?25h~C[0m"
                   #\Escape #\Escape #\Escape)
@@ -224,7 +224,7 @@ the library that reads a generation owns only the fields every host shares."
 (serapeum:-> recovery-read-form (pathname) t)
 (defun recovery-read-form (pathname)
   "Read exactly one portable form from PATHNAME with reader evaluation disabled."
-  (with-open-file (stream pathname :direction :input :external-format :utf-8)
+  (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
     (let ((*read-eval* nil)
           (end-marker (cons nil nil)))
       (let ((form (read stream t nil)))
@@ -275,7 +275,7 @@ the library that reads a generation owns only the fields every host shares."
 (defun recovery-read-journal-records (pathname)
   "Read complete journal forms from PATHNAME, ignoring an incomplete final form."
   (if (probe-file pathname)
-      (with-open-file (stream pathname :direction :input :external-format :utf-8)
+      (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
         (let ((*read-eval* nil)
               (end-marker (cons nil nil))
               (records nil))
@@ -839,8 +839,8 @@ generation. Its validator carries this image's own stricter checks."
           (error "The crash pointer is outside private Autolith state."))
         (when (probe-file pointer-pathname)
           (with-open-file (stream pointer-pathname
-                                  :direction :input
-                                  :external-format :utf-8)
+                                  :direction ':input
+                                  :external-format ':utf-8)
             (let ((capsule (read-line stream nil nil))
                   (trailing-line (read-line stream nil nil)))
               (unless (and (stringp capsule)
@@ -993,8 +993,8 @@ generation. Its validator carries this image's own stricter checks."
    '(#\Space #\Tab #\Newline #\Return)
    (uiop:run-program
     (append (list "git" "-C" (namestring repository)) arguments)
-    :output :string
-    :error-output :output)))
+    :output ':string
+    :error-output ':output)))
 
 (serapeum:-> recovery-source-commit (recovery-context) string)
 (defun recovery-source-commit (context)
@@ -1045,7 +1045,7 @@ generation. Its validator carries this image's own stricter checks."
                (not (recovery-source-checkout-valid-p checkout commit)))
       (uiop:delete-directory-tree checkout
                                   :validate t
-                                  :if-does-not-exist :ignore))
+                                  :if-does-not-exist ':ignore))
     (unless (probe-file checkout)
       (ensure-directories-exist root)
       (let ((temporary
@@ -1055,7 +1055,7 @@ generation. Its validator carries this image's own stricter checks."
         (when (probe-file temporary)
           (uiop:delete-directory-tree temporary
                                       :validate t
-                                      :if-does-not-exist :ignore))
+                                      :if-does-not-exist ':ignore))
         (unwind-protect
              (progn
                (uiop:run-program
@@ -1063,8 +1063,8 @@ generation. Its validator carries this image's own stricter checks."
                       "--no-hardlinks"
                       (namestring (recovery-context-source-root context))
                       (namestring temporary))
-                :output :string
-                :error-output :output)
+                :output ':string
+                :error-output ':output)
                (recovery-git-output temporary
                                     (list "checkout" "--quiet" "--detach"
                                           commit))
@@ -1074,7 +1074,7 @@ generation. Its validator carries this image's own stricter checks."
           (when (probe-file temporary)
             (uiop:delete-directory-tree temporary
                                         :validate t
-                                        :if-does-not-exist :ignore)))))
+                                        :if-does-not-exist ':ignore)))))
     checkout))
 
 (serapeum:-> recovery-source-worktree
@@ -1139,9 +1139,9 @@ generation. Its validator carries this image's own stricter checks."
                     "--end-runtime-options")
               forwarded-arguments)
              :directory worktree
-             :input :interactive
-             :output :interactive
-             :error-output :interactive
+             :input ':interactive
+             :output ':interactive
+             :error-output ':interactive
              :wait nil)))
       (uiop:wait-process process))))
 
@@ -1171,9 +1171,9 @@ generation. Its validator carries this image's own stricter checks."
                                 (namestring launcher))
                           forwarded-arguments)
                   :directory checkout
-                  :input :interactive
-                  :output :interactive
-                  :error-output :interactive
+                  :input ':interactive
+                  :output ':interactive
+                  :error-output ':interactive
                   :wait nil)))
            (uiop:wait-process process))
       (recovery-terminal-state-restore terminal-state))))

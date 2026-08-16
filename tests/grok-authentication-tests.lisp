@@ -12,10 +12,10 @@
   "Write a synthetic Grok Build credential document to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string
      (json-encode
       (json-object
@@ -208,7 +208,7 @@
                        :status 400
                        :headers nil
                        :uri nil
-                       :method :post)))))
+                       :method ':post)))))
                  (lambda ()
                    (credential-manager-refresh manager renewable)))
               (token-refresh-failed (failure)
@@ -241,5 +241,5 @@
             "private Grok credentials live under the state root")
            (grok-authentication-tests--test-bootstrap configuration)
            (grok-authentication-tests--test-refresh configuration))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

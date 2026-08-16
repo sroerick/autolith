@@ -234,7 +234,7 @@
             (:directory
              (uiop:delete-directory-tree path
                                          :validate t
-                                         :if-does-not-exist :error))
+                                         :if-does-not-exist ':error))
             (:missing
              (error 'tool-error
                     :message "Cannot delete an observed missing scratchpad resource."

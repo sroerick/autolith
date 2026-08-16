@@ -8,10 +8,10 @@
   (let ((pathname (merge-pathnames relative root)))
     (ensure-directories-exist pathname)
     (with-open-file (stream pathname
-                            :direction :output
-                            :if-exists :supersede
-                            :if-does-not-exist :create
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-exists ':supersede
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
       (write-string content stream))
     pathname))
 
@@ -21,9 +21,9 @@
   (let ((pathname (merge-pathnames relative root)))
     (ensure-directories-exist pathname)
     (with-open-file (stream pathname
-                            :direction :output
-                            :if-exists :supersede
-                            :if-does-not-exist :create
+                            :direction ':output
+                            :if-exists ':supersede
+                            :if-does-not-exist ':create
                             :element-type '(unsigned-byte 8))
       (dolist (octet octets)
         (write-byte octet stream)))
@@ -74,7 +74,7 @@
   (when (probe-file root)
     (uiop:delete-directory-tree root
                                 :validate t
-                                :if-does-not-exist :ignore))
+                                :if-does-not-exist ':ignore))
   nil)
 
 (-> skill-tests--definition-error-kind (function) (option keyword))

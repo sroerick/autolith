@@ -4,8 +4,8 @@
   "Read and return PATHNAME's only form with reader evaluation disabled."
   (let ((*read-eval* nil))
     (with-open-file (stream pathname
-                            :direction :input
-                            :external-format :utf-8)
+                            :direction ':input
+                            :external-format ':utf-8)
       (let ((form (read stream t nil))
             (end-marker (gensym "CHECK-END-")))
         (unless (eq (read stream nil end-marker) end-marker)
@@ -107,7 +107,7 @@
                          (namestring source-root)
                          "--probe")
                    :output probe-output-pathname
-                   :error-output :output)
+                   :error-output ':output)
                   (uiop:launch-program
                    (list sbcl-command
                          "--noinform"
@@ -116,7 +116,7 @@
                          (namestring source-root)
                          "--list")
                    :output list-output-pathname
-                   :error-output :output)
+                   :error-output ':output)
                   (uiop:launch-program
                    (list "env"
                          (format nil "HOME=~A" temporary-home)
@@ -132,7 +132,7 @@
                          "--"
                          "--version")
                    :output fallback-output-pathname
-                   :error-output :output)))
+                   :error-output ':output)))
            (asdf:test-system :autolith)
            (let* ((probe-output
                     (check--wait-for-process
@@ -165,4 +165,4 @@
       (check--stop-processes processes)
       (uiop:delete-directory-tree temporary-root
                                   :validate t
-                                  :if-does-not-exist :ignore))))
+                                  :if-does-not-exist ':ignore))))

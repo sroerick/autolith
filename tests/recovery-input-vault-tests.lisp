@@ -6,7 +6,7 @@
 (defun recovery-input-vault-tests--octets (pathname)
   "Return the exact octets stored at PATHNAME."
   (with-open-file (stream pathname
-                          :direction :input
+                          :direction ':input
                           :element-type '(unsigned-byte 8))
     (let ((octets (make-array (file-length stream)
                               :element-type '(unsigned-byte 8))))
@@ -120,7 +120,7 @@
                    (equalp vault-octets
                            (recovery-input-vault-tests--octets vault-pathname)))
               "a conflicting replay preserves both the pending snapshot and vault")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-legacy-isolation () null)
@@ -216,7 +216,7 @@
                      :id)
                     "migration-snapshot"))
               "migration recovery reuses canonical identity and removes both sources")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-corruption () null)
@@ -251,10 +251,10 @@
            (snapshot-write pending-pathname pending-form :mode #o600)
            (ensure-directories-exist vault-pathname)
            (with-open-file (stream vault-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "(:recovery-input-vault :version 1" stream))
            (let ((pending-octets
                    (recovery-input-vault-tests--octets pending-pathname))
@@ -284,7 +284,7 @@
                 (recovery-input-vault-error ()
                   t))
               "strict vault inspection reports the same corruption")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-unattributed-legacy () null)
@@ -306,10 +306,10 @@
            (configuration-ensure-directories configuration)
            (ensure-directories-exist legacy-pathname)
            (with-open-file (stream legacy-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "(:pending-inputs :version" stream))
            (let ((legacy-octets
                    (recovery-input-vault-tests--octets legacy-pathname)))
@@ -323,7 +323,7 @@
                    (equalp legacy-octets
                            (recovery-input-vault-tests--octets legacy-pathname)))
               "unattributed corrupt global legacy bytes remain untouched")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Vault Controls --
@@ -468,7 +468,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-active-restore-crash () null)
@@ -559,7 +559,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-restore-rollback () null)
@@ -650,7 +650,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-post-delete-rollback () null)
@@ -774,7 +774,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-discard () null)
@@ -813,10 +813,10 @@
            (conversation-append-user-message other-conversation "seed")
            (ensure-directories-exist current-vault)
            (with-open-file (stream current-vault
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "(:corrupt" stream))
            (ensure-directories-exist other-vault)
            (snapshot-write
@@ -847,10 +847,10 @@
             :mode #o600)
            (ensure-directories-exist legacy-pathname)
            (with-open-file (stream legacy-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "(:pending-inputs :version" stream))
            (setf legacy-octets
                  (recovery-input-vault-tests--octets legacy-pathname))
@@ -883,7 +883,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-disabled-ingress () null)
@@ -937,7 +937,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-disabled-recalled-ingress () null)
@@ -1001,7 +1001,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1147,7 +1147,7 @@
                    (search "/vault-restore" output)
                    (search "/vault-discard" output))
               "recovery startup warns how to inspect, restore, or discard vaulted input")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-corrupt-startup () null)
@@ -1201,10 +1201,10 @@
             :mode #o600)
            (ensure-directories-exist vault-pathname)
            (with-open-file (stream vault-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "(:recovery-input-vault :version 1" stream))
            (setf pending-octets
                  (recovery-input-vault-tests--octets pending-pathname)
@@ -1310,7 +1310,7 @@
                    (search "/vault-restore" output)
                    (search "/vault-discard" output))
               "corrupt startup warns without submitting or hiding vault controls")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-ordinary-startup () null)
@@ -1413,7 +1413,7 @@
                    (not (probe-file vault-pathname))
                    (not (search "Nothing was submitted automatically." output)))
               "ordinary startup neither vaults pending input nor presents a recovery warning")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-live-primary-submit () null)
@@ -1468,7 +1468,7 @@
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-input-vault-capture-message () null)
@@ -1510,7 +1510,7 @@
                    (equal (application-recovery-input-vault--capture-work capture)
                           '((:message "child steer"))))
               "a child-steer capture survives reload from disk")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-recovery-input-vault-tests () boolean)

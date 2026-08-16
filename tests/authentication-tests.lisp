@@ -367,7 +367,7 @@
              :stream (make-string-output-stream)
              :input (make-string-input-stream "")
              :input-file-descriptor 17)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and
       (find "Anthropic" calls :key #'first :test #'string=)
@@ -412,7 +412,7 @@
                (authentication-error ()
                  t))
              "Fireworks login propagates validation failure")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
     (test-assert
      (and fireworks-secret-use-active-p
           (not (secret-use-active-p)))
@@ -455,7 +455,7 @@
               "the private credential store round-trips its account")
              (test-assert (= (logand mode #o777) #o600)
                           "the private credential store has mode 0600")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-write-codex-auth
@@ -465,10 +465,10 @@
   "Write a synthetic Codex credential document to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string
      (json-encode
       (json-object
@@ -604,7 +604,7 @@
                                 :status 400
                                 :headers nil
                                 :uri nil
-                                :method :post)))))
+                                :method ':post)))))
                           (lambda ()
                             (credential-manager-refresh manager renewable)))
                        (token-refresh-failed (failure)
@@ -620,5 +620,5 @@
                   condition
                   "[OAUTH CREDENTIAL REDACTED]"))
                 "OAuth failure diagnostics redact an echoed refresh token"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

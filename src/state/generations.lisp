@@ -147,7 +147,7 @@ quiescing, because both touch the private history repository."
           (let ((journal (configuration-journal-path configuration)))
             (if (probe-file journal)
                 (with-open-file (stream journal
-                                        :direction :input
+                                        :direction ':input
                                         :element-type '(unsigned-byte 8))
                   (file-length stream))
                 0)))))
@@ -346,8 +346,8 @@ structured type and message survive the round trip."
                   (merge-pathnames "script/check"
                                    (configuration-source-root configuration))))
            :directory (configuration-source-root configuration)
-           :output :string
-           :error-output :output)
+           :output ':string
+           :error-output ':output)
         (error (condition)
           (error 'checkpoint-error
                  :message (format nil "The repository check failed: ~A" condition)

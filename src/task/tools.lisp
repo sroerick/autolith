@@ -323,13 +323,13 @@ The primary blocking field and legacy inverse async field are mutually exclusive
   "Return RESULT FIELD, respecting terminal compaction metadata."
   (let* ((storage-field
            (ecase field
-             (:output :output-storage)
+             (:output ':output-storage)
              (:error :error-storage)
              (:label :label-storage)
              (:structured-output :structured-output-storage)))
          (characters-field
            (ecase field
-             (:output :output-characters)
+             (:output ':output-characters)
              (:error :error-characters)
              (:label :label-characters)
              (:structured-output :structured-output-characters)))
@@ -601,7 +601,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
 (-> task--agent-native-record (task-agent-definition) list)
 (defun task--agent-native-record (definition)
   "Return model-visible native metadata for one child role."
-  (list :kind :agent
+  (list :kind ':agent
         :name (task-agent-definition-name definition)
         :description
         (task--retained-prefix
@@ -629,7 +629,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
 (defun task--agent-diagnostic-native-record (diagnostic)
   "Return bounded typed native metadata for one rejected role."
   (let ((pathname (task-agent-definition-error-pathname diagnostic)))
-    (list :kind :diagnostic
+    (list :kind ':diagnostic
           :type :task-agent-definition-error
           :name (task-agent-definition-error-definition-name diagnostic)
           :source (task-agent-definition-error-source diagnostic)
@@ -925,7 +925,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                         (list :job-cancel
                               :id identifier
                               :accepted-p (and accepted-p t)
-                              :reason :user
+                              :reason ':user
                               :cancelled-descendants cancelled-descendants
                               :job record)))
                    (task-tool-result content form))))

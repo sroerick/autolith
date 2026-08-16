@@ -162,7 +162,7 @@
               "an empty conversation contributes no user-operation context")))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-user-operation-bounds-and-validation () null)
@@ -354,8 +354,8 @@
                   (progn
                     (with-open-file
                         (stream (conversation-log-pathname conversation)
-                                :direction :output
-                                :if-exists :append
+                                :direction ':output
+                                :if-exists ':append
                                 :external-format ':utf-8)
                       (terpri stream)
                       (write record :stream stream :readably t :circle t)
@@ -391,8 +391,8 @@
                     (progn
                       (with-open-file
                           (stream (conversation-log-pathname conversation)
-                                  :direction :output
-                                  :if-exists :supersede
+                                  :direction ':output
+                                  :if-exists ':supersede
                                   :external-format ':utf-8)
                         (write header :stream stream :readably t :circle t)
                         (terpri stream)
@@ -422,7 +422,7 @@
             "replay rejects an incomplete durable user-operation property list"))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -557,7 +557,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-user-operation-command-outcomes () null)
@@ -670,7 +670,7 @@
                    (tool-registry-close-runtime-state
                     (application-tool-registry application)))
                  (uiop:delete-directory-tree
-                  root :validate t :if-does-not-exist :ignore)))))
+                  root :validate t :if-does-not-exist ':ignore)))))
       (application-command--registry-restore snapshot)))
   nil)
 
@@ -721,7 +721,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-user-operation-retention-failure () null)
@@ -771,7 +771,7 @@
            (application-tool-registry application)))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> run-user-operation-context-tests () null)

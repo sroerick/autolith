@@ -35,14 +35,14 @@
     (mcp-configuration--error
      "A trusted directory must be a bounded non-empty pathname string."
      :pathname manifest-pathname
-     :field :directories))
+     :field ':directories))
   (let ((expanded (configuration--expanded-working-directory value)))
     (unless (uiop:absolute-pathname-p expanded)
       (mcp-configuration--error
        (format nil "Trusted directory ~S must be absolute or begin with ~~/."
                value)
        :pathname manifest-pathname
-       :field :directories))
+       :field ':directories))
     (handler-case
         (let ((directory
                 (uiop:directory-exists-p
@@ -53,7 +53,7 @@
             (mcp-configuration--error
              (format nil "Trusted directory ~S does not exist." value)
              :pathname manifest-pathname
-             :field :directories))
+             :field ':directories))
           (uiop:ensure-directory-pathname (truename directory)))
       (mcp-configuration-error (condition)
         (error condition))
@@ -62,7 +62,7 @@
          (format nil "Could not resolve trusted directory ~S: ~A"
                  value cause)
          :pathname manifest-pathname
-         :field :directories
+         :field ':directories
          :cause cause)))))
 
 (-> directory-configuration-read-trusted-directories (configuration) list)
@@ -82,7 +82,7 @@
          (format nil "Directory scopes must use version ~D."
                  *directory-configuration-version*)
          :pathname pathname
-         :field :version))
+         :field ':version))
       (let ((directories
               (mcp-configuration--property
                form :directories :required-p t :pathname pathname)))
@@ -90,14 +90,14 @@
           (mcp-configuration--error
            "Directory-scope :DIRECTORIES must be a proper list."
            :pathname pathname
-           :field :directories))
+           :field ':directories))
         (when (> (length directories)
                  *directory-configuration-maximum-directories*)
           (mcp-configuration--error
            (format nil "Directory-scope :DIRECTORIES exceeds the limit of ~D."
                    *directory-configuration-maximum-directories*)
            :pathname pathname
-           :field :directories))
+           :field ':directories))
         (let ((result nil)
               (seen (make-hash-table :test #'equal)))
           (dolist (value directories)
@@ -105,7 +105,7 @@
               (mcp-configuration--error
                "Every trusted directory must be a pathname string."
                :pathname pathname
-               :field :directories))
+               :field ':directories))
             (let* ((directory
                      (directory-configuration--canonical-directory value pathname))
                    (key (namestring directory)))
@@ -113,7 +113,7 @@
                 (mcp-configuration--error
                  (format nil "Duplicate trusted directory ~S." value)
                  :pathname pathname
-                 :field :directories))
+                 :field ':directories))
               (setf (gethash key seen) t)
               (setf result (append result (list directory)))))
           result)))))

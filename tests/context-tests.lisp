@@ -444,5 +444,5 @@
                        "inspect this request")
               "contributors receive the latest durable user text"))
            (context-tests--serialized-invocation configuration conversation))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -334,7 +334,7 @@ letters, digits, hyphens, and underscores on the wire."
            (string-right-trim
             "."
             (usb8-array-to-base64-string
-             (sb-ext:string-to-octets payload :external-format :utf-8)
+             (sb-ext:string-to-octets payload :external-format ':utf-8)
              :uri t)))
          (wire-name (format nil "a~A" encoded)))
     (when (> (length wire-name) *openai-compatible-wire-tool-name-maximum-length*)

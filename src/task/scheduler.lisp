@@ -42,17 +42,17 @@
                        (getf retained storage-field) storage
                        (getf retained characters-field) (length value))))))
       (compact-string :assignment *task-retained-assignment-limit*
-                      :storage-field :assignment-storage
-                      :characters-field :assignment-characters)
+                      :storage-field ':assignment-storage
+                      :characters-field ':assignment-characters)
       (compact-string :output *task-retained-output-limit*
-                      :storage-field :output-storage
-                      :characters-field :output-characters)
+                      :storage-field ':output-storage
+                      :characters-field ':output-characters)
       (compact-string :error *task-retained-output-limit*
-                      :storage-field :error-storage
-                      :characters-field :error-characters)
+                      :storage-field ':error-storage
+                      :characters-field ':error-characters)
       (compact-string :label *task-result-label-maximum-characters*
-                      :storage-field :label-storage
-                      :characters-field :label-characters))
+                      :storage-field ':label-storage
+                      :characters-field ':label-characters))
     (when (getf retained :structured-output-present-p)
       (let* ((value (getf retained :structured-output))
              (serialized (task--write-readable-sexp value)))

@@ -56,18 +56,18 @@
          (progn
            (ensure-directories-exist script)
            (with-open-file (stream script
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (format stream "(in-package #:autolith)~%"))
            (test-assert
             (null (image-commit-replay-probe configuration script identifier))
             "a clean Autolith process loads a valid private replay script")
            (with-open-file (stream script
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :external-format ':utf-8)
              (format stream "(in-package #:autolith)~%(error \"Broken replay.\")~%"))
            (test-assert
             (handler-case
@@ -77,5 +77,5 @@
               (image-commit-error (condition)
                 (eq (image-commit-error-stage condition) ':replay-probe)))
             "a clean Autolith process rejects a failing private replay script"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

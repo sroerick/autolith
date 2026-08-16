@@ -68,7 +68,7 @@
              (test-assert (= (length (memory-list other)) 2)
                           "another workspace sees its own and global memories")
              (test-assert (= (length (memory-list configuration
-                                                   :visibility :all))
+                                                   :visibility ':all))
                              3)
                           "all-scope memory listing crosses workspaces")
              (test-assert
@@ -125,7 +125,7 @@
                       :tags '("tests")
                       :source-conversation "third")))
                (test-assert (= (length (memory-list configuration
-                                                     :visibility :all))
+                                                     :visibility ':all))
                                3)
                             "replacement records retain one active memory")
                (test-assert (string= (memory-content replacement)
@@ -139,16 +139,16 @@
                                             (memory-identifier global-memory)))
                           "memory tombstones remove active recall")
              (test-assert (= (length (memory-list configuration
-                                                   :visibility :all))
+                                                   :visibility ':all))
                              2)
                           "forgotten memories stay absent after replay")
              (with-open-file (stream (configuration-memory-path configuration)
-                                     :direction :output
-                                     :if-exists :append
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':append
+                                     :external-format ':utf-8)
                (write-string "(:memory :version" stream))
              (test-assert (= (length (memory-list configuration
-                                                   :visibility :all))
+                                                   :visibility ':all))
                              2)
                           "an incomplete final memory form is ignored")
              (memory-remember
@@ -158,7 +158,7 @@
               :tags nil
               :source-conversation "fourth")
              (test-assert (= (length (memory-list configuration
-                                                   :visibility :all))
+                                                   :visibility ':all))
                              3)
                           "the next append atomically repairs an incomplete tail")
              (let* ((matches (memory-rank configuration "Repository script"))
@@ -189,9 +189,9 @@
                        (not (search "Other project" evidence)))
                   "request-local recall offers ranked relevant memory metadata")))
              (with-open-file (stream (configuration-memory-path configuration)
-                                     :direction :output
-                                     :if-exists :append
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':append
+                                     :external-format ':utf-8)
                (write-string "#.(error \"reader evaluation ran\")" stream))
              (let* ((conversation
                       (conversation-create configuration
@@ -209,5 +209,5 @@
                                     (context-delivery-failures delivery)))
                            "related-memories")
                   "malformed memory data degrades to context diagnostics without reader evaluation")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

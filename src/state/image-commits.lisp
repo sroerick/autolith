@@ -105,7 +105,7 @@
   (let ((journal (configuration-journal-path configuration)))
     (if (probe-file journal)
         (with-open-file (stream journal
-                                :direction :input
+                                :direction ':input
                                 :element-type '(unsigned-byte 8))
           (file-length stream))
         0)))
@@ -124,10 +124,10 @@
     (unwind-protect
          (progn
            (with-open-file (stream temporary
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (funcall writer stream)
              (finish-output stream))
            (uiop:rename-file-overwriting-target temporary pathname)
@@ -160,8 +160,8 @@
                  (namestring
                   (configuration-mutation-history-root configuration)))
            arguments)
-   :output :string
-   :error-output :output))
+   :output ':string
+   :error-output ':output))
 
 (-> image-history--ensure-repository (configuration) pathname)
 (defun image-history--ensure-repository (configuration)
@@ -171,8 +171,8 @@
     (unless (uiop:directory-exists-p (merge-pathnames ".git/" root))
       (uiop:run-program
        (list "git" "init" "--quiet" (namestring root))
-       :output :string
-       :error-output :output))
+       :output ':string
+       :error-output ':output))
     root))
 
 (-> image-history--artifact-directory (configuration string) pathname)
@@ -766,8 +766,8 @@
                       (namestring script)
                       identifier)
                 :input nil
-                :output :string
-                :error-output :output)
+                :output ':string
+                :error-output ':output)
              (error (condition)
                (error 'image-commit-error
                       :message
@@ -890,13 +890,13 @@
         (when (probe-file directory)
           (uiop:delete-directory-tree directory
                                       :validate t
-                                      :if-does-not-exist :ignore))
+                                      :if-does-not-exist ':ignore))
         (error condition))
       (error (condition)
         (when (probe-file directory)
           (uiop:delete-directory-tree directory
                                       :validate t
-                                      :if-does-not-exist :ignore))
+                                      :if-does-not-exist ':ignore))
         (error 'image-commit-error
                :message (format nil "Could not publish private image commit: ~A"
                                 condition)
@@ -972,7 +972,7 @@
                  :title title
                  :mutations mutation-identifiers
                  :generation generation-identifier
-                 :result :pending))
+                 :result ':pending))
           (handler-case
               (progn
                 (mutation-checker-check-active
@@ -999,7 +999,7 @@
                                   (image-commit-script-pathname commit))
                          :history-commit
                          (image-commit-history-commit commit)
-                         :result :committed))
+                         :result ':committed))
                   commit))
             (error (condition)
               (mutation-journal-append
@@ -1011,7 +1011,7 @@
                      :title title
                      :mutations mutation-identifiers
                      :generation generation-identifier
-                     :result :failed
+                     :result ':failed
                      :condition (bounded-string condition :limit 2000)))
               (error condition)))))))
 
@@ -1096,7 +1096,7 @@
              :parent *active-image-commit-identifier*
              :title title
              :mutations mutation-identifiers
-             :result :pending))
+             :result ':pending))
       (handler-case
           (progn
             (mutation-checker-check-active
@@ -1121,7 +1121,7 @@
                               (image-commit-script-pathname commit))
                      :history-commit
                      (image-commit-history-commit commit)
-                     :result :committed))
+                     :result ':committed))
               (tool-success
                (format nil
                        "Committed ~D live mutation~:P as private image commit ~A.~%Private Git commit: ~A~%Replay script: ~A"
@@ -1138,6 +1138,6 @@
                  :parent *active-image-commit-identifier*
                  :title title
                  :mutations mutation-identifiers
-                 :result :failed
+                 :result ':failed
                  :condition (bounded-string condition :limit 2000)))
           (error condition))))))

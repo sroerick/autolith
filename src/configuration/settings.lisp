@@ -774,8 +774,8 @@ reasoning effort only when that effort is supported by the selected model."
   "Return a process-independent identifier suitable for conversations and requests."
   (handler-case
       (with-open-file (stream #P"/proc/sys/kernel/random/uuid"
-                              :direction :input
-                              :external-format :utf-8)
+                              :direction ':input
+                              :external-format ':utf-8)
         (string-trim '(#\Space #\Tab #\Newline #\Return)
                      (read-line stream)))
     (error ()

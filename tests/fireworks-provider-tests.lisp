@@ -109,7 +109,7 @@
                      "saved-fireworks-key")
             "the saved interactive key is the environment fallback"))
       (setf (uiop:getenv "FIREWORKS_API_KEY") (or saved ""))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> fireworks-provider-test--wire-tools () null)
@@ -237,7 +237,7 @@
              (test-assert
               (zerop (length (json-get compaction-request "tools")))
               "compaction requests carry no tools")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> fireworks-provider-test--reasoning-omission () null)
@@ -272,7 +272,7 @@
                         "store=false still rides reasoning-free requests")
            (test-assert (eq (json-get request "stream") t)
                         "streaming still rides reasoning-free requests"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> fireworks-provider-test--static-authentication-rejection () null)

@@ -82,7 +82,7 @@
              :id mutation-identifier
              :lineage *active-image-lineage-identifier*
              :target (getf properties :target)
-             :result :pending))
+             :result ':pending))
       (funcall undo-action)
       (handler-case
           (progn
@@ -93,7 +93,7 @@
                    :id mutation-identifier
                    :lineage *active-image-lineage-identifier*
                    :target (getf properties :target)
-                   :result :discarded))
+                   :result ':discarded))
             (when (eq (getf properties :kind) :definition)
               (self-discard--synchronize-definition-source
                configuration

@@ -47,9 +47,9 @@
   "Write one deliberately non-bootable byte to GENERATION's temporary core."
   (ensure-directories-exist (generation-temporary-core-pathname generation))
   (with-open-file (stream (generation-temporary-core-pathname generation)
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
                           :element-type '(unsigned-byte 8))
     (write-byte 42 stream))
   (generation-temporary-core-pathname generation))
@@ -67,9 +67,9 @@
 (defun generation-tests--make-core-plausible (generation)
   "Expand GENERATION's published core past the static compatibility threshold."
   (with-open-file (stream (generation-core-pathname generation)
-                          :direction :output
-                          :if-exists :overwrite
-                          :if-does-not-exist :error
+                          :direction ':output
+                          :if-exists ':overwrite
+                          :if-does-not-exist ':error
                           :element-type '(unsigned-byte 8))
     (file-position stream 1048576)
     (write-byte 42 stream))
@@ -171,7 +171,7 @@
           (condition-notify secret-condition))
         (join-thread secret-thread))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-partial-runtime-quiescence () null)
@@ -260,7 +260,7 @@
                    (zerop failed-resume-count))
               "checkpoint recovery resumes only the runtime that actually closed"))
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore))))
+         root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> generation-tests--test-active-provider-secret-refusal () null)
@@ -325,7 +325,7 @@
         (condition-notify barrier))
       (join-thread thread)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--unpublished-p (configuration generation) boolean)
@@ -420,7 +420,7 @@
                 (string= (rollback-requested-generation-id command-condition)
                          "rollback-generation")
                 "/rollback carries the selected generation into recovery"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-reconstruction-capture () null)
@@ -499,7 +499,7 @@
             *active-image-lineage-identifier* previous-lineage-identifier)
       (remhash (definition-key '(defun test-generation-replay-target () 0))
                *exploratory-definitions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -579,7 +579,7 @@
                      (list (list ':detach worker)
                            '(:state :saved-application)))
               "the saver detaches worker and application state before saving")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-active-image-single-thread-check () null)
@@ -608,7 +608,7 @@
                       (equal (active-image-build-error-pathname condition)
                              core-pathname))))))
           "active-image installation checks for one live thread before forking")
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> generation-tests--test-autolith-error-translation () null)
@@ -696,7 +696,7 @@
                         (generation-selected configuration))
                        "generation-under-test")
               "publication atomically selects the ready generation")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (directory (merge-pathnames "legacy-generation/"
@@ -724,7 +724,7 @@
                             "legacy-generation")
                    (null (generation-reconstruction-pathname legacy)))
               "version-one generation manifests remain readable")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (wrong-commit
@@ -799,7 +799,7 @@
             (generation-tests--unpublished-p configuration
                                              missing-reconstruction)
             "missing reconstruction leaves publication paths untouched"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (generation-tests--test-rollback-control-path)
   (generation-tests--test-reconstruction-capture)
   nil)
@@ -912,5 +912,5 @@
                            previous-session-pointer
                            1)
           (sb-posix:unsetenv "AUTOLITH_RECOVERY_SESSION_POINTER"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

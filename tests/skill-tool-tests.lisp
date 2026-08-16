@@ -8,10 +8,10 @@
   (let ((pathname (merge-pathnames relative-path root)))
     (ensure-directories-exist pathname)
     (with-open-file (stream pathname
-                            :direction :output
-                            :if-does-not-exist :create
-                            :if-exists :supersede
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-does-not-exist ':create
+                            :if-exists ':supersede
+                            :external-format ':utf-8)
       (write-string content stream))
     pathname))
 
@@ -196,5 +196,5 @@
                      "deferred body failure becomes request-local warning")))))))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

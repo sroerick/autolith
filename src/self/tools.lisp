@@ -150,10 +150,10 @@
                       (rest record))))
     (ensure-directories-exist pathname)
     (with-open-file (stream pathname
-                            :direction :output
-                            :if-exists :append
-                            :if-does-not-exist :create
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-exists ':append
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
       (let ((*print-circle* t)
             (*print-readably* t))
         (prin1 entry stream)
@@ -272,7 +272,7 @@ protocol."
            (configuration (tool-context-configuration context)))
       (mutation-journal-append
        configuration
-       (list :mutation :kind :eval :proposed source :result :pending))
+       (list :mutation :kind :eval :proposed source :result ':pending))
       (handler-case
           (multiple-value-bind (result-values output)
               (self-capture-evaluation
@@ -284,7 +284,7 @@ protocol."
                   :restart-value-source restart-value-source)))
             (mutation-journal-append
              configuration
-             (list :mutation :kind :eval :proposed source :result :installed))
+             (list :mutation :kind :eval :proposed source :result ':installed))
             (tool-success (self-evaluation-result result-values output)))
         (error (condition)
           (mutation-journal-append
@@ -292,7 +292,7 @@ protocol."
            (list :mutation
                  :kind :eval
                  :proposed source
-                 :result :failed
+                 :result ':failed
                  :condition (princ-to-string condition)))
           (error condition))))))
 
@@ -685,7 +685,7 @@ protocol."
                :package package-name
                :previous previous
                :proposed source
-               :result :pending))
+               :result ':pending))
         (handler-case
             (let ((result (self--install-definition definition
                                                     source
@@ -700,7 +700,7 @@ protocol."
                      :package package-name
                      :previous previous
                      :proposed source
-                     :result :installed))
+                     :result ':installed))
               (setf (gethash identifier *exploratory-undo-actions*)
                     undo-action)
               result)
@@ -722,7 +722,7 @@ protocol."
                      :package package-name
                      :previous previous
                      :proposed source
-                     :result :failed
+                     :result ':failed
                      :condition (princ-to-string reported-condition)))
               (error reported-condition))))))))
 
@@ -769,7 +769,7 @@ protocol."
              :target (write-to-string symbol)
              :previous previous
              :proposed value-source
-             :result :pending))
+             :result ':pending))
       (handler-case
           (let ((value (self-call-with-restarts
                         (lambda ()
@@ -788,7 +788,7 @@ protocol."
                    :target (write-to-string symbol)
                    :previous previous
                    :proposed value-source
-                   :result :installed))
+                   :result ':installed))
             (setf (gethash identifier *exploratory-undo-actions*)
                   (lambda ()
                     (self--restore-value-binding symbol
@@ -808,7 +808,7 @@ protocol."
                  :target (write-to-string symbol)
                  :previous previous
                  :proposed value-source
-                 :result :failed
+                 :result ':failed
                  :condition (bounded-string condition :limit 2000)))
           (error condition))))))
 
@@ -1107,10 +1107,10 @@ protocol."
                    (sb-posix:getpid))
            (uiop:pathname-directory-pathname pathname))))
     (with-open-file (stream temporary
-                            :direction :output
-                            :if-exists :supersede
-                            :if-does-not-exist :create
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-exists ':supersede
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
       (write-string content stream)
       (finish-output stream))
     (uiop:rename-file-overwriting-target temporary pathname)

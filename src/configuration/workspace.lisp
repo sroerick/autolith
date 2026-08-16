@@ -29,7 +29,7 @@
     (update-mac
      mac
      (sb-ext:string-to-octets (workspace-directory-name directory)
-                              :external-format :utf-8))
+                              :external-format ':utf-8))
     (let ((digest (produce-mac mac)))
       (with-output-to-string (stream)
         (loop for octet across digest

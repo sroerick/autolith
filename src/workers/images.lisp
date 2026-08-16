@@ -27,8 +27,8 @@
                       (namestring (configuration-source-root configuration))
                       "rev-parse"
                       "HEAD")
-                :output :string
-                :error-output :output))
+                :output ':string
+                :error-output ':output))
              (commit
                (string-trim '(#\Space #\Tab #\Newline #\Return) output)))
         (and (non-empty-string-p commit) commit))

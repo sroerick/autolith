@@ -43,7 +43,7 @@
               (not (permissions-allowed-p
                     (permissions-load configuration) "git status" root))
               "clearing approvals persists an empty permission state")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-command-permission-corruption () null)
@@ -56,9 +56,9 @@
          (progn
            (ensure-directories-exist pathname)
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
              (write-string "#.(error \"must not evaluate\")" stream))
            (let ((warned-p nil)
                  (state nil))
@@ -74,7 +74,7 @@
              (test-assert
               (not (permissions-allowed-p state "anything" root))
               "malformed command permissions fail closed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
     nil)
 
 

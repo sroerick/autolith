@@ -103,7 +103,7 @@ that PATH still names the opened object."
                             file-descriptor
                             :input t
                             :element-type '(unsigned-byte 8)
-                            :buffering :none
+                            :buffering ':none
                             :auto-close nil))
                      (unless (= (read-sequence octets stream) length)
                        (changed))
@@ -112,7 +112,7 @@ that PATH still names the opened object."
                               (sb-posix:fstat file-descriptor))
                        (changed))
                      (handler-case
-                         (sb-ext:octets-to-string octets :external-format :utf-8)
+                         (sb-ext:octets-to-string octets :external-format ':utf-8)
                        (error ()
                          (fail "~A ~A is not valid UTF-8 text."
                                description

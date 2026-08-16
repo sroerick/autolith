@@ -14,10 +14,10 @@
   "Write CONTENT to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string content stream))
   pathname)
 
@@ -152,7 +152,7 @@ fi
      :output nil)
     (uiop:delete-directory-tree root
                                 :validate t
-                                :if-does-not-exist :ignore))
+                                :if-does-not-exist ':ignore))
   nil)
 
 (-> release-script-tests--make-release (pathname pathname) pathname)
@@ -213,8 +213,8 @@ fi
                       "script/runtime-requirement.lisp"
                       "server/build-in-container.lisp"))
     (with-open-file (stream (merge-pathnames relative source-root)
-                            :direction :input
-                            :external-format :utf-8)
+                            :direction ':input
+                            :external-format ':utf-8)
       (let ((*read-eval* nil))
         (loop while (read stream nil nil))))
     (test-assert (probe-file (merge-pathnames relative source-root))
@@ -346,7 +346,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                  (uiop:run-program
                   (release-script-tests--pty-command command "y")
                   :input input
-                  :output :string
+                  :output ':string
                   :error-output ':output
                   :ignore-error-status t)))
              (events (uiop:read-file-string log)))
@@ -372,7 +372,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                  (uiop:run-program
                   (release-script-tests--pty-command command "n")
                   :input input
-                  :output :string
+                  :output ':string
                   :error-output ':output
                   :ignore-error-status t)))
              (events (uiop:read-file-string log)))

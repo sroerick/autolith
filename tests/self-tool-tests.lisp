@@ -147,10 +147,10 @@
                     (test-configuration-for-source-root source-root)))
              (ensure-directories-exist source-pathname)
              (with-open-file (stream source-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (format stream
                        "(in-package #:autolith)~%~%(defun test-self-target () ~
                         \"Tracked source documentation.\" 0)~%"))
@@ -288,10 +288,10 @@
               "a restoration failure preserves both conditions and escapes tool handling"))
            (ensure-directories-exist pathname)
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (format stream
                      "; preserve this comment~%~%(defun first-definition () 1)~%~%(defun test-self-target () 0)~%"))
            (source-replace-definition
@@ -318,7 +318,7 @@
              (when (fboundp symbol)
                (fmakunbound symbol))
              (unintern symbol implementation-package)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-definition-installation-rollback () null)
@@ -429,7 +429,7 @@
         (fmakunbound new-name))
       (remhash existing-target *exploratory-definitions*)
       (remhash new-target *exploratory-definitions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-application-command-definitions () null)
@@ -550,10 +550,10 @@
                     (test-configuration-for-source-root tracked-root)))
              (ensure-directories-exist tracked-pathname)
              (with-open-file (stream tracked-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (format stream "(in-package #:autolith)~2%~A~%"
                        replay-source))
              (let ((definitions
@@ -711,7 +711,7 @@
             *active-image-commit-identifier* previous-commit-identifier
             *active-image-history-commit* previous-history-commit
             *active-image-lineage-identifier* previous-lineage-identifier)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-restart-selection () null)
@@ -768,7 +768,7 @@
                                      "(cerror \"Keep going.\" \"Stop.\")"
                                      "restart" "NO-SUCH-RESTART")))
                           "unknown restart names still fail with the menu")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-self-discard () null)
@@ -935,7 +935,7 @@
       (when (fboundp 'test-new-discard-target)
         (fmakunbound 'test-new-discard-target))
       (clrhash *exploratory-undo-actions*)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-durable-self-mutation () null)
@@ -976,10 +976,10 @@
          (progn
            (ensure-directories-exist source-pathname)
            (with-open-file (stream source-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (format stream
                      "(in-package #:autolith)~%~%(defun test-self-target () \"Return the durable baseline.\" 0)~%"))
            (self-git-command configuration '("init" "--quiet"))
@@ -1068,7 +1068,7 @@
                           :proposed
                           "(defun test-self-target () 0)"
                           :base-commit nil
-                          :result :failed))
+                          :result ':failed))
                    t)
                "v0.31.1 overlay journal paths remain valid after the upgrade")
               (let* ((legacy-source
@@ -1322,9 +1322,9 @@
                              (tool-result-content diff)))
                 "self.diff shows pending reconstructible image mutations"))
              (with-open-file (stream source-pathname
-                                     :direction :output
-                                     :if-exists :append
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':append
+                                     :external-format ':utf-8)
                (format stream "~%;; A user-made repository change.~%"))
              (let* ((head-before
                       (string-trim
@@ -1383,9 +1383,9 @@
                       (image-history--artifact-directory
                        configuration identifier)))
                (uiop:delete-directory-tree
-                history-directory :validate t :if-does-not-exist :ignore)
+                history-directory :validate t :if-does-not-exist ':ignore)
                (uiop:delete-directory-tree
-                canonical-directory :validate t :if-does-not-exist :ignore)
+                canonical-directory :validate t :if-does-not-exist ':ignore)
                (setf (symbol-function 'test-self-target) previous-function
                      *test-self-setting* :baseline
                      *image-state-initialized-p* nil
@@ -1476,7 +1476,7 @@
           (remhash identifier *durable-mutations*)))
       (uiop:delete-directory-tree source-root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-durable-definition-publication-boundary () null)
@@ -1509,10 +1509,10 @@
          (progn
            (ensure-directories-exist source-pathname)
            (with-open-file (stream source-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (format stream "(in-package #:autolith)~%"))
            (self-git-command configuration '("init" "--quiet"))
            (self-git-command configuration
@@ -1615,5 +1615,5 @@
         (remhash (durable-mutation-identifier mutation) *durable-mutations*))
       (uiop:delete-directory-tree source-root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

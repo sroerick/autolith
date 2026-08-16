@@ -20,8 +20,8 @@
        '(#\Space #\Tab #\Newline #\Return)
        (uiop:run-program
         (append (list "git" "-C" (namestring source-root)) arguments)
-        :output :string
-        :error-output :output))
+        :output ':string
+        :error-output ':output))
     (error (condition)
       (error 'active-image-build-error
              :message (format nil "Could not identify active-image source: ~A"
@@ -265,8 +265,8 @@
                       (namestring source-root)
                       *active-image-probe-argument*)
                 :input nil
-                :output :string
-                :error-output :output)
+                :output ':string
+                :error-output ':output)
              (error (condition)
                (error 'active-image-build-error
                       :message (format nil "The active-image probe failed: ~A"

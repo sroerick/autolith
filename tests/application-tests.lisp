@@ -597,7 +597,7 @@
           (sb-posix:unsetenv "AUTOLITH_RECOVERED"))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-thinking-label-selection () null)
@@ -716,7 +716,7 @@
                 "checkpoint quiescence joins the background update check")))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -777,7 +777,7 @@
               (test-assert
                (search "could not check the release service" (first presented))
                "a failed explicit check is nonfatal and reports no installation change"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-status-details () null)
@@ -819,7 +819,7 @@
                 (eq (terminal-span-style (first (last details)))
                     ':status-branch)
                 "the branch remains last so narrow status rows clip it first"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-info-command () null)
@@ -904,7 +904,7 @@
                   "info exposes no editable command arguments")))))
       (when (terminal-started-p terminal)
         (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-reasoning-trace-command () null)
@@ -963,7 +963,7 @@
                 t))
             "unsupported trace modes signal a typed usage error"))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-compact-view-command () null)
@@ -995,7 +995,7 @@
               (conversation-record-entry
                application
                (list :tool-result :seq 3 :time 0 :call-id tool-name
-                     :tool tool-name :status :ok :output "ok"))
+                     :tool tool-name :status ':ok :output "ok"))
               (format nil "compact presentation retains successful ~A results"
                       tool-name)))
            (test-assert (eq (application-command application "/compact off")
@@ -1022,7 +1022,7 @@
                 t))
             "unsupported compact modes signal a typed usage error"))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-turn-timestamps-command () null)
@@ -1085,7 +1085,7 @@
                     (< command-position error-position))
                "normal command errors retain their originating command heading")))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-simple-technical-english-command () null)
@@ -1146,7 +1146,7 @@
                 t))
             "unsupported response styles signal a typed usage error"))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-command-permission-modes () null)
@@ -1214,7 +1214,7 @@
                         "the command reference includes /permissions")
            (terminal-ui-stop ui))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-interrupt-resume-instruction () null)
@@ -1259,7 +1259,7 @@
                 "Ctrl-C does not persist an empty conversation")))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-repeated-interrupt-forces-exit () null)
@@ -1319,7 +1319,7 @@
                (test-assert
                 (search "autolith resume force-resume" output)
                 "forced cancellation carries the exact resume command"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-forced-exit-without-durable-conversation () null)
@@ -1579,7 +1579,7 @@
                       (agent-test-result
                        "unexpected completion"
                        (list (agent-test-message "not cancelled"))
-                       :turn-completion :end))))
+                       :turn-completion ':end))))
                   (terminal
                     (make-instance 'queued-recording-terminal :columns 80))
                   (ui (terminal-ui-create :terminal terminal))
@@ -1689,7 +1689,7 @@
                (search "Press Ctrl-C again within 2.5 seconds"
                        output-before-exit))
               "a promptly cancelled turn never flashes the force-exit hint")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Active Command Cancellation --
@@ -1802,7 +1802,7 @@
              (join-thread producer)
              (setf producer nil))
            (application-command--registry-restore registrations))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 ;;;; -- Active Tool Cancellation --
@@ -1829,7 +1829,7 @@
                     (agent-test-result
                      "recovered-turn"
                      (list (agent-test-message "the next turn ran"))
-                     :turn-completion :end))))
+                     :turn-completion ':end))))
                 (registry (agent-test-registry))
                 (tool
                   (make-instance
@@ -1968,7 +1968,7 @@
               (string= (json-get output "output")
                        *conversation-interrupted-tool-output*)
               "the repaired result explains that tool state is unknown")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-interrupt-force-window () null)
@@ -2224,7 +2224,7 @@
       (let ((user-entry
               (conversation-record-entry
                timestamped-application
-               (list :message :seq 1 :time timestamp :role :user
+               (list :message :seq 1 :time timestamp :role ':user
                      :content "dated prompt"))))
         (test-assert
          (find (terminal-span :dim "  2026-07-29 14:30")
@@ -2246,7 +2246,7 @@
          "enabled timestamps appear as dim local text beside assistant headers")))
     (let ((entry (conversation-record-entry
                   application
-                  (list :message :seq 1 :time 0 :role :user
+                  (list :message :seq 1 :time 0 :role ':user
                         :content (make-string 50 :initial-element #\a)))))
       (test-assert (= (count #\Newline
                              (terminal-span-text (first (last entry))))
@@ -2545,7 +2545,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 2 :time 0 :call-id 1
-                         :tool "shell.run" :status :ok
+                         :tool "shell.run" :status ':ok
                          :cpu-microseconds 1234
                          :real-microseconds 567890
                          :output "wrote file")))
@@ -2556,7 +2556,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 3 :time 0 :call-id 2
-                         :tool "shell.run" :status :ok
+                         :tool "shell.run" :status ':ok
                          :output (format nil "exit 3~%command output"))))
            (text (test-terminal-row-text entry)))
       (test-assert (and (search "exit 3" text)
@@ -2565,7 +2565,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 4 :time 0 :call-id 3
-                         :tool "self.eval" :status :ok
+                         :tool "self.eval" :status ':ok
                          :output (format nil "Output:~%hello~%Values:~%42~%"))))
            (text (test-terminal-row-text entry)))
       (test-assert (equal (first entry) (terminal-span :success "✓ self.eval"))
@@ -2578,7 +2578,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 5 :time 0 :call-id 4
-                          :tool "lisp.describe" :status :ok
+                          :tool "lisp.describe" :status ':ok
                          :output (format nil
                                          "Symbol: FOO~%Package: AUTOLITH~%~
                                           Function binding: yes~%~
@@ -2593,7 +2593,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 6 :time 0 :call-id 5
-                         :tool "lisp.describe" :status :ok
+                         :tool "lisp.describe" :status ':ok
                          :output (format nil
                                          "Output:~%Symbol: CAR~%~
                                           Documentation: list head~%~
@@ -2607,7 +2607,7 @@
     (let* ((entry (conversation-record-entry
                    application
                    (list :tool-result :seq 6 :time 0 :call-id 5
-                         :tool "self.eval" :status :error
+                         :tool "self.eval" :status ':error
                          :output (format nil
                                          "Needs a value.~2%Available restarts:~%~
                                             CONTINUE  Try again.~%~
@@ -2978,7 +2978,7 @@
               "workspace resource edits require the full range to be visible"))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-agenda-change-tool-presentation () null)
@@ -3097,7 +3097,7 @@
                    "invalid multi-operation agenda edits stay structured"))))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-memory-change-tool-presentation () null)
@@ -3329,7 +3329,7 @@
                   "invalid multi-operation memory edits stay structured"))))
         (uiop:delete-directory-tree root
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-structured-tool-presentation () null)
@@ -3396,7 +3396,7 @@
              (conversation-record-entry
               application
               (list :tool-result :seq 1 :time 0 :call-id 1
-                    :tool "mcp__example.inspect" :status :ok
+                    :tool "mcp__example.inspect" :status ':ok
                     :output
                     (json-encode
                      (json-object
@@ -3720,7 +3720,7 @@
              (test-assert
               (and (zerop rendered) (null floor))
               "cursor metadata is ignored outside its recovered conversation")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-diagnosis-prompt () null)
@@ -3774,10 +3774,10 @@
                   :journal-position 17))
            (ensure-directories-exist pointer-pathname)
            (with-open-file (stream pointer-pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-line (namestring capsule-pathname) stream))
            (sb-posix:setenv recovered-name "1" 1)
            (sb-posix:setenv pointer-name (namestring pointer-pathname) 1)
@@ -3835,7 +3835,7 @@
         (if (rest entry)
             (sb-posix:setenv (first entry) (rest entry) 1)
             (sb-posix:unsetenv (first entry))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-recovery-application-construction () null)
@@ -3954,7 +3954,7 @@
         (context--registry-restore context-registration-snapshot)
         (application-command--registry-restore command-registration-snapshot)
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-bounded-transcript-replay () null)
@@ -4031,7 +4031,7 @@
                      (search "showing 250 newest entries added after recovery"
                              output))
                 "recovery retains only the newest unread transcript page"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -4256,7 +4256,7 @@
                     (conversation-invariant-error ()
                       t))
                   "startup fallback validates the exact preceding segment")))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-hidden-reasoning-does-not-crowd-replay () null)
@@ -4317,7 +4317,7 @@
                    (search "hidden-reasoning-7" output)
                    (search "hidden-reasoning-8" output))
               "changing visibility makes the newest newly visible page replayable")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-paged-transcript-history () null)
@@ -4394,7 +4394,7 @@
             (search "No earlier transcript history remains."
                     (recording-terminal-output terminal))
             "history reports exhaustion after the final page"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-compaction-presentation-lifecycle () null)
@@ -4482,7 +4482,7 @@
                           "turn unwind cleanup removes stale compaction state")))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-streaming-presentation () null)
@@ -4707,7 +4707,7 @@
                         "streamed code blocks render numbered gutters")
            (funcall send-status :provider-request-completed nil)
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-retry-presentation () null)
@@ -4758,7 +4758,7 @@
                    (search "Replacement answer" output))
               "the replacement attempt starts a distinct assistant block"))
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-turn-cursor-visibility () null)
@@ -4783,7 +4783,7 @@
                     (agent-test-result
                      "cursor-response"
                      (list (agent-test-message "finished"))
-                     :turn-completion :end))))
+                     :turn-completion ':end))))
                 (registry (make-instance 'tool-registry))
                 (agent (agent-create :configuration configuration
                                      :provider provider
@@ -4831,7 +4831,7 @@
                 (= (application-rendered-sequence application)
                    (1- (conversation-next-sequence conversation)))
                 "the transcript cursor follows the actual durable tail"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-responsive-model-input () null)
@@ -4857,11 +4857,11 @@
                     (agent-test-result
                      "responsive-steered"
                      (list (agent-test-message "steered answer"))
-                     :turn-completion :end)
+                     :turn-completion ':end)
                     (agent-test-result
                      "responsive-queued"
                      (list (agent-test-message "queued answer"))
-                     :turn-completion :end))))
+                     :turn-completion ':end))))
                 (terminal
                   (make-instance
                    'responsive-scripted-terminal
@@ -4927,7 +4927,7 @@
               "responsive model turns leave the input cursor visible")
              (test-assert (not (terminal-tests--forbidden-control-p output))
                           "concurrent input and streaming preserve scrollback")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-responsive-goal-inspection () null)
@@ -5924,7 +5924,7 @@
                    (equal (user-message-input-image-pathnames input)
                           (list (truename image))))
               "command-line images preload a labelled composer draft")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (current-workspace (merge-pathnames "current-workspace/" root))
@@ -6127,7 +6127,7 @@
                         (recording-terminal-output terminal))
                 "confirmed picker deletion reports the removed conversation"))
              (terminal-ui-stop (application-ui application))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let ((application (application-tests--ui-application :columns 60)))
     (test-assert (handler-case
                      (progn
@@ -6166,10 +6166,10 @@
     (ensure-directories-exist broken-workspace)
     (ensure-directories-exist (configuration-directory-init-path workspace))
     (with-open-file (stream (configuration-directory-init-path workspace)
-                            :direction :output
-                            :if-exists :supersede
-                            :if-does-not-exist :create
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-exists ':supersede
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
       (let ((*print-readably* nil))
         (write
          '(with-open-file
@@ -6191,7 +6191,7 @@
      (list
       (test-mcp-configuration--server-form
        :name "workspace-scoped"
-       :approval :deny)))
+       :approval ':deny)))
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "working-directory"))
@@ -6240,8 +6240,8 @@
               "directory initialization does not resolve relative files in the old workspace")
               (let ((observation
                       (with-open-file (stream observation-path
-                                               :direction :input
-                                               :external-format :utf-8)
+                                               :direction ':input
+                                               :external-format ':utf-8)
                         (let ((*read-eval* nil))
                           (read stream)))))
                 (test-assert
@@ -6330,7 +6330,7 @@
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
       (application--extension-registry-restore extension-registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-busy-conversation-resume () null)
@@ -6393,7 +6393,7 @@
       (when (and current-lease
                  (conversation-lease-held-p current-lease))
         (conversation-lease-release current-lease))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-fresh-conversation-lease-collision () null)
@@ -6434,7 +6434,7 @@
                             (conversation-pathname conversation))))
                          "fresh ownership skips a leased empty identifier")
                     (conversation-lease-release lease)))))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-tool-runtime-lifecycle () null)
@@ -6534,7 +6534,7 @@
                   configuration
                   (conversation-identifier second-conversation)))
                 "checkpoint detachment excludes the conversation lease"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (define-condition application-test-runtime-retirement-interruption
@@ -6864,7 +6864,7 @@
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-runtime-retirement-failures () null)
@@ -7038,7 +7038,7 @@
         (application-command--registry-restore
          command-registration-snapshot)
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore))))
+         root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-application-create-unwind-safety () null)
@@ -7140,7 +7140,7 @@
                      (application-command--registry-snapshot)))
              "late construction failure restores declarative registrations")))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-application-reconnect-unwind-safety () null)
@@ -7454,7 +7454,7 @@
               (application-command--registry-restore
                command-registration-snapshot)
               (uiop:delete-directory-tree
-               root :validate t :if-does-not-exist :ignore)))))
+               root :validate t :if-does-not-exist ':ignore)))))
     (run-case ':pre-commit)
     (run-case ':retirement))
   nil)
@@ -7820,7 +7820,7 @@
           (tool-registry-close-runtime-state replacement-registry)))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-working-directory-command () null)
@@ -7916,7 +7916,7 @@
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:chdir previous-process-directory)
       (setf *default-pathname-defaults* previous-defaults)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-effort-switch () null)
@@ -8170,7 +8170,7 @@
              (test-assert
               (string= (preference-state-reasoning-effort preferences) "medium")
               "resuming does not replace the global effort default")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-status-entry () null)
@@ -8235,7 +8235,7 @@
                           "status reports the reasoning-summary display mode")
              (test-assert (search "compacts at 80%" text)
                           "status reports the compaction threshold")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-session-goal () null)
@@ -8347,10 +8347,10 @@
                      'scripted-provider
                      :results (list (agent-test-result "goal-1"
                                                        (list working-item)
-                                                       :turn-completion :end)
+                                                       :turn-completion ':end)
                                     (agent-test-result "goal-2"
                                                        (list completion-item)
-                                                       :turn-completion :end))))
+                                                       :turn-completion ':end))))
                   (agent (agent-create :configuration configuration
                                        :provider provider
                                        :conversation conversation
@@ -8403,7 +8403,7 @@
                         "pausing explains the continuation budget")
            (test-assert (equal (conversation-record-entry
                                 application
-                                (list :message :seq 99 :time 0 :role :user
+                                (list :message :seq 99 :time 0 :role ':user
                                       :content
                                       *application-goal-continuation-prompt*))
                                (list (terminal-span :hint "∙ goal continues")))
@@ -8412,7 +8412,7 @@
            (test-assert (null (application-goal application))
                         "clearing removes the session goal")
            (terminal-ui-stop (application-ui application)))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -8617,7 +8617,7 @@
       (when controller
         (application-input-controller-stop controller))
       (terminal-ui-stop ui)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-rate-limit-defers-queued-follow-ups () null)
@@ -8704,7 +8704,7 @@
                     (search "Deferred 1 queued follow-up" text))
                   presented)
             "the user is told that follow-ups were deferred"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-later-scheduler () null)
@@ -8796,7 +8796,7 @@
               "successful deferred completion removes durable state")))
       (when controller
         (application-input-controller-stop controller))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-hurry-up-mode () null)
@@ -8838,7 +8838,7 @@
                         "/hurry-up off restores ordinary session policy"))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-application-tests () boolean)

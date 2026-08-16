@@ -65,9 +65,9 @@ match a new library version is never the correct repair."
                              storage)))
              (ensure-directories-exist pathname)
              (with-open-file (stream pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create)
                (write-string "occupied" stream))
              (test-assert
               (eq (conversation-identifier--reserved-p storage occupied) t)
@@ -89,7 +89,7 @@ match a new library version is never the correct repair."
                      timestamp)))
               "occupying every seed signals structured exhaustion")))
       (identifier-clear-reservations)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier--legacy-conversation
@@ -135,9 +135,9 @@ match a new library version is never the correct repair."
            (declare (ignore other-conversation))
            (ensure-directories-exist (merge-pathnames "image.png" old-image-root))
            (with-open-file (stream (merge-pathnames "image.png" old-image-root)
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
              (write-string "artifact" stream))
            (snapshot-write
             old-task-result
@@ -157,9 +157,9 @@ match a new library version is never the correct repair."
                             :tags nil
                             :source-conversation old)
            (with-open-file (stream old-active
-                                   :direction :output
-                                   :if-exists :append
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':append
+                                   :external-format ':utf-8)
              (write-string "(:interrupted" stream))
            (let* ((old-write-date (file-write-date old-active))
                   (entries (conversation-identifier-migrate configuration))
@@ -244,7 +244,7 @@ match a new library version is never the correct repair."
              (test-assert
               (equal entries (conversation-identifier-migrate configuration))
               "running a completed migration again is idempotent")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier-migration-validation () null)
@@ -332,7 +332,7 @@ match a new library version is never the correct repair."
               (and (conversation-storage-occupied-p first-source)
                    (conversation-storage-occupied-p second-source))
               "one invalid target preserves every legacy source before cleanup")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifier-migration-resumption () null)
@@ -380,7 +380,7 @@ match a new library version is never the correct repair."
                             :status)
                       ':complete))
                  "a repeated migration safely completes every remaining phase"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-conversation-identifiers () null)

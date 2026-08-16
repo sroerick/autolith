@@ -29,7 +29,7 @@
                        :description "Wait until the detachment test releases this call."
                        :parameters (tool-object-schema (json-object) nil)))
                     (provider
-                      (make-instance 'task-test-provider :mode :blocking-tool))
+                      (make-instance 'task-test-provider :mode ':blocking-tool))
                     (conversation nil)
                     (primary nil)
                     (run-tool nil)
@@ -46,7 +46,7 @@
                    "forced-blocking"
                    "Always wait for this child."
                    "Enter the blocking test tool, then yield."
-                   :tools :all
+                   :tools ':all
                    :blocking-p t)))
                (tool-registry-register registry blocking-tool)
                (task-augment-tool-registry registry)
@@ -130,7 +130,7 @@
                      (task-job-await job 2)))
                  (ignore-errors (tool-registry-close-runtime-state registry))
                  (uiop:delete-directory-tree root :validate t
-                                                  :if-does-not-exist :ignore)))))
+                                                  :if-does-not-exist ':ignore)))))
     (run-case
      "default-detached"
      (json-object "name" "default-detached"
@@ -169,7 +169,7 @@
     (tool-registry-register registry blocking-tool)
     (task-augment-tool-registry registry)
     (let* ((provider
-             (make-instance 'task-test-provider :mode :blocking-tool))
+             (make-instance 'task-test-provider :mode ':blocking-tool))
            (conversation (conversation-create configuration))
            (primary
              (agent-create :configuration configuration
@@ -232,7 +232,7 @@
         (task-tests--release-blocking-tool blocking-tool)
         (ignore-errors (tool-registry-close-runtime-state registry))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-task-runtime-deadline () null)
@@ -269,7 +269,7 @@
              (task-augment-tool-registry registry)
              (let* ((provider
                       (make-instance 'task-test-provider
-                                     :mode :blocking-tool))
+                                     :mode ':blocking-tool))
                     (conversation (conversation-create configuration))
                     (primary
                       (agent-create :configuration configuration
@@ -378,7 +378,7 @@
     (tool-registry-register registry blocking-tool)
     (task-augment-tool-registry registry)
     (let* ((provider
-             (make-instance 'task-test-provider :mode :nested-cancel))
+             (make-instance 'task-test-provider :mode ':nested-cancel))
            (conversation (conversation-create configuration))
            (primary
              (agent-create :configuration configuration
@@ -447,7 +447,7 @@
         (task-tests--release-blocking-tool blocking-tool)
         (ignore-errors (tool-registry-close-runtime-state registry))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-task-admission-cancellation-barrier () null)
@@ -465,8 +465,8 @@ exactly that race."
             :name "admission-race"
             :description "Exercise admission and cancellation ordering."
             :instructions "Remain queued for the scheduler race."
-            :spawns :all
-            :source :test))
+            :spawns ':all
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "admission-primary")))
     (unwind-protect
@@ -614,7 +614,7 @@ exactly that race."
                    (= (cl-jobpond::job-pool--next-index (task-orchestrator-pool orchestrator)) 1))
               "cancel-first admission consumes no identity or live capacity")))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-hurry-up-admission-races () null)
@@ -627,8 +627,8 @@ exactly that race."
             :name "hurry-race"
             :description "Exercise hurry-up admission serialization."
             :instructions "Remain inline for the admission test."
-            :spawns :all
-            :source :test))
+            :spawns ':all
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "hurry-race-primary")))
     (labels ((make-viewer (orchestrator identifier)
@@ -856,7 +856,7 @@ exactly that race."
                         3))
                 "a limit change takes effect after the atomic submission boundary")))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 (-> task-tests--release-publication-barrier
@@ -883,11 +883,11 @@ exactly that race."
             :name "publication"
             :description "Exercise terminal publication."
             :instructions secret
-            :tools :all
-            :spawns :all
+            :tools ':all
+            :spawns ':all
             :models '("@task")
-            :reasoning-effort :high
-            :source :test))
+            :reasoning-effort ':high
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "publication-primary")))
     (unwind-protect
@@ -899,7 +899,7 @@ exactly that race."
                   (barrier (make-instance 'task-test-publication-barrier))
                   (result
                     (task-tests--terminal-result
-                     job :status :success :output "published"))
+                     job :status ':success :output "published"))
                   (publication-result nil)
                   (publication-condition nil))
              (setf (getf result :publication-barrier) barrier
@@ -983,7 +983,7 @@ exactly that race."
                     (result
                       (task-tests--terminal-result
                        job
-                       :status :success
+                       :status ':success
                        :output (make-string 3000 :initial-element #\O)))
                     (publication-result nil)
                     (publication-condition nil))
@@ -1042,7 +1042,7 @@ exactly that race."
                           "post-claim ~A forces one coherent terminal failure"
                           failure))))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-terminal-wakeup-ordering () null)
@@ -1056,7 +1056,7 @@ exactly that race."
             :name "wakeup-order"
             :description "Exercise terminal wakeup ordering."
             :instructions "Publish one result."
-            :source :test))
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "wakeup-primary"))
          (job
@@ -1064,7 +1064,7 @@ exactly that race."
             orchestrator primary definition :name "wakeup-job"))
          (result
            (task-tests--terminal-result
-            job :status :success :output "wake the waiter"))
+            job :status ':success :output "wake the waiter"))
          (ready-lock (make-lock "Autolith waiter readiness"))
          (ready-condition (make-condition-variable))
          (waiter-ready-p nil)
@@ -1137,7 +1137,7 @@ exactly that race."
           (task--condition-broadcast (cl-jobpond::job--condition-variable job)))
         (join-thread waiter))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-job-visibility () null)
@@ -1152,7 +1152,7 @@ exactly that race."
             :name "visibility"
             :description "Exercise task-tree visibility."
             :instructions "Inspect only descendant task jobs."
-            :source :test))
+            :source ':test))
          (primary-a
            (task-tests--primary-agent configuration "visibility-primary-a"))
          (primary-b
@@ -1229,7 +1229,7 @@ exactly that race."
                  (null (job-cancellation-reason foreign)))
             "invisible wait and cancel attempts cannot mutate the job"))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1247,7 +1247,7 @@ exactly that race."
             :name "execution-owner"
             :description "Own one asynchronous tool execution."
             :instructions "Remain available while the tool is inspected."
-            :source :test))
+            :source ':test))
          (primary-a
            (task-tests--primary-agent
             configuration "execution-primary-a" registry))
@@ -1403,7 +1403,7 @@ exactly that race."
           (task-job-await root-job 2))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1620,7 +1620,7 @@ exactly that race."
                     "an asynchronous shell job retains its admission-time output bound")))))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore))))
+                                         :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -1687,7 +1687,7 @@ exactly that race."
         (ignore-errors (task-orchestrator-close orchestrator)))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-job-list-pagination () null)
@@ -1704,7 +1704,7 @@ exactly that race."
             :name agent-name
             :description "Exercise the largest job listing page."
             :instructions "Remain queued for pagination."
-            :source :test))
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "job-list-primary"))
          (tool
@@ -1786,7 +1786,7 @@ exactly that race."
                       *task-job-page-maximum*))
               "job.list pagination returns every oversized summary exactly once")))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-refresh-after-delayed-close () null)
@@ -1869,7 +1869,7 @@ exactly that race."
             :name "lifecycle"
             :description "Exercise terminal lifecycle invariants."
             :instructions "Publish one terminal result."
-            :source :test))
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "lifecycle-primary"))
          (events nil)
@@ -1886,7 +1886,7 @@ exactly that race."
                    orchestrator primary definition :name "terminal-parent"))
                 (parent-result
                   (task-tests--terminal-result
-                   parent :status :success :output "parent complete"))
+                   parent :status ':success :output "parent complete"))
                 (parent-id (job-identifier parent))
                 (viewer
                   (task-tests--child-viewer configuration parent))
@@ -1946,7 +1946,7 @@ exactly that race."
                      orchestrator primary definition :name "publication-race"))
                   (result
                     (task-tests--terminal-result
-                     race-job :status :success :output "race winner"))
+                     race-job :status ':success :output "race winner"))
                   (barrier-lock
                     (make-lock "Autolith terminal publication barrier"))
                   (barrier (make-condition-variable))
@@ -1998,7 +1998,7 @@ exactly that race."
                       (getf (job-result race-job) :output-path)))
                 "concurrent duplicate publication claims one artifact and event"))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-retention-and-admission () null)
@@ -2011,7 +2011,7 @@ exactly that race."
             :name "capacity"
             :description "Exercise scheduler capacity."
             :instructions "Remain inert until the test changes state."
-            :source :test))
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "capacity-primary")))
     (unwind-protect
@@ -2030,7 +2030,7 @@ exactly that race."
                       (result
                         (task-tests--terminal-result
                          job
-                         :status :success
+                         :status ':success
                          :output (format nil "terminal result ~D" index))))
                  (push identifier identifiers)
                  (test-assert
@@ -2125,7 +2125,7 @@ exactly that race."
                         live-count))
                 "failed live admission consumes no identity or scheduler state"))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-evicted-identity-retention () null)
@@ -2139,7 +2139,7 @@ exactly that race."
             :name "identity-retention"
             :description "Exercise retained task ancestry."
             :instructions "Keep descendant ownership unambiguous."
-            :source :test))
+            :source ':test))
          (primary
            (task-tests--primary-agent configuration "identity-primary")))
     (unwind-protect
@@ -2153,7 +2153,7 @@ exactly that race."
                    orchestrator viewer definition :name "live-descendant"))
                 (parent-result
                   (task-tests--terminal-result
-                   parent :status :success :output "parent terminal")))
+                   parent :status ':success :output "parent terminal")))
            (task-tests--publish-terminal parent :completed parent-result)
            (dotimes (index *task-terminal-retention-limit*)
              (let* ((job
@@ -2162,7 +2162,7 @@ exactly that race."
                        :name (format nil "identity-filler-~D" index)))
                     (result
                       (task-tests--terminal-result
-                       job :status :success :output "filler terminal")))
+                       job :status ':success :output "filler terminal")))
                (task-tests--publish-terminal job :completed result)))
            (let* ((replacement
                     (task-tests--register-job
@@ -2182,7 +2182,7 @@ exactly that race."
                    (= (task-orchestrator-live-count orchestrator) 2))
               "eviction never permits a generated ancestor identity to be reused")))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-live-activity-snapshots () null)
@@ -2305,7 +2305,7 @@ exactly that race."
            (task-tests--terminal-result
             job :status ':aborted :output "test cleanup"))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> task-tests--run-scheduler-case
@@ -2440,7 +2440,7 @@ exactly that race."
                                              (get-internal-real-time)))))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore))))
+                                       :if-does-not-exist ':ignore))))
 
 (-> test-task-run-native-manifest () null)
 (defun test-task-run-native-manifest ()
@@ -2453,7 +2453,7 @@ exactly that race."
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1" 1)
            (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "5000" 1)
            (let* ((provider
-                    (make-instance 'task-test-provider :mode :manifest))
+                    (make-instance 'task-test-provider :mode ':manifest))
                   (tasks
                     (coerce
                      (loop for index from 1 to *task-maximum-batch-size*
@@ -2546,7 +2546,7 @@ exactly that race."
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "2" 1)
            (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000" 1)
            (let* ((provider (make-instance 'task-test-provider
-                                           :mode :concurrent))
+                                           :mode ':concurrent))
                   (tasks
                    (coerce
                     (loop for index from 1 to 4
@@ -2595,7 +2595,7 @@ exactly that race."
                                        :public-conversation-count))
                           "private child transcripts stay out of conversation lists"))
            (let* ((provider (make-instance 'task-test-provider
-                                           :mode :concurrent))
+                                           :mode ':concurrent))
                   (observation
                     (task-tests--run-scheduler-case
                      provider
@@ -2618,7 +2618,7 @@ exactly that race."
              (test-assert (= (getf observation :public-conversation-count) 1)
                           "only the seeded parent appears in public conversations"))
            (let* ((provider
-                    (make-instance 'task-test-provider :mode :concurrent))
+                    (make-instance 'task-test-provider :mode ':concurrent))
                   (observation
                     (task-tests--run-scheduler-case
                      provider
@@ -2646,7 +2646,7 @@ exactly that race."
                (let* ((provider
                         (make-instance
                          'task-test-provider
-                         :mode :concurrent
+                         :mode ':concurrent
                          :reference-history-p parent-reference-p
                          :child-reference-history-p child-reference-p))
                       (observation
@@ -2668,7 +2668,7 @@ exactly that race."
                           label)))))
            (let* ((*task-inherited-reference-context-divisor* 1000000)
                   (provider
-                    (make-instance 'task-test-provider :mode :concurrent))
+                    (make-instance 'task-test-provider :mode ':concurrent))
                   (observation
                     (task-tests--run-scheduler-case
                      provider
@@ -2684,7 +2684,7 @@ exactly that race."
                      '("user"))
               "inheritance is disabled when its boundary exceeds the budget"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "1" 1)
-           (let* ((provider (make-instance 'task-test-provider :mode :nested))
+           (let* ((provider (make-instance 'task-test-provider :mode ':nested))
                   (observation
                    (task-tests--run-scheduler-case
                     provider
@@ -2709,7 +2709,7 @@ exactly that race."
              (test-assert (< (getf observation :duration-ms) 1000)
                           "nested help-join avoids a concurrency-one deadlock"))
            (let* ((provider
-                    (make-instance 'task-test-provider :mode :async-wait))
+                    (make-instance 'task-test-provider :mode ':async-wait))
                   (observation
                     (task-tests--run-scheduler-case
                      provider

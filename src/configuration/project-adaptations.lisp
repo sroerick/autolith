@@ -196,9 +196,9 @@ discarded or obsolete candidates.
           (ensure-directories-exist lock-pathname)
           (with-lock-held (*project-adaptation-offer-state-lock*)
             (with-open-file (stream lock-pathname
-                                    :direction :output
-                                    :if-exists :append
-                                    :if-does-not-exist :create)
+                                    :direction ':output
+                                    :if-exists ':append
+                                    :if-does-not-exist ':create)
               (let ((file-descriptor (sb-sys:fd-stream-fd stream)))
                 (file-position stream 0)
                 (sb-posix:lockf file-descriptor sb-posix:f-lock 0)
@@ -312,10 +312,10 @@ discarded or obsolete candidates.
          (handler-case
              (progn
                (with-open-file (stream temporary
-                                       :direction :output
-                                       :if-exists :error
-                                       :if-does-not-exist :create
-                                       :external-format :utf-8)
+                                       :direction ':output
+                                       :if-exists ':error
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
                  (write-string *project-adaptation-notes-template* stream)
                  (finish-output stream))
                (handler-case
@@ -470,8 +470,8 @@ discarded or obsolete candidates.
          (buffer (make-string (1+ content-limit))))
     (handler-case
         (with-open-file (stream pathname
-                                :direction :input
-                                :external-format :utf-8)
+                                :direction ':input
+                                :external-format ':utf-8)
           (let ((count (read-character-sequence buffer stream)))
             (if (> count content-limit)
                 (concatenate 'string

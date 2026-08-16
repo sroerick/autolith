@@ -109,7 +109,7 @@
         (application-release-conversation-lease second-application))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-handoff-scheduling () null)
@@ -190,7 +190,7 @@
         (application-input-controller-stop controller))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-process-handoff () null)
@@ -266,7 +266,7 @@
                    (application-input-controller-stop controller))
                  (uiop:delete-directory-tree root
                                              :validate t
-                                             :if-does-not-exist :ignore)))))
+                                             :if-does-not-exist ':ignore)))))
     (run-success nil)
     (run-success t))
   (let* ((configuration (test-configuration))
@@ -327,5 +327,5 @@
         (application-input-controller-stop controller))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

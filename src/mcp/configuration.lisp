@@ -147,7 +147,7 @@
     :documentation "The exact argument strings following the executable.")
    (directory
     :initarg :directory
-    :initform :workspace
+    :initform ':workspace
     :reader mcp-stdio-configuration-directory
     :type t
     :documentation "The :WORKSPACE marker or configured server directory.")
@@ -210,7 +210,7 @@
     :documentation "The default deadline for one server tool call.")
    (approval-policy
     :initarg :approval-policy
-    :initform :prompt
+    :initform ':prompt
     :reader mcp-server-configuration-approval-policy
     :type keyword
     :documentation "The policy deciding which MCP tool calls need approval.")
@@ -556,7 +556,7 @@ bound policy takes effect without reloading this file."
        "An MCP stdio command must be a bounded non-empty string."
        :pathname pathname
        :server-name server-name
-       :field :command))
+       :field ':command))
     (unless (and (mcp-configuration--proper-list-p arguments)
                  (<= (length arguments) *mcp-stdio-maximum-arguments*)
                  (every
@@ -570,7 +570,7 @@ bound policy takes effect without reloading this file."
        "MCP stdio arguments must be a bounded proper list of bounded strings."
        :pathname pathname
        :server-name server-name
-       :field :arguments))
+       :field ':arguments))
     (unless (or (eq directory :workspace)
                 (mcp-configuration--bounded-string-p
                  directory
@@ -579,7 +579,7 @@ bound policy takes effect without reloading this file."
        "An MCP stdio directory must be :WORKSPACE or a bounded non-empty string."
        :pathname pathname
        :server-name server-name
-       :field :directory))
+       :field ':directory))
     (make-instance
      'mcp-stdio-transport-configuration
      :command (copy-seq command)
@@ -709,7 +709,7 @@ bound policy takes effect without reloading this file."
      "An MCP Streamable HTTP URL must be a bounded non-empty string."
      :pathname pathname
      :server-name server-name
-     :field :url))
+     :field ':url))
   (handler-case
       (let* ((uri (uri url))
              (scheme (uri-scheme uri))
@@ -726,7 +726,7 @@ bound policy takes effect without reloading this file."
            "An MCP HTTP URL must contain a valid HTTP host and port."
            :pathname pathname
            :server-name server-name
-           :field :url))
+           :field ':url))
         (unless (or (string-equal scheme "https")
                     (and (string-equal scheme "http")
                          (mcp-configuration--loopback-host-p host)))
@@ -734,7 +734,7 @@ bound policy takes effect without reloading this file."
            "An MCP HTTP URL must use HTTPS unless its host is loopback."
            :pathname pathname
            :server-name server-name
-           :field :url)))
+           :field ':url)))
     (mcp-configuration-error (condition)
       (error condition))
     (error (cause)
@@ -743,7 +743,7 @@ bound policy takes effect without reloading this file."
        "Invalid MCP Streamable HTTP URL."
        :pathname pathname
        :server-name server-name
-       :field :url)))
+       :field ':url)))
   url)
 
 (-> mcp-configuration--http
@@ -802,7 +802,7 @@ bound policy takes effect without reloading this file."
      "An MCP transport must be a native property list."
      :pathname pathname
      :server-name server-name
-     :field :transport))
+     :field ':transport))
   (let ((type
           (mcp-configuration--property
            form :type
@@ -821,7 +821,7 @@ bound policy takes effect without reloading this file."
         "Unsupported MCP transport type."
         :pathname pathname
         :server-name server-name
-        :field :type)))))
+        :field ':type)))))
 
 (-> mcp-server-configuration-create
     (&key (:name t)
@@ -850,19 +850,19 @@ bound policy takes effect without reloading this file."
     (mcp-configuration--error
      "An MCP server name must be a bounded non-empty string."
      :pathname pathname
-     :field :name))
+     :field ':name))
   (unless (or (null required-p) (eq required-p t))
     (mcp-configuration--error
      "MCP :REQUIRED-P must be exactly T or NIL."
      :pathname pathname
      :server-name name
-     :field :required-p))
+     :field ':required-p))
   (unless (member approval *mcp-approval-policies*)
     (mcp-configuration--error
      "Unsupported MCP approval policy."
      :pathname pathname
      :server-name name
-     :field :approval))
+     :field ':approval))
   (unless
       (and
        (mcp-configuration--proper-list-p trusted-read-only-tools)
@@ -881,14 +881,14 @@ bound policy takes effect without reloading this file."
      "MCP :TRUSTED-READ-ONLY-TOOLS must be a bounded proper list of unique bounded raw tool names."
      :pathname pathname
      :server-name name
-     :field :trusted-read-only-tools))
+     :field ':trusted-read-only-tools))
   (when (and trusted-read-only-tools
              (not (eq approval :read-only)))
     (mcp-configuration--error
      "MCP :TRUSTED-READ-ONLY-TOOLS requires :APPROVAL :READ-ONLY."
      :pathname pathname
      :server-name name
-     :field :trusted-read-only-tools))
+     :field ':trusted-read-only-tools))
   (unless (and (mcp-configuration--proper-list-p child-tools)
                (<= (length child-tools) *mcp-maximum-child-tools*)
                (every
@@ -903,7 +903,7 @@ bound policy takes effect without reloading this file."
      "MCP :CHILD-TOOLS must be a bounded proper list of unique bounded raw tool names."
      :pathname pathname
      :server-name name
-     :field :child-tools))
+     :field ':child-tools))
   (make-instance
    'mcp-server-configuration
    :name (copy-seq name)
@@ -1020,7 +1020,7 @@ bound policy takes effect without reloading this file."
                     :pathname pathname))
                  (sb-ext:octets-to-string
                   buffer
-                  :external-format :utf-8
+                  :external-format ':utf-8
                   :start 0
                   :end count)))
           (when descriptor
@@ -1100,7 +1100,7 @@ bound policy takes effect without reloading this file."
        (format nil "MCP configuration must use version ~D."
                *mcp-configuration-version*)
        :pathname pathname
-       :field :version))
+       :field ':version))
     (let ((servers
             (mcp-configuration--property
              form :servers :required-p t :pathname pathname)))
@@ -1108,13 +1108,13 @@ bound policy takes effect without reloading this file."
         (mcp-configuration--error
          "MCP :SERVERS must be a proper list."
          :pathname pathname
-         :field :servers))
+         :field ':servers))
       (when (> (length servers) *mcp-configuration-maximum-servers*)
         (mcp-configuration--error
          (format nil "MCP :SERVERS exceeds the limit of ~D."
                  *mcp-configuration-maximum-servers*)
          :pathname pathname
-         :field :servers))
+         :field ':servers))
       (let ((definitions
               (mapcar
                (lambda (server)
@@ -1128,7 +1128,7 @@ bound policy takes effect without reloading this file."
                (format nil "Duplicate MCP server name ~S." name)
                :pathname pathname
                :server-name name
-               :field :name))
+               :field ':name))
             (setf (gethash name seen) t)))
         definitions))))
 

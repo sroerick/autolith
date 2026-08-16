@@ -111,8 +111,8 @@ The subprocess writes into a pipe, so threads, captured streams, and
 grandchild processes all land under the rail."
   (let* ((process (uiop:launch-program command
                                        :input nil
-                                       :output :stream
-                                       :error-output :output))
+                                       :output ':stream
+                                       :error-output ':output))
          (output (uiop:process-info-output process)))
     (loop for line = (read-line output nil nil)
           while line

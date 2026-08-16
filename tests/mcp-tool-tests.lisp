@@ -309,7 +309,7 @@
             :name "Test Server"
             :transport
             '(:type :stdio :command "/bin/true")
-            :approval :read-only
+            :approval ':read-only
             :trusted-read-only-tools '("read file")
             :child-tools '("read file")))
          (transport
@@ -325,7 +325,7 @@
            (make-instance
             'mcp-server-runtime
             :configuration server-configuration
-            :registration-source :runtime
+            :registration-source ':runtime
             :provider-namespace "mcp__test_server"
             :client client))
          (manager
@@ -443,7 +443,7 @@
            (make-instance
             'mcp-server-runtime
             :configuration server
-            :registration-source :runtime
+            :registration-source ':runtime
             :provider-namespace "mcp__generation_test"
             :client client))
          (manager
@@ -507,7 +507,7 @@
             "pagination and tool discovery both restart after generation churn"))
       (ignore-errors (mcp-server-runtime-close runtime))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp--generation-rediscovery-bound () null)
@@ -560,7 +560,7 @@
            (make-instance
             'mcp-server-runtime
             :configuration server
-            :registration-source :runtime
+            :registration-source ':runtime
             :provider-namespace "mcp__unstable_generation_test"
             :client client)))
     (unwind-protect
@@ -599,7 +599,7 @@
               "continual generation churn stops at the discovery restart bound")))
       (ignore-errors (mcp-server-runtime-close runtime))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp--empty-context (request-context) null)
@@ -669,10 +669,10 @@
                      :configuration configuration
                      :tool-registry old-tool-registry)))
              (with-open-file (stream mcp-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string
                 "(:version 1
                    :servers
@@ -684,10 +684,10 @@
                      :startup-timeout-seconds 1)))"
                 stream))
              (with-open-file (stream init-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string
                 "(progn
                    (register-context-contributor
@@ -757,7 +757,7 @@
       (context--registry-restore original-context-registrations)
       (application-command--registry-restore original-command-registrations)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp-reload-registry-isolation () null)
@@ -833,10 +833,10 @@
                "/mcp-isolation-old")
               :source ':user)
              (with-open-file (stream mcp-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string
                 "(:version 1
                    :servers
@@ -845,10 +845,10 @@
                      (:type :stdio :command \"/bin/true\"))))"
                 stream))
              (with-open-file (stream init-pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string
                 "(progn
                    (register-context-contributor
@@ -1012,7 +1012,7 @@
         (application-command--registry-restore
          original-command-registrations)
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore))))
+         root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-mcp-reload-transaction-boundary () null)
@@ -1065,18 +1065,18 @@
                         "/mcp-reload-late-old")
                        :source ':user)
                       (with-open-file (stream mcp-pathname
-                                              :direction :output
-                                              :if-exists :supersede
-                                              :if-does-not-exist :create
-                                              :external-format :utf-8)
+                                              :direction ':output
+                                              :if-exists ':supersede
+                                              :if-does-not-exist ':create
+                                              :external-format ':utf-8)
                         (write-string
                          "(:version 1 :servers ())"
                          stream))
                       (with-open-file (stream init-pathname
-                                              :direction :output
-                                              :if-exists :supersede
-                                              :if-does-not-exist :create
-                                              :external-format :utf-8)
+                                              :direction ':output
+                                              :if-exists ':supersede
+                                              :if-does-not-exist ':create
+                                              :external-format ':utf-8)
                         (write-string
                          "(progn
                             (register-context-contributor
@@ -1357,7 +1357,7 @@
                  (application-command--registry-restore
                   original-command-registrations)
                  (uiop:delete-directory-tree
-                  root :validate t :if-does-not-exist :ignore)))))
+                  root :validate t :if-does-not-exist ':ignore)))))
     (run-case ':agent-creation)
     (run-case ':presentation)
     (run-case ':old-runtime-close))
@@ -1699,7 +1699,7 @@
               (length
                (sb-ext:string-to-octets
                 (json-encode (mcp-tool-input-schema poisoned))
-                :external-format :utf-8)))
+                :external-format ':utf-8)))
              (incf (mcp-server-runtime-tools-revision runtime)))
            (mcp-tool-registry-register-manager registry manager)
            (let* ((retained
@@ -1868,7 +1868,7 @@
           (mcp-manager-close manager)))
       (sb-posix:unsetenv environment-name)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp--credential-redacted-p (string string) boolean)
@@ -1977,7 +1977,7 @@
       (mcp--registry-restore registrations)
       (sb-posix:unsetenv environment-name)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp-credential-echo-containment () null)
@@ -1999,7 +1999,7 @@
               :command "/bin/true"
               :environment
               (("SERVICE_TOKEN" :environment ,environment-name)))
-            :approval :allow))
+            :approval ':allow))
          (transport nil)
          (runtime nil)
          (manager nil)
@@ -2020,7 +2020,7 @@
             (make-instance
              'mcp-server-runtime
              :configuration server
-             :registration-source :runtime
+             :registration-source ':runtime
              :provider-namespace "mcp__credential_echo"
              :client
              (make-mcp-client
@@ -2132,7 +2132,7 @@
                       (length
                        (sb-ext:string-to-octets
                         (json-encode (mcp-tool-input-schema tool))
-                        :external-format :utf-8))))
+                        :external-format ':utf-8))))
                (test-mcp--credential-redacted-p schemas credential)
                (test-mcp--credential-redacted-p identity credential)
                (test-mcp--credential-redacted-p client-state credential)
@@ -2167,7 +2167,7 @@
                       (make-instance
                        'mcp-server-runtime
                        :configuration server
-                       :registration-source :runtime
+                       :registration-source ':runtime
                        :provider-namespace "mcp__credential_stderr"
                        :client stdio-client))
                     (stdio-manager
@@ -2257,7 +2257,7 @@
           (mcp-manager-close manager)))
       (sb-posix:unsetenv environment-name)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -2378,7 +2378,7 @@
       (mcp-transport-close credential-transport)
       (mcp-transport-close plain-transport)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp-environment-fingerprint-lifecycle () null)
@@ -2627,7 +2627,7 @@
           (ignore-errors (uiop:terminate-process process :urgent t))
           (ignore-errors (uiop:wait-process process)))
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore)))
+         root :validate t :if-does-not-exist ':ignore)))
     (let* ((configuration (test-configuration))
            (root (test-configuration-root configuration))
            (environment-name
@@ -2702,7 +2702,7 @@
           (ignore-errors (bordeaux-threads:destroy-thread listener))
           (ignore-errors (join-thread listener)))
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore))))
+         root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 
@@ -2777,7 +2777,7 @@
                ,(test-mcp--rotating-stdio-server-form))
               :environment
               (("SERVICE_TOKEN" :environment ,environment-name)))
-            :approval :allow
+            :approval ':allow
             :required-p t))
          (client (mcp-tools--client server configuration))
          (runtime
@@ -2954,7 +2954,7 @@
         (ignore-errors (uiop:terminate-process process-b :urgent t))
         (ignore-errors (uiop:wait-process process-b)))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -3071,7 +3071,7 @@
             "required servers receive aggregate schema budget before optional servers"))
       (ignore-errors (mcp-manager-close manager))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (first-definition
@@ -3130,7 +3130,7 @@
               "a required aggregate overflow aborts with structured budget data")))
       (ignore-errors (mcp-manager-close manager))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (fail-refresh-p nil)
@@ -3210,7 +3210,7 @@
         (tool-registry-close-runtime-state registry))
       (ignore-errors (mcp-manager-close manager))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-mcp-initialization-metadata-bounds () null)
@@ -3327,7 +3327,7 @@
         (tool-registry-close-runtime-state registry))
       (ignore-errors (mcp-manager-close manager))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -3413,7 +3413,7 @@
                          "provider projection detaches mutable JSON strings")))))
              (mcp-manager-close manager)))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -4112,7 +4112,7 @@
               (= (test-mcp-transport-detach-count transport) 1)
               "a shared MCP manager detaches exactly once through its registry")))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   (test-mcp--generation-rediscovery)
   (test-mcp--generation-rediscovery-bound)
   (let* ((configuration (test-configuration))
@@ -4143,7 +4143,7 @@
            (make-instance
             'mcp-server-runtime
             :configuration server
-            :registration-source :runtime
+            :registration-source ':runtime
             :provider-namespace "mcp__resources_only"
             :client
             (make-mcp-client transport :name "autolith-test"))))
@@ -4165,7 +4165,7 @@
       (uiop:delete-directory-tree
        (test-configuration-root configuration)
        :validate t
-       :if-does-not-exist :ignore)))
+       :if-does-not-exist ':ignore)))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (missing-directory
@@ -4182,7 +4182,7 @@
                :command "/bin/true"
                :directory ,missing-directory)
               :required-p nil)
-            :source :runtime)
+            :source ':runtime)
            (let ((manager (mcp-manager-create configuration)))
              (unwind-protect
                   (let ((record
@@ -4207,7 +4207,7 @@
                :command "/bin/true"
                :directory ,missing-directory)
               :required-p t)
-            :source :runtime)
+            :source ':runtime)
            (test-assert
             (handler-case
                 (progn
@@ -4224,5 +4224,5 @@
       (uiop:delete-directory-tree
        root
        :validate t
-       :if-does-not-exist :ignore)))
+       :if-does-not-exist ':ignore)))
   nil)

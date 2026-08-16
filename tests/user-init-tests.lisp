@@ -23,10 +23,10 @@
            (test-assert (null (user-init-load configuration))
                         "a missing user init is an ordinary empty configuration")
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string
               "(progn
                  (setf *user-init-test-value*
@@ -82,9 +82,9 @@
                     ':user))
               "commands registered by user init retain their source"))
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :external-format ':utf-8)
              (write-string
               "(progn
                  (define-context-contributor user-init-tests--contributor
@@ -152,7 +152,7 @@
         (fmakunbound 'user-init-tests--command))
       (when (fboundp 'user-init-tests--contributor)
         (fmakunbound 'user-init-tests--contributor))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-directory-user-init () null)
@@ -225,5 +225,5 @@
       (mcp--registry-restore mcp-registrations)
       (when (fboundp 'directory-user-init-tests--definition)
         (fmakunbound 'directory-user-init-tests--definition))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

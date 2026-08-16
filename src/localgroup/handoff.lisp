@@ -367,7 +367,7 @@ exit \"$status\""
       (rest arguments))
      :input nil
      :output output
-     :error-output :output
+     :error-output ':output
      :directory directory
      :wait nil)))
 
@@ -391,10 +391,10 @@ exit \"$status\""
             (list "--localgroup-handoff" (namestring handoff-pathname)))))
     (ensure-directories-exist log-pathname)
     (with-open-file (output log-pathname
-                            :direction :output
-                            :if-exists :append
-                            :if-does-not-exist :create
-                            :external-format :utf-8)
+                            :direction ':output
+                            :if-exists ':append
+                            :if-does-not-exist ':create
+                            :external-format ':utf-8)
       (sb-posix:chmod (namestring log-pathname) #o600)
       (localgroup-handoff--launch-supervised
        :arguments arguments
@@ -504,8 +504,8 @@ exit \"$status\""
   "Return PATHNAME's one positive decimal PID, when complete."
   (handler-case
       (with-open-file (stream pathname
-                              :direction :input
-                              :external-format :utf-8)
+                              :direction ':input
+                              :external-format ':utf-8)
         (let ((line (read-line stream nil nil)))
           (and (non-empty-string-p line)
                (every #'digit-char-p line)

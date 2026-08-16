@@ -7,9 +7,9 @@
   "Write native MCP test CONTENTS to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create)
     (write-string contents stream)
     (finish-output stream))
   pathname)
@@ -622,7 +622,7 @@
            (test-assert
             (test-mcp-configuration--server-signals-p
              (test-mcp-configuration--server-form
-              :approval :read-only
+              :approval ':read-only
               :trusted-read-only-tools
               (loop for index
                       below (1+ *mcp-maximum-trusted-read-only-tools*)
@@ -631,13 +631,13 @@
            (test-assert
             (test-mcp-configuration--server-signals-p
              (test-mcp-configuration--server-form
-              :approval :read-only
+              :approval ':read-only
               :trusted-read-only-tools '("duplicate" "duplicate")))
             "trusted read-only MCP tool names must be unique")
            (test-assert
             (test-mcp-configuration--server-signals-p
              (test-mcp-configuration--server-form
-              :approval :prompt
+              :approval ':prompt
               :trusted-read-only-tools '("unused")))
             "trusted read-only MCP tools require the read-only policy")
            (test-assert
@@ -716,22 +716,22 @@
             '(:name "precedence"
               :transport (:type :stdio :command "/bin/true")
               :approval :allow)
-            :source :runtime)
+            :source ':runtime)
            (register-mcp-server
             '(:name "precedence"
               :transport (:type :stdio :command "/bin/true")
               :approval :deny)
-            :source :tracked)
+            :source ':tracked)
            (register-mcp-server
             '(:name "precedence"
               :transport (:type :stdio :command "/bin/true")
               :approval :read-only)
-            :source :user)
+            :source ':user)
            (register-mcp-server
             '(:name "precedence"
               :transport (:type :stdio :command "/bin/true")
               :approval :prompt)
-            :source :config)
+            :source ':config)
            (test-assert
             (and
              (eq
@@ -762,7 +762,7 @@
                   (register-mcp-server
                    '(:name "unsupported-source"
                      :transport (:type :stdio :command "/bin/true"))
-                   :source :compatibility)
+                   :source ':compatibility)
                   nil)
               (mcp-configuration-error ()
                 t))
@@ -800,7 +800,7 @@
             '(:name "layered"
               :transport (:type :stdio :command "/bin/false")
               :approval :deny)
-            :source :tracked)
+            :source ':tracked)
            (mcp-configuration-load configuration)
            (test-assert
             (eq
@@ -854,5 +854,5 @@
               "a malformed reload leaves every prior MCP layer intact")))
       (mcp--registry-restore registry-snapshot)
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)

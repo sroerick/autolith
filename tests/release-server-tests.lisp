@@ -7,10 +7,10 @@
   "Write test CONTENT to PATHNAME and return PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string content stream))
   pathname)
 
@@ -32,8 +32,8 @@
                   "GIT_CONFIG_PARAMETERS="
                   "git" "-C" (namestring directory))
             arguments)
-    :output :string
-    :error-output :output)))
+    :output ':string
+    :error-output ':output)))
 
 (-> release-server-tests--git-deployment
     (pathname string &key (:annotated-p boolean) (:updater-p boolean))
@@ -104,7 +104,7 @@
             (sb-posix:unsetenv (first entry))))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> release-server-tests--test-service-runtime-isolation () null)
@@ -304,7 +304,7 @@
               (release-server-request-error ()
                 t))
             "malformed HTTP request lines signal a structured condition"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -350,7 +350,7 @@
             "packaged source identities omit template and reflog state"))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -376,7 +376,7 @@
            (test-assert
             (not (probe-file broken-link))
             "release archives remove broken dependency links"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((commit-a "0123456789abcdef0123456789abcdef01234567")
            (commit-b "89abcdef0123456789abcdef0123456789abcdef")
            (tag-object "fedcba9876543210fedcba9876543210fedcba98")
@@ -453,7 +453,7 @@
            (test-assert
             (string= (release-builder--source-version source-root) "0.11.2")
             "builder source validation reads the declared ASDF version"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -509,7 +509,7 @@
                    cleanup
                    (member "--force" cleanup :test #'string=))
               "container builds have a deadline, managed name, and force cleanup")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -696,7 +696,7 @@
               "host deployments reject annotated release tags")))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -815,5 +815,5 @@
                 "a failed updater-owned final candidate is removed for retry")))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil))

@@ -59,7 +59,7 @@
           (task-agent-definition--error
            :pathname (task-agent-definition-pathname definition)
            :source (task-agent-definition-source definition)
-           :field :tools
+           :field ':tools
            :cause (format nil "Tool grant ~S is unavailable in this session."
                           specification)
            :definition-name (task-agent-definition-name definition)))))
@@ -345,7 +345,7 @@ boundary cannot fit within that budget."
 
 (defun task--utf8-length (text)
   "Return the UTF-8 byte length of TEXT on the supported SBCL runtime."
-  (length (sb-ext:string-to-octets text :external-format :utf-8)))
+  (length (sb-ext:string-to-octets text :external-format ':utf-8)))
 
 (defun task--bounded-output (text)
   "Bound TEXT by configured UTF-8 bytes and lines, marking truncation."
@@ -415,10 +415,10 @@ boundary cannot fit within that budget."
          (progn
            (with-open-file
                (stream temporary
-                       :direction :output
-                       :if-exists :supersede
-                       :if-does-not-exist :create
-                       :external-format :utf-8)
+                       :direction ':output
+                       :if-exists ':supersede
+                       :if-does-not-exist ':create
+                       :external-format ':utf-8)
              (with-standard-io-syntax
                (let ((*print-readably* t)
                      (*print-pretty* t)

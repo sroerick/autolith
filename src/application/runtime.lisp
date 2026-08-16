@@ -104,7 +104,7 @@
     :documentation "The exact command approvals loaded from private state.")
    (permission-mode
     :initarg :permission-mode
-    :initform :ask
+    :initform ':ask
     :accessor application-permission-mode
     :type (member :ask :auto :sandboxed :full-access)
     :documentation "The command approval behavior for this process session.")
@@ -317,8 +317,8 @@
     (handler-case
         (terminal--positive-integer-or-nil
          (uiop:run-program (list "tput" capability)
-                           :output :string
-                           :error-output :output))
+                           :output ':string
+                           :error-output ':output))
       (error ()
         nil))))
 
@@ -2596,8 +2596,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                (uiop:run-program
                 (list "git" "-C" (namestring directory)
                       "symbolic-ref" "--quiet" "--short" "HEAD")
-                :output :string
-                :error-output :string
+                :output ':string
+                :error-output ':string
                 :ignore-error-status t))))
         (and (non-empty-string-p branch) branch))
     (error ()

@@ -134,7 +134,7 @@
                   (test-assert
                    (null (header "ChatGPT-Account-ID"))
                    "web.run does not send Codex-only headers to Grok"))))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-tool-registry () null)
@@ -248,7 +248,7 @@
                (test-assert
                 (null (gethash "query" (json-get parameters "properties")))
                 "web.run no longer declares its incompatible query shim"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (let* ((registry (make-instance 'tool-registry))
          (empty-schema (tool-object-schema (json-object) nil))
          (replaceable
@@ -547,6 +547,6 @@
                (test-assert (search "stopped after 1"
                                     (tool-result-content result))
                              "shell.run explains its timeout"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (tool-test--grok-web-run)
   nil)

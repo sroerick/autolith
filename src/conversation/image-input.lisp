@@ -284,7 +284,7 @@
 (defun image-input--read-file (pathname)
   "Read PATHNAME after enforcing the source-byte sanity limit."
   (with-open-file (stream pathname
-                          :direction :input
+                          :direction ':input
                           :element-type '(unsigned-byte 8))
     (let ((length (file-length stream)))
       (when (> length *image-input-maximum-source-bytes*)
@@ -373,7 +373,7 @@
   "Decode PATHNAME as FORMAT through the pinned Lisp image codec."
   (handler-case
       (with-open-file (stream pathname
-                              :direction :input
+                              :direction ':input
                               :element-type '(unsigned-byte 8))
         (read-image-stream stream
                            (ecase format

@@ -192,8 +192,8 @@
         (output (make-string-output-stream))
         (characters 0))
     (with-open-file (stream pathname
-                            :direction :input
-                            :external-format :utf-8)
+                            :direction ':input
+                            :external-format ':utf-8)
       (loop for count = (read-sequence buffer stream)
             while (plusp count)
             do (incf characters count)

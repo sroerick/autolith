@@ -145,7 +145,7 @@
   "Return PATHNAME's active leading conversation form, or NIL when absent."
   (let ((source (or (conversation-storage-active-pathname pathname) pathname)))
     (handler-case
-        (with-open-file (stream source :direction :input :external-format :utf-8)
+        (with-open-file (stream source :direction ':input :external-format ':utf-8)
           (let* ((*read-eval* nil)
                  (end-marker (cons nil nil))
                  (form (read stream nil end-marker)))
@@ -327,10 +327,10 @@
     (unwind-protect
          (progn
            (with-open-file (stream temporary
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (with-standard-io-syntax
                (let ((*print-readably* t)
                      (*print-pretty* t)
@@ -376,12 +376,12 @@ shared structure. An incomplete final form remains ignored, as in log-read."
     (ensure-directories-exist target)
     (unwind-protect
          (progn
-           (with-open-file (input source :direction :input :external-format :utf-8)
+           (with-open-file (input source :direction ':input :external-format ':utf-8)
              (with-open-file (output temporary
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (with-standard-io-syntax
                  (let ((*print-readably* t)
                        (*print-pretty* t)
@@ -420,7 +420,7 @@ large conversations that contain no legacy reference."
         (carry-length 0))
     (dolist (entry entries)
       (setf (gethash (getf entry :old) identifiers) t))
-    (with-open-file (stream pathname :direction :input :external-format :utf-8)
+    (with-open-file (stream pathname :direction ':input :external-format ':utf-8)
       (loop
         for end = (read-sequence buffer stream :start carry-length)
         do (when (= end carry-length)
@@ -690,7 +690,7 @@ large conversations that contain no legacy reference."
         (uiop:delete-directory-tree
          source-directory
          :validate t
-         :if-does-not-exist :ignore))))
+         :if-does-not-exist ':ignore))))
   nil)
 
 (-> conversation-identifier-migration--call-with-file-lock

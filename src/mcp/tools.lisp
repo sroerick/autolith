@@ -221,7 +221,7 @@
                  "Mix one length-delimited UTF-8 STRING into the digest."
                  (let ((octets
                          (sb-ext:string-to-octets
-                          string :external-format :utf-8)))
+                          string :external-format ':utf-8)))
                    (feed-length (length octets))
                    (update-mac mac octets))))
         (feed-length (length snapshot))
@@ -586,7 +586,7 @@
 (defun mcp-tools--identifier-hash (raw)
   "Return RAW's fixed 64-bit FNV-1a hexadecimal identity."
   (let ((hash #xcbf29ce484222325))
-    (loop for octet across (sb-ext:string-to-octets raw :external-format :utf-8)
+    (loop for octet across (sb-ext:string-to-octets raw :external-format ':utf-8)
           do
              (setf hash
                    (mod
@@ -656,7 +656,7 @@
     :type t
     :documentation "The lock protecting discovery and status.")
    (state
-    :initform :disconnected
+    :initform ':disconnected
     :accessor mcp-server-runtime-state
     :type keyword
     :documentation "The disconnected, connecting, ready, failed, or detached state.")
@@ -1201,7 +1201,7 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
            (length
             (sb-ext:string-to-octets
              encoded
-             :external-format :utf-8))))
+             :external-format ':utf-8))))
     (when (> encoded-bytes *mcp-maximum-tool-schema-bytes*)
       (mcp-tools--server-error
        (mcp-server-runtime-configuration runtime)
@@ -1254,7 +1254,7 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
               (length
                (sb-ext:string-to-octets
                 (json-encode copy)
-                :external-format :utf-8))))
+                :external-format ':utf-8))))
         (when (> provider-bytes *mcp-maximum-tool-schema-bytes*)
           (mcp-tools--server-error
            (mcp-server-runtime-configuration runtime)
@@ -1343,7 +1343,7 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                   (sb-ext:string-to-octets
                    (json-encode
                     (mcp-tool-input-schema prepared-tool))
-                   :external-format :utf-8))))
+                   :external-format ':utf-8))))
           (when (> retained-bytes *mcp-maximum-tool-schema-bytes*)
             (mcp-tools--server-error
              (mcp-server-runtime-configuration runtime)
@@ -2097,10 +2097,10 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                (let ((bytes (base64-string-to-usb8-array encoded)))
                  (with-open-file
                      (stream temporary
-                             :direction :output
+                             :direction ':output
                              :element-type '(unsigned-byte 8)
-                             :if-does-not-exist :create
-                             :if-exists :error)
+                             :if-does-not-exist ':create
+                             :if-exists ':error)
                    (write-sequence bytes stream)
                    (finish-output stream))
                  (setf prepared (image-input-prepare temporary root))

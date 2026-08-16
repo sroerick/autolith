@@ -69,7 +69,7 @@
                        ("x-codex-primary-used-percent" . "100")
                        ("x-codex-primary-window-minutes" . "300"))
             :uri nil
-            :method :post)))
+            :method ':post)))
     (unwind-protect
          (progn
            (test-assert
@@ -95,7 +95,7 @@
                     :status 400
                     :headers '(("request-id" . "request-400"))
                     :uri nil
-                    :method :post)))
+                    :method ':post)))
              (test-assert
               (handler-case
                   (progn
@@ -132,7 +132,7 @@
                       :status status
                       :headers nil
                       :uri nil
-                      :method :post)))
+                      :method ':post)))
                (test-assert
                 (handler-case
                     (progn
@@ -148,7 +148,7 @@
                                  :test #'char-equal)
                          t)))
                 (format nil "HTTP ~D is eligible for bounded retry" status)))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> provider-tests--request-tools (json-object) vector)
@@ -346,7 +346,7 @@
              (declare (ignore value))
              (test-assert (not present-p)
                           "Responses Lite omits top-level tools")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-native-compaction () null)
@@ -567,7 +567,7 @@
                  :tool-namespaces schemas
                  :event-callback #'identity))
                "an unavailable native endpoint falls back without failing compaction"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-sse-event-string (json-object) string)
@@ -1243,7 +1243,7 @@
                 (provider-error (condition)
                   (not (typep condition 'provider-retryable-error))))
               "non-transient TLS setup failures remain typed and terminal")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> provider-tests--credentials (configuration) oauth-credentials)
@@ -1490,7 +1490,7 @@
                                         :status 400
                                         :headers headers
                                         :uri nil
-                                        :method :post))
+                                        :method ':post))
                                       (values
                                        (make-string-input-stream body)
                                        400
@@ -1517,7 +1517,7 @@
                 (not (search collision marker))
                 "credential collisions select a marker without the credential")))
         (uiop:delete-directory-tree
-         root :validate t :if-does-not-exist :ignore)))
+         root :validate t :if-does-not-exist ':ignore)))
     (test-assert
      (and (null *provider-active-credential-values*)
           (null *provider-active-credential-redaction-marker*))
@@ -1684,7 +1684,7 @@
               (equal (nreverse (test-codex-provider-refresh-flags provider))
                      '(nil))
               "a rejected static API key is not retried or refreshed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-stream-retries () null)
@@ -1798,5 +1798,5 @@
                 (provider-retryable-error (condition)
                   (string= (provider-error-code condition) "server_error")))
               "retry exhaustion re-signals the final structured failure")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

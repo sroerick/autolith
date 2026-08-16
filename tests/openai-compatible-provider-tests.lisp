@@ -43,7 +43,7 @@
                     read-descriptor
                     :input t
                     :element-type 'character
-                    :external-format :utf-8
+                    :external-format ':utf-8
                     :buffering ':none
                     :auto-close nil)
                    output
@@ -51,7 +51,7 @@
                     write-descriptor
                     :output t
                     :element-type 'character
-                    :external-format :utf-8
+                    :external-format ':utf-8
                     :buffering ':none
                     :auto-close nil))
               (write-string content output)
@@ -146,7 +146,7 @@
           (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" old-environment-effort 1)
           (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-deferred-main-validation () null)
@@ -294,7 +294,7 @@
                           old-environment-effort 1)
           (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-discovery-is-on-demand () null)
@@ -348,7 +348,7 @@
             "startup loads the last successful model list from cache"))
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-model-cache-boundary () null)
@@ -404,7 +404,7 @@
               "cache reload does not resurrect removed static models"))
         (setf (symbol-function 'dexador:get) original-get)
         (provider--registry-restore registry-snapshot)
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-openai-compatible-provider-discovery () null)
@@ -566,7 +566,7 @@
                "model discovery normalizes dependency transport failures"))
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-registration-identity () null)
@@ -591,7 +591,7 @@
               (configuration-error () t))
             "reload rejects a same-name user provider replaced by a built-in"))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-openai-compatible-provider-authentication-bootstrap () null)
@@ -642,7 +642,7 @@
                               "bootstrap-key"))
                 "bracketed paste saves the exact API key without terminal markers"))))
       (provider--registry-restore registry-snapshot)
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-provider-sse-bounds () null)
@@ -1120,10 +1120,10 @@
            (configuration-ensure-directories configuration)
            (let ((pathname (configuration-user-init-path configuration)))
              (with-open-file (stream pathname
-                                     :direction :output
-                                     :if-exists :supersede
-                                     :if-does-not-exist :create
-                                     :external-format :utf-8)
+                                     :direction ':output
+                                     :if-exists ':supersede
+                                     :if-does-not-exist ':create
+                                     :external-format ':utf-8)
                (write-string
                 "(register-openai-compatible-provider
                     :name \"init-openai\"
@@ -1151,5 +1151,5 @@
               "removing init.lisp removes its provider registrations")))
       (provider--registry-restore registry-snapshot)
       (when root
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil))

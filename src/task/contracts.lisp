@@ -292,18 +292,18 @@
   "Validate and copy one native output enum VALUE."
   (unless (and (task--proper-list-p value) value)
     (task-agent-definition--error
-     :pathname pathname :source source :field :enum
+     :pathname pathname :source source :field ':enum
      :cause "An output enum must be a non-empty proper list."
      :definition-name definition-name))
   (unless (every #'task-output--enum-value-p value)
     (task-agent-definition--error
-     :pathname pathname :source source :field :enum
+     :pathname pathname :source source :field ':enum
      :cause "Output enum values must be strings, JSON numbers, T, NIL, or :NULL."
      :definition-name definition-name))
   (unless (task--unique-list-p
            value :test #'task-output--native-value-equal-p)
     (task-agent-definition--error
-     :pathname pathname :source source :field :enum
+     :pathname pathname :source source :field ':enum
      :cause "Output enum values must be unique."
      :definition-name definition-name))
   (when (and type
@@ -311,7 +311,7 @@
                            (task-output--value-has-type-p item type))
                          value)))
     (task-agent-definition--error
-     :pathname pathname :source source :field :enum
+     :pathname pathname :source source :field ':enum
      :cause (format nil "An enum value does not have declared type ~S." type)
      :definition-name definition-name))
   (copy-list value))
@@ -326,7 +326,7 @@
   "Validate and normalize a native object property association list."
   (unless (task--proper-list-p value)
     (task-agent-definition--error
-     :pathname pathname :source source :field :properties
+     :pathname pathname :source source :field ':properties
      :cause "Output properties must be a proper association list."
      :definition-name definition-name))
   (let ((names nil)
@@ -335,17 +335,17 @@
       (unless (and (task--proper-list-p entry) (= (length entry) 2)
                    (non-empty-string-p (first entry)))
         (task-agent-definition--error
-         :pathname pathname :source source :field :properties
+         :pathname pathname :source source :field ':properties
          :cause "Each output property must be a two-element list of name and schema."
          :definition-name definition-name))
       (when (> (length (first entry)) *task-agent-string-maximum-characters*)
         (task-agent-definition--error
-         :pathname pathname :source source :field :properties
+         :pathname pathname :source source :field ':properties
          :cause "An output property name exceeds the string bound."
          :definition-name definition-name))
       (when (member (first entry) names :test #'string=)
         (task-agent-definition--error
-         :pathname pathname :source source :field :properties
+         :pathname pathname :source source :field ':properties
          :cause (format nil "Output property ~S occurs more than once."
                         (first entry))
          :definition-name definition-name))
@@ -392,13 +392,13 @@ inside enum value positions."
       (task--alist-value :enum pairs))
     (unless (or type-present-p enum-present-p)
       (task-agent-definition--error
-       :pathname pathname :source source :field :type
+       :pathname pathname :source source :field ':type
        :cause "An output schema requires :TYPE or :ENUM."
        :definition-name definition-name))
     (when (and type-present-p
                (not (member type *task-output-types* :test #'eq)))
       (task-agent-definition--error
-       :pathname pathname :source source :field :type
+       :pathname pathname :source source :field ':type
        :cause (format nil "Unsupported output type ~S." type)
        :definition-name definition-name))
     (let* ((allowed
@@ -420,7 +420,7 @@ inside enum value positions."
          :definition-name definition-name)))
     (when (and enum-present-p (member type '(:object :array) :test #'eq))
       (task-agent-definition--error
-       :pathname pathname :source source :field :enum
+       :pathname pathname :source source :field ':enum
        :cause "Object and array output schemas do not support scalar enums."
        :definition-name definition-name))
     (let ((normalized (list :type type)))
@@ -459,7 +459,7 @@ inside enum value positions."
                               (every #'non-empty-string-p required)
                               (task--unique-list-p required :test #'string=))
                    (task-agent-definition--error
-                    :pathname pathname :source source :field :required
+                    :pathname pathname :source source :field ':required
                     :cause "Object :REQUIRED must be a proper list of unique non-empty strings."
                     :definition-name definition-name))
                  (unless (every
@@ -467,7 +467,7 @@ inside enum value positions."
                             (assoc name normalized-properties :test #'string=))
                           required)
                    (task-agent-definition--error
-                    :pathname pathname :source source :field :required
+                    :pathname pathname :source source :field ':required
                     :cause "Every required name must have a declared property schema."
                     :definition-name definition-name))
                  (setf normalized
@@ -478,7 +478,7 @@ inside enum value positions."
                  (unless (typep additional 'boolean)
                    (task-agent-definition--error
                     :pathname pathname :source source
-                    :field :additional-properties
+                    :field ':additional-properties
                     :cause ":ADDITIONAL-PROPERTIES must be T or NIL."
                     :definition-name definition-name))
                  (setf normalized
@@ -489,7 +489,7 @@ inside enum value positions."
              (task--alist-value :items pairs)
            (unless items-present-p
              (task-agent-definition--error
-              :pathname pathname :source source :field :items
+              :pathname pathname :source source :field ':items
               :cause "An array output schema requires :ITEMS."
               :definition-name definition-name))
            (setf normalized
@@ -507,19 +507,19 @@ inside enum value positions."
              (when (and minimum-present-p
                         (not (typep minimum '(integer 0))))
                (task-agent-definition--error
-                :pathname pathname :source source :field :min-items
+                :pathname pathname :source source :field ':min-items
                 :cause ":MIN-ITEMS must be a nonnegative integer."
                 :definition-name definition-name))
              (when (and maximum-present-p
                         (not (typep maximum '(integer 0))))
                (task-agent-definition--error
-                :pathname pathname :source source :field :max-items
+                :pathname pathname :source source :field ':max-items
                 :cause ":MAX-ITEMS must be a nonnegative integer."
                 :definition-name definition-name))
              (when (and minimum-present-p maximum-present-p
                         (> minimum maximum))
                (task-agent-definition--error
-                :pathname pathname :source source :field :max-items
+                :pathname pathname :source source :field ':max-items
                 :cause ":MAX-ITEMS must not be smaller than :MIN-ITEMS."
                 :definition-name definition-name))
              (when minimum-present-p

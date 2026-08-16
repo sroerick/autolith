@@ -144,7 +144,7 @@
   "Percent-encode IDENTIFIER while retaining readable path separators."
   (with-output-to-string (stream)
     (loop for octet across (sb-ext:string-to-octets identifier
-                                                    :external-format :utf-8)
+                                                    :external-format ':utf-8)
           do
              (if (workspace-file--uri-safe-octet-p octet)
                  (write-char (code-char octet) stream)
@@ -784,7 +784,7 @@ Return NIL when NAME disappears during enumeration."
 (-> workspace-file--replacement-octets (string) (simple-array (unsigned-byte 8) (*)))
 (defun workspace-file--replacement-octets (content)
   "Return CONTENT as UTF-8 octets after enforcing the exact replacement limit."
-  (let ((octets (sb-ext:string-to-octets content :external-format :utf-8)))
+  (let ((octets (sb-ext:string-to-octets content :external-format ':utf-8)))
     (when (> (length octets) *workspace-file-resource-maximum-bytes*)
       (error 'tool-error
              :message
@@ -821,9 +821,9 @@ Return NIL when NAME disappears during enumeration."
 (defun workspace-file--write-temporary (temporary target octets)
   "Write replacement OCTETS to TEMPORARY and preserve TARGET permissions."
   (with-open-file (stream temporary
-                          :direction :output
-                          :if-exists :error
-                          :if-does-not-exist :create
+                          :direction ':output
+                          :if-exists ':error
+                          :if-does-not-exist ':create
                           :element-type '(unsigned-byte 8))
     (write-sequence octets stream)
     (finish-output stream))

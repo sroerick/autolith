@@ -652,7 +652,7 @@
                      (equal (user-message-input-image-pathnames pruned)
                             (list (truename second-image))))
                 "deleted image labels prune attachments and renumber survivors"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-terminal-input-decoding () null)
@@ -786,7 +786,7 @@
                     read-descriptor
                     :input t
                     :element-type 'character
-                    :external-format :utf-8
+                    :external-format ':utf-8
                     :buffering ':none
                     :auto-close nil)
                    output
@@ -794,7 +794,7 @@
                     write-descriptor
                     :output t
                     :element-type 'character
-                    :external-format :utf-8
+                    :external-format ':utf-8
                     :buffering ':none
                     :auto-close nil))
              (write-string payload output)

@@ -24,10 +24,10 @@
   "Write CONTENT to PATHNAME for one native search fixture."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
-                          :direction :output
-                          :if-exists :supersede
-                          :if-does-not-exist :create
-                          :external-format :utf-8)
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
     (write-string content stream))
   nil)
 
@@ -271,10 +271,10 @@
           (sb-posix:unsetenv "AUTOLITH_FFF_LIBRARY"))
       (uiop:delete-directory-tree workspace-root
                                   :validate t
-                                  :if-does-not-exist :ignore)
+                                  :if-does-not-exist ':ignore)
       (when configuration
         (uiop:delete-directory-tree
          (test-configuration-root configuration)
          :validate t
-         :if-does-not-exist :ignore))))
+         :if-does-not-exist ':ignore))))
   nil)

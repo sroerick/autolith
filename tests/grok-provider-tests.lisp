@@ -222,7 +222,7 @@
                              0)
                        "text"))
               "compaction requests end with the handoff instructions")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> grok-provider-test--transport-headers () null)
@@ -285,7 +285,7 @@
                           "the Grok transport carries the conversation identity")
              (test-assert (string= (header "Accept") "text/event-stream")
                           "the Grok transport requests an event stream")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> grok-provider-test--selection () null)
@@ -328,7 +328,7 @@
                    (eq (provider-credential-manager copied)
                        (provider-credential-manager grok-provider)))
               "same-family reconfiguration preserves session and credentials")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-grok-provider () null)

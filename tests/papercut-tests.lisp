@@ -257,5 +257,5 @@
            (test-assert (search "/papercut-close ID" (application-help))
                         "interactive help includes /papercut-close ID"))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

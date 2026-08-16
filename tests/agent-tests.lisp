@@ -359,7 +359,7 @@
              (test-assert
               (= (count :provider-progress statuses) 2)
               "every streamed delta refreshes visible provider progress")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-free-turn () null)
@@ -424,7 +424,7 @@
              (test-assert
               (= (length (conversation-input-items call-conversation)) 1)
               "a rejected tool-free call is never persisted or executed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-read-only-tool-allowlist () null)
@@ -448,7 +448,7 @@
              (agent-test-result
               "read-only-answer"
               (list (agent-test-message "diagnosed"))
-              :turn-completion :end))))
+              :turn-completion ':end))))
          (agent
            (agent-create :configuration configuration
                          :provider provider
@@ -507,7 +507,7 @@
              (test-assert
               (= (length (conversation-input-items forbidden-conversation)) 1)
               "a forbidden mutation call is neither persisted nor executed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -558,7 +558,7 @@
              (agent-test-result
               "restricted-resource-answer"
               (list (agent-test-message "diagnosed"))
-              :turn-completion :end))))
+              :turn-completion ':end))))
          (registry (make-default-tool-registry))
          (agent
            (agent-create :configuration configuration
@@ -570,10 +570,10 @@
          (progn
            (ensure-directories-exist workspace)
            (with-open-file (stream (merge-pathnames "allowed.txt" workspace)
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (write-string "restricted workspace content" stream))
            (let ((*agent-restricted-maximum-tool-rounds* 3))
              (agent-run-user-turn
@@ -601,7 +601,7 @@
                            (third outputs)))
               "a restricted turn rejects memory resources")))
       (ignore-errors (tool-registry-close-runtime-state registry))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-restricted-tool-round-limit () null)
@@ -654,7 +654,7 @@
            (test-assert
             (= (length (conversation-input-items conversation)) 3)
             "the over-limit call is rejected before persistence or execution"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-empty-tool-allowlist () null)
@@ -701,7 +701,7 @@
            (test-assert
             (= (length (conversation-input-items conversation)) 1)
             "an empty restriction persists no rejected call or tool result"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-steering () null)
@@ -725,7 +725,7 @@
              (agent-test-result
               "steering-2"
               (list (agent-test-message "changed course"))
-              :turn-completion :end))))
+              :turn-completion ':end))))
           (pending-input
             (list
              (agent-steering-input-create
@@ -785,7 +785,7 @@
             "the observer acknowledges each steering append immediately")
            (test-assert (member :steering-applied statuses)
                         "the observer is notified after steering becomes durable"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-explicit-continuation () null)
@@ -801,10 +801,10 @@
             (list (agent-test-result "response-1"
                                      (list (agent-test-message "working"))
                                      :turn-state "continuation-state"
-                                     :turn-completion :continue)
+                                     :turn-completion ':continue)
                   (agent-test-result "response-2"
                                      (list (agent-test-message "done"))
-                                     :turn-completion :end)))))
+                                     :turn-completion ':end)))))
     (unwind-protect
          (let* ((agent (agent-create
                         :configuration configuration
@@ -824,7 +824,7 @@
             "the continuation request receives request-local routing state")
            (test-assert (null (conversation-turn-state conversation))
                         "explicit continuation state is cleared after the user turn"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-invalid-call-history () null)
@@ -893,7 +893,7 @@
                           "only the first call and its correlated output remain")
              (test-assert (null (conversation-turn-state conversation))
                           "turn state clears after a duplicate-call invariant failure")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-tool-failures () null)
@@ -942,7 +942,7 @@
                                tool-results)
                        '(:ok :error))
                 "successful and failed calls remain explicitly distinguished"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-provider-failure-persistence () null)
@@ -1013,7 +1013,7 @@
                                  "role")
                        "user")
               "replayed input retains the user message that failed")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-incomplete-provider-failure-persistence () null)
@@ -1079,7 +1079,7 @@
              (test-assert
               (string= (getf failure :response-id) "response-incomplete")
               "incomplete failure metadata retains its response identifier")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-provider-credential-failure-containment () null)
@@ -1181,7 +1181,7 @@
                   (search *provider-credential-redaction-marker* text))
                  "durable provider failure metadata retains sanitized diagnostics"))))
       (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
+       root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-long-tool-turn () null)
@@ -1224,7 +1224,7 @@
                           (conversation-pathname conversation)))
                12)
             "every long-turn tool call receives a durable correlated output"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-unbounded-tool-calls () null)
@@ -1272,7 +1272,7 @@
                           (conversation-pathname conversation)))
                257)
             "every call above the former ceiling receives a durable result"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-default-turn-has-no-step-guillotine () null)
@@ -1288,7 +1288,7 @@
                  (agent-test-result
                   (format nil "continue-~D" index)
                   (list (agent-test-message "Still working."))
-                  :turn-completion :continue)))
+                  :turn-completion ':continue)))
          (provider
            (make-instance
             'scripted-provider
@@ -1302,7 +1302,7 @@
                      (agent-test-result
                       "step-65-final"
                       (list (agent-test-message "Done."))
-                      :turn-completion :end)))))
+                      :turn-completion ':end)))))
          (agent
            (agent-create :configuration configuration
                          :provider provider
@@ -1330,7 +1330,7 @@
                               (getf (rest record) :call-id)))
                   :test #'string=)
             "the tool requested on provider step 64 executes normally"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-skill-provider-barrier () null)
@@ -1376,7 +1376,7 @@
              (agent-test-result
               "skill-barrier-2"
               (list (agent-test-message "Applied selected instructions."))
-              :turn-completion :end))))
+              :turn-completion ':end))))
          (registry
            (skill-augment-tool-registry (agent-test-registry))))
     (unwind-protect
@@ -1478,7 +1478,7 @@
                 "crash replay retains only the complete durable call pair"))))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-compaction () null)
@@ -1510,10 +1510,10 @@
                    'scripted-provider
                    :results (list (agent-test-result "compact-1"
                                                      (list summary-item)
-                                                     :turn-completion :end)
+                                                     :turn-completion ':end)
                                   (agent-test-result "turn-1"
                                                      (list answer-item)
-                                                     :turn-completion :end))))
+                                                     :turn-completion ':end))))
                 (agent (agent-create :configuration configuration
                                      :provider provider
                                      :conversation conversation
@@ -1548,7 +1548,7 @@
                                        0)
                                  "text"))
                         "the live projection starts from the summary bridge"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agent-native-compaction () null)
@@ -1582,10 +1582,10 @@
                                       "encrypted_content" "native-checkpoint"))
                    :results (list (agent-test-result "compact-native"
                                                      (list summary-item)
-                                                     :turn-completion :end)
+                                                     :turn-completion ':end)
                                   (agent-test-result "turn-native"
                                                      (list answer-item)
-                                                     :turn-completion :end))))
+                                                     :turn-completion ':end))))
                 (agent (agent-create :configuration configuration
                                      :provider provider
                                      :conversation conversation
@@ -1614,7 +1614,7 @@
            (test-assert
             (= (length (conversation-input-items-for-family conversation ':grok)) 3)
             "another provider receives the portable handoff and new messages"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> run-agent-tests () boolean)

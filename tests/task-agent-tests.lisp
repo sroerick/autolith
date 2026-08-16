@@ -216,7 +216,7 @@
                            "~A native role input returns complete typed diagnostic metadata"
                            name))))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -320,7 +320,7 @@
                                  dupe-diagnostic))))
                   "case-normalized duplicate filenames fail closed before parsing")))))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-agents-tool () null)
@@ -459,9 +459,9 @@
                            :name "spawn-parent"
                            :description "Permit two role names."
                            :instructions "Exercise child discovery policy."
-                           :tools :all
+                           :tools ':all
                            :spawns '("allowed" "blocked")
-                           :source :test))
+                           :source ':test))
                         (job
                           (task-tests--register-job
                            orchestrator primary definition
@@ -528,7 +528,7 @@
                          :description "Permit no descendants."
                          :instructions "Do not delegate."
                          :spawns nil
-                         :source :test)
+                         :source ':test)
                         1)
                        (list
                         "max-depth"
@@ -536,8 +536,8 @@
                          :name "max-depth"
                          :description "Reach the configured depth."
                          :instructions "Do not exceed the depth limit."
-                         :spawns :all
-                         :source :test)
+                         :spawns ':all
+                         :source ':test)
                         (task-orchestrator-maximum-depth orchestrator))))
                    (destructuring-bind (name definition depth) case
                      (let* ((job
@@ -569,7 +569,7 @@
                                   name))))))))))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-tool-default-argument-types () null)
@@ -598,13 +598,13 @@
             :name "default-types"
             :description "Exercise explicit invalid default values."
             :instructions "Remain terminal while job.wait validates."
-            :source :test))
+            :source ':test))
          (job
            (task-tests--register-job
             orchestrator primary definition :name "default-types"))
          (job-result
            (task-tests--terminal-result
-            job :status :success :output "already terminal")))
+            job :status ':success :output "already terminal")))
     (unwind-protect
          (progn
            (task-tests--publish-terminal job :completed job-result)
@@ -647,7 +647,7 @@
                         value)))))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-task-native-output-contracts () null)
@@ -672,7 +672,7 @@
                  :max-items 2)))
               :required ("enabled" "nothing" "items")
               :additional-properties nil)
-            :source :programmatic
+            :source ':programmatic
             :definition-name "recursive"))
          (provider-schema (task-output-schema->json schema))
          (candidate
@@ -709,7 +709,7 @@
   (let* ((enum-schema
            (task-output-schema-normalize
             '(:enum (nil :null t))
-            :source :programmatic
+            :source ':programmatic
             :definition-name "enum"))
          (provider-enum
            (json-get (task-output-schema->json enum-schema) "enum")))
@@ -738,7 +738,7 @@
                   (progn
                     (task-output-schema-normalize
                      invalid-schema
-                     :source :programmatic
+                     :source ':programmatic
                      :definition-name "invalid-output")
                     nil)
                 (task-agent-definition-error (error)
@@ -814,7 +814,7 @@
                      :description "Return a boolean."
                      :instructions "Yield one explicit boolean."
                      :output '(:type :boolean)
-                     :source :test))
+                     :source ':test))
                   (fixture
                     (task-tests--yield-fixture
                      configuration definition "yield-false"))
@@ -858,7 +858,7 @@
                      :description "Return null."
                      :instructions "Yield one explicit null."
                      :output '(:type :null)
-                     :source :test))
+                     :source ':test))
                   (fixture
                     (task-tests--yield-fixture
                      configuration definition "yield-null"))
@@ -880,7 +880,7 @@
                      :name "optional-output"
                      :description "Return optional data."
                      :instructions "Yield a concise result."
-                     :source :test))
+                     :source ':test))
                   (fixture
                     (task-tests--yield-fixture
                      configuration definition "yield-absent"))
@@ -933,7 +933,7 @@
                          :description "Exercise one invalid terminal yield."
                          :instructions "Follow the exact yield contract."
                          :output output
-                         :source :test))
+                         :source ':test))
                       (fixture
                         (task-tests--yield-fixture
                          configuration definition name))
@@ -951,7 +951,7 @@
                      :name "bounded-label"
                      :description "Exercise the terminal label bound."
                      :instructions "Yield one bounded label."
-                     :source :test))
+                     :source ':test))
                   (oversized-fixture
                     (task-tests--yield-fixture
                      configuration definition "yield-oversized-label"))
@@ -1006,7 +1006,7 @@
                      :name "failed-result"
                      :description "Report a failure."
                      :instructions "Yield one explained failure."
-                     :source :test))
+                     :source ':test))
                   (fixture
                     (task-tests--yield-fixture
                      configuration definition "yield-failed"))
@@ -1024,7 +1024,7 @@
                    (not (task-completion-data-present-p completion)))
               "an explained failed yield is an accepted terminal result")))
       (uiop:delete-directory-tree root :validate t
-                                       :if-does-not-exist :ignore)))
+                                       :if-does-not-exist ':ignore)))
   nil)
 
 
@@ -1038,7 +1038,7 @@
             :name "steering-child"
             :description "Exercise child steering."
             :instructions "Accept steering before yielding."
-            :source :test)))
+            :source ':test)))
     (labels ((fixture (identifier &key (state ':running))
                (task-tests--yield-fixture
                 configuration definition identifier :state state))
@@ -1071,7 +1071,7 @@
                         (agent-test-result
                          "normal-race"
                          (list (agent-test-message "done"))
-                         :turn-completion :end))
+                         :turn-completion ':end))
                       (gate-lock (make-lock "Autolith steering race gate"))
                       (gate-condition (make-condition-variable))
                       (ready-count 0)
@@ -1336,7 +1336,7 @@
                     (result
                       (agent-test-result
                        "normal-stop" (list (agent-test-message "done"))
-                       :turn-completion :end)))
+                       :turn-completion ':end)))
                (multiple-value-bind (entry reason)
                    (task-job-enqueue-steering job "continue instead")
                  (declare (ignore reason))
@@ -1595,11 +1595,11 @@
                         (agent-test-result
                          "before-steering"
                          (list reasoning-item)
-                         :turn-completion :end)
+                         :turn-completion ':end)
                         (agent-test-result
                          "after-steering"
                          (list (agent-test-message "after context"))
-                         :turn-completion :end))))
+                         :turn-completion ':end))))
                     (child
                       (make-instance
                        'task-child-agent
@@ -1724,7 +1724,7 @@
                       (agent-test-result
                        "cancelled-normal-stop"
                        (list (agent-test-message "done"))
-                       :turn-completion :end)))
+                       :turn-completion ':end)))
                (test-assert
                 (job-cancel job :reason ':steering-claim-test)
                 "cancellation precedes the terminal claim checks")
@@ -1750,7 +1750,7 @@
                       (agent-test-result
                        "publication-normal-stop"
                        (list (agent-test-message "done"))
-                       :turn-completion :end))
+                       :turn-completion ':end))
                     (original-hook
                       (cl-jobpond:job-terminal-result-function job))
                     (gate-lock
@@ -1871,5 +1871,5 @@
                          (task-job-steering-closed-p job))
                     "terminal publication records queued and in-flight prompts")))))
         (uiop:delete-directory-tree root :validate t
-                                         :if-does-not-exist :ignore)))
+                                         :if-does-not-exist ':ignore)))
     nil)))

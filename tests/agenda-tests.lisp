@@ -34,7 +34,7 @@
                                              :require-existing-p t))))
                    40)
                 "agenda transport retains more than 32 items"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agenda-command () null)
@@ -76,7 +76,7 @@
            (test-assert (search "/agenda" (application-help))
                         "interactive help includes /agenda"))
       (ignore-errors (terminal-ui-stop ui))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agenda-persistence-and-transport () null)
@@ -171,7 +171,7 @@
                   "copying an agenda preserves its source, items, and memory links"))
                (uiop:delete-directory-tree source
                                            :validate t
-                                           :if-does-not-exist :ignore)
+                                           :if-does-not-exist ':ignore)
                (agenda-transport :configuration source-configuration
                                  :state loaded
                                  :source-directory source-name
@@ -197,7 +197,7 @@
                                      #o777)
                              #o600)
                           "agenda state is private to the current user")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agenda-version-one-migration () null)
@@ -248,7 +248,7 @@
                       (getf (rest (first (fifth form))) :items)))
                     :memory-ids))
               "the next agenda write upgrades legacy state to version two")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agenda-malformed-state () null)
@@ -263,9 +263,9 @@
          (progn
            (ensure-directories-exist pathname)
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
              (write-string
               "#.(setf autolith::*agenda-reader-evaluated-p* t)"
               stream))
@@ -275,7 +275,7 @@
                           "malformed agenda state loads as empty"))
            (test-assert (null *agenda-reader-evaluated-p*)
                         "agenda state disables reader evaluation"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-agenda-tools () null)
@@ -351,5 +351,5 @@
                 (not (tool-result-success-p
                       (run "operation" "rename")))
                 "agenda.transport rejects unsupported operations"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

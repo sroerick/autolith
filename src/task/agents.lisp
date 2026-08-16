@@ -161,14 +161,14 @@
        (dolist (specification tools)
          (unless (task-agent--tool-specification-p specification)
            (task-agent-definition--error
-            :pathname pathname :source source :field :tools
+            :pathname pathname :source source :field ':tools
             :cause (format nil "Malformed or forbidden child tool grant ~S."
                            specification)
             :definition-name definition-name)))
        tools))
     (t
      (task-agent-definition--error
-      :pathname pathname :source source :field :tools
+      :pathname pathname :source source :field ':tools
       :cause ":TOOLS must be NIL, :ALL, or a proper list of tool strings."
       :definition-name definition-name))))
 
@@ -193,13 +193,13 @@
               :allow-empty-p t)))
        (unless (every #'task-agent-name-p spawns)
          (task-agent-definition--error
-          :pathname pathname :source source :field :spawns
+          :pathname pathname :source source :field ':spawns
           :cause "Every spawn grant must be a portable child-role name."
           :definition-name definition-name))
        (mapcar #'string-downcase spawns)))
     (t
      (task-agent-definition--error
-      :pathname pathname :source source :field :spawns
+      :pathname pathname :source source :field ':spawns
       :cause ":SPAWNS must be NIL, :ALL, or a proper list of role-name strings."
       :definition-name definition-name))))
 
@@ -228,7 +228,7 @@
              :allow-empty-p nil)))
       (unless (every #'task-agent--model-p models)
         (task-agent-definition--error
-         :pathname pathname :source source :field :models
+         :pathname pathname :source source :field ':models
          :cause "A model entry is neither supported nor a documented alias."
          :definition-name definition-name))
       models)))
@@ -248,7 +248,7 @@
                            *supported-reasoning-efforts*
                            :test #'string=)))
     (task-agent-definition--error
-     :pathname pathname :source source :field :reasoning-effort
+     :pathname pathname :source source :field ':reasoning-effort
      :cause ":REASONING-EFFORT must be NIL, :AUTO, or a supported effort keyword."
      :definition-name definition-name))
   value)
@@ -270,26 +270,26 @@
           (and (stringp instructions) (task--trim instructions))))
     (unless (task-agent-name-p name)
       (task-agent-definition--error
-       :pathname pathname :source source :field :name
+       :pathname pathname :source source :field ':name
        :cause "The role name must start with an ASCII letter and contain only letters, digits, or hyphens."
        :definition-name normalized-name))
     (unless (and (non-empty-string-p normalized-description)
                  (<= (length normalized-description)
                      *task-agent-description-maximum-characters*))
       (task-agent-definition--error
-       :pathname pathname :source source :field :description
+       :pathname pathname :source source :field ':description
        :cause "The description must be non-empty and within its character bound."
        :definition-name normalized-name))
     (unless (and (non-empty-string-p normalized-instructions)
                  (<= (length normalized-instructions)
                      *task-agent-instructions-maximum-characters*))
       (task-agent-definition--error
-       :pathname pathname :source source :field :instructions
+       :pathname pathname :source source :field ':instructions
        :cause "The instructions must be non-empty and within their character bound."
        :definition-name normalized-name))
     (unless (typep blocking-p 'boolean)
       (task-agent-definition--error
-       :pathname pathname :source source :field :blocking-p
+       :pathname pathname :source source :field ':blocking-p
        :cause ":BLOCKING-P must be T or NIL."
        :definition-name normalized-name))
     (make-instance
@@ -335,17 +335,17 @@
     "Investigate rapidly and return source-grounded findings. Stay read-only. Search broadly, read only relevant sections, cite paths and line ranges, explain how the pieces connect, and finish with a concise handoff."
     :tools '("resource.read" "search.*" "web_search")
     :models '("@smol")
-    :reasoning-effort :medium
-    :source :bundled)
+    :reasoning-effort ':medium
+    :source ':bundled)
    (task-agent-definition-create
     :name "designer"
     :description "UI and UX specialist for implementation, review, and visual refinement."
     :instructions
     "Act as a pragmatic product and interface designer. Inspect the existing design language before changing it, preserve accessibility and terminal constraints, implement concrete improvements when asked, and report the rationale and verification."
-    :tools :all
+    :tools ':all
     :models '("@designer")
-    :reasoning-effort :high
-    :source :bundled)
+    :reasoning-effort ':high
+    :source ':bundled)
    (task-agent-definition-create
     :name "reviewer"
     :description "Code review specialist for correctness, security, and regression analysis."
@@ -354,9 +354,9 @@
     :tools '("resource.read" "shell.run" "search.*" "web_search")
     :spawns '("scout")
     :models '("@slow")
-    :reasoning-effort :high
+    :reasoning-effort ':high
     :blocking-p t
-    :source :bundled)
+    :source ':bundled)
    (task-agent-definition-create
     :name "librarian"
     :description "Source-verifying researcher for external libraries, APIs, and standards."
@@ -365,26 +365,26 @@
     :tools '("resource.read" "shell.run" "lisp.*" "search.*"
              "web_search")
     :models '("@smol")
-    :reasoning-effort :low
-    :source :bundled)
+    :reasoning-effort ':low
+    :source ':bundled)
    (task-agent-definition-create
     :name "task"
     :description "General-purpose child agent for delegated multi-step work."
     :instructions
     "Own the delegated assignment end to end. Inspect before changing, preserve unrelated work, use the available tools directly, verify proportionally to risk, and return concrete results rather than a plan. Delegate only when it materially helps."
-    :tools :all
-    :spawns :all
+    :tools ':all
+    :spawns ':all
     :models '("@task")
-    :source :bundled)
+    :source ':bundled)
    (task-agent-definition-create
     :name "sonic"
     :description "Low-overhead agent for strictly mechanical updates or data collection."
     :instructions
     "Perform only the narrowly specified mechanical work. Avoid redesign and speculative cleanup. Make the smallest correct change, run a focused verification, and report exactly what changed."
-    :tools :all
+    :tools ':all
     :models '("@smol")
-    :reasoning-effort :medium
-    :source :bundled)))
+    :reasoning-effort ':medium
+    :source ':bundled)))
 
 
 ;;;; -- Safe Native Reader --
@@ -392,7 +392,7 @@
 (-> task-agent--file-byte-length (pathname) (integer 0))
 (defun task-agent--file-byte-length (pathname)
   "Return PATHNAME's byte length without allocating its contents."
-  (with-open-file (stream pathname :direction :input
+  (with-open-file (stream pathname :direction ':input
                                    :element-type '(unsigned-byte 8))
     (file-length stream)))
 
@@ -400,7 +400,7 @@
 (defun task-agent--read-bounded-contents (pathname source definition-name)
   "Read PATHNAME as UTF-8 while enforcing the byte bound on bytes consumed."
   (with-open-file (stream pathname
-                          :direction :input
+                          :direction ':input
                           :element-type '(unsigned-byte 8))
     (let* ((limit *task-agent-file-maximum-bytes*)
            (octets (make-array (1+ limit)
@@ -416,7 +416,7 @@
       (sb-ext:octets-to-string octets
                                :start 0
                                :end count
-                               :external-format :utf-8))))
+                               :external-format ':utf-8))))
 
 (-> task-agent--source-grammar () source-grammar)
 (defun task-agent--source-grammar ()
@@ -584,7 +584,7 @@ the offending object rather than only reporting that one was rejected."
     (unless (and (stringp name)
                  (string= (string-downcase name) basename))
       (task-agent-definition--error
-       :pathname pathname :source source :field :name
+       :pathname pathname :source source :field ':name
        :cause (format nil "The role name must match file basename ~S." basename)
        :definition-name basename))
     (task-agent-definition-create
@@ -640,7 +640,7 @@ the offending object rather than only reporting that one was rejected."
    :pathname pathname
    :source source
    :line nil
-   :field :name
+   :field ':name
    :cause "A role basename must use the portable role-name grammar."
    :definition-name basename))
 
@@ -654,7 +654,7 @@ the offending object rather than only reporting that one was rejected."
    :pathname (first pathnames)
    :source source
    :line nil
-   :field :name
+   :field ':name
    :cause
    (format nil "Multiple files claim the same normalized role name: ~{~A~^, ~}."
            pathnames)

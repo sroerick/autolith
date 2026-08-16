@@ -255,8 +255,8 @@ Lightweight tags only publish one line and keep that commit identity."
         (list "git" "ls-remote" "--tags"
               (release-builder-configuration-repository configuration)
               "v*.*.*")
-        :output :string
-        :error-output :output))
+        :output ':string
+        :error-output ':output))
     (release-builder-error (condition)
       (error condition))
     (error (cause)
@@ -308,8 +308,8 @@ semantic order so a temporary builder outage cannot skip a version."
   (string-trim
    '(#\Space #\Tab #\Newline #\Return)
    (uiop:run-program (append (list "git" "-C" (namestring directory)) arguments)
-                     :output :string
-                     :error-output :output)))
+                     :output ':string
+                     :error-output ':output)))
 
 (-> release-builder--checkout-valid-p
     (pathname release-source-tag)
@@ -337,7 +337,7 @@ semantic order so a temporary builder outage cannot skip a version."
       (when (uiop:directory-exists-p checkout)
         (uiop:delete-directory-tree checkout
                                     :validate t
-                                    :if-does-not-exist :ignore))
+                                    :if-does-not-exist ':ignore))
       (ensure-directories-exist checkout)
       (uiop:delete-empty-directory checkout)
       (handler-case
@@ -348,8 +348,8 @@ semantic order so a temporary builder outage cannot skip a version."
                  "--single-branch"
                  (release-builder-configuration-repository configuration)
                  (namestring checkout))
-           :output :interactive
-           :error-output :interactive)
+           :output ':interactive
+           :error-output ':interactive)
         (error (cause)
           (error 'release-builder-error
                  :stage ':checkout
@@ -368,8 +368,8 @@ semantic order so a temporary builder outage cannot skip a version."
   (let ((prefix "  :version \"")
         (versions nil))
     (with-open-file (stream (merge-pathnames "autolith.asd" checkout)
-                            :direction :input
-                            :external-format :utf-8)
+                            :direction ':input
+                            :external-format ':utf-8)
       (loop for line = (read-line stream nil nil)
             while line
             when (and (uiop:string-prefix-p prefix line)
@@ -400,8 +400,8 @@ semantic order so a temporary builder outage cannot skip a version."
                "--tag" *release-builder-container-image*
                "--file" (namestring containerfile)
                (namestring server-root))
-         :output :interactive
-         :error-output :interactive)
+         :output ':interactive
+         :error-output ':interactive)
       (error (cause)
         (error 'release-builder-error
                :stage ':container-image
@@ -436,7 +436,7 @@ tree intact lets one tag's object files fail a later tag's checks."
           (when (uiop:directory-exists-p source-cache)
             (uiop:delete-directory-tree source-cache
                                         :validate t
-                                        :if-does-not-exist :ignore)
+                                        :if-does-not-exist ':ignore)
             (format t "~&Cleared shared source fasl cache at ~A.~%"
                     source-cache)
             (finish-output))))))
@@ -495,7 +495,7 @@ tree intact lets one tag's object files fail a later tag's checks."
     (when (uiop:directory-exists-p staging)
       (uiop:delete-directory-tree staging
                                   :validate t
-                                  :if-does-not-exist :ignore))
+                                  :if-does-not-exist ':ignore))
     (uiop:ensure-all-directories-exist (list state staging))
     (release-builder--clear-shared-source-fasl-cache state)
     (handler-case
@@ -546,7 +546,7 @@ tree intact lets one tag's object files fail a later tag's checks."
     (unless (and (uiop:file-exists-p archive)
                  (uiop:file-exists-p checksum)
                  (plusp
-                  (with-open-file (stream archive :direction :input
+                  (with-open-file (stream archive :direction ':input
                                                  :element-type '(unsigned-byte 8))
                     (file-length stream))))
       (error 'release-builder-error
@@ -557,8 +557,8 @@ tree intact lets one tag's object files fail a later tag's checks."
         (uiop:run-program
          (list "sha256sum" "--check" "--status" (file-namestring checksum))
          :directory directory
-         :output :interactive
-         :error-output :interactive)
+         :output ':interactive
+         :error-output ':interactive)
       (error (cause)
         (error 'release-builder-error
                :stage ':artifact-validation
@@ -589,7 +589,7 @@ tree intact lets one tag's object files fail a later tag's checks."
     (when (uiop:directory-exists-p temporary)
       (uiop:delete-directory-tree temporary
                                   :validate t
-                                  :if-does-not-exist :ignore))
+                                  :if-does-not-exist ':ignore))
     (uiop:ensure-all-directories-exist (list temporary))
     (multiple-value-bind (archive checksum)
         (release-builder--artifact-pathnames staging tag)

@@ -151,7 +151,7 @@
   ((lock :initform (make-lock "Autolith task progress") :reader
          task-progress-lock :documentation
          "The lock protecting snapshots read by job tools.")
-   (status :initform :queued :accessor task-progress-status :type
+   (status :initform ':queued :accessor task-progress-status :type
            keyword :documentation
            "The queued, running, completed, failed, or aborted state.")
    (current-tool

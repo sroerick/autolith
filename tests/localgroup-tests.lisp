@@ -155,7 +155,7 @@
                 "legacy session identifiers remain valid in detached handoff records")
         (uiop:delete-directory-tree (test-configuration-root configuration)
                                     :validate t
-                                    :if-does-not-exist :ignore))))
+                                    :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-localgroup-protocol () null)
@@ -213,7 +213,7 @@
                     read-descriptor
                     :input t
                     :element-type 'character
-                    :external-format :utf-8
+                    :external-format ':utf-8
                     :buffering ':none
                     :auto-close nil))
              (let ((*localgroup-connect-timeout-seconds* 0.05))
@@ -418,7 +418,7 @@
         (localgroup-stop application))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-localgroup-attachments () null)
@@ -597,5 +597,5 @@
       (ignore-errors (terminal-stop relay))
       (uiop:delete-directory-tree root
                                   :validate t
-                                  :if-does-not-exist :ignore)))
+                                  :if-does-not-exist ':ignore)))
   nil)

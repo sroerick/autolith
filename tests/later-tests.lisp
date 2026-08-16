@@ -55,7 +55,7 @@
                                    #o777)
                            #o600)
                         "deferred state is private to the current user"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-later-malformed-state () null)
@@ -70,9 +70,9 @@
          (progn
            (ensure-directories-exist pathname)
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
              (write-string
               "#.(setf autolith::*later-reader-evaluated-p* t)"
               stream))
@@ -82,7 +82,7 @@
                           "malformed deferred state loads as an empty queue"))
            (test-assert (null *later-reader-evaluated-p*)
                         "deferred state disables reader evaluation"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-later-reset-selection () null)

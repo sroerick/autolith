@@ -89,10 +89,10 @@
                 (not (getf (rest form) :simple-technical-english-p))
                 "normalizing preferences adds the disabled response style")))
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :if-does-not-exist :create
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
              (prin1 '(:preferences
                       :version 1
                       :reasoning-traces-p t)
@@ -233,9 +233,9 @@
               (eq (preferences-permission-mode configuration) ':ask)
               "ask command-permission mode can replace auto durably")
            (with-open-file (stream pathname
-                                   :direction :output
-                                   :if-exists :supersede
-                                   :external-format :utf-8)
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :external-format ':utf-8)
              (write-string "#.(error \"preference read evaluation escaped\")"
                            stream))
            (let ((warning nil))
@@ -253,5 +253,5 @@
              (test-assert (equal (preferences-load-warning-pathname warning)
                                  pathname)
                           "preference warnings identify the malformed file")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

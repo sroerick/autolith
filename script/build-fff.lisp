@@ -28,9 +28,9 @@
              "Run one build COMMAND, preserving its output."
              (uiop:run-program command
                                :directory directory
-                               :input :interactive
-                               :output :interactive
-                               :error-output :interactive))
+                               :input ':interactive
+                               :output ':interactive
+                               :error-output ':interactive))
 
            (manifest-current-p ()
              "Return true when the installed private library matches COMMIT."
@@ -38,8 +38,8 @@
                   (probe-file manifest)
                   (handler-case
                       (with-open-file (stream manifest
-                                              :direction :input
-                                              :external-format :utf-8)
+                                              :direction ':input
+                                              :external-format ':utf-8)
                         (let ((*read-eval* nil))
                           (equal (read stream nil nil)
                                  (list :fff-library
@@ -87,7 +87,7 @@
                    '(#\Space #\Tab #\Newline #\Return)
                    (uiop:run-program
                     (list "git" "-C" (namestring checkout) "rev-parse" "HEAD")
-                    :output :string))))
+                    :output ':string))))
             (unless (string= actual commit)
               (error "Fetched fff commit ~A instead of ~A." actual commit)))
           (format t "~&Building fff's C library. The first build can take several minutes.~%")
@@ -109,10 +109,10 @@
               (unwind-protect
                    (progn
                      (with-open-file (stream temporary
-                                             :direction :output
-                                             :if-exists :supersede
-                                             :if-does-not-exist :create
-                                             :external-format :utf-8)
+                                             :direction ':output
+                                             :if-exists ':supersede
+                                             :if-does-not-exist ':create
+                                             :external-format ':utf-8)
                        (prin1 (list :fff-library
                                     :version 1
                                     :commit commit)
