@@ -6,7 +6,7 @@
 ;;; token. The key rides in the generic oauth-credentials access-token slot so
 ;;; transport and redaction treat it exactly like any other provider credential.
 ;;; Keys carry no expiry, so Autolith never attempts a refresh; a rejected key
-;;; fails as unauthorized and the user re-runs `autolith --auth opencode`.
+;;; fails as unauthorized and the user re-runs `autolith auth opencode`.
 
 (defparameter *opencode-account-label* "opencode"
   "The synthetic account identifier pinned for static OpenCode API keys.")
@@ -41,7 +41,7 @@
     ((manager opencode-credential-manager))
   "Point OpenCode credential failures at the OpenCode login command."
   (declare (ignore manager))
-  "run autolith --auth opencode")
+  "run autolith auth opencode")
 
 (-> opencode-credential-manager-create (configuration) opencode-credential-manager)
 (defun opencode-credential-manager-create (configuration)

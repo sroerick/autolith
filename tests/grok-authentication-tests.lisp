@@ -110,7 +110,7 @@
            nil)
        (token-refresh-failed (condition)
          (test-object-contains-string-p condition
-                                        "run autolith --auth grok")))
+                                        "run autolith auth grok")))
      "non-renewable Grok credentials point at the Grok device flow")
     (test-assert
      (handler-case

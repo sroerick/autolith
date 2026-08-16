@@ -476,64 +476,6 @@
 (defparameter *main-update-request-status* 76
   "The process status asking a packaged outer launcher to perform an update.")
 
-(-> main-usage () string)
-(defun main-usage ()
-  "Return the command-line usage text."
-  "Usage: autolith [--from-source] [--immutable] [--permissions MODE]
-       autolith [--from-source] [--immutable] [--permissions MODE] [-i FILE | --image FILE]...
-       autolith [--from-source] [--immutable] [--permissions MODE] resume [ID]
-       autolith localgroup status [--sexp]
-       autolith localgroup tell SESSION-ID MESSAGE
-       autolith localgroup attach SESSION-ID [--read-only | --take-over]
-       autolith localgroup detach SESSION-ID
-       autolith localgroup pause SESSION-ID
-       autolith localgroup kill SESSION-ID
-       autolith --auth [PROVIDER]
-       autolith --version
-       autolith --recovery [--generation ID | --list]")
-
-(-> main--permission-mode
-      (list)
-      (option (member :ask :auto :sandboxed :full-access)))
-  (defun main--permission-mode (arguments)
-    "Return the explicit session command-authorization mode from ARGUMENTS."
-    (let ((count (count "--permissions" arguments :test #'string=)))
-      (when (> count 1)
-        (error 'configuration-error
-               :message "The --permissions option may appear only once."))
-      (unless (zerop count)
-        (let ((selection
-                (nth (1+ (position "--permissions" arguments :test #'string=))
-                     arguments)))
-          (cond ((or (not (non-empty-string-p selection))
-                     (uiop:string-prefix-p "-" selection))
-                 (error 'configuration-error
-                        :message "The --permissions option requires ask, auto, sandbox, or full."))
-                ((string-equal selection "ask")
-                 ':ask)
-                ((or (string-equal selection "auto")
-                     (string-equal selection "pick"))
-                 ':auto)
-                ((string-equal selection "sandbox")
-                 ':sandboxed)
-                ((string-equal selection "full")
-                 ':full-access)
-                (t
-                 (error 'configuration-error
-                        :message (format nil
-                                         "Unknown --permissions mode ~S. The choices are ask, auto, sandbox, and full."
-                                         selection))))))))
-
-(-> main--auth-selection (list) (option string))
-(defun main--auth-selection (arguments)
-  "Return the optional provider name following --auth in ARGUMENTS."
-  (let ((position (position "--auth" arguments :test #'string=)))
-    (when position
-      (let ((candidate (nth (1+ position) arguments)))
-        (and (non-empty-string-p candidate)
-             (not (uiop:string-prefix-p "-" candidate))
-             candidate)))))
-
 (-> main--authentication-provider (configuration (option string)) model-provider)
 (defun main--authentication-provider (configuration selection)
   "Return a provider for the active or explicitly selected registration."
@@ -552,59 +494,23 @@
                                    :open-browser-p t)))
   nil)
 
-(-> main--resume-selection (list) (values boolean (option string)))
-(defun main--resume-selection (arguments)
-  "Return whether ARGUMENTS request resume and their optional identifier."
-  (let ((position
-          (position "resume" arguments :test #'string=)))
-    (if position
-        (let ((candidate (nth (1+ position) arguments)))
-          (values t
-                  (and (non-empty-string-p candidate)
-                       (not (uiop:string-prefix-p "-" candidate))
-                       candidate)))
-        (values nil nil))))
-
-(-> main--image-values (list) list)
-(defun main--image-values (arguments)
-  "Return image value strings carried by repeatable -i and --image options."
-  (let ((values nil)
-        (remaining arguments))
-    (loop while remaining
-          for argument = (pop remaining)
-          do (cond
-               ((or (string= argument "-i")
-                    (string= argument "--image"))
-                (unless remaining
-                  (error 'configuration-error
-                         :message (format nil "~A requires an image pathname."
-                                          argument)))
-                (let ((value (pop remaining)))
-                  (when (uiop:string-prefix-p "-" value)
-                    (error 'configuration-error
-                           :message (format nil
-                                            "~A requires an image pathname."
-                                            argument)))
-                  (setf values
-                        (nconc values
-                               (uiop:split-string value :separator '(#\,))))))
-               ((uiop:string-prefix-p "--image=" argument)
-                (setf values
-                      (nconc values
-                             (uiop:split-string
-                              (subseq argument (length "--image="))
-                              :separator '(#\,)))))))
-    (when (some (lambda (value) (not (non-empty-string-p value))) values)
+(-> main--image-pathnames (list) list)
+(defun main--image-pathnames (image-values)
+  "Return validated pathnames from repeated comma-separable IMAGE-VALUES."
+  (let ((values
+          (loop for value in image-values
+                append (uiop:split-string value :separator '(#\,)))))
+    (when (some (lambda (value)
+                  (not (non-empty-string-p value)))
+                values)
       (error 'configuration-error
              :message "Every --image value must name a local image."))
-    values))
+    (mapcar #'image-input-validate-pathname values)))
 
 (-> main--initial-image-input (list) (option user-message-input))
-(defun main--initial-image-input (arguments)
-  "Return a labelled initial composer draft for ARGUMENTS' local images."
-  (let ((pathnames
-          (mapcar #'image-input-validate-pathname
-                  (main--image-values arguments))))
+(defun main--initial-image-input (image-values)
+  "Return a labelled initial composer draft for IMAGE-VALUES' local images."
+  (let ((pathnames (main--image-pathnames image-values)))
     (when pathnames
       (user-message-input-create
        :text (format nil "~{~A~^ ~}"
@@ -633,6 +539,218 @@
                           :conversation-id conversation-id
                           :permission-mode permission-mode)))
 
+(-> main--start-session
+    (clingon:command
+     &key (:resume-requested-p boolean)
+          (:resume-id (option string))
+          (:authenticate-p boolean)
+          (:authentication-selection (option string)))
+    null)
+(defun main--start-session
+    (command &key resume-requested-p resume-id authenticate-p
+                  authentication-selection)
+  "Start one interactive Autolith session from COMMAND's parsed options."
+  (let* ((immutable-p (not (null (getopt* command ':immutable))))
+         (explicit-permission-mode (getopt* command ':permissions))
+         (image-values (getopt* command ':images))
+         (configuration
+           (configuration-create
+            :immutable-p immutable-p
+            :defer-provider-validation-p t))
+         (permission-mode
+           (or explicit-permission-mode
+               (preferences-permission-mode configuration)
+               ':ask))
+         (handoff-record
+           (localgroup-handoff-selection
+            configuration
+            (getopt* command ':localgroup-handoff)))
+         (fresh-handoff-p
+           (and handoff-record
+                (getf (rest handoff-record) :fresh-conversation-p)))
+         (effective-resume-requested-p
+           (and (null handoff-record) resume-requested-p))
+         (effective-resume-id
+           (if handoff-record
+               (getf (rest handoff-record) :conversation-id)
+               resume-id))
+         (recovery-state
+           (if handoff-record
+               (list nil nil)
+               (multiple-value-list
+                (application-recovery-state configuration))))
+         (recovery-conversation-id (first recovery-state))
+         (recovery-diagnosis
+           (and (null handoff-record)
+                (null effective-resume-id)
+                (application-recovery-diagnosis-prompt configuration)))
+         (resume-command-p
+           (and effective-resume-requested-p
+                (or (not (null effective-resume-id))
+                    (and (null recovery-conversation-id)
+                         (null recovery-diagnosis))))))
+    (when authenticate-p
+      (user-init-load configuration)
+      (main-authenticate (preferences-apply-model-selection
+                          (provider-bootstrap-configuration configuration))
+                         authentication-selection))
+    (when handoff-record
+      (localgroup-handoff-begin-startup handoff-record)
+      (application--clear-recovery-environment))
+    (let ((*localgroup-startup-record* handoff-record))
+      (setf *active-application*
+            (main--connect-application
+             :configuration configuration
+             :conversation-id effective-resume-id
+             :immutable-p immutable-p
+             :permission-mode permission-mode
+             :fresh-conversation-p (not (null fresh-handoff-p))))
+      (application--clear-recovery-environment)
+      (when (and (getopt* command ':simulate-crash)
+                 (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
+        (let ((capsule
+                (application-write-crash-capsule
+                 *active-application*
+                 (make-condition 'simple-error
+                                 :format-control "Intentional recovery test."
+                                 :format-arguments nil))))
+          (format *error-output* "Intentional crash capsule: ~A~%" capsule)
+          (uiop:quit *main-fatal-recovery-status*)))
+      (handler-case
+          (application-run
+           *active-application*
+           :initial-command (and resume-command-p
+                                 (null effective-resume-id)
+                                 "(resume)")
+           :initial-input
+           (if handoff-record
+               (localgroup-handoff-initial-input handoff-record)
+               (main--initial-image-input image-values))
+           :recovery-diagnosis recovery-diagnosis
+           :resume-offer-p resume-command-p)
+        (rollback-requested (condition)
+          (format *error-output*
+                  "Autolith is rolling back to retained generation ~A.~%"
+                  (rollback-requested-generation-id condition))
+          (uiop:quit *main-rollback-recovery-status*))
+        (update-requested (condition)
+          (format *error-output*
+                  "Autolith will update to ~A after restoring the terminal.~%"
+                  (subseq (update-requested-tag condition) 1))
+          (uiop:quit *main-update-request-status*))
+        (fatal-control-path-error (condition)
+          (format *error-output*
+                  "Autolith entered recovery after a fatal error. Capsule: ~A~%"
+                  (fatal-control-path-error-capsule-pathname condition))
+          (uiop:quit *main-fatal-recovery-status*)))))
+  nil)
+
+(-> main--session-options () list)
+(defun main--session-options ()
+  "Return the persistent session options shared with every sub-command."
+  (list
+   (make-option ':flag
+                :long-name "immutable"
+                :key ':immutable
+                :persistent t
+                :description "disable source and configuration mutation")
+   (make-option ':enum
+                :long-name "permissions"
+                :key ':permissions
+                :parameter "MODE"
+                :persistent t
+                :items '(("ask" . :ask)
+                         ("auto" . :auto)
+                         ("pick" . :auto)
+                         ("sandbox" . :sandboxed)
+                         ("full" . :full-access))
+                :description "initial command authorization mode")
+   (make-option ':list
+                :short-name #\i
+                :long-name "image"
+                :key ':images
+                :parameter "FILE"
+                :persistent t
+                :description "preload a local image into the composer; repeatable and comma-separable")
+   (make-option ':string
+                :long-name "localgroup-handoff"
+                :key ':localgroup-handoff
+                :parameter "FILE"
+                :persistent t
+                :hidden t
+                :description "claim an internal localgroup handoff record")
+   (make-option ':flag
+                :long-name "simulate-crash"
+                :key ':simulate-crash
+                :persistent t
+                :hidden t
+                :description "write a crash capsule and exit into recovery")))
+
+(-> main--single-selection (clingon:command string) (option string))
+(defun main--single-selection (command description)
+  "Return COMMAND's optional single positional argument named by DESCRIPTION."
+  (let ((arguments (command-arguments command)))
+    (when (rest arguments)
+      (error 'configuration-error
+             :message (format nil "~A accepts at most one ~A."
+                              (command-name command)
+                              description)))
+    (let ((candidate (first arguments)))
+      (and (non-empty-string-p candidate)
+           candidate))))
+
+(-> main--resume-command () clingon:command)
+(defun main--resume-command ()
+  "Return the resume sub-command definition."
+  (make-command
+   :name "resume"
+   :description "resume a saved conversation, or pick one interactively"
+   :usage "[ID]"
+   :handler
+   (lambda (command)
+     (main--start-session
+      command
+      :resume-requested-p t
+      :resume-id (main--single-selection command
+                                         "conversation identifier")))))
+
+(-> main--auth-command () clingon:command)
+(defun main--auth-command ()
+  "Return the auth sub-command definition."
+  (make-command
+   :name "auth"
+   :description "authenticate a provider, then start a session"
+   :usage "[PROVIDER]"
+   :handler
+   (lambda (command)
+     (main--start-session
+      command
+      :authenticate-p t
+      :authentication-selection
+      (main--single-selection command "provider name")))))
+
+(-> main--top-level-command () clingon:command)
+(defun main--top-level-command ()
+  "Return Autolith's top-level command-line definition."
+  (make-command
+   :name "autolith"
+   :description "a small, live, self-modifying Common Lisp agent"
+   :long-description
+   "The stable launcher also accepts --recovery and --from-source, which
+select how Autolith starts before this command line is parsed."
+   :version *autolith-version*
+   :options (main--session-options)
+   :sub-commands (list (main--resume-command)
+                       (main--auth-command)
+                       (main-localgroup-command))
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
+       (error 'configuration-error
+              :message (format nil "Unknown command ~S."
+                               (first (command-arguments command)))))
+     (main--start-session command))))
+
 (-> main-dispatch (list) null)
 (defun main-dispatch (arguments)
   "Dispatch validated Autolith ARGUMENTS inside the active process."
@@ -644,109 +762,17 @@
                                      (third arguments)))
     ((member "--worker" arguments :test #'string=)
      (worker-main))
-    ((member "--version" arguments :test #'string=)
-     (format t "autolith ~A~%" *autolith-version*))
-    ((or (member "--help" arguments :test #'string=)
-         (member "-h" arguments :test #'string=))
-     (format t "~A~%" (main-usage)))
-    ((and arguments (string= (first arguments) "localgroup"))
-     (main-localgroup
-      (configuration-create :defer-provider-validation-p t)
-      (rest arguments)))
     (t
-       (let* ((immutable-p (not (null (member "--immutable" arguments
-                                              :test #'string=))))
-              (explicit-permission-mode (main--permission-mode arguments))
-              (configuration
-                (configuration-create
-                 :immutable-p immutable-p
-                 :defer-provider-validation-p t))
-              (permission-mode
-                (or explicit-permission-mode
-                    (preferences-permission-mode configuration)
-                    ':ask))
-            (handoff-record
-              (localgroup-handoff-selection configuration arguments))
-            (fresh-handoff-p
-              (and handoff-record
-                   (getf (rest handoff-record) :fresh-conversation-p)))
-            (resume-selection
-              (multiple-value-list (main--resume-selection arguments)))
-            (resume-requested-p
-              (and (null handoff-record) (first resume-selection)))
-            (resume-id
-              (if handoff-record
-                  (getf (rest handoff-record) :conversation-id)
-                  (second resume-selection)))
-            (recovery-state
-              (if handoff-record
-                  (list nil nil)
-                  (multiple-value-list
-                   (application-recovery-state configuration))))
-            (recovery-conversation-id (first recovery-state))
-            (recovery-diagnosis
-              (and (null handoff-record)
-                   (null resume-id)
-                   (application-recovery-diagnosis-prompt configuration)))
-            (effective-resume-requested-p
-              (and resume-requested-p
-                   (or (not (null resume-id))
-                       (and (null recovery-conversation-id)
-                            (null recovery-diagnosis))))))
-       (when (member "--auth" arguments :test #'string=)
-         (user-init-load configuration)
-         (main-authenticate (preferences-apply-model-selection
-                             (provider-bootstrap-configuration configuration))
-                            (main--auth-selection arguments)))
-       (when handoff-record
-         (localgroup-handoff-begin-startup handoff-record)
-         (application--clear-recovery-environment))
-       (let ((*localgroup-startup-record* handoff-record))
-         (setf *active-application*
-               (main--connect-application
-                :configuration configuration
-                :conversation-id resume-id
-                :immutable-p immutable-p
-                :permission-mode permission-mode
-                :fresh-conversation-p (not (null fresh-handoff-p))))
-         (application--clear-recovery-environment)
-         (when (and (member "--simulate-crash" arguments :test #'string=)
-                    (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
-           (let ((capsule
-                   (application-write-crash-capsule
-                    *active-application*
-                    (make-condition 'simple-error
-                                    :format-control "Intentional recovery test."
-                                    :format-arguments nil))))
-             (format *error-output* "Intentional crash capsule: ~A~%" capsule)
-             (uiop:quit *main-fatal-recovery-status*)))
-         (handler-case
-             (application-run
-              *active-application*
-              :initial-command (and effective-resume-requested-p
-                                    (null resume-id)
-                                    "(resume)")
-              :initial-input
-              (if handoff-record
-                  (localgroup-handoff-initial-input handoff-record)
-                  (main--initial-image-input arguments))
-              :recovery-diagnosis recovery-diagnosis
-              :resume-offer-p effective-resume-requested-p)
-           (rollback-requested (condition)
-             (format *error-output*
-                     "Autolith is rolling back to retained generation ~A.~%"
-                     (rollback-requested-generation-id condition))
-             (uiop:quit *main-rollback-recovery-status*))
-           (update-requested (condition)
-             (format *error-output*
-                     "Autolith will update to ~A after restoring the terminal.~%"
-                     (subseq (update-requested-tag condition) 1))
-             (uiop:quit *main-update-request-status*))
-           (fatal-control-path-error (condition)
-             (format *error-output*
-                     "Autolith entered recovery after a fatal error. Capsule: ~A~%"
-                     (fatal-control-path-error-capsule-pathname condition))
-             (uiop:quit *main-fatal-recovery-status*)))))))
+     (let ((command
+             (handler-case
+                 (parse-command-line (main--top-level-command) arguments)
+               (exit-error (condition)
+                 ;; Help and version output was already printed.
+                 (uiop:quit (exit-error-code condition)))
+               (error (condition)
+                 (format *error-output* "~&~A~%" condition)
+                 (uiop:quit 64)))))
+       (funcall (command-handler command) command))))
   nil)
 
 (-> main (list) null)

@@ -61,10 +61,10 @@ curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 Authenticate providers either with web flows or API keys:
 
 #+BEGIN_SRC sh
-autolith --auth chatgpt
-autolith --auth anthropic
-autolith --auth fireworks
-autolith --auth opencode
+autolith auth chatgpt
+autolith auth anthropic
+autolith auth fireworks
+autolith auth opencode
 #+END_SRC
 
 Then start Autolith:

@@ -619,7 +619,7 @@
                   nil)
               (authentication-error (condition)
                 (let ((message (princ-to-string condition)))
-                  (and (search "--auth opencode" message)
+                  (and (search "auth opencode" message)
                        (not (search "could not be reached" message))))))
             "OpenCode discovery reports HTTP 401 as an authentication failure")
            (setf (symbol-function 'dexador:get)

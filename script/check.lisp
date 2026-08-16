@@ -153,7 +153,7 @@
                     (check--wait-for-process
                      "Recovery fallback" (third processes) fallback-output-pathname))
                   (expected-version
-                    (format nil "autolith ~A"
+                    (format nil "autolith version ~A"
                             (asdf:component-version
                              (asdf:find-system :autolith)))))
              (unless (and (search "No compatible retained generation is available."

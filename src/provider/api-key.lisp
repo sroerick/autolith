@@ -295,7 +295,7 @@
 
 (defmethod credential-manager-login-hint ((manager api-key-credential-manager))
   "Describe the command that stores this provider's API key."
-  (format nil "run autolith --auth ~A to enter it"
+  (format nil "run autolith auth ~A to enter it"
           (credential-manager-provider-label manager)))
 
 (defmethod credential-manager-refreshable-p ((manager api-key-credential-manager))

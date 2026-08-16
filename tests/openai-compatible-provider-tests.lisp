@@ -196,10 +196,13 @@
            (let ((observed-configuration nil))
              (test-call-with-function-replacements
               (list
-               (list 'main-localgroup
-                     (lambda (configuration arguments)
-                       (declare (ignore arguments))
+               (list 'localgroup-statuses
+                     (lambda (configuration)
                        (setf observed-configuration configuration)
+                       nil))
+               (list 'localgroup-print-statuses
+                     (lambda (statuses)
+                       (declare (ignore statuses))
                        nil)))
               (lambda ()
                 (main-dispatch '("localgroup" "status"))))
@@ -273,7 +276,7 @@
                              authenticated-selection selection)
                        nil)))
               (lambda ()
-                (main-dispatch '("--auth"))))
+                (main-dispatch '("auth"))))
              (test-assert
               (and authenticated-configuration
                    (null authenticated-selection)
@@ -282,7 +285,7 @@
                    (string= (configuration-reasoning-effort
                              authenticated-configuration)
                             "minimal"))
-              "bare --auth selects the persisted registered provider")))
+              "bare auth selects the persisted registered provider")))
       (if old-environment-model
           (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
           (sb-posix:unsetenv "AUTOLITH_MODEL"))

@@ -5761,19 +5761,6 @@
 (-> test-conversation-picker () null)
 (defun test-conversation-picker ()
   "Test saved-conversation picker items and interactive selection."
-  (multiple-value-bind (requested-p identifier)
-      (main--resume-selection '("resume"))
-    (test-assert (and requested-p (null identifier))
-                 "plain resume requests the interactive conversation picker"))
-  (multiple-value-bind (requested-p identifier)
-      (main--resume-selection '("resume" "saved-conversation"))
-    (test-assert (and requested-p
-                      (string= identifier "saved-conversation"))
-                 "resume accepts an explicit conversation identifier"))
-  (multiple-value-bind (requested-p identifier)
-      (main--resume-selection '("--resume" "saved-conversation"))
-    (test-assert (and (not requested-p) (null identifier))
-                 "the removed --resume option is not recognized"))
   (let ((observed-initial-command nil)
         (*active-application* nil))
     (test-call-with-function-replacements
@@ -5802,38 +5789,6 @@
    (string= (application--selected-conversation-id nil "recovered")
             "recovered")
    "automatic recovery supplies the conversation without an explicit resume")
-  (test-assert (search "--immutable" (main-usage))
-               "command-line help documents immutable mode")
-  (test-assert (search "--from-source" (main-usage))
-               "command-line help documents deliberate source startup")
-  (test-assert (not (search "--resume" (main-usage)))
-               "command-line help omits the removed --resume option")
-  (test-assert (search "--image" (main-usage))
-               "command-line help documents initial local images")
-  (test-assert (search "--auth [PROVIDER]" (main-usage))
-               "command-line help documents provider authentication choices")
-  (test-assert (search "--permissions MODE" (main-usage))
-               "command-line help documents initial permission mode")
-    (dolist (case '((("--permissions" "ask") :ask)
-                    (("--permissions" "auto") :auto)
-                    (("--permissions" "pick") :auto)
-                    (("--permissions" "sandbox") :sandboxed)
-                    (("--permissions" "full") :full-access)
-                    (("--immutable" "--permissions" "full") :full-access)))
-    (destructuring-bind (arguments expected) case
-      (test-assert (eq (main--permission-mode arguments) expected)
-                   (format nil "--permissions parses ~S" arguments))))
-  (dolist (arguments '(("--permissions")
-                       ("--permissions" "unknown")
-                       ("--permissions" "ask" "--permissions" "full")))
-    (test-assert
-     (handler-case
-         (progn
-           (main--permission-mode arguments)
-           nil)
-       (configuration-error ()
-         t))
-     (format nil "--permissions rejects ~S" arguments)))
   (let ((observed-mode nil)
         (*active-application* nil))
     (test-call-with-function-replacements
@@ -5954,24 +5909,6 @@
         (if (rest entry)
             (sb-posix:setenv (first entry) (rest entry) 1)
             (sb-posix:unsetenv (first entry))))))
-  (test-assert (null (main--auth-selection '("--auth")))
-               "plain --auth defers to the configured provider family")
-  (test-assert (string= (main--auth-selection '("--auth" "grok")) "grok")
-               "--auth accepts an explicit provider name")
-  (test-assert
-   (equal (main--image-values
-           '("-i" "one.png,two.png" "--image=three.png"
-             "--image" "four.png"))
-          '("one.png" "two.png" "three.png" "four.png"))
-   "repeatable image options preserve comma-delimited command-line order")
-  (test-assert
-   (handler-case
-       (progn
-         (main--image-values '("--image"))
-         nil)
-     (configuration-error ()
-       t))
-   "a command-line image option requires its pathname")
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (image (merge-pathnames "initial.png" root)))
@@ -5980,7 +5917,7 @@
            (test-conversation--write-tiny-png image)
            (let ((input
                    (main--initial-image-input
-                    (list "--image" (namestring image)))))
+                    (list (namestring image)))))
              (test-assert
               (and (typep input 'user-message-input)
                    (string= (user-message-input-text input) "[Image #1]")

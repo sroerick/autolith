@@ -404,7 +404,7 @@ its protocol-level close operation."
 (defmethod credential-manager-login-hint ((manager chatgpt-credential-manager))
   "Point ChatGPT credential failures at the default login command."
   (declare (ignore manager))
-  "run autolith --auth")
+  "run autolith auth")
 
 (-> credential-manager-refreshable-p (credential-manager) boolean)
 (defgeneric credential-manager-refreshable-p (manager)

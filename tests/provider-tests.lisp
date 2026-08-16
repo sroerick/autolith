@@ -1677,7 +1677,7 @@
                                           :event-callback #'identity)
                     nil)
                 (authentication-error (condition)
-                  (search "run autolith --auth retry-api-key"
+                  (search "run autolith auth retry-api-key"
                           (princ-to-string condition))))
               "a rejected static API key gives its direct authentication hint")
              (test-assert

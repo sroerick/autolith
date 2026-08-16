@@ -8,7 +8,7 @@
 ;;; subscription bearer token. Account scoping never applies, so the slot
 ;;; holds the fixed label "fireworks". Keys carry no expiry, so Autolith
 ;;; never attempts a refresh; a rejected key fails as unauthorized and the
-;;; user re-runs `autolith --auth fireworks`.
+;;; user re-runs `autolith auth fireworks`.
 
 (defparameter *fireworks-account-label* "fireworks"
   "The synthetic account identifier pinned for static Fireworks API keys.")
@@ -43,7 +43,7 @@
     ((manager fireworks-credential-manager))
   "Point Fireworks credential failures at the Fireworks login command."
   (declare (ignore manager))
-  "run autolith --auth fireworks")
+  "run autolith auth fireworks")
 
 (-> fireworks-credential-manager-create
     (configuration)

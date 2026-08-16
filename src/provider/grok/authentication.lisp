@@ -91,7 +91,7 @@
 (defmethod credential-manager-login-hint ((manager grok-credential-manager))
   "Point Grok credential failures at the Grok login command."
   (declare (ignore manager))
-  "run autolith --auth grok")
+  "run autolith auth grok")
 
 (-> grok-credential-manager-create (configuration) grok-credential-manager)
 (defun grok-credential-manager-create (configuration)

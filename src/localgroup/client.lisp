@@ -451,21 +451,6 @@ HEADER-P renders field labels rather than status values."
 
 ;;;; -- Localgroup Attach Client --
 
-(-> localgroup--attachment-request-mode (list) keyword)
-(defun localgroup--attachment-request-mode (arguments)
-  "Return the attach mode selected by command-line ARGUMENTS."
-  (let ((read-only-count (count "--read-only" arguments :test #'string=))
-        (take-over-count (count "--take-over" arguments :test #'string=)))
-    (when (or (> read-only-count 1)
-              (> take-over-count 1)
-              (and (plusp read-only-count) (plusp take-over-count)))
-      (error 'localgroup-error
-             :message "Choose at most one of --read-only and --take-over."
-             :operation ':arguments))
-    (cond ((plusp read-only-count) ':read-only)
-          ((plusp take-over-count) ':take-over)
-          (t ':control))))
-
 (-> localgroup--attach-receiver
     (stream stream function)
     null)
@@ -665,68 +650,146 @@ HEADER-P renders field labels rather than status values."
 
 ;;;; -- Localgroup Command Entry --
 
-(-> main-localgroup (configuration list) null)
-(defun main-localgroup (configuration arguments)
-  "Run one noninteractive localgroup command described by ARGUMENTS."
-  (configuration-ensure-directories configuration)
-  (let ((operation (first arguments)))
-    (cond
-      ((or (null operation) (string= operation "status"))
-       (let ((statuses (localgroup-statuses configuration)))
-         (if (member "--sexp" arguments :test #'string=)
-             (dolist (status statuses)
-               (write status :stream *standard-output* :readably t)
-               (terpri))
-             (localgroup-print-statuses statuses))))
-      ((string= operation "attach")
-       (let* ((session-id (second arguments))
-              (options (cddr arguments)))
-         (unless session-id
-           (error 'localgroup-error
-                  :message "localgroup attach requires a session identifier."
-                  :operation ':arguments))
-         (when (some (lambda (option)
-                       (not (member option '("--read-only" "--take-over")
-                                    :test #'string=)))
-                     options)
-           (error 'localgroup-error
-                  :message "localgroup attach accepts only --read-only or --take-over."
-                  :operation ':arguments
-                  :session-id session-id))
+(-> localgroup--client-configuration () configuration)
+(defun localgroup--client-configuration ()
+  "Return a directory-ensured configuration for one localgroup client command."
+  (let ((configuration (configuration-create :defer-provider-validation-p t)))
+    (configuration-ensure-directories configuration)
+    configuration))
+
+(-> localgroup--run-status (&key (:sexp-p boolean)) null)
+(defun localgroup--run-status (&key sexp-p)
+  "Print localgroup session statuses, as readable forms when SEXP-P."
+  (let ((statuses (localgroup-statuses (localgroup--client-configuration))))
+    (if sexp-p
+        (dolist (status statuses)
+          (write status :stream *standard-output* :readably t)
+          (terpri))
+        (localgroup-print-statuses statuses)))
+  nil)
+
+(-> localgroup--required-session-id (clingon:command) string)
+(defun localgroup--required-session-id (command)
+  "Return COMMAND's single required session identifier argument."
+  (let ((arguments (command-arguments command)))
+    (unless (and (= (length arguments) 1)
+                 (non-empty-string-p (first arguments)))
+      (error 'localgroup-error
+             :message (format nil "localgroup ~A requires a session identifier."
+                              (command-name command))
+             :operation ':arguments))
+    (first arguments)))
+
+(-> localgroup--status-command () clingon:command)
+(defun localgroup--status-command ()
+  "Return the localgroup status sub-command definition."
+  (make-command
+   :name "status"
+   :description "list detached Autolith sessions"
+   :options (list (make-option ':flag
+                               :long-name "sexp"
+                               :key ':sexp
+                               :description "print statuses as readable forms"))
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
+       (error 'localgroup-error
+              :message "localgroup status accepts no arguments."
+              :operation ':arguments))
+     (localgroup--run-status
+      :sexp-p (not (null (getopt command ':sexp)))))))
+
+(-> localgroup--tell-command () clingon:command)
+(defun localgroup--tell-command ()
+  "Return the localgroup tell sub-command definition."
+  (make-command
+   :name "tell"
+   :description "queue one message for a detached session"
+   :usage "SESSION-ID MESSAGE"
+   :handler
+   (lambda (command)
+     (let ((arguments (command-arguments command)))
+       (unless (= (length arguments) 2)
+         (error 'localgroup-error
+                :message "localgroup tell requires a session identifier and exactly one quoted message argument."
+                :operation ':arguments))
+       (let* ((configuration (localgroup--client-configuration))
+              (entry (localgroup--find-record configuration
+                                              (first arguments))))
+         (localgroup--print-response
+          (localgroup-query-record entry ':tell
+                                   (list :message (second arguments)))
+          *standard-output*))))))
+
+(-> localgroup--attach-command () clingon:command)
+(defun localgroup--attach-command ()
+  "Return the localgroup attach sub-command definition."
+  (make-command
+   :name "attach"
+   :description "attach this terminal to a detached session"
+   :usage "SESSION-ID"
+   :options (list (make-option ':flag
+                               :long-name "read-only"
+                               :key ':read-only
+                               :description "observe without control")
+                  (make-option ':flag
+                               :long-name "take-over"
+                               :key ':take-over
+                               :description "take exclusive control"))
+   :handler
+   (lambda (command)
+     (let ((session-id (localgroup--required-session-id command))
+           (read-only-p (not (null (getopt command ':read-only))))
+           (take-over-p (not (null (getopt command ':take-over)))))
+       (when (and read-only-p take-over-p)
+         (error 'localgroup-error
+                :message "Choose at most one of --read-only and --take-over."
+                :operation ':arguments))
+       (let ((configuration (localgroup--client-configuration)))
          (localgroup-attach-record
           configuration
           (localgroup--find-record configuration session-id)
-          (localgroup--attachment-request-mode options))))
-      ((member operation '("tell" "pause" "detach" "kill") :test #'string=)
-       (let* ((session-id (second arguments))
-              (entry
-                (and session-id
-                     (localgroup--find-record configuration session-id))))
-         (unless session-id
-           (error 'localgroup-error
-                  :message (format nil "localgroup ~A requires a session identifier."
-                                   operation)
-                  :operation ':arguments))
-         (let ((response
-                 (cond
-                   ((string= operation "tell")
-                    (let ((message (third arguments)))
-                      (unless (and message (= (length arguments) 3))
-                        (error 'localgroup-error
-                               :message "localgroup tell requires exactly one quoted message argument."
-                               :operation ':arguments
-                               :session-id session-id))
-                      (localgroup-query-record
-                       entry ':tell (list :message message))))
-                   ((string= operation "pause")
-                    (localgroup-query-record entry ':pause))
-                   ((string= operation "detach")
-                    (localgroup-query-record entry ':detach))
-                   (t
-                    (localgroup-query-record entry ':kill)))))
-           (localgroup--print-response response *standard-output*))))
-      (t
+          (cond (read-only-p ':read-only)
+                (take-over-p ':take-over)
+                (t ':control))))))))
+
+(-> localgroup--operation-command (string string keyword) clingon:command)
+(defun localgroup--operation-command (name description operation)
+  "Return one single-session localgroup OPERATION sub-command definition."
+  (make-command
+   :name name
+   :description description
+   :usage "SESSION-ID"
+   :handler
+   (lambda (command)
+     (let* ((session-id (localgroup--required-session-id command))
+            (configuration (localgroup--client-configuration))
+            (entry (localgroup--find-record configuration session-id)))
+       (localgroup--print-response
+        (localgroup-query-record entry operation)
+        *standard-output*)))))
+
+(-> main-localgroup-command () clingon:command)
+(defun main-localgroup-command ()
+  "Return the localgroup command definition and its sub-commands."
+  (make-command
+   :name "localgroup"
+   :description "inspect and control detached Autolith sessions"
+   :sub-commands
+   (list (localgroup--status-command)
+         (localgroup--tell-command)
+         (localgroup--attach-command)
+         (localgroup--operation-command
+          "detach" "detach a session from its terminal" ':detach)
+         (localgroup--operation-command
+          "pause" "pause a detached session" ':pause)
+         (localgroup--operation-command
+          "kill" "terminate a detached session" ':kill))
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
        (error 'localgroup-error
-              :message (format nil "Unknown localgroup command ~S." operation)
-              :operation ':arguments))))
-  nil)
+              :message (format nil "Unknown localgroup command ~S."
+                               (first (command-arguments command)))
+              :operation ':arguments))
+     (localgroup--run-status :sexp-p nil))))

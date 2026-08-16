@@ -224,33 +224,22 @@ exit \"$status\""
              :operation ':handoff
              :cause condition))))
 
-(-> localgroup-handoff-selection (configuration list) (option list))
-(defun localgroup-handoff-selection (configuration arguments)
-  "Return the detached-process handoff selected by command-line ARGUMENTS."
-  (let ((positions
-          (loop for argument in arguments
-                for position from 0
-                when (string= argument "--localgroup-handoff")
-                  collect position)))
-    (when (rest positions)
+(-> localgroup-handoff-selection (configuration (option string)) (option list))
+(defun localgroup-handoff-selection (configuration pathname-value)
+  "Return the detached-process handoff named by the internal PATHNAME-VALUE."
+  (when pathname-value
+    (unless (non-empty-string-p pathname-value)
       (error 'localgroup-error
-             :message "The internal localgroup handoff option may appear only once."
+             :message "The internal localgroup handoff option requires a pathname."
              :operation ':arguments))
-    (when positions
-      (let ((value (nth (1+ (first positions)) arguments)))
-        (unless (and (non-empty-string-p value)
-                     (not (uiop:string-prefix-p "-" value)))
-          (error 'localgroup-error
-                 :message "The internal localgroup handoff option requires a pathname."
-                 :operation ':arguments))
-        (let ((record
-                (localgroup-handoff--read configuration (pathname value))))
-          (unless (eq (getf (rest record) :state) ':pending)
-            (error 'localgroup-error
-                   :message "The localgroup handoff is no longer pending."
-                   :operation ':handoff
-                   :session-id (getf (rest record) :session-id)))
-          record)))))
+    (let ((record
+            (localgroup-handoff--read configuration (pathname pathname-value))))
+      (unless (eq (getf (rest record) :state) ':pending)
+        (error 'localgroup-error
+               :message "The localgroup handoff is no longer pending."
+               :operation ':handoff
+               :session-id (getf (rest record) :session-id)))
+      record)))
 
 (-> localgroup-handoff-begin-startup (list) null)
 (defun localgroup-handoff-begin-startup (record)

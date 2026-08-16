@@ -7,7 +7,7 @@
 ;;; generic oauth-credentials access-token slot so transport and redaction
 ;;; treat it exactly like any other provider credential. Keys carry no
 ;;; expiry, so Autolith never attempts a refresh; a rejected key fails as
-;;; unauthorized and the user re-runs `autolith --auth anthropic`.
+;;; unauthorized and the user re-runs `autolith auth anthropic`.
 
 (defparameter *anthropic-account-label* "anthropic"
   "The synthetic account identifier pinned for static Anthropic API keys.")
