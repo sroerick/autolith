@@ -3053,8 +3053,7 @@
               required-runtime
               (json-get required-definition "inputSchema"))
            (declare (ignore schema))
-           (let ((*mcp-maximum-retained-tools* 8)
-                 (*mcp-maximum-retained-input-schema-bytes*
+           (let ((*mcp-maximum-retained-input-schema-bytes*
                    schema-bytes))
              (with-lock-held ((mcp-manager-lock manager))
                (mcp-manager--connect-runtimes manager)))
@@ -3104,8 +3103,7 @@
               first-runtime
               (json-get first-definition "inputSchema"))
            (declare (ignore schema))
-           (let* ((*mcp-maximum-retained-tools* 8)
-                  (*mcp-maximum-retained-input-schema-bytes*
+           (let* ((*mcp-maximum-retained-input-schema-bytes*
                     schema-bytes)
                   (failure
                     (handler-case
@@ -3130,66 +3128,6 @@
                (eq (mcp-server-runtime-state second-runtime) :failed)
                (null (mcp-server-runtime-tools second-runtime)))
               "a required aggregate overflow aborts with structured budget data")))
-      (ignore-errors (mcp-manager-close manager))
-      (uiop:delete-directory-tree
-       root :validate t :if-does-not-exist :ignore)))
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (optional-definitions
-           (list (test-mcp--tool-definition "optional-existing")))
-         (required-definitions
-           (list (test-mcp--tool-definition "required-before")))
-         (optional-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "optional-refresh"
-            :required-p nil
-            :tools-function (lambda () optional-definitions)))
-         (required-runtime
-           (test-mcp--bounded-runtime
-            configuration
-            :name "required-refresh"
-            :required-p t
-            :tools-function (lambda () required-definitions)))
-         (manager
-           (make-instance
-            'mcp-manager
-            :configuration configuration
-            :runtimes (list optional-runtime required-runtime))))
-    (unwind-protect
-         (let ((*mcp-maximum-retained-tools* 2)
-               (*mcp-maximum-retained-input-schema-bytes*
-                 (* 8 1024 1024)))
-           (with-lock-held ((mcp-manager-lock manager))
-             (mcp-manager--connect-runtimes manager))
-           (setf
-            required-definitions
-            (list
-             (test-mcp--tool-definition "required-after")
-             (test-mcp--tool-definition
-              "required-task"
-              :task-required-p t)))
-           (mcp-server-runtime-request-tool-refresh required-runtime)
-           (with-lock-held ((mcp-manager-lock manager))
-             (mcp-manager--connect-runtimes manager))
-           (let ((required-record
-                   (find
-                    "required-refresh"
-                    (mcp-manager-status-records manager)
-                    :test #'string=
-                    :key (lambda (record) (getf record :name)))))
-             (test-assert
-              (and
-               (eq (mcp-server-runtime-state required-runtime) :ready)
-               (= (length (mcp-server-runtime-tools required-runtime)) 2)
-               (= (getf required-record :tool-count) 1)
-               (= (getf required-record :task-required-tool-count) 1)
-               (eq (mcp-server-runtime-state optional-runtime) :failed)
-               (null (mcp-server-runtime-tools optional-runtime))
-               (search
-                "retained tool count"
-                (mcp-server-runtime-failure optional-runtime)))
-              "a required list change evicts optional tools without exposing task-required tools")))
       (ignore-errors (mcp-manager-close manager))
       (uiop:delete-directory-tree
        root :validate t :if-does-not-exist :ignore)))

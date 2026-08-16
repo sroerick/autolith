@@ -198,7 +198,7 @@ A load failure restores the previous registry.
 
 * Limits and shutdown
 
-- One MCP manager retains at most 1,024 advertised tools
+- One MCP manager retains at most 8 MiB of encoded input schemas
 - Required servers receive capacity first, then optional servers
 - A required overflow fails startup or refresh
 - An optional overflow marks that server failed and clears its tools

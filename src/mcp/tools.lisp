@@ -33,7 +33,7 @@
     :initarg :resource
     :reader mcp-aggregate-budget-exceeded-resource
     :type keyword
-    :documentation "The retained tools or input schema bytes that overflowed.")
+    :documentation "The aggregate resource that overflowed, currently input schema bytes.")
    (allocated
     :initarg :allocated
     :reader mcp-aggregate-budget-exceeded-allocated
@@ -512,12 +512,6 @@
 
 (defparameter *mcp-provider-identifier-limit* 23
   "The maximum MCP namespace or tool identifier length for Chat Completions.")
-
-(defparameter *mcp-maximum-tools-per-server* 256
-  "The maximum tools accepted from one MCP server.")
-
-(defparameter *mcp-maximum-retained-tools* 1024
-  "The maximum MCP tools retained across one manager.")
 
 (defparameter *mcp-maximum-retained-input-schema-bytes* (* 8 1024 1024)
   "The maximum encoded input schema bytes retained across one MCP manager.")
@@ -1090,7 +1084,6 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
   (let* ((configuration (mcp-server-runtime-configuration runtime))
          (label
            (ecase resource
-             (:retained-tools "retained tool count")
              (:input-schema-bytes "encoded input schema bytes")))
          (message
            (format nil
@@ -1281,27 +1274,11 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 
 (-> mcp-server-runtime--validate-tools
     (mcp-server-runtime list
-     &key (:allocated-tools (integer 0))
-          (:allocated-schema-bytes (integer 0)))
+     &key (:allocated-schema-bytes (integer 0)))
     (values list (integer 0)))
 (defun mcp-server-runtime--validate-tools
-    (runtime tools &key (allocated-tools 0) (allocated-schema-bytes 0))
+    (runtime tools &key (allocated-schema-bytes 0))
   "Validate, bound, sanitize, and return MCP TOOLS advertised by RUNTIME."
-  (when (> (length tools) *mcp-maximum-tools-per-server*)
-    (mcp-tools--server-error
-     (mcp-server-runtime-configuration runtime)
-     (length tools)
-     (format nil "MCP server ~A advertised more than ~D tools."
-             (mcp-server-runtime-name runtime)
-             *mcp-maximum-tools-per-server*)))
-  (when (> (+ allocated-tools (length tools))
-           *mcp-maximum-retained-tools*)
-    (mcp-tools--aggregate-budget-error
-     runtime
-     :resource ':retained-tools
-     :allocated allocated-tools
-     :requested (length tools)
-     :limit *mcp-maximum-retained-tools*))
   (let ((seen (make-hash-table :test #'equal))
         (schema-bytes 0)
         (prepared-tools nil))
@@ -1456,11 +1433,10 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 
 (-> mcp-server-runtime--discover-tools-stably
     (mcp-server-runtime
-     &key (:allocated-tools (integer 0))
-          (:allocated-schema-bytes (integer 0)))
+     &key (:allocated-schema-bytes (integer 0)))
     (values list (integer 0) (integer 0)))
 (defun mcp-server-runtime--discover-tools-stably
-    (runtime &key (allocated-tools 0) (allocated-schema-bytes 0))
+    (runtime &key (allocated-schema-bytes 0))
   "Discover RUNTIME's tools within one stable client connection generation."
   (let ((client (mcp-server-runtime-client runtime)))
     (loop repeat *mcp-tool-discovery-restart-limit*
@@ -1475,7 +1451,6 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                        (mcp-server-runtime--validate-tools
                         runtime
                         (mcp-client-list-tools client)
-                        :allocated-tools allocated-tools
                         :allocated-schema-bytes allocated-schema-bytes)
                        (values nil 0))
                  (let ((final-generation
@@ -1494,11 +1469,10 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 
 (-> mcp-server-runtime--connect
     (mcp-server-runtime
-     &key (:allocated-tools (integer 0))
-          (:allocated-schema-bytes (integer 0)))
+     &key (:allocated-schema-bytes (integer 0)))
     (values mcp-server-runtime boolean))
 (defun mcp-server-runtime--connect
-    (runtime &key (allocated-tools 0) (allocated-schema-bytes 0))
+    (runtime &key (allocated-schema-bytes 0))
   "Initialize RUNTIME within aggregate budgets and report snapshot publication."
   (let ((discovery-p nil))
     (with-lock-held ((mcp-server-runtime-lock runtime))
@@ -1523,7 +1497,6 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                  (multiple-value-bind (tools generation schema-bytes)
                      (mcp-server-runtime--discover-tools-stably
                       runtime
-                      :allocated-tools allocated-tools
                       :allocated-schema-bytes allocated-schema-bytes)
                    (setf
                     (mcp-server-runtime-tools runtime) tools
@@ -1700,15 +1673,13 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 
 (-> mcp-server-runtime--budget-usage
     (mcp-server-runtime)
-    (values (integer 0) (integer 0)))
+    (integer 0))
 (defun mcp-server-runtime--budget-usage (runtime)
-  "Return retained tool and encoded schema usage for ready RUNTIME."
+  "Return retained encoded input schema bytes for ready RUNTIME."
   (with-lock-held ((mcp-server-runtime-lock runtime))
     (if (eq (mcp-server-runtime-state runtime) :ready)
-        (values
-         (length (mcp-server-runtime-tools runtime))
-         (mcp-server-runtime-tool-schema-bytes runtime))
-        (values 0 0))))
+        (mcp-server-runtime-tool-schema-bytes runtime)
+        0)))
 
 (-> mcp-server-runtime--manager-connect-p
     (mcp-server-runtime (option mcp-server-runtime))
@@ -1740,8 +1711,7 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 (defun mcp-manager--connect-runtimes
     (manager &key target-runtime signal-target-failure-p)
   "Reconcile MANAGER under its held lock and return true after any revision."
-  (let ((allocated-tools 0)
-        (allocated-schema-bytes 0)
+  (let ((allocated-schema-bytes 0)
         (changed-p nil))
     (dolist (runtime (mcp-manager--ordered-runtimes manager))
       (let ((before
@@ -1754,19 +1724,9 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                    runtime target-runtime)
                 (mcp-server-runtime--connect
                  runtime
-                 :allocated-tools allocated-tools
                  :allocated-schema-bytes allocated-schema-bytes))
-              (multiple-value-bind (tool-count schema-bytes)
-                  (mcp-server-runtime--budget-usage runtime)
-                (when
-                    (> (+ allocated-tools tool-count)
-                       *mcp-maximum-retained-tools*)
-                  (mcp-tools--aggregate-budget-error
-                   runtime
-                   :resource ':retained-tools
-                   :allocated allocated-tools
-                   :requested tool-count
-                   :limit *mcp-maximum-retained-tools*))
+              (let ((schema-bytes
+                      (mcp-server-runtime--budget-usage runtime)))
                 (when
                     (> (+ allocated-schema-bytes schema-bytes)
                        *mcp-maximum-retained-input-schema-bytes*)
@@ -1776,7 +1736,6 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                    :allocated allocated-schema-bytes
                    :requested schema-bytes
                    :limit *mcp-maximum-retained-input-schema-bytes*))
-                (incf allocated-tools tool-count)
                 (incf allocated-schema-bytes schema-bytes)))
           (mcp-server-startup-error (condition)
             (when (mcp-server-runtime--mark-failed runtime condition)
