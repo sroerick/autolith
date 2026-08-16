@@ -543,7 +543,7 @@
 
 (-> main-authenticate (configuration (option string)) null)
 (defun main-authenticate (configuration selection)
-  "Authenticate a registered provider without starting the conversation UI."
+  "Authenticate a registered provider before the conversation UI starts."
   (configuration-ensure-directories configuration)
   (let ((provider (main--authentication-provider configuration selection)))
     (format t "~&~A~%"
@@ -693,65 +693,60 @@
                    (or (not (null resume-id))
                        (and (null recovery-conversation-id)
                             (null recovery-diagnosis))))))
-       (cond
-         ((member "--auth" arguments :test #'string=)
-          (user-init-load configuration)
-          (setf configuration
-                (provider-bootstrap-configuration configuration)
-                configuration
-                (preferences-apply-model-selection configuration))
-          (main-authenticate configuration
-                             (main--auth-selection arguments)))
-         (t
-          (when handoff-record
-            (localgroup-handoff-begin-startup handoff-record)
-            (application--clear-recovery-environment))
-          (let ((*localgroup-startup-record* handoff-record))
-            (setf *active-application*
-                  (main--connect-application
-                   :configuration configuration
-                   :conversation-id resume-id
-                   :immutable-p immutable-p
-                   :permission-mode permission-mode
-                   :fresh-conversation-p (not (null fresh-handoff-p))))
-          (application--clear-recovery-environment)
-          (when (and (member "--simulate-crash" arguments :test #'string=)
-                     (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
-            (let ((capsule
-                    (application-write-crash-capsule
-                     *active-application*
-                     (make-condition 'simple-error
-                                     :format-control "Intentional recovery test."
-                                     :format-arguments nil))))
-              (format *error-output* "Intentional crash capsule: ~A~%" capsule)
-              (uiop:quit *main-fatal-recovery-status*)))
-          (handler-case
-              (application-run
-               *active-application*
-               :initial-command (and effective-resume-requested-p
-                                     (null resume-id)
-                                     "(resume)")
-               :initial-input
-               (if handoff-record
-                   (localgroup-handoff-initial-input handoff-record)
-                   (main--initial-image-input arguments))
-               :recovery-diagnosis recovery-diagnosis
-               :resume-offer-p effective-resume-requested-p)
-            (rollback-requested (condition)
-              (format *error-output*
-                      "Autolith is rolling back to retained generation ~A.~%"
-                      (rollback-requested-generation-id condition))
-              (uiop:quit *main-rollback-recovery-status*))
-            (update-requested (condition)
-              (format *error-output*
-                      "Autolith will update to ~A after restoring the terminal.~%"
-                      (subseq (update-requested-tag condition) 1))
-              (uiop:quit *main-update-request-status*))
-            (fatal-control-path-error (condition)
-              (format *error-output*
-                      "Autolith entered recovery after a fatal error. Capsule: ~A~%"
-                      (fatal-control-path-error-capsule-pathname condition))
-              (uiop:quit *main-fatal-recovery-status*)))))))))
+       (when (member "--auth" arguments :test #'string=)
+         (user-init-load configuration)
+         (main-authenticate (preferences-apply-model-selection
+                             (provider-bootstrap-configuration configuration))
+                            (main--auth-selection arguments)))
+       (when handoff-record
+         (localgroup-handoff-begin-startup handoff-record)
+         (application--clear-recovery-environment))
+       (let ((*localgroup-startup-record* handoff-record))
+         (setf *active-application*
+               (main--connect-application
+                :configuration configuration
+                :conversation-id resume-id
+                :immutable-p immutable-p
+                :permission-mode permission-mode
+                :fresh-conversation-p (not (null fresh-handoff-p))))
+         (application--clear-recovery-environment)
+         (when (and (member "--simulate-crash" arguments :test #'string=)
+                    (not (non-empty-string-p (uiop:getenv "AUTOLITH_RECOVERED"))))
+           (let ((capsule
+                   (application-write-crash-capsule
+                    *active-application*
+                    (make-condition 'simple-error
+                                    :format-control "Intentional recovery test."
+                                    :format-arguments nil))))
+             (format *error-output* "Intentional crash capsule: ~A~%" capsule)
+             (uiop:quit *main-fatal-recovery-status*)))
+         (handler-case
+             (application-run
+              *active-application*
+              :initial-command (and effective-resume-requested-p
+                                    (null resume-id)
+                                    "(resume)")
+              :initial-input
+              (if handoff-record
+                  (localgroup-handoff-initial-input handoff-record)
+                  (main--initial-image-input arguments))
+              :recovery-diagnosis recovery-diagnosis
+              :resume-offer-p effective-resume-requested-p)
+           (rollback-requested (condition)
+             (format *error-output*
+                     "Autolith is rolling back to retained generation ~A.~%"
+                     (rollback-requested-generation-id condition))
+             (uiop:quit *main-rollback-recovery-status*))
+           (update-requested (condition)
+             (format *error-output*
+                     "Autolith will update to ~A after restoring the terminal.~%"
+                     (subseq (update-requested-tag condition) 1))
+             (uiop:quit *main-update-request-status*))
+           (fatal-control-path-error (condition)
+             (format *error-output*
+                     "Autolith entered recovery after a fatal error. Capsule: ~A~%"
+                     (fatal-control-path-error-capsule-pathname condition))
+             (uiop:quit *main-fatal-recovery-status*)))))))
   nil)
 
 (-> main (list) null)
