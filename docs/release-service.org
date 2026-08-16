@@ -1,5 +1,4 @@
 #+TITLE: Autolith Release Service
-#+SUBTITLE: Host-built Linux releases and the Common Lisp download server
 #+STARTUP: content
 
 * Components
@@ -26,8 +25,7 @@ bootstrap remain shell because they must run before a Lisp image is available
 or replace the current Unix process.
 
 The HTTP process runs as the unprivileged =autolith-release= user. It can read
-the selected checkout and published artifacts but cannot write them. The
-builder runs separately with Docker access and never handles public requests.
+the selected checkout and published artifacts but cannot write them.
 The updater runs as root because it owns deployments and controls s6 services,
 but it performs bootstrap, checks, and candidate probes as =autolith-release=.
 Docker authority must not be given to the HTTP process.
@@ -63,8 +61,7 @@ checksum exist in the final release directory.
 
 The updater retains the current and previous deployments. A failed activation
 is also retained for diagnosis. After a later successful activation it prunes
-older deployments only when they remain clean exact lightweight tags. It never
-resets, overwrites, or removes a deployment containing tracked changes.
+older deployments only when they remain clean exact lightweight tags.
 
 * Initial Artix and s6 deployment
 
@@ -101,9 +98,7 @@ ln -s "deployments/$tag" /srv/autolith-release-server/current
 #+END_SRC
 
 Install Quicklisp into the service home, then bootstrap the selected deployment
-as the service account at its final pathname. The updater uses this same
-ownership transition for future deployments so root never creates cache files
-inside the unprivileged home.
+as the service account at its final pathname.
 
 #+BEGIN_SRC sh
 export HOME=/var/lib/autolith-release-server/home
@@ -149,7 +144,7 @@ docker ps --filter ancestor=autolith-release-builder:ubuntu-22.04
 Require the existing fixed checkout to be clean. Never reset or discard it.
 Fetch the final pushed 0.16.1 commit into that checkout, detach at the explicit
 commit, then bootstrap it as =autolith-release=. This checkout is only the
-first-update runner; it is not selected as the public server source.
+first-update runner.
 
 #+BEGIN_SRC sh
 source=/srv/autolith-release-server/source
@@ -233,8 +228,7 @@ manifests may retain absolute source pathnames.
 A repository check is retried once in a fresh process before its immutable tag
 is suppressed. Network, fetch, and bootstrap failures remain retryable. Source,
 version, repeated check, candidate-probe, and moved-tag failures are recorded in
-the native deployment state and are not attempted every minute. A newer tag is
-still eligible.
+the native deployment state and are not attempted every minute.
 
 Promotion first writes a =:prepared= native sexp transaction, updates the
 =previous= and =current= symlinks atomically, and writes =:selected=. It then

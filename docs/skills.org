@@ -1,113 +1,89 @@
 #+TITLE: Autolith Skills
 #+STARTUP: content
-#+OPTIONS: toc:2 num:nil
 
-* Skills, when a job needs a playbook
+* Skills
 
-A Skill is a named bundle of instructions for the model. It is native Autolith
-configuration, not an MCP server, tool, resource, or prompt.
+A Skill is a named bundle of instructions for the model,
+if you have used clankers for any significant measure of time.
 
-Autolith shows the model a small catalog first. The full instructions enter only
-after the model calls =skill.load= for an exact Skill name. They are request-local:
-they never enter conversation files, summaries, memories, saved request history,
-or a later logical turn.
+Autolith shows the model a small catalog first.
 
-For example, put this in =.autolith/skills/release-check/SKILL.sexp=:
+The model can call =skill.load= to load the entire skill contents.
 
-#+begin_src lisp
+They are request-local.
+
+Put this in =.autolith/skills/release-check/SKILL.sexp=:
+
+#+BEGIN_SRC lisp
 (:autolith-skill
- :version 1
- :name "release-check"
- :description "Verify a release from source through its packaged artifact."
+ :version      1
+ :name         "release-check"
+ :description  "Verify a release from source through its packaged artifact."
  :instructions
  "Follow the repository release procedure completely.
 Run every relevant check before reporting success.")
-#+end_src
+#+END_SRC
 
-Then ask for release verification. If the catalog describes a matching Skill, the
-model selects it with =skill.load= before work that depends on those instructions.
+Then ask for release verification. If the catalog describes a matching
+Skill, the model selects it with =skill.load= before work that depends
+on those instructions.
 
-* Write a Skill
+Ask your clankers to convert existing skills into the Autolith format.
 
-A Skill directory contains one file named exactly =SKILL.sexp=. It contains one
-bounded top-level form with all five required fields shown above: the marker,
-version, name, description, and instructions.
+There is a good reason why we do this, and in the future, Autolith will
+be able to convert your skills automatically.
 
-=:instructions= is the complete instruction body. It may refer to files relative
-to its own directory, but Autolith neither executes =SKILL.sexp= nor automatically
-loads neighboring files.
+* Writing skill
 
-Names are 1 to 64 lowercase ASCII letters, digits, and hyphens. They cannot start
-or end with a hyphen, contain =--=, or differ from their immediate parent directory
-name.
+A Skill directory contains one file named exactly =SKILL.sexp=. It is
+one bounded top-level form with these required fields:
 
-Autolith rejects unsupported versions; unknown or duplicate fields; malformed data;
-extra forms; reader labels; circular or shared structure; and values of the wrong
-type. It reads with =*read-eval*= bound to =nil=, a fresh readtable, and a temporary
-package. The file, tree, metadata, and instruction text are bounded.
+- =:autolith-skill=
+- =:version=
+- =:name=
+- =:description=
+- =:instructions=
 
-* Where Autolith looks
+=:instructions= is the instruction body. You can of course refer
+to neigboring files there.
 
-Autolith scans these roots in precedence order:
+Autolith rejects unsupported versions, unknown or duplicate fields,
+malformed data, extra forms, reader labels, circular or shared
+structure, and values of the wrong type, and so on and so forth.
+You will get an error, you will know what's wrong.
 
-1. =.autolith/skills/= at the project root.
-2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=.
-3. Bundled Skill roots.
+* Locations
 
-Outside Git, the workspace directory is the project root. Scans are recursive and
-deterministic by pathname. Only the case-sensitive filename =SKILL.sexp= counts;
-hidden directories are still scanned, and missing roots are fine.
+Scans these roots, first match wins:
 
-The first definition of a name wins. A project Skill overrides a user or bundled
-Skill, and a user Skill overrides a bundled Skill. An invalid higher-precedence
-candidate in a validly named directory still reserves that name and produces a
-diagnostic, rather than silently falling back to a lower definition.
+1. =.autolith/skills/= at the project root
+2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=
+3. bundled Skill roots
 
-Traversal stays inside each canonical root. A broken link, an escaping symbolic
-link, or a non-regular =SKILL.sexp= is rejected before it is opened as Skill data.
-Its lexical directory name remains reserved for the same reason.
+Outside Git, the workspace directory is the project root. Scans are
+recursive. Only the case-sensitive filename =SKILL.sexp= counts.
 
-* What loading does
+Each consecutive location overrides the previous ones, so
+you can have a project local version of a skill if you like.
 
-Every normal provider request gets a bounded catalog when Skills exist. It contains
-names, fitting descriptions, and exact paths. =skill.load= records the selected
-name and filesystem identity for the current logical turn and returns a short
-confirmation, not the instruction text.
+* Loading
 
-At the next provider boundary, Autolith rereads the selected file and injects its
-current complete =:instructions= string as mandatory request-local context. This
-makes an in-place edit visible during the turn while preventing a swapped file from
-silently changing the selected definition.
+- Every inference provider request gets a bounded catalog when Skills exist
+- The catalog has names, descriptions, and paths
+- =skill.load= records the selected name and filesystem identity for the
+  current logical turn
+- It returns a short confirmation that the model did not fuck up skill selection
+- At the next provider boundary, Autolith will reread the file and
+  injects the current version of =:instructions= as request-local context
+- Selected Skills stack in catalog order
+- Child agents may load Skills only when their role permits =skill.load=.
 
-=skill.load= is a round-trip barrier. Tool calls before it run normally. Calls after
-it in the same provider result do not run; they receive a request-local failure and
-the model retries after seeing the selection result and refreshed instructions.
+* Diagnostics
 
-Selected Skills stack in deterministic catalog order. Steering input can join the
-same turn's existing selections. Loading an already selected name is harmless. A
-reloadable limit bounds distinct selections. Child agents may load Skills only when
-their role permits =skill.load=; their context is isolated from the parent.
+The =(skills)= commands inspects the catalog. It shows
+selected definitions, descriptions, paths, and diagnostics for rejected
+or shadowed files. With no Skills, it shows the roots where you can
+create one.
 
-If a selected file disappears, changes identity, becomes unreadable or malformed,
-or exceeds a bound, Autolith gives the model a bounded warning. Unrelated provider
-work continues, and Autolith never claims the Skill was applied. The turn retains
-the winning lexical and canonical paths plus device and inode, so it cannot switch
-to a newly exposed lower or higher definition.
-
-* See what is active
-
-Use =/skills= to inspect the current catalog without injecting instructions. It
-shows selected definitions, descriptions, paths, and bounded diagnostics for
-rejected or shadowed files. With no Skills, it shows the effective roots where you
-can create one.
-
-Use =/context= to inspect the metadata catalog, selected contributions, omissions,
-and context-contributor failures. Side-channel compaction requests receive neither
-the catalog nor Skill instructions.
-
-Discovery, catalog rendering, files, instructions, cumulative selected text, status,
-and diagnostics all have reloadable bounds. Discovery also bounds total definition
-characters across roots. Hitting a discovery limit stops the applicable remaining
-scan with a typed diagnostic. Hitting a request limit omits the affected
-instructions and adds a bounded warning; excess selected-Skill warnings collapse
-into one bounded mandatory warning.
+You can also use =(context)= to show the catalog, selected contributions,
+omissions, and contributor failures.
