@@ -85,11 +85,26 @@
                     "type" "message"
                     "id" "server-item-2"
                     "role" "assistant"
+                    "status" "completed"
                     "content" (json-array))))
       (provider-normalize-output-item provider message)
       (test-assert (and (null (gethash "id" message))
+                        (null (gethash "status" message))
                         (string= (json-get message "role") "assistant"))
-                   "non-call items only lose transient identifiers")))
+                   "non-call items lose identifiers and output-only status"))
+    (let ((reasoning (json-object
+                      "type" "reasoning"
+                      "id" "reasoning-item-1"
+                      "status" "completed"
+                      "summary" (json-array)
+                      "encrypted_content" "opaque-ciphertext")))
+      (provider-normalize-output-item provider reasoning)
+      (test-assert
+       (and (string= (json-get reasoning "id") "reasoning-item-1")
+            (null (gethash "status" reasoning))
+            (string= (json-get reasoning "encrypted_content")
+                     "opaque-ciphertext"))
+       "Grok keeps replayable reasoning identifiers and drops status")))
   (let* ((namespaced (json-object
                       "type" "function_call"
                       "call_id" "call-1"
@@ -131,8 +146,9 @@
                         "the Grok request names the Grok model")
            (test-assert (null (json-get request "service_tier"))
                         "Grok requests never select a provider service tier")
-           (test-assert (null (json-get request "prompt_cache_key"))
-                        "Grok requests omit the Codex prompt cache key")
+           (test-assert (string= (json-get request "prompt_cache_key")
+                                 "grok-shape")
+                        "Grok requests reuse the conversation as the cache key")
            (test-assert (null (json-get request "text"))
                         "Grok requests omit the Codex verbosity selection")
            (let ((input (json-get request "input")))
@@ -178,11 +194,10 @@
                                 wire)
                        (format nil "Grok maps ~A reasoning onto ~A"
                                effort wire))))
-           (multiple-value-bind (value present-p)
-               (gethash "summary" (json-get request "reasoning"))
-             (declare (ignore value))
-             (test-assert (not present-p)
-                          "Grok requests never ask for reasoning summaries"))
+           (test-assert
+            (string= (json-get (json-get request "reasoning") "summary")
+                     "concise")
+            "Grok requests ask for concise reasoning summaries")
            (test-assert (string= (json-get request "tool_choice") "auto")
                         "the Grok request permits automatic tool selection")
            (test-assert (eq (json-get request "parallel_tool_calls") false)
@@ -283,6 +298,10 @@
                           "the Grok transport reports interactive client mode")
              (test-assert (string= (header "x-grok-conv-id") "grok-wire")
                           "the Grok transport carries the conversation identity")
+             (test-assert (string= (header "x-grok-doom-loop-check")
+                                   (format nil "~D"
+                                           *grok-doom-loop-window-tokens*))
+                          "the Grok transport opts into server loop detection")
              (test-assert (string= (header "Accept") "text/event-stream")
                           "the Grok transport requests an event stream")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
@@ -331,12 +350,151 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> grok-provider-test--doom-loop-stream (list) string)
+(defun grok-provider-test--doom-loop-stream (triggers)
+  "Return one complete Grok SSE fixture reporting TRIGGERS mid-stream."
+  (concatenate
+   'string
+   (test-sse-event-string
+    (json-object "type" "response.created"
+                 "response" (json-object "id" "grok-doom-1")))
+   (test-sse-event-string
+    (json-object "type" "response.doom_loop_check"
+                 "sequence_number" 4176
+                 "doom_loop_check"
+                 (json-object "triggers" (apply #'json-array triggers))))
+   (test-sse-event-string
+    (json-object "type" "response.completed"
+                 "response" (json-object "id" "grok-doom-1"
+                                         "usage" (json-object))))))
+
+(-> grok-provider-test--consume-doom-stream (list) t)
+(defun grok-provider-test--consume-doom-stream (triggers)
+  "Consume one Grok stream reporting TRIGGERS and return the outcome."
+  (provider-consume-stream
+   (grok-provider-create (grok-provider-test--configuration))
+   (make-instance 'test-character-input-stream
+                  :source (grok-provider-test--doom-loop-stream triggers))
+   nil
+   (lambda (event)
+     (declare (ignore event)))))
+
+(-> grok-provider-test--doom-loop-recovery () null)
+(defun grok-provider-test--doom-loop-recovery ()
+  "Test server-reported loop detection, confidence, budget, and resampling."
+  (dolist (case '(("tail_repetition:8@thinking" t)
+                  ("tail_repetition:2@thinking" t)
+                  ("tail_repetition:64@thinking" t)
+                  ("tail_repetition:65@thinking" nil)
+                  ("tail_repetition:4@response" nil)
+                  ("tail_repetition:4" nil)
+                  ("low_logprob@thinking" nil)
+                  ("novel_detector:3@thinking" nil)
+                  ("tail_repetition:huge@thinking" nil)
+                  ("" nil)))
+    (destructuring-bind (trigger expected) case
+      (test-assert (eq (grok--doom-loop-confident-trigger-p trigger) expected)
+                   (format nil "doom-loop confidence classifies ~S" trigger))))
+  (let ((*grok-doom-loop-resamples-remaining* 2))
+    (test-assert
+     (handler-case
+         (progn
+           (grok-provider-test--consume-doom-stream
+            (list "tail_repetition:4@response" "tail_repetition:8@thinking"))
+           nil)
+       (provider-resample-requested (condition)
+         (and (equal (provider-resample-requested-triggers condition)
+                     (list "tail_repetition:8@thinking"))
+              (= (provider-resample-requested-attempt condition) 1)
+              (= (provider-resample-requested-maximum-attempts condition) 2)
+              (= *grok-doom-loop-resamples-remaining* 1))))
+     "a confident loop report abandons the stream while budget remains"))
+  (let ((*grok-doom-loop-resamples-remaining* 0))
+    (test-assert
+     (typep (grok-provider-test--consume-doom-stream
+             (list "tail_repetition:2@thinking"))
+            'provider-result)
+     "a spent resample budget accepts the looping response as-is"))
+  (let ((*grok-doom-loop-resamples-remaining* 2))
+    (test-assert
+     (typep (grok-provider-test--consume-doom-stream
+             (list "tail_repetition:4@response" "low_logprob@thinking"))
+            'provider-result)
+     "warn-only triggers never abandon the stream"))
+  (test-assert
+   (typep (grok-provider-test--consume-doom-stream
+           (list "tail_repetition:2@thinking"))
+          'provider-result)
+   "loop reports outside an armed turn are ignored")
+  (let* ((configuration (grok-provider-test--configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "grok-doom-retry"))
+         (result
+           (make-instance 'provider-result
+                          :response-id "grok-doom-recovered"
+                          :output-items nil
+                          :tool-calls nil
+                          :usage nil
+                          :turn-state nil)))
+    (unwind-protect
+         (let ((events nil)
+               (delays nil)
+               (provider
+                 (test-codex-provider-create
+                  configuration
+                  (list :resample :resample result))))
+           (let ((*provider-stream-retry-sleep-function*
+                   (lambda (seconds)
+                     (push seconds delays))))
+             (test-assert
+              (eq (provider-stream-turn
+                   provider
+                   conversation
+                   :tool-namespaces #()
+                   :event-callback (lambda (event) (push event events)))
+                  result)
+              "resample requests retry the turn until a clean response"))
+           (test-assert (null delays)
+                        "resample retries never wait before the fresh sample")
+           (let ((retry-events
+                   (remove-if-not (lambda (event)
+                                    (typep event 'provider-retry-event))
+                                  events)))
+             (test-assert
+              (and (= (length retry-events) 2)
+                   (every (lambda (event)
+                            (zerop (provider-retry-event-delay event)))
+                          retry-events))
+              "resample retries surface immediate retry events")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  (test-assert
+   (grok--empty-response-p
+    (make-instance 'provider-result
+                   :response-id "empty"
+                   :output-items (list (json-object "type" "reasoning"))
+                   :tool-calls nil
+                   :usage nil
+                   :turn-state nil))
+   "a reasoning-only completion counts as an empty response")
+  (test-assert
+   (not (grok--empty-response-p
+         (make-instance 'provider-result
+                        :response-id "visible"
+                        :output-items (list (json-object "type" "message"))
+                        :tool-calls nil
+                        :usage nil
+                        :turn-state nil)))
+   "an assistant message keeps a response from counting as empty")
+  nil)
+
 (-> test-grok-provider () null)
 (defun test-grok-provider ()
   "Test the Grok subscription provider without network access."
   (grok-provider-test--selection)
   (grok-provider-test--wire-tools)
   (grok-provider-test--item-normalization)
+  (grok-provider-test--doom-loop-recovery)
   (let ((provider (grok-provider-create (grok-provider-test--configuration))))
     (test-assert (string= (provider-account-label provider) "Grok")
                  "the Grok provider names its account service")

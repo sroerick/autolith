@@ -114,6 +114,19 @@
 NIL means the serving stack rejects the reasoning parameter entirely;
 the request builder then omits the reasoning object."))
 
+(-> provider-responses-reasoning-summary
+    (responses-api-provider configuration)
+    (option string))
+(defgeneric provider-responses-reasoning-summary (provider configuration)
+  (:documentation
+   "Return CONFIGURATION's reasoning summary style for PROVIDER, or NIL."))
+
+(defmethod provider-responses-reasoning-summary
+    ((provider responses-api-provider) (configuration configuration))
+  "Request no reasoning summary style unless a concrete provider opts in."
+  (declare (ignore provider configuration))
+  nil)
+
 (-> provider-responses-hosted-tool
     (responses-api-provider configuration)
     (option json-object))
@@ -226,9 +239,17 @@ after a completed response."
              ;; A NIL wire effort means the serving stack rejects the
              ;; reasoning parameter entirely; omit the reasoning object.
              (let ((effort
-                     (provider-responses-wire-effort provider configuration)))
+                     (provider-responses-wire-effort provider configuration))
+                   (summary
+                     (provider-responses-reasoning-summary
+                      provider configuration)))
                (when effort
-                 (list "reasoning" (json-object "effort" effort))))
+                 (list "reasoning"
+                       (apply #'json-object
+                              (append
+                               (list "effort" effort)
+                               (when summary
+                                 (list "summary" summary)))))))
              (list "store" false
                    "stream" t)
              (provider-responses-request-fields provider conversation)))

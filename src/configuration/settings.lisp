@@ -36,9 +36,9 @@
 
 ;; The proxy gates requests on this protocol revision and rejects requests
 ;; without it as HTTP 426. Autolith implements the wire dialect of this
-;; grok-build release, reference commit 47348d13, while reporting its own
+;; grok-build release, reference commit 5163763e, while reporting its own
 ;; identity through User-Agent and x-grok-client-identifier.
-(defparameter *grok-client-protocol-version* "0.2.112"
+(defparameter *grok-client-protocol-version* "1.0.4"
   "The grok-build release whose Grok proxy wire protocol Autolith implements.")
 
 ;; The public Fireworks Responses API, verified against
