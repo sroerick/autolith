@@ -202,7 +202,6 @@ A load failure restores the previous registry.
 - Required servers receive capacity first, then optional servers
 - A required overflow fails startup or refresh
 - An optional overflow marks that server failed and clears its tools
-- Server instructions are credential-sanitized before retention
 
 Shutdown, MCP reload, conversation replacement, and checkpoint
 preparation close live clients.

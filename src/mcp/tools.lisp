@@ -835,21 +835,15 @@
             (setf (gethash name projected) (json-object)))))
       projected)))
 
-(-> mcp-tools--sanitized-instructions (t) (option string))
-(defun mcp-tools--sanitized-instructions (instructions)
-  "Return sanitized server INSTRUCTIONS, or NIL for non-strings."
-  (when (stringp instructions)
-    (mcp-tools--sanitize-string instructions)))
-
 (-> mcp-tools--sanitize-client-state (mcp-server-runtime) null)
 (defun mcp-tools--sanitize-client-state (runtime)
-  "Sanitize every retained server-controlled value in RUNTIME's client."
+  "Sanitize retained server-controlled state in RUNTIME's client.
+
+Server instructions are deliberately retained verbatim; every other
+retained value is credential-redacted or projected."
   (let* ((client (mcp-server-runtime-client runtime))
          (transport (mcp-client-transport client)))
-    (setf (mcp-client-instructions client)
-          (mcp-tools--sanitized-instructions
-           (mcp-client-instructions client))
-          (mcp-client-server-capabilities client)
+    (setf (mcp-client-server-capabilities client)
           (mcp-tools--project-capabilities
            (mcp-client-server-capabilities client))
           (mcp-client-server-info client) nil)

@@ -1390,8 +1390,7 @@
          (json-object
           "name" "credential-echo"
           "version" credential)
-         "instructions"
-         (format nil "Server instructions echoed ~A." credential))))
+         "instructions" "Server instructions stay verbatim.")))
       ((string= method "tools/list")
        (test-mcp--rpc-result
         request
@@ -2135,8 +2134,8 @@
                         :external-format ':utf-8))))
                (test-mcp--credential-redacted-p schemas credential)
                (test-mcp--credential-redacted-p identity credential)
-               (test-mcp--credential-redacted-p client-state credential)
-               (test-mcp--credential-redacted-p context-text credential))
+               (not (search credential client-state))
+               (not (search credential context-text)))
               "credential echoes are redacted and exact retained schemas are counted")
              (test-assert
               (every
@@ -2515,8 +2514,7 @@
                        (request-identifier line)
                        (format
                         nil
-                        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"rotation-fixture\",\"version\":\"~A\"},\"instructions\":\"~A\"}"
-                        token
+                        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"rotation-fixture\",\"version\":\"~A\"},\"instructions\":\"Rotation instructions stay verbatim.\"}"
                         token)))
                      ((search "\"tools/list\"" line)
                       (reply
@@ -3944,7 +3942,7 @@
                       "deterministic test fixture"
                       (context-contribution-evidence
                        (first contributions))))
-                "server instructions remain bounded untrusted request context"))
+                "server instructions reach the model as untrusted request context"))
              (let* ((record (first (mcp-manager-status-records manager)))
                     (rendered (mcp-manager-render-status manager)))
                (test-assert
