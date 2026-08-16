@@ -1235,6 +1235,20 @@ are decoded as UTF-8."
   "Return true when ITEM is a Responses function call."
   (json-string= (json-get item "type") "function_call"))
 
+(-> provider-note-doom-loop-event (model-provider json-object) null)
+(defgeneric provider-note-doom-loop-event (provider event)
+  (:documentation
+   "React to one server-reported doom-loop detection EVENT.
+
+A provider with resample support may signal PROVIDER-RESAMPLE-REQUESTED to
+abandon the looping stream; the default reaction ignores the report."))
+
+(defmethod provider-note-doom-loop-event
+    ((provider model-provider) (event hash-table))
+  "Ignore doom-loop reports for providers without resample support."
+  (declare (ignore provider event))
+  nil)
+
 (-> provider--reasoning-summary-key (json-object) (option list))
 (defun provider--reasoning-summary-key (event)
   "Return EVENT's stable reasoning summary part identity, when available."
@@ -1606,6 +1620,12 @@ are decoded as UTF-8."
                                               :response-id response-id
                                               :usage usage
                                               :turn-completion turn-completion))))
+                  ((json-string= type "response.doom_loop_check")
+                    ;; A non-standard xAI event reporting a detected
+                    ;; generation loop; it must never reach item handling.
+                    (provider-note-doom-loop-event provider event)
+                    (funcall event-callback
+                             (make-instance 'provider-progress-event)))
                   ((json-string= type "response.incomplete")
                     (provider--signal-incomplete-response
                      event
@@ -1741,24 +1761,37 @@ streaming turns and native compaction requests."
                       :message
                       (format nil "~A authentication retry ended unexpectedly."
                               (provider-account-label provider))))))
-    (loop for retry-number from 0
-          do (handler-case
-                 (return-from provider--call-with-bounded-retries
-                   (attempt-with-authentication))
-               (provider-retryable-error (condition)
-                 (when (= retry-number
-                          (length *provider-stream-retry-delays*))
-                   (error condition))
-                 (let ((delay
-                         (nth retry-number *provider-stream-retry-delays*)))
-                   (funcall event-callback
-                            (make-instance
-                             'provider-retry-event
-                             :attempt (1+ retry-number)
-                             :maximum-attempts
-                             (length *provider-stream-retry-delays*)
-                             :delay delay))
-                   (funcall *provider-stream-retry-sleep-function* delay)))))))
+    (let ((retry-number 0))
+      (loop
+        (handler-case
+            (return-from provider--call-with-bounded-retries
+              (attempt-with-authentication))
+          (provider-resample-requested (condition)
+            ;; Loops are stochastic at sampling temperature, so a fresh
+            ;; sample is the remedy and waiting buys nothing. The signaling
+            ;; provider enforces its own per-turn resample budget.
+            (funcall event-callback
+                     (make-instance
+                      'provider-retry-event
+                      :attempt (provider-resample-requested-attempt condition)
+                      :maximum-attempts
+                      (provider-resample-requested-maximum-attempts condition)
+                      :delay 0)))
+          (provider-retryable-error (condition)
+            (when (= retry-number
+                     (length *provider-stream-retry-delays*))
+              (error condition))
+            (let ((delay
+                    (nth retry-number *provider-stream-retry-delays*)))
+              (funcall event-callback
+                       (make-instance
+                        'provider-retry-event
+                        :attempt (1+ retry-number)
+                        :maximum-attempts
+                        (length *provider-stream-retry-delays*)
+                        :delay delay))
+              (funcall *provider-stream-retry-sleep-function* delay)
+              (incf retry-number))))))))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)

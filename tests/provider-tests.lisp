@@ -1590,6 +1590,15 @@
               :request-id "request-slow-down"
               :response-id "response-slow-down"
               :response nil))
+      ((eq outcome :resample)
+       (error 'provider-resample-requested
+              :message "Injected provider loop report."
+              :status nil
+              :request-id nil
+              :response nil
+              :triggers (list "tail_repetition:4@thinking")
+              :attempt 1
+              :maximum-attempts 2))
       (t
        (error "Invalid scripted provider outcome ~S." outcome)))))
 

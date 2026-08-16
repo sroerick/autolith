@@ -209,6 +209,25 @@
     :documentation "The provider's incomplete response reason, or unknown."))
   (:documentation "A retryable provider response that ended incomplete."))
 
+(define-condition provider-resample-requested (provider-retryable-error)
+  ((triggers
+    :initarg :triggers
+    :reader provider-resample-requested-triggers
+    :type list
+    :documentation "The provider's degenerate-generation trigger labels.")
+   (attempt
+    :initarg :attempt
+    :reader provider-resample-requested-attempt
+    :type (integer 1)
+    :documentation "The one-based resample attempt about to begin.")
+   (maximum-attempts
+    :initarg :maximum-attempts
+    :reader provider-resample-requested-maximum-attempts
+    :type (integer 1)
+    :documentation "The provider's per-turn resample budget."))
+  (:documentation
+   "A provider reported a degenerate generation loop worth resampling."))
+
 (define-condition provider-transport-error (provider-retryable-error)
   ()
   (:documentation
