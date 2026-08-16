@@ -1283,6 +1283,28 @@ newly acquired lease."
           (application-agent application) agent))
   nil)
 
+(-> application--agent-adopt-runtime (application agent) null)
+(defun application--agent-adopt-runtime (application agent)
+  "Let running AGENT adopt APPLICATION's replaced runtime at a safe boundary.
+
+Boundary-applied commands install a fresh configuration, provider, or tool
+registry on APPLICATION while AGENT still executes the current turn. Adoption
+between provider requests lets the change reach the very next request. The
+running turn owns its conversation, so adoption is skipped entirely when a
+command replaced the active conversation."
+  (when (eq (agent-conversation agent)
+            (application-conversation application))
+    (let ((configuration (application-configuration application))
+          (provider (application-provider application))
+          (registry (application-tool-registry application)))
+      (unless (eq (agent-configuration agent) configuration)
+        (setf (agent-configuration agent) configuration))
+      (unless (eq (agent-provider agent) provider)
+        (setf (agent-provider agent) provider))
+      (unless (eq (agent-tool-registry agent) registry)
+        (setf (agent-tool-registry agent) registry))))
+  nil)
+
 (-> application--prepare-runtime-replacement
     (application configuration conversation)
     (values model-provider tool-registry agent))
@@ -2674,13 +2696,15 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
      &key (:steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
+          (:pending-operations-function (option function))
           (:user-message-input (option (or string user-message-input)))
           (:continuation-p boolean))
     agent-observer)
 (defun application-agent-observer
     (application
      &key steering-function steering-persisted-function
-          user-message-persisted-function user-message-input (continuation-p nil))
+          user-message-persisted-function pending-operations-function
+          user-message-input (continuation-p nil))
   "Return a terminal observer streaming one APPLICATION turn as stable lines."
   (let ((ui (application-ui application))
         (activity-label (application-thinking-label))
@@ -2881,6 +2905,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (application-set-activity application nil))))
        :steering-callback steering-function
        :steering-persisted-callback steering-persisted-function
+       :pending-operations-callback pending-operations-function
        :command-authorization-callback
        (lambda (command directory)
          (application-authorize-command application command directory))
@@ -2924,6 +2949,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           (:steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
+          (:pending-operations-function (option function))
           (:pending-input-identifier (option non-empty-string))
           (:tools-p boolean)
           (:tool-allowlist (option list))
@@ -2932,7 +2958,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 (defun application--run-turn
     (application content
      &key continuation-p steering-function steering-persisted-function
-          user-message-persisted-function pending-input-identifier (tools-p t)
+          user-message-persisted-function pending-operations-function
+          pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil))
   "Persist and run one model turn for CONTENT while retaining editable input."
   (let ((conversation (application-conversation application))
@@ -2951,6 +2978,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                          :steering-persisted-function steering-persisted-function
                          :user-message-persisted-function
                          user-message-persisted-function
+                         :pending-operations-function pending-operations-function
                          :user-message-input content
                          :continuation-p continuation-p)
               :goal-context (application-goal-context application)
@@ -2968,10 +2996,12 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 (-> application--run-goal-continuations
     (application
      &key (:steering-function (option function))
-          (:steering-persisted-function (option function)))
+          (:steering-persisted-function (option function))
+          (:pending-operations-function (option function)))
     null)
 (defun application--run-goal-continuations
-    (application &key steering-function steering-persisted-function)
+    (application &key steering-function steering-persisted-function
+                      pending-operations-function)
   "Run bounded automatic continuation turns while the session goal is active."
   (loop
     (let ((goal (application-goal application)))
@@ -2994,7 +3024,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                              :continuation-p t
                              :steering-function steering-function
                              :steering-persisted-function
-                             steering-persisted-function)))
+                             steering-persisted-function
+                             :pending-operations-function
+                             pending-operations-function)))
   nil)
 
 (-> application-run-message
@@ -3002,6 +3034,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
      &key (:steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
+          (:pending-operations-function (option function))
           (:pending-input-identifier (option non-empty-string))
           (:tools-p boolean)
           (:tool-allowlist (option list))
@@ -3011,7 +3044,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 (defun application-run-message
     (application content
      &key steering-function steering-persisted-function
-          user-message-persisted-function pending-input-identifier (tools-p t)
+          user-message-persisted-function pending-operations-function
+          pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t))
   "Run one user turn for CONTENT with optional tools and goal continuations."
   (let ((goal (application-goal application)))
@@ -3023,6 +3057,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                          :steering-persisted-function steering-persisted-function
                          :user-message-persisted-function
                          user-message-persisted-function
+                         :pending-operations-function pending-operations-function
                          :pending-input-identifier pending-input-identifier
                          :tools-p tools-p
                          :tool-allowlist tool-allowlist
@@ -3031,5 +3066,6 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (application--run-goal-continuations
      application
      :steering-function steering-function
-     :steering-persisted-function steering-persisted-function))
+     :steering-persisted-function steering-persisted-function
+     :pending-operations-function pending-operations-function))
   nil)

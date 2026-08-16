@@ -4960,8 +4960,8 @@
                         (command
                           (application-command-invocation-command invocation)))
                    (application-command-busy-action command invocation))
-                 ':hold)
-                "goal mutations remain on the serialized application thread")
+                 ':apply)
+                "goal mutations apply at the next serialized safe boundary")
                (test-assert
                 (search "finish the migration" output)
                 "/goal renders the active goal while a turn is running")
@@ -4999,10 +4999,42 @@
 
 (-> test-responsive-command-scheduling () null)
 (defun test-responsive-command-scheduling ()
-  "Test busy held commands queue as follow-up work instead of blocking."
+  "Test busy commands apply at safe boundaries, hold, or report immediately."
+  (labels ((busy-action (input)
+             "Return the registered busy action for command INPUT."
+             (let* ((invocation (application-command-invocation-parse input))
+                    (command
+                      (application-command-invocation-command invocation)))
+               (and command
+                    (application-command-busy-action command invocation)))))
+    (dolist (case '(("/model gpt-5.6-luna" :apply)
+                    ("/effort high" :apply)
+                    ("/mcp refresh" :apply)
+                    ("/permissions full" :apply)
+                    ("/hurry-up on" :apply)
+                    ("/goal pause" :apply)
+                    ("/mcp" :execute)
+                    ("/hurry-up" :execute)
+                    ("/model" :hold)
+                    ("/effort" :hold)
+                    ("/status" :execute)
+                    ("/compact" :hold)
+                    ("/resume" :hold)
+                    ("/quit" :cancel)))
+      (destructuring-bind (input expected) case
+        (test-assert (eq (busy-action input) expected)
+                     (format nil "busy ~A resolves to ~A" input expected)))))
   (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application :ui ui))
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "responsive-apply"))
+         (application (make-instance 'application
+                                     :ui ui
+                                     :configuration configuration
+                                     :conversation conversation))
          (controller nil))
     (setf (application-goal application)
           (list :objective "finish the migration"
@@ -5021,32 +5053,55 @@
               controller "/goal pause")
              (let* ((output (recording-terminal-output terminal))
                     (command-position (search "/goal pause" output))
-                    (scheduled-position (search "command scheduled" output)))
+                    (apply-position (search "next safe point" output)))
                (test-assert
                 (and command-position
-                     scheduled-position
-                     (< command-position scheduled-position))
-                "a busy held command labels its scheduling notice")
+                     apply-position
+                     (< apply-position command-position))
+                "a busy state change labels its boundary application notice")
                (test-assert
                 (zerop (length (line-editor-text (terminal-ui-editor ui))))
-                "a scheduled command does not return to the editor"))
+                "a boundary-applying command does not return to the editor"))
              (application-input-controller--handle-submission
-              controller "/model gpt-5.6-luna")
+              controller "/compact")
+             (test-assert
+              (search "command scheduled"
+                      (recording-terminal-output terminal))
+              "a busy held command still labels its scheduling notice")
              (application-input-controller--handle-submission
-              controller "/effort high")
+              controller "/bogus-command")
+             (test-assert
+              (search "Unknown command"
+                      (recording-terminal-output terminal))
+              "an unknown busy command reports its error immediately")
              (test-assert
               (equal (application-input-controller--state controller :work-items)
-                     (list (list ':command "/goal pause")
-                           (list ':command "/model gpt-5.6-luna")
-                           (list ':command "/effort high")))
-              "held model and effort changes wait behind the active turn")
+                     (list (list ':command "/compact")))
+              "only genuinely held commands wait behind the active turn")
+             (test-assert
+              (equal (deque->list
+                      (application-input-controller-pending-apply-items
+                       controller))
+                     (list "/goal pause"))
+              "state changes queue for the next safe boundary instead")
+             (application-input-controller--apply-pending-commands controller)
+             (test-assert
+              (and (deque-empty-p
+                    (application-input-controller-pending-apply-items
+                     controller))
+                   (eq (getf (application-goal application) :status) ':paused))
+              "applying pending commands executes their effects")
+             (application-input-controller--handle-submission
+              controller "/goal resume")
              (application-input-controller--finish-work controller)
              (test-assert
               (equal (application-input-controller--next-work controller)
-                     (list ':command "/goal pause"))
-              "a scheduled command runs at the first idle opportunity"))
+                     (list ':apply-pending))
+              "boundary commands missing their turn apply before follow-ups"))
         (when controller
-          (application-input-controller-stop controller)))))
+          (application-input-controller-stop controller))
+        (uiop:delete-directory-tree
+         root :validate t :if-does-not-exist ':ignore))))
   nil)
 
 (-> test-input-reader-quiescence () null)
@@ -5667,8 +5722,11 @@
              (test-assert
               (and
                (equal (application-input-controller--state controller :work-items)
-                      '((:message "older follow-up")
-                        (:command "/goal pause")))
+                      '((:message "older follow-up")))
+               (equal (deque->list
+                       (application-input-controller-pending-apply-items
+                        controller))
+                      '("/goal pause"))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "recalled Enter commands use active-turn busy policy"))

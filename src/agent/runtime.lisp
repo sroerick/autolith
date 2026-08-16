@@ -38,6 +38,13 @@
     :type (option function)
     :documentation
     "The optional function acknowledging one identified durable steering message.")
+   (pending-operations-callback
+    :initarg :pending-operations-callback
+    :initform nil
+    :reader callback-agent-observer-pending-operations-callback
+    :type (option function)
+    :documentation
+    "The optional function applying queued user operations at a safe boundary.")
    (command-authorization-callback
     :initarg :command-authorization-callback
     :initform nil
@@ -68,12 +75,12 @@
 (defclass agent ()
   ((configuration
     :initarg :configuration
-    :reader agent-configuration
+    :accessor agent-configuration
     :type configuration
     :documentation "The paths and model choices governing this agent.")
    (provider
     :initarg :provider
-    :reader agent-provider
+    :accessor agent-provider
     :type model-provider
     :documentation "The replaceable streaming model provider.")
    (conversation
@@ -83,7 +90,7 @@
     :documentation "The durable conversation owned by this agent.")
    (tool-registry
     :initarg :tool-registry
-    :reader agent-tool-registry
+    :accessor agent-tool-registry
     :type tool-registry
     :documentation "The namespaced tool schemas and dispatch table.")
    (worker
@@ -149,6 +156,11 @@
   (:documentation
    "Acknowledge that steering input IDENTIFIER is durable through OBSERVER."))
 
+(-> agent-observer-apply-pending-operations (agent-observer t) null)
+(defgeneric agent-observer-apply-pending-operations (observer agent)
+  (:documentation
+   "Apply user operations queued for AGENT's next safe provider boundary."))
+
 (-> agent-observer-authorize-command
     (agent-observer string pathname)
     keyword)
@@ -188,6 +200,12 @@
     ((observer agent-observer) (identifier string))
   "Ignore durable steering IDENTIFIER for the default silent OBSERVER."
   (declare (ignore observer identifier))
+  nil)
+
+(defmethod agent-observer-apply-pending-operations
+    ((observer agent-observer) agent)
+  "Apply no queued operations for the default silent OBSERVER."
+  (declare (ignore observer agent))
   nil)
 
 (defmethod agent-observer-authorize-command
@@ -243,6 +261,15 @@
       (funcall callback identifier)))
   nil)
 
+(defmethod agent-observer-apply-pending-operations
+    ((observer callback-agent-observer) agent)
+  "Apply queued operations through OBSERVER's configured callback."
+  (let ((callback
+          (callback-agent-observer-pending-operations-callback observer)))
+    (when callback
+      (funcall callback agent)))
+  nil)
+
 (defmethod agent-observer-authorize-command
     ((observer callback-agent-observer) (command string) (directory pathname))
   "Authorize COMMAND through OBSERVER's callback, denying when absent."
@@ -283,13 +310,14 @@
      (:status-callback (option function))
      (:steering-callback (option function))
      (:steering-persisted-callback (option function))
+     (:pending-operations-callback (option function))
      (:command-authorization-callback (option function))
      (:tool-authorization-callback (option function)))
     callback-agent-observer)
 (defun callback-agent-observer-create
     (&key text-callback reasoning-callback status-callback steering-callback
-      steering-persisted-callback command-authorization-callback
-      tool-authorization-callback)
+      steering-persisted-callback pending-operations-callback
+      command-authorization-callback tool-authorization-callback)
   "Create an observer backed by optional presentation callbacks."
   (make-instance 'callback-agent-observer
                  :text-callback text-callback
@@ -297,6 +325,7 @@
                  :status-callback status-callback
                  :steering-callback steering-callback
                  :steering-persisted-callback steering-persisted-callback
+                 :pending-operations-callback pending-operations-callback
                  :command-authorization-callback
                  command-authorization-callback
                  :tool-authorization-callback tool-authorization-callback))
@@ -780,7 +809,11 @@
 
 (-> agent--apply-steering-input (agent agent-observer integer) null)
 (defun agent--apply-steering-input (agent observer request-number)
-  "Persist user messages drained from OBSERVER at a safe provider boundary."
+  "Apply queued operations and persist steering at a safe provider boundary.
+
+Queued user operations run first so a replaced provider, configuration, or
+tool registry reaches the very next provider request."
+  (agent-observer-apply-pending-operations observer agent)
   (let ((messages (agent-observer-take-steering observer))
         (conversation (agent-conversation agent)))
     (unless (listp messages)

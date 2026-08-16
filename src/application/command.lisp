@@ -14,7 +14,7 @@
     "The command metadata keys every defining form must state explicitly.")
 
   (defparameter *application-command-busy-behaviors*
-    '(:hold :inspect :execute :cancel)
+    '(:hold :inspect :execute :apply :cancel)
     "The supported command policies while application work is active.")
 
   (defparameter *application-command-terminal-behaviors*
@@ -813,12 +813,20 @@ without changing the registry."
 
 (defgeneric application-command-busy-action (command invocation)
   (:documentation
-   "Return :HOLD, :EXECUTE, or :CANCEL for COMMAND during active work."))
+   "Return :HOLD, :EXECUTE, :APPLY, or :CANCEL for COMMAND during active work.
+
+:EXECUTE runs immediately on the terminal reader, :APPLY runs at the active
+turn's next safe provider boundary, and :HOLD waits for the idle queue."))
 
 (defmethod application-command-busy-action
     ((command application-command)
      (invocation application-command-invocation))
-  "Resolve COMMAND's declared busy policy for INVOCATION."
+  "Resolve COMMAND's declared busy policy for INVOCATION.
+
+An argument-free :INSPECT or :APPLY invocation only displays state, so it
+executes immediately unless it owns the terminal for a modal picker, which
+must wait for the idle queue. Supplied arguments make :APPLY defer the
+change to the next safe boundary and make :INSPECT wait for the idle queue."
   (ecase (application-command-busy-behavior command)
     (:hold
      ':hold)
@@ -826,6 +834,15 @@ without changing the registry."
      (if (application-command-invocation-argument-free-p command invocation)
          ':execute
          ':hold))
+    (:apply
+     (cond
+       ((not (application-command-invocation-argument-free-p
+              command invocation))
+        ':apply)
+       ((application-command-terminal-owner-p command invocation)
+        ':hold)
+       (t
+        ':execute)))
     (:execute
      ':execute)
     (:cancel

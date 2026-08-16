@@ -79,6 +79,12 @@
     :type deque
     :documentation
     "Identified steering messages drained but not yet durably acknowledged.")
+   (pending-apply-items
+    :initform (make-deque)
+    :reader application-input-controller-pending-apply-items
+    :type deque
+    :documentation
+    "FIFO command inputs applying at the active turn's next safe boundary.")
    (follow-up-edit-index
     :initform nil
     :accessor application-input-controller-follow-up-edit-index
@@ -382,7 +388,8 @@ offers, so the hint appears only while forcing exit is still worth explaining."
   (list (application-input-controller-initial-work-items controller)
         (application-input-controller-work-items controller)
         (application-input-controller-steering-items controller)
-        (application-input-controller-steering-in-flight-items controller)))
+        (application-input-controller-steering-in-flight-items controller)
+        (application-input-controller-pending-apply-items controller)))
 
 (-> application-input-controller--prepare-shutdown
     (application-input-controller keyword)
@@ -1739,6 +1746,60 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (application-input-controller--present-scheduled-lisp controller source))
   nil)
 
+(-> application-input-controller--schedule-apply
+    (application-input-controller string)
+    null)
+(defun application-input-controller--schedule-apply (controller input)
+  "Queue busy command INPUT to apply at the active turn's next safe boundary."
+  (with-lock-held ((application-input-controller-lock controller))
+    (deque-push-back
+     (application-input-controller-pending-apply-items controller)
+     input))
+  (application-present
+   (application-input-controller-application controller)
+   (list
+    (terminal-span ':hint
+                   "∙ command applies at the next safe point in the active response")
+    (terminal-span ':plain (string #\Newline))
+    (terminal-span ':dim
+                   (format nil "  ~A"
+                           (text-cell-prefix
+                            (sanitize-text input :single-line-p t)
+                            72)))))
+  nil)
+
+(-> application-input-controller--take-pending-applies
+    (application-input-controller)
+    list)
+(defun application-input-controller--take-pending-applies (controller)
+  "Drain and return CONTROLLER's queued apply-at-boundary command inputs."
+  (with-lock-held ((application-input-controller-lock controller))
+    (let ((items (application-input-controller-pending-apply-items controller))
+          (drained nil))
+      (loop until (deque-empty-p items)
+            do (push (deque-pop-front items) drained))
+      (nreverse drained))))
+
+(-> application-input-controller--apply-pending-commands
+    (application-input-controller &key (:agent t))
+    null)
+(defun application-input-controller--apply-pending-commands (controller &key agent)
+  "Apply queued commands now, then let running AGENT adopt replaced runtime.
+
+Runs non-interactively so a boundary application never opens terminal
+pickers. AGENT, when supplied, is the loop still executing the current turn;
+it adopts a replaced configuration, provider, or tool registry so the change
+reaches the very next provider request."
+  (let ((inputs (application-input-controller--take-pending-applies controller))
+        (application (application-input-controller-application controller)))
+    (when inputs
+      (dolist (input inputs)
+        (let ((*application-command-interactive-p* nil))
+          (application--run-command-input application input)))
+      (when agent
+        (application--agent-adopt-runtime application agent))))
+  nil)
+
 (-> application-input-controller--lisp-active-turn-action
     (application-input-controller string)
     (member :cancel :execute :hold))
@@ -1857,6 +1918,18 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
      (application-run-lisp-input
       (application-input-controller-application controller) source))))
 
+(-> application-input-controller--run-responsive-unknown
+    (application-input-controller string)
+    keyword)
+(defun application-input-controller--run-responsive-unknown (controller input)
+  "Report unknown or malformed command INPUT immediately during active work."
+  (application-input-controller--call-with-responsive-prompt-block
+   controller
+   (lambda ()
+     (application--run-command-input
+      (application-input-controller-application controller)
+      input))))
+
 (-> application-input-controller--run-responsive-command
     (application-input-controller application-command
      application-command-invocation)
@@ -1922,7 +1995,9 @@ may execute immediately; other Lisp waits for the idle boundary."
              (invocation
               (if command
                   (application-command-busy-action command invocation)
-                  ':hold))))
+                  ;; An unknown command can only ever error, so report it
+                  ;; immediately instead of scheduling the mistake.
+                  ':execute))))
          (handled-p nil)
          (changed-p nil)
          (post-action nil))
@@ -1986,13 +2061,20 @@ may execute immediately; other Lisp waits for the idle boundary."
        (application-input-controller--request-exit controller ':quit))
       (:execute
        (let ((result
-               (if lisp-input-p
-                   (application-input-controller--run-responsive-lisp
-                    controller text)
-                   (application-input-controller--run-responsive-command
-                    controller command invocation))))
+               (cond
+                 (lisp-input-p
+                  (application-input-controller--run-responsive-lisp
+                   controller text))
+                 (command
+                  (application-input-controller--run-responsive-command
+                   controller command invocation))
+                 (t
+                  (application-input-controller--run-responsive-unknown
+                   controller text)))))
          (when (eq result ':quit)
            (application-input-controller--request-exit controller ':quit))))
+      (:apply
+       (application-input-controller--schedule-apply controller text))
       (:hold
        (if lisp-input-p
            (application-input-controller--present-scheduled-lisp controller text)
@@ -2084,15 +2166,22 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (action
                    (if command
                        (application-command-busy-action command invocation)
-                       ':hold)))
+                       ;; An unknown command can only ever error, so report
+                       ;; it immediately instead of scheduling the mistake.
+                       ':execute)))
             (ecase action
               (:cancel
                (application-input-controller--request-exit controller ':quit))
               (:execute
-               (when (eq (application-input-controller--run-responsive-command
-                          controller command invocation)
+               (when (eq (if command
+                             (application-input-controller--run-responsive-command
+                              controller command invocation)
+                             (application-input-controller--run-responsive-unknown
+                              controller text))
                          ':quit)
                  (application-input-controller--request-exit controller ':quit)))
+              (:apply
+               (application-input-controller--schedule-apply controller text))
               (:hold
                (application-input-controller--schedule-command controller text)))))
          (t
@@ -2846,6 +2935,18 @@ may execute immediately; other Lisp waits for the idle boundary."
                  (application-input-controller-queued-work-paused-p controller))
                 (not
                  (deque-empty-p
+                  (application-input-controller-pending-apply-items
+                   controller))))
+           ;; Boundary-applying commands missed their turn boundary; apply
+           ;; them before any queued follow-up starts new work.
+           (setf work (list ':apply-pending)
+                 (application-input-controller-active-p controller) t)
+           (return))
+          ((and (not (application-localgroup-paused-p application))
+                (not
+                 (application-input-controller-queued-work-paused-p controller))
+                (not
+                 (deque-empty-p
                   (application-input-controller-work-items controller)))
                 (not
                  (eql
@@ -3075,6 +3176,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
      &key (:steering-function (option function))
           (:steering-persisted-function (option function))
           (:user-message-persisted-function (option function))
+          (:pending-operations-function (option function))
           (:pending-input-identifier (option non-empty-string))
           (:tools-p boolean)
           (:tool-allowlist (option list))
@@ -3085,7 +3187,8 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
 (defun application--run-message-input
     (application input
      &key steering-function steering-persisted-function
-          user-message-persisted-function pending-input-identifier (tools-p t)
+          user-message-persisted-function pending-operations-function
+          pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
           (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling."
@@ -3103,6 +3206,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              :steering-function steering-function
              :steering-persisted-function steering-persisted-function
              :user-message-persisted-function user-message-persisted-function
+             :pending-operations-function pending-operations-function
              :pending-input-identifier pending-input-identifier
              :tools-p tools-p
              :tool-allowlist tool-allowlist
@@ -3330,6 +3434,8 @@ the next application boundary because it does not depend on the provider."
         (progn
           (application-input-controller--begin-prompt-work controller work)
           (case (first work)
+            (:apply-pending
+             (application-input-controller--apply-pending-commands controller))
             (:message
              (let ((result
                      (application--run-message-input
@@ -3346,6 +3452,11 @@ the next application boundary because it does not depend on the provider."
                       (lambda (identifier)
                         (application-input-controller--acknowledge-active-work
                          controller identifier))
+                      :pending-operations-function
+                      (lambda (agent)
+                        (application-input-controller--apply-pending-commands
+                         controller
+                         :agent agent))
                       :pending-input-identifier pending-input-identifier)))
                (application-input-controller--record-prompt-result
                 controller result)

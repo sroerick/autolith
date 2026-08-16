@@ -1743,7 +1743,7 @@ to TERMINAL-UI-SELECT."
      :argument "[MODEL]"
      :description "pick a registered provider model and reasoning effort"
      :tip "changes both the model and its reasoning effort."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :exclusive
      :call-lambda-list (&optional (model nil model-supplied-p))
      :slash-argument-mode :first)
@@ -1787,7 +1787,7 @@ to TERMINAL-UI-SELECT."
      :argument "[LEVEL]"
      :description "pick the reasoning effort"
      :tip "changes reasoning effort without switching models."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :call-lambda-list (&optional (effort nil effort-supplied-p))
      :slash-argument-mode :first)
@@ -1811,7 +1811,7 @@ to TERMINAL-UI-SELECT."
      :argument "on|off"
      :description "show visible reasoning summaries"
      :tip "toggles visible reasoning summaries with on or off."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (mode)
      :slash-argument-mode :first)
@@ -1824,7 +1824,7 @@ to TERMINAL-UI-SELECT."
      :argument "on|off"
      :description "show local timestamps beside user and assistant turns"
      :tip "toggles dim local timestamps beside user and assistant turns."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (mode)
      :slash-argument-mode :first)
@@ -1837,7 +1837,7 @@ to TERMINAL-UI-SELECT."
      :argument "on|off"
      :description "use Simple Technical English for replies"
      :tip "toggles short, direct Simple Technical English replies."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (mode)
      :slash-argument-mode :first)
@@ -1850,7 +1850,7 @@ to TERMINAL-UI-SELECT."
      :argument "on|off"
      :description "prioritize speed and cap child-agent spawning"
      :tip "acts directly and admits at most two child agents until disabled."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (mode)
      :slash-argument-mode :first)
@@ -1863,7 +1863,7 @@ to TERMINAL-UI-SELECT."
      :argument "[ask|auto|sandbox|full|list|clear]"
      :description "choose command access for this session"
      :tip "chooses how shell commands are authorized, including pick-for-me auto mode."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :call-lambda-list (&optional (choice nil choice-supplied-p))
      :slash-argument-mode :first)
@@ -1886,7 +1886,7 @@ to TERMINAL-UI-SELECT."
      :argument "INPUT"
      :description "run input after rate limits reset"
      :tip "queues a prompt for the next known rate-limit reset."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (input)
      :slash-argument-mode :remainder)
@@ -1899,7 +1899,7 @@ to TERMINAL-UI-SELECT."
      :argument "[OBJECTIVE]"
      :description "set or view the session goal"
      :tip "sets the objective Autolith should pursue across continuations."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (&optional (remainder ""))
      :slash-argument-mode :remainder)
@@ -1912,7 +1912,7 @@ to TERMINAL-UI-SELECT."
      :argument nil
      :description "show workspace agenda entries"
      :tip "shows durable commitments and notes for the current workspace."
-     :busy-behavior :inspect
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list ()
      :slash-argument-mode :none)
@@ -1957,7 +1957,7 @@ to TERMINAL-UI-SELECT."
      :argument "ID"
      :description "close one resolved papercut report"
      :tip "removes a fixed or obsolete report from /papercuts."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (identifier)
      :slash-argument-mode :first)
@@ -1991,7 +1991,7 @@ to TERMINAL-UI-SELECT."
      :argument "[refresh|reload]"
      :description "show or refresh configured MCP servers"
      :tip "shows MCP connections; refresh rediscovers, reload rereads configuration."
-     :busy-behavior :hold
+     :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (&optional mode)
      :slash-argument-mode :remainder)

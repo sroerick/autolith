@@ -253,7 +253,12 @@ providers that have no model-list endpoint.
 - Interactive arity errors open the restart debugger. =supply-arguments=
   takes one Lisp form of replacement arguments.
 - Programmatic calls keep ordinary Common Lisp arity rules.
-- Busy behavior is =:inspect=, =:execute=, =:hold=, or =:cancel=.
+- Busy behavior is =:inspect=, =:execute=, =:apply=, =:hold=, or =:cancel=.
+  During active work, =:execute= runs immediately, =:apply= applies its
+  change at the turn's next safe provider boundary, and =:hold= waits for
+  the idle queue. Argument-free =:inspect= and =:apply= invocations only
+  display state, so they run immediately. An unknown command reports its
+  error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=.
 
