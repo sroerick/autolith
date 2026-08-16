@@ -151,10 +151,11 @@ If you want to pull an update, you can do so easily:
 
 Or do *autolith update* in your shell.
 
-* What makes Autolith different
+* Autolith differences from other agents
 
 ** Lisp-first control
-Prose, callable commands, tools, and explicit Common Lisp share the REPL.
+Plain text, callable commands, tools, and explicit Common Lisp share
+Autolith's REPL (or prompt window/input, as you may know it from other agents).
 This means that you can construct scripts easily, and you can call tools just
 like the clanker does it.
 
@@ -174,17 +175,16 @@ colors your terminal sets, therefore, it should look pretty good no matter what 
 terminal color scheme is, so long as you like it.
 
 Autolith also emits prompt markers, so if your terminal can scroll jump between shell prompts,
-it can also scroll between messages to Autolith
+it can also scroll between messages to Autolith.
 
 The line editor is the fairly powerful [[https://github.com/luciusmagn/clinedi][clinedi]], it should support all the editing niceties
 and shortcuts you are used to.
 
-** Durable state and recovery
-Conversations use append-only readable files. Memories and workspace agendas remain explicit.
+** State and recovery
+Conversations use append-only readable files.
 
-Steering messages and follow-ups survive active-image crashes in a conversation-scoped vault.
-The vault is (intentionally) not resubmitted automatically, since you may want to diagnose
-the crash before you resume your previous work.
+Steering messages and follow-ups survive active-image crashes and abrupt shutdowns in a conversation-scoped vault. The vault is (intentionally) not resubmitted automatically,
+since you may want to diagnose a crash before you resume your previous work.
 
 You can use the following commands to interact with the vault:
 #+BEGIN_SRC lisp
@@ -192,7 +192,6 @@ You can use the following commands to interact with the vault:
 (vault-restore) ; re-submit follow-ups and steering messages in the vault
 (vault-discard) ; delete vault contents
 #+END_SRC
-
 
 Finally, checkpoints, private mutation commits, generations, and a pristine recovery image keep
 live work reconstructible, so it's hard to terminally lobotomize AL.
