@@ -112,9 +112,9 @@
               wait "$first_pid"
               wait "$concurrent_pid"
               test "$(tail -n 1 "$first_output")" = \
-                "autolith ${autolith.autolithSystem.version}"
+                "autolith version ${autolith.autolithSystem.version}"
               test "$(tail -n 1 "$concurrent_output")" = \
-                "autolith ${autolith.autolithSystem.version}"
+                "autolith version ${autolith.autolithSystem.version}"
               test "$(cat "$first_output" "$concurrent_output" | \
                 grep -c 'Installed preloaded active image')" = 1
               test "$(cat "$first_output" "$concurrent_output" | \
@@ -146,7 +146,7 @@
                 "$image_directory/recovery/autolith-recovery.core" | cut -d ' ' -f 1)
               autolith --version > "$second_output"
               test "$(cat "$second_output")" = \
-                "autolith ${autolith.autolithSystem.version}"
+                "autolith version ${autolith.autolithSystem.version}"
               test "$active_hash" = "$(sha256sum \
                 "$image_directory/active/autolith-active.core" | cut -d ' ' -f 1)"
               test "$recovery_hash" = "$(sha256sum \
@@ -160,7 +160,7 @@
               upgrade_output="$TMPDIR/upgrade-output"
               "${upgradeAutolith}/bin/autolith" --version > "$upgrade_output"
               test "$(tail -n 1 "$upgrade_output")" = \
-                "autolith ${upgradeAutolith.autolithSystem.version}"
+                "autolith version ${upgradeAutolith.autolithSystem.version}"
               upgrade_directory="$XDG_DATA_HOME/autolith/nix/images/${upgradeImageIdentity}"
               test "$upgrade_directory" != "$image_directory"
               test "$(cat "$upgrade_directory/identity")" = \
