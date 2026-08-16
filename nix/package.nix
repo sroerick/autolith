@@ -306,6 +306,7 @@ let
       bordeaux-threads
       cl-base64
       cffi
+      clingon
       closer-mop
       colorlisp
       colordiff

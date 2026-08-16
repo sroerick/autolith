@@ -141,6 +141,17 @@
                 #:live-region-suspend
                 #:live-region-dismiss
                 #:live-region-resize)
+  (:import-from #:clingon
+                #:command-arguments
+                #:command-handler
+                #:command-name
+                #:exit-error
+                #:exit-error-code
+                #:getopt
+                #:getopt*
+                #:make-command
+                #:make-option
+                #:parse-command-line)
   (:import-from #:colordiff
                 #:highlight-lines
                 #:highlight-spans

@@ -12,6 +12,7 @@
                #:cl-termdown
                #:clifff
                #:clinedi
+               #:clingon
                #:colorlisp
                #:colordiff
                #:closer-mop
