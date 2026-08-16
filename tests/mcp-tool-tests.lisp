@@ -3224,11 +3224,7 @@
             'string
             marker
             (make-string 10000 :initial-element #\X)))
-         (instructions
-           (concatenate
-            'string
-            (make-string 3000 :initial-element #\I)
-            payload))
+         (instructions (make-string 3000 :initial-element #\I))
          (initialization-function
            (lambda ()
              (json-object
@@ -3291,13 +3287,10 @@
                        (zerop (hash-table-count capability)))))
                   '("tools" "resources" "prompts"))
                  (null (mcp-client-server-info client))
-                 (stringp retained-instructions)
-                 (=
-                  (length retained-instructions)
-                  *mcp-maximum-server-instruction-characters*)
+                 (string= retained-instructions instructions)
                  (not
                   (test-mcp--object-contains-string-p runtime marker)))
-                "one MCP runtime retains only bounded initialization projections")))
+                "one MCP runtime retains only projected initialization metadata")))
            (mcp-tool-registry-register-manager registry manager)
            (let ((contributions
                    (mcp-tool-registry-context-contributions registry)))
@@ -3306,11 +3299,11 @@
                (= (length contributions) 2)
                (every
                 (lambda (contribution)
-                  (=
-                   (length (context-contribution-evidence contribution))
-                   *mcp-maximum-server-instruction-characters*))
+                  (string=
+                   (context-contribution-evidence contribution)
+                   instructions))
                 contributions))
-              "multi-server instructions share the exact model-visible bound"))
+              "multi-server instructions reach the model unabridged"))
            (let ((application
                    (make-instance
                     'application

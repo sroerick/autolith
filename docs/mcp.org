@@ -8,7 +8,7 @@ through stdio and Streamable HTTP, using [[https://github.com/luciusmagn/mcparen
 revision and accepts either one the server selects.
 
 As with other agents servers can offer tools, resources, resource
-templates, prompts, and bounded server instructions.
+templates, prompts, and server instructions.
 
 Autolit's MCP configuration is an S-expression, see below.
 
@@ -202,8 +202,7 @@ A load failure restores the previous registry.
 - Required servers receive capacity first, then optional servers
 - A required overflow fails startup or refresh
 - An optional overflow marks that server failed and clears its tools
-- Autolith keeps at most 2,000 credential-sanitized characters of
-  server instructions per server and per request
+- Server instructions are credential-sanitized before retention
 
 Shutdown, MCP reload, conversation replacement, and checkpoint
 preparation close live clients.
