@@ -35,9 +35,8 @@
     (let ((*standard-output* stream)
           (*error-output* stream)
           (*trace-output* stream)
-          (*skill-logical-turn-active-p* nil)
-          (*skill-logical-turn-selection-names* nil)
-          (*skill-logical-turn-selection-metadata* nil))
+            (*skill-logical-turn-active-p* nil)
+            (*skill-logical-turn-selection-names* nil))
       (asdf:test-system :autolith))))
 
 (defmethod mutation-checker-check-active

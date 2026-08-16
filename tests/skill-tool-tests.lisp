@@ -114,30 +114,6 @@
                    (search "only while an agent turn is active"
                            (tool-result-content outside-turn)))
               "skill.load rejects selection that cannot survive a logical turn"))
-           (let ((discovery-called-p nil)
-                 (result nil))
-             (test-call-with-function-replacements
-              (list
-               (list
-                'skill-catalog-for-configuration
-                (lambda (ignored-configuration)
-                  (declare (ignore ignored-configuration))
-                  (setf discovery-called-p t)
-                  (error "Invalid names must not reach discovery."))))
-              (lambda ()
-                (setf result
-                      (skill-tool-tests--call
-                       registry
-                       context
-                       (make-string
-                        (1+ *skill-name-character-limit*)
-                        :initial-element #\a)))))
-             (test-assert
-              (and (not discovery-called-p)
-                   (not (tool-result-success-p result))
-                   (search "at most"
-                           (tool-result-content result)))
-              "skill.load rejects oversized names before filesystem discovery"))
            (call-with-skill-logical-turn
             (user-message-input-create :text "Use the relevant workflow.")
             (lambda ()
@@ -194,21 +170,9 @@
                                 (tool-result-content duplicate))
                         (equal *skill-logical-turn-selection-names*
                                '("alpha")))
-                   "repeated selection is idempotent"))
-                (let ((wrong-case
-                        (skill-tool-tests--call
-                         registry
-                         context
-                         "Alpha")))
-                  (test-assert
-                   (and (not (tool-result-success-p wrong-case))
-                        (search "lowercase ASCII letters"
-                                (tool-result-content wrong-case))
-                        (equal *skill-logical-turn-selection-names*
-                               '("alpha")))
-                   "skill.load rejects names that differ only by case")))))
-           (let ((*skill-instruction-character-limit* 128))
-             (call-with-skill-logical-turn
+                     "repeated selection is idempotent")))))
+             (let ((*skill-instruction-character-limit* 128))
+               (call-with-skill-logical-turn
               (user-message-input-create :text "Use the large workflow.")
               (lambda ()
                 (let ((result

@@ -24,14 +24,11 @@
 
 (-> skill-load-tool--name (json-object) string)
 (defun skill-load-tool--name (arguments)
-  "Return the exact valid skill name supplied in ARGUMENTS."
+  "Return the exact skill name supplied in ARGUMENTS."
   (let ((name (tool-argument arguments "name" :required t)))
-    (unless (skill--valid-name-p name)
+    (unless (and (stringp name) (plusp (length name)))
       (error 'tool-error
-             :message
-             (format nil
-                     "skill.load name must be at most ~D characters and contain only lowercase ASCII letters, digits, and nonconsecutive interior hyphens."
-                     *skill-name-character-limit*)
+             :message "skill.load name must be a non-empty string."
              :tool-name "skill.load"))
     name))
 

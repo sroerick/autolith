@@ -35,12 +35,15 @@
 (defun skill-tests--definition
     (name description instructions &key (version 1))
   "Return one native skill definition string."
-  (format nil
-          "(:autolith-skill~% :version ~S~% :name ~S~% :description ~S~% :instructions ~S)~%"
-          version
-          name
-          description
-          instructions))
+  (let ((*print-pretty* nil)
+        (*print-circle* nil)
+        (*print-readably* nil))
+    (format nil
+            "(:autolith-skill~% :version ~S~% :name ~S~% :description ~S~% :instructions ~S)~%"
+            version
+            name
+            description
+            instructions)))
 
 (-> skill-tests--names (skill-catalog) list)
 (defun skill-tests--names (catalog)
@@ -169,27 +172,28 @@ related operations."
            (let* ((catalog
                     (skill-catalog-discover (list primary secondary)))
                   (kinds (skill-tests--diagnostic-kinds catalog)))
-             (test-assert
-              (equal (skill-tests--names catalog) '("hidden" "alpha" "beta"))
-              "native skills are path-sorted and ordered by root precedence")
-             (test-assert
-              (string=
-               (skill-metadata-description
-                (skill-catalog-find catalog "alpha"))
-               "Handles several related operations.")
-              "skill descriptions become bounded single-line metadata")
-             (test-assert
-              (member ':missing-field kinds)
-              "a missing native field produces a typed diagnostic")
-             (test-assert
-              (member ':name-directory-mismatch kinds)
-              "the declared name must match the immediate parent directory")
-             (test-assert
-              (= (count ':shadowed kinds) 2)
-              "valid and malformed higher-precedence directories reserve names")
-             (test-assert
-              (null (skill-catalog-find catalog "blocked"))
-              "a malformed higher-precedence skill blocks a lower definition")
+               (test-assert
+                  (equal (skill-tests--names catalog)
+                         '("hidden" "alpha" "different" "beta" "blocked"))
+                "native skills are path-sorted and ordered by root precedence")
+               (test-assert
+                (string=
+                 (skill-metadata-description
+                  (skill-catalog-find catalog "alpha"))
+                 "Handles several related operations.")
+                "skill descriptions become bounded single-line metadata")
+               (test-assert
+                (member ':missing-field kinds)
+                "a missing native field produces a typed diagnostic")
+               (test-assert
+                (skill-catalog-find catalog "different")
+                "a valid :name does not have to match its directory")
+               (test-assert
+                (= (count ':shadowed kinds) 1)
+                "a later valid skill with the same :name is shadowed")
+               (test-assert
+                (skill-catalog-find catalog "blocked")
+                "a malformed higher-precedence skill does not reserve a name")
              (test-assert
               (skill-catalog-find catalog "hidden")
               "recursive discovery includes Skills beneath hidden directories")
@@ -201,7 +205,7 @@ related operations."
 
 (-> skill-tests--filesystem-boundaries () null)
 (defun skill-tests--filesystem-boundaries ()
-  "Test root confinement, lexical reservation, and regular-file enforcement."
+  "Test root confinement and regular-file enforcement."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (primary (merge-pathnames "primary/" root))
@@ -282,20 +286,22 @@ related operations."
            (let* ((catalog
                     (skill-catalog-discover (list primary secondary)))
                   (kinds (skill-tests--diagnostic-kinds catalog)))
-             (test-assert
-              (null (skill-catalog-skills catalog))
-              "unsafe higher-precedence filesystem entries reserve every name")
-             (test-assert
-              (member ':outside-root kinds)
-              "file and directory symlinks cannot escape a canonical skill root")
-             (test-assert
-             (member ':not-regular-file kinds)
-              "direct and symbolic FIFO candidates fail without being opened")
-             (test-assert
-              (= (count ':shadowed kinds) 5)
-              "rejected lexical candidates block all lower-precedence definitions")))
-      (skill-tests--delete-root root)))
-  nil)
+               (test-assert
+                (equal (skill-tests--names catalog)
+                       '("broken-link" "directory-link" "fifo-link" "fifo"
+                         "file-link"))
+                "unsafe higher-precedence entries do not reserve names")
+               (test-assert
+                (member ':outside-root kinds)
+                "file and directory symlinks cannot escape a canonical skill root")
+               (test-assert
+                (member ':not-regular-file kinds)
+                "direct and symbolic FIFO candidates fail without being opened")
+               (test-assert
+                (zerop (count ':shadowed kinds))
+                "rejected higher-precedence candidates do not shadow lower names")))
+        (skill-tests--delete-root root)))
+    nil)
 
 (-> skill-tests--native-parser-rejections () null)
 (defun skill-tests--native-parser-rejections ()
@@ -319,9 +325,6 @@ related operations."
               ,(skill-tests--definition
                 "bad-version" "Bad version." "x" :version "1")
               :invalid-version)
-             ("bad-name"
-              ,(skill-tests--definition "Bad-Name" "Bad name." "x")
-              :invalid-name)
              ("bad-description"
               "(:autolith-skill :version 1 :name \"bad-description\" :description 4 :instructions \"x\")"
               :invalid-description)
@@ -332,10 +335,6 @@ related operations."
               ,(skill-tests--definition
                 "empty-instructions" "Empty instructions." "   ")
               :invalid-instructions)
-             ("mismatch"
-              ,(skill-tests--definition
-                "another-name" "Mismatched name." "x")
-              :name-directory-mismatch)
              ("extra-form"
               ,(concatenate
                 'string
@@ -1088,108 +1087,6 @@ related operations."
                      contributions
                      "skill-selected-missing"))
                    "unreadable selected instructions are never applied")))))
-           (let ((selected-path
-                   (skill-tests--write
-                    skills
-                    "revealed/SKILL.sexp"
-                    (skill-tests--definition
-                     "revealed"
-                     "The selected higher-precedence definition."
-                     "Selected higher instructions."))))
-             (skill-tests--write
-              lower-skills
-              "revealed/SKILL.sexp"
-              (skill-tests--definition
-               "revealed"
-               "The hidden lower-precedence definition."
-               "Hidden lower instructions."))
-             (call-with-skill-logical-turn
-              (user-message-input-create :text "Select explicitly.")
-              (lambda ()
-                (skill-select-for-logical-turn configuration "revealed")
-                (delete-file selected-path)
-                (let ((contributions
-                        (skill-request-contributions
-                         configuration
-                         conversation)))
-                  (test-assert
-                   (and
-                    (skill-tests--contribution
-                     contributions
-                     "skill-warning-revealed")
-                    (null
-                     (skill-tests--contribution
-                      contributions
-                      "skill-selected-revealed")))
-                   "deletion cannot silently expose a lower-precedence skill")))))
-           (skill-tests--write
-            lower-skills
-            "promoted/SKILL.sexp"
-            (skill-tests--definition
-             "promoted"
-             "The initially selected lower definition."
-             "Initially selected instructions."))
-           (call-with-skill-logical-turn
-            (user-message-input-create :text "Select explicitly.")
-            (lambda ()
-              (skill-select-for-logical-turn configuration "promoted")
-              (skill-tests--write
-               skills
-               "promoted/SKILL.sexp"
-               (skill-tests--definition
-                "promoted"
-                "A newly added higher definition."
-                "Replacement higher instructions."))
-              (let ((contributions
-                      (skill-request-contributions
-                       configuration
-                       conversation)))
-                (test-assert
-                 (and
-                  (skill-tests--contribution
-                   contributions
-                   "skill-warning-promoted")
-                  (null
-                   (skill-tests--contribution
-                    contributions
-                    "skill-selected-promoted")))
-                 "a newly winning higher-precedence path is not silently applied"))))
-           (let ((replaced-path
-                   (skill-tests--write
-                    skills
-                    "replaced/SKILL.sexp"
-                    (skill-tests--definition
-                     "replaced"
-                     "The original inode."
-                     "Original inode instructions."))))
-             (call-with-skill-logical-turn
-              (user-message-input-create :text "Select explicitly.")
-              (lambda ()
-                (skill-select-for-logical-turn configuration "replaced")
-                (rename-file
-                 replaced-path
-                 (merge-pathnames "replaced/SKILL.original" skills))
-                (skill-tests--write
-                 skills
-                 "replaced/SKILL.sexp"
-                 (skill-tests--definition
-                  "replaced"
-                  "A replacement inode."
-                  "Replacement inode instructions."))
-                (let ((contributions
-                        (skill-request-contributions
-                         configuration
-                         conversation)))
-                  (test-assert
-                   (and
-                    (skill-tests--contribution
-                     contributions
-                     "skill-warning-replaced")
-                    (null
-                     (skill-tests--contribution
-                      contributions
-                      "skill-selected-replaced")))
-                   "same-path inode replacement invalidates the selection")))))
            (skill-tests--write
             skills
             "first/SKILL.sexp"
