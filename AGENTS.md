@@ -140,8 +140,12 @@ of repeating type or state dispatch in `cond` trees.
 - Functions and methods with four or more parameters use keyword arguments.
   Do not introduce new positional lambda lists with four or more parameters.
 - Prefer `first` and `rest` over `car` and `cdr` in application code.
-- Quote keywords used as data, especially when they appear as values in a
-  keyword-argument call, for example `:status ':durable`.
+- Quote keywords used as data. Whenever a keyword value directly follows a
+  keyword-argument name, in a call, an evaluated plist, or a `defclass`
+  `:initform`, quote the value, for example `:status ':durable`. Never quote
+  keywords in unevaluated syntax positions: `defclass` `:initarg` names,
+  `case` clause keys, `member` type specifiers, quoted configuration data,
+  and macro metadata the macro quotes itself.
 
 ### Types and Documentation
 
