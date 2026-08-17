@@ -4,11 +4,11 @@
 
 (defparameter *terminal-window-size-request*
   #+linux #x5413
-  #+darwin #x40087468
-  #-(or linux darwin) #x5413
+  #+bsd #x40087468
+  #-(or linux bsd) #x5413
   "The platform TIOCGWINSZ ioctl request for reading terminal dimensions.")
 
-#-(or linux darwin)
+#-(or linux bsd)
 (warn "Autolith has no validated TIOCGWINSZ value for this platform; terminal size will fall back to tput.")
 
 (-> terminal-file-descriptor-size
