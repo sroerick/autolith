@@ -295,23 +295,24 @@ User's language preference overrules your Lisp preference."))
   (if (configuration-immutable-p configuration)
       "The self namespace is inspection-only in this immutable session.
 Use self.status for a concise active-image and recovery summary, lisp.describe and lisp.source with target self to inspect active bindings and exact tracked definitions, self.diff to read effective pending changes, and self.generations to list retained states."
-      "The self namespace operates on the active Autolith image itself; use it only to inspect or change the running agent and its Lisp-level SBCL implementation, never as a general shell or file reader.
-Start with self.status when the running, selected, pending, or retained state is unclear.
-Inspect active bindings with lisp.describe and exact tracked Autolith, dependency, or matching SBCL source with lisp.source, passing target self.
-Use self.eval for questions and instrumentation needed only in the current investigation. Prototype workspace Lisp, uncertain techniques, and SBCL internals in disposable lisp.* workers before they need to affect the agent.
-Use self.redefine to trial a complete definition; it accepts an explicit package, restores package locks, and journals that package for replay. self.set installs a journaled global value change.
-self.diff collapses repeated edits into the effective changes awaiting persistence, self.exercise records a narrow assertion-style check against one change, and self.discard peels back an experiment not worth keeping.
-Focused exercises speed iteration but never replace self.commit's full checks.
+      "The self namespace operates on the active Autolith image itself; use it to inspect or change the running agent and its Lisp-level SBCL implementation.
+Start with self.status when the state is unclear.
+Inspect active bindings with lisp.describe and exact tracked Autolith, dependency, or matching SBCL source with lisp.source, by passing target self.
+Use self.eval for questions and instrumentation needed.
+When necessary, prototype workspace Lisp, uncertain techniques, and SBCL internals in disposable lisp.* workers before trying them on yourself.
+Use self.redefine to trial a complete definition; it accepts an explicit package, restores package locks, and journals that package for replay.
+self.set installs a journaled global value change.
+self.diff collapses repeated edits into the effective changes awaiting persistence, self.exercise records a narrow assertion-style check against one change, and self.discard discards unwanted changes.
 Use self.persist-definition for one tested Autolith definition with continued value, or self.commit for one focused group of pending definitions and settings.
 Private commits are clean-process replay-probed before selection.
-Use memory or configuration for declarative preferences and self-modification only when a preference requires executable behavior.
-Request-local context contributors are the right extension point for recurring state-specific advice that should never enter durable conversation history; inspect DEFINE-CONTEXT-CONTRIBUTOR, MAKE-CONTEXT-CONTRIBUTION, and CONTEXT-STATUS before adding one.
-Contributions stack by default, and priority matters only when their bounded advice budget is full. Interactive slash commands use DEFINE-APPLICATION-COMMAND, whose metadata controls help, tips, completion, active-turn behavior, and terminal ownership; redefine the complete form so discard and private replay work.
-Use defparameter for live policy and defaults that should adopt a new definition on reload; reserve defvar for process state or identity that must survive reload.
-Redefining a macro or compiler macro does not recompile existing callers.
+Use memory or config for declarative preferences and self-modification only when a preference requires a code change.
+Request-local context contributors are the right mechanism for recurring advice that shouldnt enter conversation history; inspect DEFINE-CONTEXT-CONTRIBUTOR, MAKE-CONTEXT-CONTRIBUTION, and CONTEXT-STATUS before adding one.
+Contributions stack by default, and priority matters only when the budget is full.
+Interactive commands use DEFINE-APPLICATION-COMMAND, whose metadata controls help, tips, completion, active-turn behavior, and terminal ownership, redefine the complete form so discard and private replay work.
+Use defparameter for live state/defaults that should adopt a new definition on reload, reserve defvar for state that must survive reload.
 Inspect self.diff before checkpointing, reserve checkpoints for changes capable of disabling the main agent path, and confirm asynchronous publication with self.generations.
-At a natural stopping point after self.redefine or self.set, inspect self.diff and report whether the change remains exploratory, was discarded, or was privately committed.
-When an active-image operation signals a correctable condition, the failure lists the available restarts; retry the identical call adding restart NAME to invoke one, plus restart-value when the restart consumes a value."))
+At a natural stopping point after self.redefine or self.set, inspect self.diff and report whether the change remains exploratory, was discarded, or was committed.
+When an active-image operation signals a correctable condition, the failure lists the available restarts, retry the identical call adding restart NAME to invoke one, plus restart-value when the restart needs one."))
 
 (-> system-prompt (configuration &key (:hurry-up-p boolean)) string)
 (defun system-prompt (configuration &key (hurry-up-p *system-prompt-hurry-up-p*))
