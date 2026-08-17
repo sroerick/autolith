@@ -58,7 +58,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install rust
+          brew install rust gnu-tar
 
       - name: Build pinned SBCL release runtime
         run: |

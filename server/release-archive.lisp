@@ -149,9 +149,12 @@
 
 (-> release-archive--link-target (pathname) (option pathname))
 (defun release-archive--link-target (link)
-  "Return LINK's canonical existing target, or NIL for a broken link."
-  (let ((target (ignore-errors (truename link))))
-    (and target (probe-file target) target)))
+  "Return LINK's canonical existing target, or NIL for a broken link.
+
+TRUENAME of a dangling symbolic link returns the link's own canonical path
+rather than failing, so existence needs the following stat first."
+  (and (ignore-errors (sb-posix:stat (namestring link)))
+       (ignore-errors (truename link))))
 
 (-> release-archive--materialize-dependency-links (pathname) null)
 (defun release-archive--materialize-dependency-links (dependency-root)
@@ -326,21 +329,13 @@
 
 (-> release-archive--tar-command (pathname pathname string string) list)
 (defun release-archive--tar-command (tar-file working-dir release-name commit-time)
-  "Return a tar creation command for TAR-FILE containing RELEASE-NAME below WORKING-DIR."
-  (if (release-archive--command-pathname "gtar")
-      (list "gtar" "--sort=name"
-            (format nil "--mtime=@~A" commit-time)
-            "--owner=0" "--group=0" "--numeric-owner"
-            "-cf" (namestring tar-file)
-            "-C" (namestring working-dir) release-name)
-      (if (string-equal (software-type) "Linux")
-          (list "tar" "--sort=name"
-                (format nil "--mtime=@~A" commit-time)
-                "--owner=0" "--group=0" "--numeric-owner"
-                "-cf" (namestring tar-file)
-                "-C" (namestring working-dir) release-name)
-          (list "tar" "-cf" (namestring tar-file)
-                "-C" (namestring working-dir) release-name))))
+  "Return a deterministic GNU tar command for RELEASE-NAME below WORKING-DIR."
+  (list (if (release-archive--command-pathname "gtar") "gtar" "tar")
+        "--sort=name"
+        (format nil "--mtime=@~A" commit-time)
+        "--owner=0" "--group=0" "--numeric-owner"
+        "-cf" (namestring tar-file)
+        "-C" (namestring working-dir) release-name))
 
 (-> release-archive-build
     (&key (:source-root pathname) (:output-directory pathname))
@@ -396,12 +391,17 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                (release-archive--git-output
                 source-root '("show" "-s" "--format=%ct" "HEAD"))))
         (release-archive--require-commands
-         '("chmod" "cp" "find" "git" "gzip" "readlink" "tar"))
+         '("chmod" "cp" "find" "git" "gzip" "tar"))
         (unless (or (release-archive--command-pathname "sha256sum")
                     (release-archive--command-pathname "shasum"))
           (error 'release-archive-error
                  :stage ':prerequisites
                  :cause "sha256sum or shasum is required."))
+        (when (and (string-equal (software-type) "Darwin")
+                   (not (release-archive--command-pathname "gtar")))
+          (error 'release-archive-error
+                 :stage ':prerequisites
+                 :cause "GNU tar (gtar) is required for reproducible release archives."))
         (release-archive--validate-platform)
         (unless (release-archive--semantic-version-p runtime-version)
           (error 'release-archive-error

@@ -27,7 +27,10 @@
     t)
 (defun release-script-tests--run
     (command &key directory environment ignore-error-status (output ':string))
-  "Run COMMAND with optional ENVIRONMENT assignments and return its output."
+  "Run COMMAND with optional ENVIRONMENT assignments and return its output.
+
+Expected failures capture their diagnostics separately, so a tolerant caller
+can assert on the exact failure message through the second return value."
   (uiop:run-program
    (if environment
        (append (list "env") environment command)
@@ -35,7 +38,7 @@
    :directory directory
    :ignore-error-status ignore-error-status
    :output output
-   :error-output (if ignore-error-status nil ':output)))
+   :error-output (if ignore-error-status ':string ':output)))
 
 (-> release-script-tests--pty-command (string string) list)
 (defun release-script-tests--pty-command (command answer)
@@ -155,17 +158,22 @@ fi
                                 :if-does-not-exist ':ignore))
   nil)
 
-(-> release-script-tests--make-release (pathname pathname) pathname)
-(defun release-script-tests--make-release (source-root release-root)
+(-> release-script-tests--make-release
+    (pathname pathname &key (:library-extension string))
+    pathname)
+(defun release-script-tests--make-release
+    (source-root release-root &key (library-extension "so"))
   "Create a minimal packaged release fixture below RELEASE-ROOT."
-  (dolist (relative '("libexec/autolith/.qlot/setup.lisp"
-                      "libexec/autolith/autolith.asd"
-                      "libexec/autolith/script/install"
-                      "libexec/sbcl-source/version.lisp-expr"
-                      "lib/libfff_c.so"
-                      "lib/libcolorlisp-tree-sitter.so"
-                      "runtime/bin/sbcl"
-                      "libexec/cl-exec-sandbox-helper"))
+  (dolist (relative
+           (list "libexec/autolith/.qlot/setup.lisp"
+                 "libexec/autolith/autolith.asd"
+                 "libexec/autolith/script/install"
+                 "libexec/sbcl-source/version.lisp-expr"
+                 (format nil "lib/libfff_c.~A" library-extension)
+                 (format nil "lib/libcolorlisp-tree-sitter.~A"
+                         library-extension)
+                 "runtime/bin/sbcl"
+                 "libexec/cl-exec-sandbox-helper"))
     (release-script-tests--write-file
      (merge-pathnames relative release-root)
      ""))
@@ -474,7 +482,8 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
            (list "AUTOLITH_NO_UPDATE_CHECK=1"
                  (format nil "PATH=~A" path))))
     (release-script-tests--install-darwin-host-tools host-bin)
-    (release-script-tests--make-release source-root release-root)
+    (release-script-tests--make-release source-root release-root
+                                        :library-extension "dylib")
     (let ((output
             (release-script-tests--run
              (list (namestring launcher) "--autolith-release-probe")
@@ -770,7 +779,8 @@ fi
          (bin-directory (merge-pathnames "darwin-bin/" root))
          (curl (merge-pathnames "curl" fixture-bin))
          (installer (merge-pathnames "script/install" source-root)))
-    (release-script-tests--make-release source-root release-root)
+    (release-script-tests--make-release source-root release-root
+                                        :library-extension "dylib")
     (uiop:ensure-all-directories-exist
      (list fixture-root fixture-source fixture-bin fixture-release))
     (release-script-tests--install-darwin-host-tools fixture-bin)
@@ -823,7 +833,7 @@ fi
        (string= (release-script-tests--readlink
                  (merge-pathnames "current" install-root))
                 (format nil "releases/~A" tag))
-       "the Darwin installer selects the requested version atomically")
+       "the Darwin installer selects the requested version")
       (test-assert
        (string= (release-script-tests--readlink
                  (merge-pathnames "autolith" bin-directory))
