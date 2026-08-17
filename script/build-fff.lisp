@@ -1,6 +1,22 @@
 (require :asdf)
 (require :sb-posix)
 
+(defun fff--prepare-build-environment ()
+  "Set host-specific compiler flags required to build fff's C dependencies.
+
+  LMDB uses SysV semaphores on BSD and only defines union semun when
+  _SEM_SEMUN_UNDEFINED is set. glibc defines that macro; NetBSD and
+  OpenBSD do not, and their public headers also omit the union."
+  #+(or netbsd openbsd)
+  (let ((previous (or (uiop:getenv "CFLAGS") "")))
+    (unless (search "-D_SEM_SEMUN_UNDEFINED" previous)
+      (sb-posix:setenv "CFLAGS"
+                       (string-trim
+                        '(#\Space)
+                        (format nil "~A -D_SEM_SEMUN_UNDEFINED" previous))
+                       1)))
+  nil)
+
 (let* ((script-path (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root (uiop:pathname-parent-directory-pathname script-directory))
@@ -90,10 +106,11 @@
                     :output ':string))))
             (unless (string= actual commit)
               (error "Fetched fff commit ~A instead of ~A." actual commit)))
-          (format t "~&Building fff's C library. The first build can take several minutes.~%")
-          (finish-output)
-          (run (list "cargo" "build" "--locked" "--release" "-p" "fff-c")
-               :directory checkout)
+            (format t "~&Building fff's C library. The first build can take several minutes.~%")
+            (finish-output)
+            (fff--prepare-build-environment)
+            (run (list "cargo" "build" "--locked" "--release" "-p" "fff-c")
+                 :directory checkout)
           (let ((built (merge-pathnames
                         (format nil "target/release/~A" library-name)
                         checkout)))
