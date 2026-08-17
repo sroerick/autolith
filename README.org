@@ -59,6 +59,9 @@ Nix also supplies the complete runtime:
 nix run github:luciusmagn/autolith
 #+END_SRC
 
+To build from a source checkout instead, follow the
+[[file:docs/guide.org][guide]]'s Source checkout section.
+
 Authenticate providers either with web flows or API keys:
 
 #+BEGIN_SRC sh
