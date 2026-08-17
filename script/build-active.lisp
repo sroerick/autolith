@@ -1,4 +1,10 @@
 (require :asdf)
+
+;;; SBCL on NetBSD still stubs CONTEXT-FLOAT-REGISTER. Compiling
+;;; ieee-floats through Opticl signals that warning, and ASDF treats it
+;;; as a compile-file failure.
+#+netbsd
+(setf asdf:*compile-file-failure-behaviour* :warn)
 (pushnew ".qlot" asdf::*default-source-registry-exclusions* :test #'string=)
 (asdf:initialize-source-registry)
 
