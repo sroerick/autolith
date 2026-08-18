@@ -45,7 +45,8 @@ a user-local init.lisp change, or a private image commit.
   =sha256sum= wrapper around =gsha256sum=.
 - Scope and location: tracked =script/build-fff.lisp=. Guest install is
   local to obsd64 (=al@10.0.0.22=, =/home/al/autolith=, =/home/al/sbcl-2.6.6=).
-- Verification: pending first Autolith --version on OpenBSD 7.9.
+- Verification: recovery and active cores built. =./bin/autolith --version=
+  reports 0.32.2 on OpenBSD 7.9 amd64 / SBCL 2.6.6 after reboot.
 - Removal condition: a packaged OpenBSD runtime path exists.
 
 ** Isolated sibling ASDF verification
