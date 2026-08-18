@@ -1637,12 +1637,29 @@ esac
                  "the release workflow uses the OpenBSD VM action")
       (test-assert (not (search "Wait for the release service" workflow))
                    "the release workflow no longer waits for the host builder")
-      (let ((linux
-              (subseq workflow
-                      (search "package-linux-x86_64:" workflow)
-                      (search "package-macos-arm64:" workflow))))
-        (test-assert (search "timeout-minutes: 75" linux)
-                     "Linux packaging has a 75-minute deadline")))
+        (let ((linux
+                (subseq workflow
+                        (search "package-linux-x86_64:" workflow)
+                        (search "package-macos-arm64:" workflow)))
+              (openbsd
+                (subseq workflow
+                        (search "package-openbsd-x86_64:" workflow)))
+              (script
+                (uiop:read-file-string
+                 (merge-pathnames "script/ci-package-release" source-root))))
+          (test-assert (search "timeout-minutes: 75" linux)
+                       "Linux packaging has a 75-minute deadline")
+          (test-assert (search "gtar--" openbsd)
+                       "OpenBSD packaging installs the default gtar flavor")
+          (test-assert (not (search " gtar " openbsd))
+                       "OpenBSD packaging does not pass the ambiguous gtar stem")
+          (test-assert (search "gtar--" script)
+                       "the packaging script installs the default OpenBSD gtar flavor")
+          (test-assert (search "gtar-1.35p1" script)
+                       "the packaging script falls back to a pinned OpenBSD gtar")
+          (test-assert (search "GNU tar (gtar) is required for reproducible release archives."
+                               script)
+                       "the packaging script fails closed when GNU tar is absent")))
     nil)
 
 (-> test-release-scripts () null)

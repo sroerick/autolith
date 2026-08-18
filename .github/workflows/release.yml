@@ -177,7 +177,7 @@ jobs:
           cache-after-prepare: true
           prepare: |
             set -eu
-            pkg_add bash curl git gmake rust cmake zstd sbcl coreutils gtar icu4c
+            pkg_add bash curl git gmake rust cmake zstd sbcl coreutils gtar-- icu4c
           run: |
               set -eu
               export HOME=/tmp/autolith-home
