@@ -24,17 +24,29 @@ a user-local init.lisp change, or a private image commit.
   arm64. nbsd64 needs a host SBCL, BSD terminal ioctl, and two bootstrap
   workarounds before images will build.
 - Behavior: TIOCGWINSZ uses the BSD ioctl request. Building fff defines
-  =union semun= for LMDB on NetBSD/OpenBSD. Active-image ASDF treats the
+  =union semun= for LMDB on NetBSD only. Active-image ASDF treats the
   SBCL =CONTEXT-FLOAT-REGISTER= stub warning as non-fatal. Runtime binary
   install remains Linux-only; set =AUTOLITH_SBCL= to a 2.6.6+ build.
 - Scope and location: tracked project work in =src/terminal/stream.lisp=,
   =script/build-fff.lisp=, and =script/build-active.lisp=. Guest install is
-    local to nbsd64 (=al@10.0.0.21=, =/home/al/autolith=,
-    =/home/al/sbcl-2.6.6=).
+  local to nbsd64 (=al@10.0.0.21=, =/home/al/autolith=,
+  =/home/al/sbcl-2.6.6=).
 - Verification: recovery probe returns NetBSD 10.1 x86-64 / SBCL 2.6.6.
   =./bin/autolith --version= reports 0.32.2 from the active core.
 - Removal condition: SBCL implements NetBSD =os_context_float_register_addr=,
   LMDB builds without extra CFLAGS, and a NetBSD runtime path exists.
+
+** OpenBSD amd64 source bootstrap
+
+- Problem: OpenBSD 7.9 already provides =union semun=. The shared BSD LMDB
+  flag redefined it and broke fff/lmdb-master-sys.
+- Behavior: =_SEM_SEMUN_UNDEFINED= is NetBSD-only. OpenBSD needs
+  =wxallowed= on =/home= for SBCL cores, =AUTOLITH_SBCL= at 2.6.6, and a
+  =sha256sum= wrapper around =gsha256sum=.
+- Scope and location: tracked =script/build-fff.lisp=. Guest install is
+  local to obsd64 (=al@10.0.0.22=, =/home/al/autolith=, =/home/al/sbcl-2.6.6=).
+- Verification: pending first Autolith --version on OpenBSD 7.9.
+- Removal condition: a packaged OpenBSD runtime path exists.
 
 ** Isolated sibling ASDF verification
 
