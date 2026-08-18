@@ -50,10 +50,13 @@
   "Return trimmed output from a Git command below SOURCE-ROOT."
   (string-trim
    '(#\Space #\Tab #\Newline #\Return)
-   (release-archive--run
-    (append (list "git" "-C" (namestring source-root)) arguments)
-    :output ':string
-    :error-output ':output)))
+     (release-archive--run
+      (append (list "git"
+                    "-c" "safe.directory=*"
+                    "-C" (namestring source-root))
+              arguments)
+      :output ':string
+      :error-output ':output)))
 
 (-> release-archive--command-pathname (string) (option pathname))
 (defun release-archive--command-pathname (name)
@@ -558,10 +561,11 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                         (merge-pathnames "lib/" release-root)))
                  (format t "~&Collecting tracked source at ~A.~%" commit)
                  (finish-output)
-                 (release-archive--run
-                  (list "git" "-C" (namestring source-root)
-                        "archive" "--format=tar"
-                        "--output" (namestring tracked-source) "HEAD"))
+                   (release-archive--run
+                    (list "git" "-c" "safe.directory=*"
+                          "-C" (namestring source-root)
+                          "archive" "--format=tar"
+                          "--output" (namestring tracked-source) "HEAD"))
                  (release-archive--run
                   (list "tar" "-xf" (namestring tracked-source)
                         "-C" (namestring packaged-source)))

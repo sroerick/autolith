@@ -18,10 +18,13 @@
   (handler-case
       (string-trim
        '(#\Space #\Tab #\Newline #\Return)
-       (uiop:run-program
-        (append (list "git" "-C" (namestring source-root)) arguments)
-        :output ':string
-        :error-output ':output))
+         (uiop:run-program
+          (append (list "git"
+                        "-c" "safe.directory=*"
+                        "-C" (namestring source-root))
+                  arguments)
+          :output ':string
+          :error-output ':output))
     (error (condition)
       (error 'active-image-build-error
              :message (format nil "Could not identify active-image source: ~A"
