@@ -41,14 +41,17 @@
                        package))
              (load (merge-pathnames "recovery/runtime.lisp" source-root)))
 
-           (git-output (arguments)
-             "Return trimmed output from one source-root Git command."
-             (string-trim
-              '(#\Space #\Tab #\Newline #\Return)
-              (uiop:run-program
-               (append (list "git" "-C" (namestring source-root)) arguments)
-               :output ':string
-               :error-output ':output)))
+             (git-output (arguments)
+               "Return trimmed output from one source-root Git command."
+               (string-trim
+                '(#\Space #\Tab #\Newline #\Return)
+                (uiop:run-program
+                 (append (list "git"
+                               "-c" "safe.directory=*"
+                               "-C" (namestring source-root))
+                         arguments)
+                 :output ':string
+                 :error-output ':output)))
 
            (source-blob (relative-pathname)
              "Return the Git object identity of one current source file."
