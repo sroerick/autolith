@@ -63,27 +63,42 @@
                                              (uiop:ensure-directory-pathname
                                               directory-name))))))
 
-           (check-archive (archive expected-sha256)
-             "Require ARCHIVE to match EXPECTED-SHA256."
-             (if (command-available-p "sha256sum")
-                 (run (list "sha256sum" "--check" "--status" "-")
-                      :output nil
-                      :error-output ':output
-                      :directory temporary-root
-                      :input
-                      (make-string-input-stream
-                       (format nil "~A  ~A~%"
-                               expected-sha256
-                               (file-namestring archive))))
-                 (run (list "shasum" "-a" "256" "--check" "--status" "-")
-                      :output nil
-                      :error-output ':output
-                      :directory temporary-root
-                      :input
-                      (make-string-input-stream
-                       (format nil "~A  ~A~%"
-                               expected-sha256
-                               (file-namestring archive))))))
+(check-archive (archive expected-sha256)
+               "Require ARCHIVE to match EXPECTED-SHA256."
+               (cond
+                 ((command-available-p "sha256sum")
+                  (run (list "sha256sum" "--check" "--status" "-")
+                       :output nil
+                       :error-output ':output
+                       :directory temporary-root
+                       :input
+                       (make-string-input-stream
+                        (format nil "~A  ~A~%"
+                                expected-sha256
+                                (file-namestring archive)))))
+                 ((command-available-p "shasum")
+                  (run (list "shasum" "-a" "256" "--check" "--status" "-")
+                       :output nil
+                       :error-output ':output
+                       :directory temporary-root
+                       :input
+                       (make-string-input-stream
+                        (format nil "~A  ~A~%"
+                                expected-sha256
+                                (file-namestring archive)))))
+                 ((command-available-p "sha256")
+                  (let ((actual
+                          (string-trim
+                           '(#\Space #\Tab #\Newline #\Return)
+                           (run (list "sha256" "-q" (file-namestring archive))
+                                :output ':string
+                                :error-output ':output
+                                :directory temporary-root))))
+                    (unless (string-equal actual expected-sha256)
+                      (fail "~A does not match the expected SHA-256."
+                            (file-namestring archive)))))
+                 (t
+                  (fail "sha256sum, shasum, or sha256 is required."))))
 
            (runtime-version (command)
              "Return the implementation version reported by SBCL COMMAND."
@@ -101,15 +116,21 @@
                        source-root installation temporary-root
                        bootstrap-installation)
             (fail "usage: build-release-runtime.lisp SOURCE INSTALLATION TEMP BOOTSTRAP"))
-          (unless (or (and (string-equal (software-type) "Linux")
-                           (member (string-downcase (machine-type))
-                                   '("x86-64" "x86_64" "amd64")
-                                   :test #'string=))
-                      (and (string-equal (software-type) "Darwin")
-                           (member (string-downcase (machine-type))
-                                   '("arm64" "aarch64")
-                                   :test #'string=)))
-            (fail "release runtimes currently support Linux x86-64 and macOS arm64 only."))
+            (unless (or (and (string-equal (software-type) "Linux")
+                             (member (string-downcase (machine-type))
+                                     '("x86-64" "x86_64" "amd64")
+                                     :test #'string=))
+                        (and (string-equal (software-type) "Darwin")
+                             (member (string-downcase (machine-type))
+                                     '("arm64" "aarch64")
+                                     :test #'string=))
+                        (and (member (software-type)
+                                     '("FreeBSD" "NetBSD" "OpenBSD")
+                                     :test #'string-equal)
+                             (member (string-downcase (machine-type))
+                                     '("x86-64" "x86_64" "amd64")
+                                     :test #'string=)))
+              (fail "release runtimes currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."))
           (let* ((runtime-version
                    (trimmed-file (merge-pathnames "sbcl.version" source-root)))
                  (runtime-sha256
@@ -128,8 +149,11 @@
               (fail "sbcl.version is malformed."))
             (unless (sha256-p runtime-sha256)
               (fail "sbcl-source.sha256 is malformed."))
-            (unless (string= (runtime-version bootstrap-command) "2.4.0")
-              (fail "the bootstrap compiler does not report version 2.4.0."))
+              (unless (or (member (software-type)
+                                  '("FreeBSD" "NetBSD" "OpenBSD")
+                                  :test #'string-equal)
+                          (string= (runtime-version bootstrap-command) "2.4.0"))
+                (fail "the bootstrap compiler does not report version 2.4.0."))
             (format t "~&Building the pinned SBCL ~A release runtime.~%"
                     runtime-version)
             (finish-output)

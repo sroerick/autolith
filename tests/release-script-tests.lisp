@@ -1394,6 +1394,120 @@ esac
            (format nil "the ~A installer selects the requested version" os))))))
   nil)
 
+(-> release-script-tests--portable-copy (pathname) null)
+(defun release-script-tests--portable-copy (root)
+  "Exercise recursive copy that preserves symbolic links."
+  (let* ((source (merge-pathnames "copy-source" root))
+         (target (merge-pathnames "copy-target" root))
+         (source-directory (uiop:ensure-directory-pathname source))
+         (target-directory (uiop:ensure-directory-pathname target))
+         (file (merge-pathnames "file.txt" source-directory))
+         (link (merge-pathnames "link.txt" source-directory)))
+    (release-script-tests--write-file file "payload")
+    (sb-posix:symlink "file.txt" (namestring link))
+    (release-archive--copy source target)
+    (test-assert
+     (probe-file (merge-pathnames "file.txt" target-directory))
+     "portable copy preserves regular files")
+    (test-assert
+     (string= (sb-posix:readlink
+               (namestring (merge-pathnames "link.txt" target-directory)))
+              "file.txt")
+     "portable copy preserves symbolic links without dereferencing them"))
+  nil)
+
+(-> release-script-tests--checksum-format (pathname) null)
+(defun release-script-tests--checksum-format (root)
+  "Exercise GNU-format SHA-256 checksum publication."
+  (let* ((file (merge-pathnames "payload.bin" root))
+         (checksum (merge-pathnames "payload.bin.sha256" root)))
+    (release-script-tests--write-file file "autolith")
+    (release-archive--checksum-file file checksum)
+    (let* ((line (string-trim '(#\Newline #\Return)
+                              (uiop:read-file-string checksum)))
+           (digest (first (uiop:split-string line :separator '(#\Space))))
+           (name (first (last (uiop:split-string line :separator '(#\Space))))))
+      (test-assert (= (length digest) 64)
+                   "checksum digest is SHA-256")
+      (test-assert (string= name "payload.bin")
+                   "checksum names the archived file")
+      (test-assert (search "  " line)
+                   "checksum uses GNU two-space format")
+      (test-assert (string= digest (release-archive--sha256-digest file))
+                   "checksum matches the computed digest")))
+  nil)
+
+(-> release-script-tests--runtime-bootstrap (pathname pathname) null)
+(defun release-script-tests--runtime-bootstrap (source-root root)
+  "Exercise BSD host-SBCL bootstrap selection and unsupported rejection."
+  (let* ((fixture (merge-pathnames "runtime-bootstrap/" root))
+         (bin (merge-pathnames "bin/" fixture))
+         (installation (merge-pathnames "installation/" fixture))
+         (log (merge-pathnames "bootstrap.log" fixture))
+         (curl-log (merge-pathnames "curl.log" fixture))
+         (sbcl (merge-pathnames "sbcl" bin))
+         (curl (merge-pathnames "curl" bin))
+         (script (merge-pathnames "script/build-release-runtime" source-root))
+         (path (format nil "~A:/bin:/usr/bin"
+                       (string-right-trim "/" (namestring bin)))))
+    (uiop:ensure-all-directories-exist (list bin installation))
+    (release-script-tests--write-uname bin "FreeBSD" "amd64")
+      (release-script-tests--write-file
+       sbcl
+       (format nil "#!/bin/sh~%printf '%s\\n' \"$*\" > \"${AUTOLITH_TEST_BOOTSTRAP_LOG:?}\"~%exit 0~%"))
+      (release-script-tests--write-file
+       curl
+       (format nil "#!/bin/sh~%printf 'curl invoked\\n' > \"${AUTOLITH_TEST_CURL_LOG:?}\"~%exit 1~%"))
+    (dolist (pathname (list sbcl curl))
+      (release-script-tests--chmod "755" pathname))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring script) (namestring installation))
+         :environment
+         (list (format nil "PATH=~A" path)
+               (format nil "AUTOLITH_SBCL=~A" (namestring sbcl))
+               (format nil "AUTOLITH_TEST_BOOTSTRAP_LOG=~A" (namestring log))
+               (format nil "AUTOLITH_TEST_CURL_LOG=~A" (namestring curl-log)))
+         :ignore-error-status t)
+      (declare (ignore error-output))
+      (test-assert (zerop status)
+                   "BSD runtime bootstrap uses the host SBCL")
+      (test-assert (search "Using host SBCL as the FreeBSD bootstrap compiler."
+                           output)
+                   "BSD runtime bootstrap reports the host compiler")
+      (test-assert (not (probe-file curl-log))
+                   "BSD runtime bootstrap does not download an official binary")
+      (test-assert
+       (and (probe-file log)
+            (search "build-release-runtime.lisp" (uiop:read-file-string log)))
+       "BSD runtime bootstrap invokes the runtime builder"))
+      (release-script-tests--write-uname bin "SunOS" "amd64")
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring script) (namestring installation))
+           :environment (list (format nil "PATH=~A" path))
+           :ignore-error-status t)
+        (let ((diagnostic (concatenate 'string (or output "") (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "currently supports Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64"
+                        diagnostic))
+           "runtime bootstrap rejects unsupported platforms")))
+      (release-script-tests--write-uname bin "OpenBSD" "amd64")
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring script) (namestring installation))
+           :environment
+           (list (format nil "PATH=~A" path)
+                 "AUTOLITH_SBCL=/no/such/sbcl")
+           :ignore-error-status t)
+        (let ((diagnostic (concatenate 'string (or output "") (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "needs a host SBCL on OpenBSD" diagnostic))
+           "BSD runtime bootstrap requires a host SBCL")))
+    nil))
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -1407,8 +1521,11 @@ esac
          (progn
            (release-script-tests--syntax source-root)
            (release-script-tests--runtime-adapter source-root root)
+           (release-script-tests--runtime-bootstrap source-root root)
            (release-script-tests--source-launcher source-root root)
            (release-script-tests--platform-ids)
+           (release-script-tests--portable-copy root)
+           (release-script-tests--checksum-format root)
            (release-script-tests--launcher source-root root)
            (release-script-tests--launcher-darwin source-root root)
            (release-script-tests--launcher-bsd source-root root)

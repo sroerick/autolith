@@ -132,7 +132,7 @@
 (defun release-archive--copy (source target)
   "Copy SOURCE recursively and without dereferencing it to TARGET."
   (release-archive--run
-   (list "cp" "-a" "--" (namestring source) (namestring target)))
+   (list "cp" "-RPp" (namestring source) (namestring target)))
   nil)
 
 (-> release-archive--dependency-links (pathname) list)
@@ -325,27 +325,61 @@ rather than failing, so existence needs the following stat first."
       "dylib"
       "so"))
 
+(-> release-archive--sha256-digest (pathname) string)
+(defun release-archive--sha256-digest (file)
+  "Return the lowercase SHA-256 hex digest of FILE."
+  (let* ((directory (uiop:pathname-directory-pathname file))
+         (name (file-namestring file))
+         (output
+           (string-trim
+            '(#\Space #\Tab #\Newline #\Return)
+            (cond
+              ((release-archive--command-pathname "sha256sum")
+               (release-archive--run
+                (list "sha256sum" name)
+                :directory directory
+                :output ':string
+                :error-output ':output))
+              ((release-archive--command-pathname "shasum")
+               (release-archive--run
+                (list "shasum" "-a" "256" name)
+                :directory directory
+                :output ':string
+                :error-output ':output))
+              ((release-archive--command-pathname "sha256")
+               (release-archive--run
+                (list "sha256" "-q" name)
+                :directory directory
+                :output ':string
+                :error-output ':output))
+              (t
+               (error 'release-archive-error
+                      :stage ':prerequisites
+                      :cause "sha256sum, shasum, or sha256 is required.")))))
+           (digest (string-downcase
+                    (first (uiop:split-string output
+                                              :separator '(#\Space #\Tab))))))
+    (unless (and (= (length digest) 64)
+                 (every (lambda (character)
+                          (or (digit-char-p character)
+                              (find character "abcdef")))
+                        digest))
+      (error 'release-archive-error
+             :stage ':prerequisites
+             :cause "Could not compute a SHA-256 digest."))
+    digest))
+
 (-> release-archive--checksum-file (pathname pathname) pathname)
 (defun release-archive--checksum-file (file output)
-  "Write the SHA-256 checksum of FILE to OUTPUT."
-  (if (release-archive--command-pathname "sha256sum")
-      (release-archive--run
-       (list "sha256sum" (file-namestring file))
-       :directory (uiop:pathname-directory-pathname file)
-       :output output
-       :error-output ':output)
-      (let* ((output-string
-               (release-archive--run
-                (list "shasum" "-a" "256" (file-namestring file))
-                :directory (uiop:pathname-directory-pathname file)
-                :output ':string
-                :error-output ':output)))
-        (with-open-file (stream output
-                                :direction ':output
-                                :if-exists ':supersede
-                                :if-does-not-exist ':create
-                                :external-format ':utf-8)
-          (write-string output-string stream))))
+  "Write the SHA-256 checksum of FILE to OUTPUT in GNU coreutils format."
+  (with-open-file (stream output
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
+    (format stream "~A  ~A~%"
+            (release-archive--sha256-digest file)
+            (file-namestring file)))
   output)
 
 (-> release-archive--tar-command (pathname pathname string string) list)

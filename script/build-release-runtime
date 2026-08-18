@@ -29,20 +29,40 @@ source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 installation=${1:?usage: build-release-runtime INSTALLATION}
 bootstrap_version=2.4.0
 
-if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
-  bootstrap_arch="x86-64-linux"
-  bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
-elif [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]]; then
-  bootstrap_arch="arm64-darwin"
-  bootstrap_sha256=1d01fac2d9748f769c9246a0a11a2c011d7843337f8f06ca144f5a500e10c117
-else
-  printf 'build-release-runtime currently supports Linux x86-64 and macOS arm64.\n' >&2
+os=$(uname -s)
+arch=$(uname -m)
+host_bootstrap=false
+case $os in
+  Linux)
+    case $arch in
+      x86_64|amd64)
+        bootstrap_arch=x86-64-linux
+        bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
+        ;;
+    esac
+    ;;
+  Darwin)
+    case $arch in
+      arm64|aarch64)
+        bootstrap_arch=arm64-darwin
+        bootstrap_sha256=1d01fac2d9748f769c9246a0a11a2c011d7843337f8f06ca144f5a500e10c117
+        ;;
+    esac
+    ;;
+  FreeBSD|NetBSD|OpenBSD)
+    case $arch in
+      amd64|x86_64) host_bootstrap=true ;;
+    esac
+    ;;
+esac
+if [[ $host_bootstrap != true && -z ${bootstrap_arch:-} ]]; then
+  printf 'build-release-runtime currently supports Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.\n' >&2
   exit 1
 fi
 
 temporary_root=$(mktemp -d)
-bootstrap_archive=$temporary_root/sbcl-$bootstrap_version-$bootstrap_arch-binary.tar.bz2
-bootstrap_source=$temporary_root/sbcl-$bootstrap_version-$bootstrap_arch
+bootstrap_archive=$temporary_root/sbcl-$bootstrap_version-${bootstrap_arch:-host}-binary.tar.bz2
+bootstrap_source=$temporary_root/sbcl-$bootstrap_version-${bootstrap_arch:-host}
 bootstrap_installation=$temporary_root/bootstrap
 
 cleanup()
@@ -61,22 +81,39 @@ sha256_verify()
     printf '%s  %s\n' "$expected" "$file" | sha256sum --check --status
   elif command -v shasum >/dev/null 2>&1; then
     printf '%s  %s\n' "$expected" "$file" | shasum -a 256 --check --status
+  elif command -v sha256 >/dev/null 2>&1; then
+    [ "$expected" = "$(sha256 -q "$file")" ]
   else
     return 1
   fi
 }
 
-printf 'Installing the pinned SBCL %s bootstrap compiler.\n' "$bootstrap_version"
-curl --fail --location --show-error --retry 3 \
-  --proto '=https' --tlsv1.2 \
-  --output "$bootstrap_archive" \
-  "https://downloads.sourceforge.net/project/sbcl/sbcl/$bootstrap_version/sbcl-$bootstrap_version-$bootstrap_arch-binary.tar.bz2"
-sha256_verify "$bootstrap_sha256" "$bootstrap_archive"
-tar -xjf "$bootstrap_archive" -C "$temporary_root"
-(
-  cd "$bootstrap_source"
-  env -u SBCL_HOME sh install.sh --prefix="$bootstrap_installation"
-)
+if [[ $host_bootstrap == true ]]; then
+  if [[ -n ${AUTOLITH_SBCL:-} ]]; then
+    host_sbcl=$AUTOLITH_SBCL
+  else
+    host_sbcl=$(command -v sbcl || true)
+  fi
+  if [[ -z $host_sbcl || ! -x $host_sbcl ]]; then
+    printf 'build-release-runtime needs a host SBCL on %s.\n' "$os" >&2
+    exit 1
+  fi
+  printf 'Using host SBCL as the %s bootstrap compiler.\n' "$os"
+  mkdir -p "$bootstrap_installation/bin"
+  ln -s "$host_sbcl" "$bootstrap_installation/bin/sbcl"
+else
+  printf 'Installing the pinned SBCL %s bootstrap compiler.\n' "$bootstrap_version"
+  curl --fail --location --show-error --retry 3 \
+    --proto '=https' --tlsv1.2 \
+    --output "$bootstrap_archive" \
+    "https://downloads.sourceforge.net/project/sbcl/sbcl/$bootstrap_version/sbcl-$bootstrap_version-$bootstrap_arch-binary.tar.bz2"
+  sha256_verify "$bootstrap_sha256" "$bootstrap_archive"
+  tar -xjf "$bootstrap_archive" -C "$temporary_root"
+  (
+    cd "$bootstrap_source"
+    env -u SBCL_HOME sh install.sh --prefix="$bootstrap_installation"
+  )
+fi
 
 env -u SBCL_HOME "$bootstrap_installation/bin/sbcl" \
   --noinform --no-userinit --no-sysinit \
