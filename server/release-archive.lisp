@@ -96,14 +96,6 @@
               value)
        t))
 
-(-> release-archive--symlink-p (pathname) boolean)
-(defun release-archive--symlink-p (pathname)
-  "Return true when PATHNAME is a symbolic link."
-  (let ((stat (ignore-errors (sb-posix:lstat (namestring pathname)))))
-    (and stat
-         (not (null (sb-posix:s-islnk (sb-posix:stat-mode stat))))
-         t)))
-
 (-> release-archive--file-named (pathname string) (option pathname))
 (defun release-archive--file-named (root name)
   "Return the first file named NAME below ROOT."
@@ -149,18 +141,16 @@
 (-> release-archive--dependency-links (pathname) list)
 (defun release-archive--dependency-links (dependency-root)
   "Return every symbolic link below DEPENDENCY-ROOT."
-  (let ((links nil))
-    (when (uiop:directory-exists-p dependency-root)
-      (labels ((walk (directory)
-                 (dolist (file (uiop:directory-files directory))
-                   (when (release-archive--symlink-p file)
-                     (push (namestring file) links)))
-                 (dolist (subdirectory (uiop:subdirectories directory))
-                   (when (release-archive--symlink-p subdirectory)
-                     (push (namestring subdirectory) links))
-                   (walk subdirectory))))
-        (walk (uiop:ensure-directory-pathname dependency-root))))
-    (nreverse links)))
+  (if (uiop:directory-exists-p dependency-root)
+      (remove-if
+       (lambda (value) (zerop (length value)))
+       (uiop:split-string
+        (release-archive--run
+         (list "find" (namestring dependency-root) "-type" "l")
+         :output ':string
+         :error-output ':output)
+        :separator '(#\Newline #\Return)))
+      nil))
 
 (-> release-archive--link-target (pathname) (option pathname))
 (defun release-archive--link-target (link)
