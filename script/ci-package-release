@@ -40,6 +40,26 @@ ensure_sha256sum()
   export PATH="$HOME/bin:$PATH"
 }
 
+ensure_gnu_tar()
+{
+  case $(uname -s) in
+    Linux)
+      return 0
+      ;;
+  esac
+  if command -v gtar >/dev/null 2>&1 || command -v gnutar >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x /usr/local/bin/gtar || -x /usr/pkg/bin/gtar || -x /opt/local/bin/gtar ]]; then
+    return 0
+  fi
+  if command -v pkg_add >/dev/null 2>&1; then
+    pkg_add gtar
+  elif command -v pkgin >/dev/null 2>&1; then
+    pkgin -y install gtar
+  fi
+}
+
 launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 output_directory=${1:-dist/}
@@ -51,6 +71,7 @@ if [[ $(uname -s) == OpenBSD && ${HOME:-} == /root ]]; then
 fi
 export PATH="$HOME/bin:/usr/local/bin:/usr/pkg/bin:$PATH"
 ensure_sha256sum
+ensure_gnu_tar
 
 runtime_version=$(tr -d '[:space:]' < sbcl.version)
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}

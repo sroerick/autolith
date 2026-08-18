@@ -1561,8 +1561,58 @@ esac
                      (search "sha256sum, shasum, or sha256 is required."
                              (release-archive-error-cause condition)))))
             "sha256 helper names every accepted digest command"))
-      (setf (uiop:getenv "PATH") saved)))
-  nil)
+        (setf (uiop:getenv "PATH") saved)))
+    (test-assert
+     (equal *release-archive-extra-command-directories*
+            '("/usr/local/bin" "/usr/pkg/bin" "/opt/local/bin" "/bin" "/usr/bin"))
+     "gnu tar extra directories include BSD prefixes")
+    (let* ((bin (merge-pathnames "gnu-tar/" root))
+           (extra (merge-pathnames "gnu-tar-extra/" root))
+           (empty (merge-pathnames "gnu-tar-empty/" root))
+           (gtar (merge-pathnames "gtar" bin))
+           (gnutar (merge-pathnames "gnutar" extra))
+           (saved (or (uiop:getenv "PATH") "")))
+      (uiop:ensure-all-directories-exist (list bin extra empty))
+      (release-script-tests--write-file gtar "#!/bin/sh\nexit 0\n")
+      (release-script-tests--write-file gnutar "#!/bin/sh\nexit 0\n")
+      (release-script-tests--chmod "755" gtar)
+      (release-script-tests--chmod "755" gnutar)
+      (unwind-protect
+           (progn
+             (setf (uiop:getenv "PATH")
+                   (string-right-trim "/" (namestring bin)))
+             (test-assert
+              (equal (namestring (truename (release-archive--gnu-tar-command)))
+                     (namestring (truename gtar)))
+              "gnu tar lookup finds gtar on PATH")
+             (setf (uiop:getenv "PATH")
+                   (string-right-trim "/" (namestring empty)))
+             (let ((*release-archive-extra-command-directories*
+                     (list (string-right-trim "/" (namestring extra)))))
+               (test-assert
+                (equal (namestring (truename (release-archive--gnu-tar-command)))
+                       (namestring (truename gnutar)))
+                "gnu tar lookup finds gnutar outside PATH"))
+             (let ((*release-archive-extra-command-directories* '()))
+               (test-assert (null (release-archive--gnu-tar-command))
+                            "gnu tar lookup is silent when gtar is absent"))
+             (setf (uiop:getenv "PATH")
+                   (string-right-trim "/" (namestring bin)))
+             (let ((command
+                     (release-archive--tar-command
+                      (merge-pathnames "release.tar" root)
+                      root
+                      "autolith-v0.0.0-x86_64-openbsd"
+                      "0")))
+               (test-assert (and (stringp (first command))
+                                 (plusp (length (first command))))
+                            "tar command starts with a command pathname")
+               (when (release-archive--gnu-tar-required-p (software-type))
+                 (test-assert
+                  (string= (first command) (namestring (truename gtar)))
+                  "tar command uses the discovered GNU tar pathname"))))
+          (setf (uiop:getenv "PATH") saved)))
+    nil)
 
 (-> release-script-tests--github-release-workflow (pathname) null)
 (defun release-script-tests--github-release-workflow (source-root)
@@ -1585,9 +1635,15 @@ esac
                  "the release workflow uses the NetBSD VM action")
     (test-assert (search "vmactions/openbsd-vm@v1" workflow)
                  "the release workflow uses the OpenBSD VM action")
-    (test-assert (not (search "Wait for the release service" workflow))
-                 "the release workflow no longer waits for the host builder"))
-  nil)
+      (test-assert (not (search "Wait for the release service" workflow))
+                   "the release workflow no longer waits for the host builder")
+      (let ((linux
+              (subseq workflow
+                      (search "package-linux-x86_64:" workflow)
+                      (search "package-macos-arm64:" workflow))))
+        (test-assert (search "timeout-minutes: 75" linux)
+                     "Linux packaging has a 75-minute deadline")))
+    nil)
 
 (-> test-release-scripts () null)
 (defun test-release-scripts ()

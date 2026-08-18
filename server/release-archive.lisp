@@ -58,18 +58,28 @@
       :output ':string
       :error-output ':output)))
 
-(-> release-archive--command-pathname (string) (option pathname))
-(defun release-archive--command-pathname (name)
+(defparameter *release-archive-extra-command-directories*
+  '("/usr/local/bin" "/usr/pkg/bin" "/opt/local/bin" "/bin" "/usr/bin")
+  "Additional directories searched for GNU tar when PATH is incomplete.")
+
+(-> release-archive--path-directories () list)
+(defun release-archive--path-directories ()
+  "Return non-empty PATH directories."
+  (remove-if (lambda (name) (zerop (length name)))
+             (uiop:split-string (or (uiop:getenv "PATH") "")
+                                :separator '(#\:))))
+
+(-> release-archive--command-pathname
+    (string &key (:extra-directories list))
+    (option pathname))
+(defun release-archive--command-pathname (name &key extra-directories)
   "Return the executable pathname for NAME, or NIL when it is unavailable."
   (loop for directory-name
-        in (uiop:split-string (or (uiop:getenv "PATH") "")
-                              :separator '(#\:))
-        when (plusp (length directory-name))
-          do (let* ((directory
-                      (uiop:ensure-directory-pathname directory-name))
-                    (candidate (merge-pathnames name directory)))
-               (when (probe-file candidate)
-                 (return candidate)))))
+        in (append (release-archive--path-directories) extra-directories)
+        for directory = (uiop:ensure-directory-pathname directory-name)
+        for candidate = (merge-pathnames name directory)
+        when (probe-file candidate)
+          return candidate))
 
 (-> release-archive--require-commands (list) null)
 (defun release-archive--require-commands (commands)
@@ -350,11 +360,21 @@ rather than failing, so existence needs the following stat first."
   "Return true when OS needs GNU tar for reproducible archives."
   (not (string-equal os "Linux")))
 
+(-> release-archive--gnu-tar-command () (option pathname))
+(defun release-archive--gnu-tar-command ()
+  "Return the GNU tar executable, or NIL when it is unavailable."
+  (or (release-archive--command-pathname
+       "gtar"
+       :extra-directories *release-archive-extra-command-directories*)
+      (release-archive--command-pathname
+       "gnutar"
+       :extra-directories *release-archive-extra-command-directories*)))
+
 (-> release-archive--require-gnu-tar () null)
 (defun release-archive--require-gnu-tar ()
   "Require GNU tar on platforms whose system tar is not GNU."
   (when (and (release-archive--gnu-tar-required-p (software-type))
-             (not (release-archive--command-pathname "gtar")))
+             (not (release-archive--gnu-tar-command)))
     (error 'release-archive-error
            :stage ':prerequisites
            :cause "GNU tar (gtar) is required for reproducible release archives."))
@@ -417,7 +437,14 @@ rather than failing, so existence needs the following stat first."
 (-> release-archive--tar-command (pathname pathname string string) list)
 (defun release-archive--tar-command (tar-file working-dir release-name commit-time)
   "Return a deterministic GNU tar command for RELEASE-NAME below WORKING-DIR."
-  (list (if (release-archive--gnu-tar-required-p (software-type)) "gtar" "tar")
+  (list (namestring
+         (if (release-archive--gnu-tar-required-p (software-type))
+             (or (release-archive--gnu-tar-command)
+                 (error 'release-archive-error
+                        :stage ':prerequisites
+                        :cause "GNU tar (gtar) is required for reproducible release archives."))
+             (or (release-archive--command-pathname "tar")
+                 #p"tar")))
         "--sort=name"
         (format nil "--mtime=@~A" commit-time)
         "--owner=0" "--group=0" "--numeric-owner"
