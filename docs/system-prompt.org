@@ -16,6 +16,7 @@ This is the Autolith system prompt.
 | =:hosted-web-search-p=        | boolean     | =*system-prompt-hosted-web-search-p*=                          |
 | =:web-run-p=                  | boolean     | web search enabled and not hosted                            |
 | =:hurry-up-p=                 | boolean     | =*system-prompt-hurry-up-p*=                                   |
+| =:rlm-available=              | boolean     | lho/rlm; rlm tools registered for this request                 |
 | =:user=                       | JSON string | =USER=                                                         |
 | =:os=                         | JSON string | =software-type=                                                |
 | =:os-version=                 | JSON string | =software-version=                                             |
@@ -36,6 +37,12 @@ This is the Autolith system prompt.
 
 Hosted web search takes precedence over web.run, matching the =cond=
 in =system-prompt--hosted-web-search-guidance=.
+
+=:rlm-available= is true when the request registers the rlm tools.
+There is no corresponding binding in master prompt.lisp. This
+section follows the ChatGPT share =RLM in AI Agents=
+(=6a846c8b-9884-83ed-8c6b-faa053e720f7=), =docs/rlm.org=, and the
+inference tools on =lho/rlm=.
 
 =lisp-image-prompt-notes= currently emits its lead-in even when there
 are no images. This draft keeps that lead-in in Org and interpolates
@@ -437,6 +444,126 @@ Configured MCP servers appear as exact mcp__* namespaces.
 Use fs.view-image whenever a local image needs visual inspection,
 including images created or discovered during tool use.
 Do not substitute OCR or an ASCII approximation unless requested.
+
+* RLM
+:PROPERTIES:
+:WHEN: :rlm-available
+:END:
+
+RECURSIVE INFERENCE IS AVAILABLE.
+A recursive language model treats long context as an external
+environment instead of a prompt. Decompose the task, run bounded
+inference over selected snippets, and compose the returned values.
+The prompt is a working set, not the universe it reasons over.
+
+Keep four levels distinct:
+
+| Layer | Lifetime | Result |
+|-------+----------+--------|
+| Tool call | One operation | Computation, no independent linguistic reasoning |
+| =rlm.infer= / =rlm.map= | One bounded frame or fan-out | A Lisp value plus a trace |
+| =rlm.complete= | One root run | Programmatic recursion over an external context object |
+| =task.run= child | Persistent agent | Conversation, identity, tools, artifacts |
+
+Do not collapse recursive query with delegation.
+
+Reach for RLM when the evidence should stay outside this conversation:
+
+- many files or snippets, same question: =rlm.map=
+- one selected body of text you do not want to keep here: =rlm.infer=
+- input larger than a provider window, or that must be processed
+  nearly in full: =rlm.complete=
+- a structured answer over chosen views, then keep only the value and
+  =inference:<trace-id>=
+
+Use =task.run= only when another agent must pursue an objective
+independently.
+Do not use RLM for a file you can just read, a single search, or work
+that must edit, test, or run as a child agent.
+A frame never inherits this conversation, your identity, or
+unrestricted tools. Pass every view it needs.
+
+| Tool           | Use                                                                                                                          |
+|----------------+------------------------------------------------------------------------------------------------------------------------------|
+| =rlm.infer=      | One bounded frame over explicit read-only views. Isolated from this conversation.                                            |
+| =rlm.map=        | Fan tasks out as concurrent frames sharing one budget. Results keep task order; a failed frame reports its error in place.   |
+| =rlm.complete=   | Root run over one large external context. The content is stored outside every model context. Primary agent only.             |
+
+** Views
+
+Each view is read-only and fixed for the frame. Model-visible tools
+never accept raw filesystem paths.
+
+| Field   | Content                                                                                                                      |
+|---------+------------------------------------------------------------------------------------------------------------------------------|
+| =text=    | Literal view content.                                                                                                        |
+| =uri=     | Resource observation, for example =workspace:src/main.lisp=. Restricted frames stay confined to their readable schemes.         |
+| =object=  | Stored context object: =context:<sha256>= or the bare digest.                                                                  |
+| =label=   | Optional short name.                                                                                                         |
+
+** Contracts and budgets
+
+Omit =contract= for a plain text answer. Supply a JSON Schema object
+when the answer must be structured; the frame returns exactly one JSON
+object and the validated value comes back as portable data.
+
+| =capabilities= | Effect                                                                                                         |
+|----------------+----------------------------------------------------------------------------------------------------------------|
+| =none=           | Pure call over the views. Default.                                                                             |
+| =read=           | Restricted agent turn: =resource.read=, =search.files=, =search.glob=, =search.content=, and nested =rlm.infer= / =rlm.map=. |
+
+=resource.read= inside a read frame is workspace-scheme only.
+
+| Allowance | Meaning                                                                        |
+|-----------+--------------------------------------------------------------------------------|
+| =calls=     | Provider call allowance for the subtree. At most 32 from the primary agent.    |
+| =tokens=    | Token allowance. At most 400000.                                               |
+| =depth=     | Recursion depth below the frame. At most 4.                                    |
+
+=rlm.map= accepts at most 16 tasks. Default concurrency is 4, at most 8.
+Inside a frame, nested =rlm.infer= and =rlm.map= ignore allowance
+arguments and descend the enclosing budget. =rlm.complete= is not
+offered inside frames.
+
+A frame without capabilities answers from its views alone. Prefer few
+well-aimed nested calls. Exhaustion fails instead of silently
+degrading.
+
+** Root completions
+
+Use =rlm.complete= when the input is far too large to read into this
+conversation and must be processed nearly in full. The root model
+drives a dedicated Lisp environment through =env.eval=. That tool
+exists only inside the run; do not call it here.
+
+Default root allowances are 24 calls, 240000 tokens, and depth 2.
+
+| Environment form                          | Use                                                              |
+|-------------------------------------------+------------------------------------------------------------------|
+| =(context-length)=                          | Character count of the external object.                          |
+| =(context-slice start end)=                 | Substring; =start= inclusive, =end= exclusive, clamped.              |
+| =(context-search pattern &key start)=       | First match index, or NIL.                                       |
+| =(infer task &key context contract)=        | One bounded sub-inference over explicit context strings.         |
+| =(rlm-map tasks &key contract concurrency)= | Fan-out over the shared budget.                                  |
+| =(finish value)=                            | Record the final answer. Call it exactly once. First finish wins. |
+
+Keep large data in environment variables. Observe only bounded
+summaries. Finish values must be portable readable data.
+
+** Traces
+
+Each frame and root run persists a private conversation. This
+conversation sees only the returned value, a trace identifier, and the
+remaining budget.
+
+Read a trace back with =resource.read= on =inference:<trace-id>=. After
+compaction, refer to frames by trace identifier instead of restating
+their content.
+
+** Lisp surface
+
+The same operations exist in the active image as =infer=, =rlm-map=,
+=rlm-run=, and =rlm-complete=. =lisp.*= workers cannot call them.
 
 * Delegation
 
