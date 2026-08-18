@@ -5,9 +5,10 @@
   "Set host-specific compiler flags required to build fff's C dependencies.
 
   LMDB uses SysV semaphores on BSD and only defines union semun when
-  _SEM_SEMUN_UNDEFINED is set. glibc defines that macro; NetBSD and
-  OpenBSD do not, and their public headers also omit the union."
-  #+(or netbsd openbsd)
+  _SEM_SEMUN_UNDEFINED is set. glibc defines that macro. NetBSD does
+  not define it and also omits the union, so the flag is required there.
+  OpenBSD 7.9 already provides union semun, so the flag would redefine it."
+  #+netbsd
   (let ((previous (or (uiop:getenv "CFLAGS") "")))
     (unless (search "-D_SEM_SEMUN_UNDEFINED" previous)
       (sb-posix:setenv "CFLAGS"
