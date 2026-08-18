@@ -209,6 +209,7 @@ fi
                       "script/check"
                       "script/build-release"
                       "script/build-release-runtime"
+                      "script/ci-package-release"
                       "server/build-in-container"))
     (release-script-tests--run
      (list "bash" "-n" (namestring (merge-pathnames relative source-root)))
@@ -1508,6 +1509,67 @@ esac
            "BSD runtime bootstrap requires a host SBCL")))
     nil))
 
+(-> release-script-tests--archive-helpers (pathname) null)
+(defun release-script-tests--archive-helpers (root)
+  "Exercise SHA-256 and GNU tar release helpers."
+  (test-assert (not (release-archive--gnu-tar-required-p "Linux"))
+               "Linux may use system tar for reproducible archives")
+  (dolist (os '("Darwin" "FreeBSD" "NetBSD" "OpenBSD"))
+    (test-assert (release-archive--gnu-tar-required-p os)
+                 (format nil "~A requires GNU tar for reproducible archives" os)))
+  (let* ((bin (merge-pathnames "sha256-only/" root))
+         (empty (merge-pathnames "no-digest/" root))
+         (sha256 (merge-pathnames "sha256" bin))
+         (saved (or (uiop:getenv "PATH") "")))
+    (uiop:ensure-all-directories-exist (list bin empty))
+    (release-script-tests--write-file sha256 "#!/bin/sh\nexit 0\n")
+    (release-script-tests--chmod "755" sha256)
+    (unwind-protect
+         (progn
+           (setf (uiop:getenv "PATH")
+                 (string-right-trim "/" (namestring bin)))
+           (test-assert (string= (release-archive--sha256-command) "sha256")
+                        "sha256 helper accepts sha256")
+           (setf (uiop:getenv "PATH")
+                 (string-right-trim "/" (namestring empty)))
+           (test-assert
+            (handler-case
+                (progn
+                  (release-archive--sha256-command)
+                  nil)
+              (release-archive-error (condition)
+                (and (eq (release-archive-error-stage condition) ':prerequisites)
+                     (search "sha256sum, shasum, or sha256 is required."
+                             (release-archive-error-cause condition)))))
+            "sha256 helper names every accepted digest command"))
+      (setf (uiop:getenv "PATH") saved)))
+  nil)
+
+(-> release-script-tests--github-release-workflow (pathname) null)
+(defun release-script-tests--github-release-workflow (source-root)
+  "Exercise the GitHub release packaging workflow."
+  (let ((workflow
+          (uiop:read-file-string
+           (merge-pathnames ".github/workflows/release.yml" source-root))))
+    (dolist (job '("package-linux-x86_64"
+                   "package-macos-arm64"
+                   "package-freebsd-x86_64"
+                   "package-netbsd-x86_64"
+                   "package-openbsd-x86_64"))
+      (test-assert (search job workflow)
+                   (format nil "the release workflow packages ~A" job)))
+    (test-assert (search "script/ci-package-release" workflow)
+                 "the release workflow uses the shared packaging script")
+    (test-assert (search "vmactions/freebsd-vm@v1" workflow)
+                 "the release workflow uses the FreeBSD VM action")
+    (test-assert (search "vmactions/netbsd-vm@v1" workflow)
+                 "the release workflow uses the NetBSD VM action")
+    (test-assert (search "vmactions/openbsd-vm@v1" workflow)
+                 "the release workflow uses the OpenBSD VM action")
+    (test-assert (not (search "Wait for the release service" workflow))
+                 "the release workflow no longer waits for the host builder"))
+  nil)
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -1519,19 +1581,21 @@ esac
              (uiop:temporary-directory)))))
     (unwind-protect
          (progn
-           (release-script-tests--syntax source-root)
-           (release-script-tests--runtime-adapter source-root root)
-           (release-script-tests--runtime-bootstrap source-root root)
-           (release-script-tests--source-launcher source-root root)
-           (release-script-tests--platform-ids)
-           (release-script-tests--portable-copy root)
-           (release-script-tests--checksum-format root)
-           (release-script-tests--launcher source-root root)
-           (release-script-tests--launcher-darwin source-root root)
-           (release-script-tests--launcher-bsd source-root root)
-           (release-script-tests--update-handoff source-root root)
-           (release-script-tests--installer source-root root)
-           (release-script-tests--installer-darwin source-root root)
-           (release-script-tests--installer-bsd source-root root))
+             (release-script-tests--syntax source-root)
+             (release-script-tests--github-release-workflow source-root)
+             (release-script-tests--runtime-adapter source-root root)
+             (release-script-tests--runtime-bootstrap source-root root)
+             (release-script-tests--source-launcher source-root root)
+             (release-script-tests--platform-ids)
+             (release-script-tests--archive-helpers root)
+             (release-script-tests--portable-copy root)
+             (release-script-tests--checksum-format root)
+             (release-script-tests--launcher source-root root)
+             (release-script-tests--launcher-darwin source-root root)
+             (release-script-tests--launcher-bsd source-root root)
+             (release-script-tests--update-handoff source-root root)
+             (release-script-tests--installer source-root root)
+             (release-script-tests--installer-darwin source-root root)
+             (release-script-tests--installer-bsd source-root root))
       (release-script-tests--cleanup root)))
   nil)

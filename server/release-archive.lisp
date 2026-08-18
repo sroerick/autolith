@@ -325,37 +325,64 @@ rather than failing, so existence needs the following stat first."
       "dylib"
       "so"))
 
+(-> release-archive--sha256-command () string)
+(defun release-archive--sha256-command ()
+  "Return the available SHA-256 command name."
+  (cond
+    ((release-archive--command-pathname "sha256sum")
+     "sha256sum")
+    ((release-archive--command-pathname "shasum")
+     "shasum")
+    ((release-archive--command-pathname "sha256")
+     "sha256")
+    (t
+     (error 'release-archive-error
+            :stage ':prerequisites
+            :cause "sha256sum, shasum, or sha256 is required."))))
+
+(-> release-archive--gnu-tar-required-p (string) boolean)
+(defun release-archive--gnu-tar-required-p (os)
+  "Return true when OS needs GNU tar for reproducible archives."
+  (not (string-equal os "Linux")))
+
+(-> release-archive--require-gnu-tar () null)
+(defun release-archive--require-gnu-tar ()
+  "Require GNU tar on platforms whose system tar is not GNU."
+  (when (and (release-archive--gnu-tar-required-p (software-type))
+             (not (release-archive--command-pathname "gtar")))
+    (error 'release-archive-error
+           :stage ':prerequisites
+           :cause "GNU tar (gtar) is required for reproducible release archives."))
+  nil)
+
 (-> release-archive--sha256-digest (pathname) string)
 (defun release-archive--sha256-digest (file)
   "Return the lowercase SHA-256 hex digest of FILE."
   (let* ((directory (uiop:pathname-directory-pathname file))
          (name (file-namestring file))
+         (command (release-archive--sha256-command))
          (output
            (string-trim
             '(#\Space #\Tab #\Newline #\Return)
             (cond
-              ((release-archive--command-pathname "sha256sum")
+              ((string= command "sha256sum")
                (release-archive--run
                 (list "sha256sum" name)
                 :directory directory
                 :output ':string
                 :error-output ':output))
-              ((release-archive--command-pathname "shasum")
+              ((string= command "shasum")
                (release-archive--run
                 (list "shasum" "-a" "256" name)
                 :directory directory
                 :output ':string
                 :error-output ':output))
-              ((release-archive--command-pathname "sha256")
+              (t
                (release-archive--run
                 (list "sha256" "-q" name)
                 :directory directory
                 :output ':string
-                :error-output ':output))
-              (t
-               (error 'release-archive-error
-                      :stage ':prerequisites
-                      :cause "sha256sum, shasum, or sha256 is required.")))))
+                :error-output ':output)))))
            (digest (string-downcase
                     (first (uiop:split-string output
                                               :separator '(#\Space #\Tab))))))
@@ -385,7 +412,7 @@ rather than failing, so existence needs the following stat first."
 (-> release-archive--tar-command (pathname pathname string string) list)
 (defun release-archive--tar-command (tar-file working-dir release-name commit-time)
   "Return a deterministic GNU tar command for RELEASE-NAME below WORKING-DIR."
-  (list (if (release-archive--command-pathname "gtar") "gtar" "tar")
+  (list (if (release-archive--gnu-tar-required-p (software-type)) "gtar" "tar")
         "--sort=name"
         (format nil "--mtime=@~A" commit-time)
         "--owner=0" "--group=0" "--numeric-owner"
@@ -447,16 +474,8 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                 source-root '("show" "-s" "--format=%ct" "HEAD"))))
         (release-archive--require-commands
          '("chmod" "cp" "find" "git" "gzip" "tar"))
-        (unless (or (release-archive--command-pathname "sha256sum")
-                    (release-archive--command-pathname "shasum"))
-          (error 'release-archive-error
-                 :stage ':prerequisites
-                 :cause "sha256sum or shasum is required."))
-        (when (and (string-equal (software-type) "Darwin")
-                   (not (release-archive--command-pathname "gtar")))
-          (error 'release-archive-error
-                 :stage ':prerequisites
-                 :cause "GNU tar (gtar) is required for reproducible release archives."))
+        (release-archive--sha256-command)
+        (release-archive--require-gnu-tar)
         (release-archive--validate-platform)
         (unless (release-archive--semantic-version-p runtime-version)
           (error 'release-archive-error
