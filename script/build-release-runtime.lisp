@@ -100,16 +100,29 @@
                  (t
                   (fail "sha256sum, shasum, or sha256 is required."))))
 
-           (runtime-version (command)
-             "Return the implementation version reported by SBCL COMMAND."
-             (string-trim
-              '(#\Space #\Tab #\Newline #\Return)
-              (run (list "env" "-u" "SBCL_HOME" (namestring command)
-                         "--noinform" "--no-userinit" "--no-sysinit"
-                         "--non-interactive" "--eval"
-                         "(write-string (lisp-implementation-version))")
-                   :output ':string
-                   :error-output ':output))))
+             (runtime-version (command)
+               "Return the implementation version reported by SBCL COMMAND."
+               (string-trim
+                '(#\Space #\Tab #\Newline #\Return)
+                (run (list "env" "-u" "SBCL_HOME" (namestring command)
+                           "--noinform" "--no-userinit" "--no-sysinit"
+                           "--non-interactive" "--eval"
+                           "(write-string (lisp-implementation-version))")
+                     :output ':string
+                     :error-output ':output)))
+
+             (runtime-thread-support-p (command)
+               "Return true when SBCL COMMAND was built with :SB-THREAD."
+               (string-equal
+                (string-trim
+                 '(#\Space #\Tab #\Newline #\Return)
+                 (run (list "env" "-u" "SBCL_HOME" (namestring command)
+                            "--noinform" "--no-userinit" "--no-sysinit"
+                            "--non-interactive" "--eval"
+                            "(write (and (find :sb-thread *features*) t))")
+                      :output ':string
+                      :error-output ':output))
+                "T")))
     (handler-case
         (progn
           (unless (and (= (length arguments) 4)
@@ -167,21 +180,23 @@
             (check-archive runtime-archive runtime-sha256)
             (run (list "tar" "-xjf" (namestring runtime-archive)
                        "-C" (namestring temporary-root)))
-            (run
-             (list "sh" "make.sh"
-                   (format nil "--prefix=~A" (namestring installation))
-                   (format nil "--xc-host=~A --no-userinit --no-sysinit"
-                           (namestring bootstrap-command)))
-             :directory runtime-source)
-            (run
-             (list "env" "-u" "SBCL_HOME" "sh" "install.sh"
-                   (format nil "--prefix=~A" (namestring installation)))
-             :directory runtime-source)
-            (let ((actual
-                    (runtime-version
-                     (merge-pathnames "bin/sbcl" installation))))
-              (unless (string= actual runtime-version)
-                (fail "the release runtime reports ~A." actual)))))
+              (run
+               (list "sh" "make.sh"
+                     "--with-sb-thread"
+                     (format nil "--prefix=~A" (namestring installation))
+                     (format nil "--xc-host=~A --no-userinit --no-sysinit"
+                             (namestring bootstrap-command)))
+               :directory runtime-source)
+              (run
+               (list "env" "-u" "SBCL_HOME" "sh" "install.sh"
+                     (format nil "--prefix=~A" (namestring installation)))
+               :directory runtime-source)
+              (let* ((installed (merge-pathnames "bin/sbcl" installation))
+                     (actual (runtime-version installed)))
+                (unless (string= actual runtime-version)
+                  (fail "the release runtime reports ~A." actual))
+                (unless (runtime-thread-support-p installed)
+                  (fail "the release runtime was built without threads.")))))
       (error (condition)
         (format *error-output* "~&~A~%" condition)
         (finish-output *error-output*)
