@@ -6,7 +6,7 @@
   "The default delay between remote release-tag checks.")
 
 (defparameter *release-builder-default-repository*
-  "https://github.com/luciusmagn/autolith.git"
+  "https://github.com/lambda-symbolics/autolith.git"
   "The public source repository inspected for release tags.")
 
 (defparameter *release-builder-container-image*
@@ -525,6 +525,180 @@ tree intact lets one tag's object files fail a later tag's checks."
     staging))
 
 
+;;;; -- GitHub Release Mirror --
+
+(-> release-builder--string-prefix-p (string string) boolean)
+(defun release-builder--string-prefix-p (prefix value)
+  "Return true when VALUE begins with PREFIX."
+  (and (>= (length value) (length prefix))
+       (string= prefix value :end2 (length prefix))
+       t))
+
+(-> release-builder--string-suffix-p (string string) boolean)
+(defun release-builder--string-suffix-p (suffix value)
+  "Return true when VALUE ends with SUFFIX."
+  (and (>= (length value) (length suffix))
+       (string= suffix value :start2 (- (length value) (length suffix)))
+       t))
+
+(-> release-builder--strip-git-suffix (string) string)
+(defun release-builder--strip-git-suffix (value)
+  "Remove a trailing .git suffix from VALUE."
+  (if (release-builder--string-suffix-p ".git" value)
+      (subseq value 0 (- (length value) 4))
+      value))
+
+(-> release-builder--split-owner-repo (string) (values string string))
+(defun release-builder--split-owner-repo (path)
+  "Split PATH into GitHub owner and repository names."
+  (let ((parts (remove "" (uiop:split-string path :separator '(#\/))
+                       :test #'string=)))
+    (unless (= (length parts) 2)
+      (error 'release-builder-error
+             :stage ':tag-discovery
+             :cause (format nil "Repository path ~S is not owner/repo." path)))
+    (values (first parts) (second parts))))
+
+(-> release-builder--github-repository (string) (values string string))
+(defun release-builder--github-repository (repository)
+  "Return OWNER and REPO parsed from a GitHub REPOSITORY URL."
+  (let ((value
+          (release-builder--strip-git-suffix
+           (string-right-trim '(#\/) repository))))
+    (cond
+      ((release-builder--string-prefix-p "https://github.com/" value)
+       (release-builder--split-owner-repo
+        (subseq value (length "https://github.com/"))))
+      ((release-builder--string-prefix-p "http://github.com/" value)
+       (release-builder--split-owner-repo
+        (subseq value (length "http://github.com/"))))
+      ((release-builder--string-prefix-p "git@github.com:" value)
+       (release-builder--split-owner-repo
+        (subseq value (length "git@github.com:"))))
+      ((release-builder--string-prefix-p "ssh://git@github.com/" value)
+       (release-builder--split-owner-repo
+        (subseq value (length "ssh://git@github.com/"))))
+      (t
+       (error 'release-builder-error
+              :stage ':tag-discovery
+              :cause (format nil "Repository ~S is not a GitHub URL."
+                             repository))))))
+
+(-> release-builder--github-asset-url (string string string string) string)
+(defun release-builder--github-asset-url (owner repo tag name)
+  "Return the public GitHub download URL for one release asset."
+  (format nil "https://github.com/~A/~A/releases/download/~A/~A"
+          owner repo tag name))
+
+(-> release-builder--try-download (string pathname) boolean)
+(defun release-builder--try-download (url destination)
+  "Download URL to DESTINATION and return true when a non-empty file arrives."
+  (handler-case
+      (progn
+        (funcall *release-builder-command-function*
+                 (list "curl" "--fail" "--location" "--show-error" "--retry" "3"
+                       "--proto" "=https" "--tlsv1.2"
+                       "--output" (namestring destination)
+                       url)
+                 :output ':interactive
+                 :error-output ':interactive)
+        (and (uiop:file-exists-p destination)
+             (plusp
+              (with-open-file (stream destination
+                                      :direction ':input
+                                      :element-type '(unsigned-byte 8))
+                (file-length stream)))
+             t))
+    (error ()
+      (when (uiop:file-exists-p destination)
+        (delete-file destination))
+      nil)))
+
+(-> release-builder--linux-artifacts-present-p (pathname string) boolean)
+(defun release-builder--linux-artifacts-present-p (directory tag)
+  "Return true when DIRECTORY contains TAG's Linux archive and checksum."
+  (multiple-value-bind (archive checksum)
+      (release-builder--artifact-pathnames directory tag)
+    (and (uiop:file-exists-p archive)
+         (uiop:file-exists-p checksum)
+         t)))
+
+(-> release-builder--published-p
+    (release-builder-configuration string)
+    boolean)
+(defun release-builder--published-p (configuration tag)
+  "Return true when TAG is already Linux-complete in the public root."
+  (release-server--release-complete-p
+   (release-server-configuration-create
+    :source-root (release-builder-configuration-source-root configuration)
+    :public-root (release-builder-configuration-public-root configuration))
+   tag))
+
+(-> release-builder--published-source-tags
+    (release-builder-configuration list)
+    list)
+(defun release-builder--published-source-tags (configuration remote-tags)
+  "Return REMOTE-TAGS that already have a complete Linux publication."
+  (remove-if-not
+   (lambda (source-tag)
+     (release-builder--published-p configuration
+                                   (release-source-tag-name source-tag)))
+   remote-tags))
+
+(-> release-builder--fetch-github-assets
+    (release-builder-configuration release-source-tag)
+    pathname)
+(defun release-builder--fetch-github-assets (configuration source-tag)
+  "Download TAG's available GitHub archives and checksums into a staging directory."
+  (let* ((tag (release-source-tag-name source-tag))
+         (staging (release-builder--staging-path configuration source-tag))
+         (target
+           (release-server--release-directory
+            (release-server-configuration-create
+             :source-root (release-builder-configuration-source-root configuration)
+             :public-root (release-builder-configuration-public-root configuration))
+            tag)))
+    (multiple-value-bind (owner repo)
+        (release-builder--github-repository
+         (release-builder-configuration-repository configuration))
+      (when (uiop:directory-exists-p staging)
+        (uiop:delete-directory-tree staging
+                                    :validate t
+                                    :if-does-not-exist ':ignore))
+      (uiop:ensure-all-directories-exist (list staging))
+      (dolist (platform *release-server-platform-ids*)
+        (let* ((archive-name (release-server--archive-name tag platform))
+               (checksum-name (format nil "~A.sha256" archive-name))
+               (archive (merge-pathnames archive-name staging))
+               (checksum (merge-pathnames checksum-name staging)))
+          (when (or (not (uiop:file-exists-p (merge-pathnames archive-name target)))
+                    (not (uiop:file-exists-p (merge-pathnames checksum-name target))))
+            (when (and (release-builder--try-download
+                        (release-builder--github-asset-url owner repo tag archive-name)
+                        archive)
+                       (release-builder--try-download
+                        (release-builder--github-asset-url owner repo tag checksum-name)
+                        checksum))
+              (format t "~&Fetched ~A.~%" archive-name)
+              (finish-output)))))
+      staging)))
+
+(-> release-builder--files-identical-p (pathname pathname) boolean)
+(defun release-builder--files-identical-p (left right)
+  "Return true when LEFT and RIGHT contain the same bytes."
+  (with-open-file (left-stream left
+                               :direction ':input
+                               :element-type '(unsigned-byte 8))
+    (with-open-file (right-stream right
+                                  :direction ':input
+                                  :element-type '(unsigned-byte 8))
+      (and (= (file-length left-stream) (file-length right-stream))
+           (loop for left-byte = (read-byte left-stream nil nil)
+                 for right-byte = (read-byte right-stream nil nil)
+                 always (eql left-byte right-byte)
+                 while left-byte)
+           t))))
+
 ;;;; -- Atomic Publication --
 
 (-> release-builder--artifact-pathnames
@@ -538,39 +712,103 @@ tree intact lets one tag's object files fail a later tag's checks."
              (format nil "~A.sha256" (file-namestring archive))
              directory))))
 
+(-> release-builder--staging-files (pathname string) list)
+(defun release-builder--staging-files (directory tag)
+  "Return archive/checksum pathnames present in DIRECTORY for TAG."
+  (loop for platform in *release-server-platform-ids*
+        for archive-name = (release-server--archive-name tag platform)
+        for checksum-name = (format nil "~A.sha256" archive-name)
+        for archive = (merge-pathnames archive-name directory)
+        for checksum = (merge-pathnames checksum-name directory)
+        when (or (uiop:file-exists-p archive)
+                 (uiop:file-exists-p checksum))
+          collect (list archive checksum archive-name)))
+
 (-> release-builder--validate-artifacts (pathname string) null)
 (defun release-builder--validate-artifacts (directory tag)
-  "Require DIRECTORY to contain exactly verifiable release artifacts for TAG."
-  (multiple-value-bind (archive checksum)
-      (release-builder--artifact-pathnames directory tag)
-    (unless (and (uiop:file-exists-p archive)
-                 (uiop:file-exists-p checksum)
-                 (plusp
-                  (with-open-file (stream archive :direction ':input
-                                                 :element-type '(unsigned-byte 8))
-                    (file-length stream))))
+  "Require DIRECTORY's fetched archives to match their checksums."
+  (let ((files (release-builder--staging-files directory tag)))
+    (unless files
       (error 'release-builder-error
              :stage ':artifact-validation
              :tag tag
-             :cause "The build did not produce its archive and checksum."))
-    (handler-case
-        (uiop:run-program
-         (list "sha256sum" "--check" "--status" (file-namestring checksum))
-         :directory directory
-         :output ':interactive
-         :error-output ':interactive)
-      (error (cause)
-        (error 'release-builder-error
-               :stage ':artifact-validation
-               :tag tag
-               :cause cause))))
+             :cause "No GitHub release archives were fetched."))
+    (dolist (entry files)
+      (destructuring-bind (archive checksum archive-name) entry
+        (unless (and (uiop:file-exists-p archive)
+                     (uiop:file-exists-p checksum)
+                     (plusp
+                      (with-open-file (stream archive
+                                              :direction ':input
+                                              :element-type '(unsigned-byte 8))
+                        (file-length stream))))
+          (error 'release-builder-error
+                 :stage ':artifact-validation
+                 :tag tag
+                 :cause (format nil "~A is missing its archive or checksum."
+                                archive-name)))
+        (handler-case
+            (uiop:run-program
+             (list "sha256sum" "--check" "--status" (file-namestring checksum))
+             :directory directory
+             :output ':interactive
+             :error-output ':interactive)
+          (error (cause)
+            (error 'release-builder-error
+                   :stage ':artifact-validation
+                   :tag tag
+                   :cause cause))))))
   nil)
+
+(-> release-builder--install-artifact (pathname pathname) pathname)
+(defun release-builder--install-artifact (source destination)
+  "Copy SOURCE to DESTINATION and freeze it as a published artifact."
+  (uiop:copy-file source destination)
+  (sb-posix:chmod (namestring destination) #o444)
+  destination)
+
+(-> release-builder--merge-artifacts (pathname pathname string) pathname)
+(defun release-builder--merge-artifacts (staging target tag)
+  "Add new STAGING artifacts into TARGET without changing existing files."
+    (sb-posix:chmod (namestring target) #o755)
+    (unwind-protect
+         (dolist (entry (release-builder--staging-files staging tag))
+           (destructuring-bind (archive checksum archive-name) entry
+             (let ((published-archive (merge-pathnames archive-name target))
+                   (published-checksum
+                     (merge-pathnames (format nil "~A.sha256" archive-name) target)))
+               (cond
+                 ((and (uiop:file-exists-p published-archive)
+                       (uiop:file-exists-p published-checksum))
+                  (unless (and (release-builder--files-identical-p
+                                archive published-archive)
+                               (release-builder--files-identical-p
+                                checksum published-checksum))
+                    (error 'release-builder-error
+                           :stage ':publication
+                           :tag tag
+                           :cause (format nil "~A already exists with different contents."
+                                          archive-name))))
+                 ((or (uiop:file-exists-p published-archive)
+                      (uiop:file-exists-p published-checksum))
+                  (error 'release-builder-error
+                         :stage ':publication
+                         :tag tag
+                         :cause (format nil "~A is only partially published."
+                                        archive-name)))
+                 (t
+                  (release-builder--install-artifact archive published-archive)
+                  (release-builder--install-artifact checksum published-checksum)
+                  (format t "~&Added ~A to Autolith ~A.~%" archive-name tag)
+                  (finish-output))))))
+      (sb-posix:chmod (namestring target) #o555))
+    target)
 
 (-> release-builder-publish
     (release-builder-configuration pathname string)
     pathname)
 (defun release-builder-publish (configuration staging tag)
-  "Validate and atomically publish TAG from STAGING, returning its directory."
+  "Validate STAGING and publish or merge TAG, returning its directory."
   (release-builder--validate-artifacts staging tag)
   (let* ((releases-root
            (merge-pathnames "releases/"
@@ -582,62 +820,72 @@ tree intact lets one tag's object files fail a later tag's checks."
             (format nil ".~A.~D/" tag (sb-posix:getpid))
             releases-root)))
     (when (uiop:directory-exists-p target)
+      (return-from release-builder-publish
+        (release-builder--merge-artifacts staging target tag)))
+    (unless (release-builder--linux-artifacts-present-p staging tag)
       (error 'release-builder-error
              :stage ':publication
              :tag tag
-             :cause "An incomplete publication directory already exists."))
+             :cause "The Linux archive is required for first publication."))
     (when (uiop:directory-exists-p temporary)
       (uiop:delete-directory-tree temporary
                                   :validate t
                                   :if-does-not-exist ':ignore))
     (uiop:ensure-all-directories-exist (list temporary))
-    (multiple-value-bind (archive checksum)
-        (release-builder--artifact-pathnames staging tag)
-      (let ((published-archive
-              (merge-pathnames (file-namestring archive) temporary))
-            (published-checksum
-              (merge-pathnames (file-namestring checksum) temporary)))
-        (uiop:copy-file archive published-archive)
-        (uiop:copy-file checksum published-checksum)
-        (sb-posix:chmod (namestring published-archive) #o444)
-        (sb-posix:chmod (namestring published-checksum) #o444)))
+    (dolist (entry (release-builder--staging-files staging tag))
+      (destructuring-bind (archive checksum archive-name) entry
+        (release-builder--install-artifact
+         archive (merge-pathnames archive-name temporary))
+        (release-builder--install-artifact
+         checksum (merge-pathnames (format nil "~A.sha256" archive-name)
+                                   temporary))))
     (sb-posix:chmod (namestring temporary) #o555)
     (rename-file temporary target)
     (format t "~&Published Autolith ~A at ~A.~%" tag target)
     (finish-output)
-    target))
+      target))
 
 
 ;;;; -- Builder Loop --
 
-(-> release-builder-build (release-builder-configuration release-source-tag) pathname)
+(-> release-builder-build
+    (release-builder-configuration release-source-tag)
+    (option pathname))
 (defun release-builder-build (configuration source-tag)
-  "Build, verify, and publish one immutable SOURCE-TAG."
+  "Fetch GitHub assets for SOURCE-TAG and publish or merge them."
   (let* ((tag (release-source-tag-name source-tag))
-         (checkout (release-builder--prepare-checkout configuration source-tag))
-         (version (release-builder--source-version checkout)))
-    (unless (string= tag (format nil "v~A" version))
-      (error 'release-builder-error
-             :stage ':source-validation
-             :tag tag
-             :cause (format nil "The checkout declares version ~A." version)))
-    (release-builder--container-image configuration)
-    (release-builder-publish
-     configuration
-     (release-builder--run-container configuration source-tag checkout)
-     tag)))
+         (staging (release-builder--fetch-github-assets configuration source-tag))
+         (published-p (release-builder--published-p configuration tag)))
+    (cond
+      ((release-builder--linux-artifacts-present-p staging tag)
+       (release-builder-publish configuration staging tag))
+      (published-p
+       (if (release-builder--staging-files staging tag)
+           (release-builder-publish configuration staging tag)
+           (release-server--release-directory
+            (release-server-configuration-create
+             :source-root (release-builder-configuration-source-root configuration)
+             :public-root (release-builder-configuration-public-root configuration))
+            tag)))
+      (t
+       (format t "~&Waiting for the GitHub Linux archive of Autolith ~A.~%" tag)
+       (finish-output)
+       nil))))
 
 (-> release-builder-build-pending (release-builder-configuration) list)
 (defun release-builder-build-pending (configuration)
-  "Build every newly discovered release and return its publication paths."
+  "Mirror newly tagged and already published GitHub releases."
   (release-host--call-with-lock
    (release-builder-configuration-state-root configuration)
    (lambda ()
-     (loop for source-tag in
-           (release-builder-pending-tags
-            configuration
-            (release-builder-remote-tags configuration))
-           collect (release-builder-build configuration source-tag)))))
+     (let ((remote-tags (release-builder-remote-tags configuration)))
+       (loop for source-tag in
+             (append (release-builder-pending-tags configuration remote-tags)
+                     (release-builder--published-source-tags
+                      configuration remote-tags))
+             for published = (release-builder-build configuration source-tag)
+             when published
+               collect published)))))
 
 (-> release-builder-run (release-builder-configuration) null)
 (defun release-builder-run (configuration)

@@ -185,10 +185,14 @@
 
 ;;;; -- Published Releases --
 
-(-> release-server--archive-name (string) string)
-(defun release-server--archive-name (tag)
-  "Return the Linux x86-64 archive name belonging to TAG."
-  (format nil "autolith-~A-x86_64-linux.tar.gz" tag))
+(defparameter *release-server-platform-ids*
+  '("x86_64-linux" "arm64-darwin" "x86_64-freebsd" "x86_64-netbsd" "x86_64-openbsd")
+  "Canonical platform identifiers published as binary release archives.")
+
+(-> release-server--archive-name (string &optional string) string)
+(defun release-server--archive-name (tag &optional (platform "x86_64-linux"))
+  "Return the archive name belonging to TAG and PLATFORM."
+  (format nil "autolith-~A-~A.tar.gz" tag platform))
 
 (-> release-server--release-directory
     (release-server-configuration string)
