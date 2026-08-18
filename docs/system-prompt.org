@@ -286,16 +286,15 @@ the workspace and temporary directories.
 
 ** Jobs
 
-| Tool                | Use                                  |
-|---------------------+--------------------------------------|
-| =shell.run=           | =async: true= for immediate inspection |
-| =lisp.eval=           | #ERROR                               |
-| =lisp.load-system=    | =async: true= for immediate inspection |
-| =lisp.run-tests=      | =async: true= for immediate inspection |
-| =lisp.scratchpad-run= | =async: true= for immediate inspection |
-| =job.wait=            | Keep the returned ID                 |
-| =job.cancel=          | Keep the returned ID                 |
-#+TBLFM: $2=async: true= for immediate inspection
+| Tool                | Use                                    |
+|---------------------+----------------------------------------|
+| =shell.run=           | =async: true= for immediate inspection   |
+| =lisp.eval=           | =async: true= for immediate inspection   |
+| =lisp.load-system=    | =async: true= for immediate inspection   |
+| =lisp.run-tests=      | =async: true= for immediate inspection   |
+| =lisp.scratchpad-run= | =async: true= for immediate inspection   |
+| =job.wait=            | Keep the returned ID                   |
+| =job.cancel=          | Keep the returned ID                   |
 
 Without async, fast operations return normally; after the default 10s
 grace, the job is handed off instead of rerun.

@@ -231,6 +231,7 @@
                              (:file "application-operation-tests")
                              (:file "recovery-input-vault-tests")
                              (:file "user-init-tests")
+                             (:file "prompt-tests")
                              (:file "tests"))))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))

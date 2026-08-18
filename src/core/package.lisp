@@ -316,7 +316,8 @@
                 #:url-decode
                 #:url-encode-params)
   (:import-from #:serapeum
-                #:->)
+                #:->
+                #:dict)
   (:import-from #:usocket
                 #:ns-error
                 #:socket-error)
