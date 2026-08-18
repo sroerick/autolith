@@ -117,13 +117,35 @@ done
 platform=
 os=$(uname -s)
 arch=$(uname -m)
-if [ "$os" = Linux ] && [ "$arch" = x86_64 ]; then
-  platform=x86_64-linux
-elif [ "$os" = Darwin ] && [ "$arch" = arm64 ]; then
-  platform=arm64-darwin
-else
-  fail "binary releases currently support Linux x86-64 and macOS arm64 only."
-fi
+case $os in
+  Linux)
+    case $arch in
+      x86_64|amd64) platform=x86_64-linux ;;
+    esac
+    ;;
+  Darwin)
+    case $arch in
+      arm64|aarch64) platform=arm64-darwin ;;
+    esac
+    ;;
+  FreeBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-freebsd ;;
+    esac
+    ;;
+  NetBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-netbsd ;;
+    esac
+    ;;
+  OpenBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-openbsd ;;
+    esac
+    ;;
+esac
+[ -n "$platform" ] ||
+  fail "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
 
 required_commands="bash curl git grep openssl tar"
 if [ "$platform" = x86_64-linux ]; then

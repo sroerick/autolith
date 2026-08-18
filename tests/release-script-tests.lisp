@@ -571,33 +571,33 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
              (format nil "~A:~A"
                      (string-right-trim "/" (namestring fixture-bin))
                      (or (uiop:getenv "PATH") ""))))
-      (release-script-tests--write-file
-       uname
-       "#!/bin/sh
+        (release-script-tests--write-file
+         uname
+         "#!/bin/sh
 case ${1:-} in
-  -s) printf 'FreeBSD\\n' ;;
-  -m) printf 'x86_64\\n' ;;
+  -s) printf 'SunOS\\n' ;;
+  -m) printf 'amd64\\n' ;;
   *) exit 64 ;;
 esac
 ")
-      (release-script-tests--chmod "755" uname)
-      (multiple-value-bind (output error-output status)
-          (release-script-tests--run
-           (list "/bin/sh" "-c"
-                 (format nil "~A --version ~A 2>&1"
-                         (namestring installer)
-                         tag))
-           :environment
-           (list (format nil "HOME=~A" (namestring root))
-                 (format nil "PATH=~A" path))
-           :ignore-error-status t)
-        (declare (ignore error-output))
-        (test-assert
-         (and (not (eql status 0))
-              (search
-               "binary releases currently support Linux x86-64 and macOS arm64 only."
-               output))
-         "the binary installer rejects unsupported platforms")))
+        (release-script-tests--chmod "755" uname)
+        (multiple-value-bind (output error-output status)
+            (release-script-tests--run
+             (list "/bin/sh" "-c"
+                   (format nil "~A --version ~A 2>&1"
+                           (namestring installer)
+                           tag))
+             :environment
+             (list (format nil "HOME=~A" (namestring root))
+                   (format nil "PATH=~A" path))
+             :ignore-error-status t)
+          (declare (ignore error-output))
+          (test-assert
+           (and (not (eql status 0))
+                (search
+                 "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+                 output))
+           "the binary installer rejects unsupported platforms")))
     (release-script-tests--install-linux-host-tools fixture-bin)
     (release-script-tests--run
      (list "cp" "-a" (format nil "~A." (namestring release-root))
@@ -1205,6 +1205,195 @@ esac
                    minimum)))))
     nil))
 
+(-> release-script-tests--write-uname (pathname string string) pathname)
+(defun release-script-tests--write-uname (directory os architecture)
+  "Install a uname fixture reporting OS and ARCHITECTURE."
+  (let ((uname (merge-pathnames "uname"
+                                (uiop:ensure-directory-pathname directory))))
+    (release-script-tests--write-file
+     uname
+     (format nil
+             "#!/bin/sh
+case ${1:-} in
+  -s) printf '~A\\n' ;;
+  -m) printf '~A\\n' ;;
+  *) exit 64 ;;
+esac
+"
+             os architecture))
+    (release-script-tests--chmod "755" uname)
+    uname))
+
+(-> release-script-tests--write-checksum (pathname pathname) pathname)
+(defun release-script-tests--write-checksum (archive checksum)
+  "Write the SHA-256 checksum of ARCHIVE to CHECKSUM."
+  (if (release-archive--command-pathname "sha256sum")
+      (release-script-tests--run
+       (list "sha256sum" (file-namestring archive))
+       :directory (uiop:pathname-directory-pathname archive)
+       :output checksum)
+      (let ((output
+              (release-script-tests--run
+               (list "shasum" "-a" "256" (file-namestring archive))
+               :directory (uiop:pathname-directory-pathname archive)
+               :output ':string)))
+        (release-script-tests--write-file checksum output)))
+  checksum)
+
+(-> release-script-tests--platform-ids () null)
+(defun release-script-tests--platform-ids ()
+  "Exercise canonical release platform identifiers."
+  (dolist (case '(("Linux" "x86-64" "x86_64-linux")
+                  ("Linux" "x86_64" "x86_64-linux")
+                  ("Linux" "amd64" "x86_64-linux")
+                  ("Darwin" "arm64" "arm64-darwin")
+                  ("Darwin" "aarch64" "arm64-darwin")
+                  ("FreeBSD" "amd64" "x86_64-freebsd")
+                  ("FreeBSD" "x86_64" "x86_64-freebsd")
+                  ("NetBSD" "amd64" "x86_64-netbsd")
+                  ("NetBSD" "x86_64" "x86_64-netbsd")
+                  ("OpenBSD" "amd64" "x86_64-openbsd")
+                  ("OpenBSD" "x86_64" "x86_64-openbsd")))
+    (destructuring-bind (os architecture expected) case
+      (test-assert
+       (string= (release-archive--platform-id os architecture) expected)
+       (format nil "~A/~A maps to ~A" os architecture expected))))
+  (dolist (case '(("Linux" "i686")
+                  ("Darwin" "x86_64")
+                  ("SunOS" "amd64")
+                  ("FreeBSD" "aarch64")
+                  ("Windows_NT" "x86_64")))
+    (destructuring-bind (os architecture) case
+      (test-assert
+       (handler-case
+           (progn
+             (release-archive--platform-id os architecture)
+             nil)
+         (release-archive-error (condition)
+           (and (eq (release-archive-error-stage condition) ':prerequisites)
+                (search "Binary releases currently support"
+                        (release-archive-error-cause condition)))))
+       (format nil "~A/~A is not a release target" os architecture))))
+  nil)
+
+(-> release-script-tests--launcher-bsd (pathname pathname) null)
+(defun release-script-tests--launcher-bsd (source-root root)
+  "Exercise BSD packaged launcher validation without Bubblewrap."
+  (dolist (os '("FreeBSD" "NetBSD" "OpenBSD"))
+    (let* ((release-root
+             (merge-pathnames (format nil "bsd-launcher-~A/" os) root))
+           (launcher (merge-pathnames "bin/autolith" release-root))
+           (host-bin (merge-pathnames (format nil "bsd-host-~A/" os) root))
+           (path (format nil "~A:~A"
+                         (string-right-trim "/" (namestring host-bin))
+                         (or (uiop:getenv "PATH") "")))
+           (environment
+             (list "AUTOLITH_NO_UPDATE_CHECK=1"
+                   (format nil "PATH=~A" path))))
+      (release-script-tests--write-uname host-bin os "amd64")
+      (release-script-tests--make-release source-root release-root)
+      (let ((output
+              (release-script-tests--run
+               (list (namestring launcher) "--autolith-release-probe")
+               :environment environment)))
+        (test-assert
+         (search (format nil "version=~A" *release-script-tests-version*)
+                 output)
+         (format nil "the ~A release launcher probes a packaged release" os)))
+      (let ((library
+              (merge-pathnames "lib/libcolorlisp-tree-sitter.so" release-root)))
+        (delete-file library)
+        (multiple-value-bind (output error-output status)
+            (release-script-tests--run
+             (list (namestring launcher) "--autolith-release-probe")
+             :environment environment
+             :ignore-error-status t
+             :output nil)
+          (declare (ignore output error-output))
+          (test-assert (not (eql status 0))
+                       (format nil
+                               "the ~A release launcher requires its private syntax library"
+                               os)))
+        (release-script-tests--write-file library ""))))
+  nil)
+
+(-> release-script-tests--installer-bsd (pathname pathname) null)
+(defun release-script-tests--installer-bsd (source-root root)
+  "Exercise FreeBSD, NetBSD, and OpenBSD amd64 installer publication."
+  (let* ((tag (format nil "v~A" *release-script-tests-version*))
+         (release-root (merge-pathnames "bsd-release/" root))
+         (installer (merge-pathnames "script/install" source-root)))
+    (release-script-tests--make-release source-root release-root)
+    (dolist (spec '(("FreeBSD" "amd64" "x86_64-freebsd")
+                    ("NetBSD" "amd64" "x86_64-netbsd")
+                    ("OpenBSD" "amd64" "x86_64-openbsd")))
+      (destructuring-bind (os architecture platform) spec
+        (let* ((release-name (format nil "autolith-~A-~A" tag platform))
+               (fixture-root
+                 (merge-pathnames (format nil "fixture-~A/" platform) root))
+               (fixture-source
+                 (merge-pathnames (format nil "fixture-~A-source/" platform)
+                                  root))
+               (fixture-bin
+                 (merge-pathnames (format nil "fixture-~A-bin/" platform) root))
+               (fixture-release
+                 (merge-pathnames (format nil "~A/" release-name)
+                                  fixture-source))
+               (archive
+                 (merge-pathnames (format nil "~A.tar.gz" release-name)
+                                  fixture-root))
+               (checksum
+                 (merge-pathnames (format nil "~A.tar.gz.sha256" release-name)
+                                  fixture-root))
+               (install-root
+                 (merge-pathnames (format nil "~A-installation/" platform)
+                                  root))
+               (bin-directory
+                 (merge-pathnames (format nil "~A-bin/" platform) root))
+               (curl (merge-pathnames "curl" fixture-bin)))
+          (uiop:ensure-all-directories-exist
+           (list fixture-root fixture-source fixture-bin fixture-release))
+          (release-script-tests--write-uname fixture-bin os architecture)
+          (release-script-tests--run
+           (list "cp" "-a" (format nil "~A." (namestring release-root))
+                 (namestring fixture-release))
+           :output nil)
+          (release-script-tests--chmod "a-w" fixture-release)
+          (release-script-tests--run
+           (list "tar" "-czf" (namestring archive)
+                 "-C" (namestring fixture-source) release-name)
+           :output nil)
+          (release-script-tests--write-checksum archive checksum)
+          (release-script-tests--write-file
+           curl (release-script-tests--fixture-curl))
+          (release-script-tests--chmod "755" curl)
+          (release-script-tests--run
+           (list (namestring installer) "--version" tag)
+           :environment
+           (list
+            (format nil "PATH=~A:~A"
+                    (string-right-trim "/" (namestring fixture-bin))
+                    (or (uiop:getenv "PATH") ""))
+            (format nil "AUTOLITH_TEST_RELEASE_FIXTURE=~A"
+                    (namestring fixture-root))
+            "AUTOLITH_RELEASE_BASE_URL=https://example.invalid"
+            (format nil "AUTOLITH_INSTALL_ROOT=~A"
+                    (string-right-trim "/" (namestring install-root)))
+            (format nil "AUTOLITH_BIN_DIR=~A"
+                    (string-right-trim "/" (namestring bin-directory))))
+           :output nil)
+          (test-assert
+           (probe-file
+            (merge-pathnames (format nil "releases/~A/bin/autolith" tag)
+                             install-root))
+           (format nil "the ~A installer publishes the requested release" os))
+          (test-assert
+           (string= (release-script-tests--readlink
+                     (merge-pathnames "current" install-root))
+                    (format nil "releases/~A" tag))
+           (format nil "the ~A installer selects the requested version" os))))))
+  nil)
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -1219,10 +1408,13 @@ esac
            (release-script-tests--syntax source-root)
            (release-script-tests--runtime-adapter source-root root)
            (release-script-tests--source-launcher source-root root)
+           (release-script-tests--platform-ids)
            (release-script-tests--launcher source-root root)
            (release-script-tests--launcher-darwin source-root root)
+           (release-script-tests--launcher-bsd source-root root)
            (release-script-tests--update-handoff source-root root)
            (release-script-tests--installer source-root root)
-           (release-script-tests--installer-darwin source-root root))
+           (release-script-tests--installer-darwin source-root root)
+           (release-script-tests--installer-bsd source-root root))
       (release-script-tests--cleanup root)))
   nil)

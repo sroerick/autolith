@@ -176,16 +176,43 @@ release_images_build()
 
 [[ -n $home ]] || fail "HOME is not set."
 platform=
-if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
-  platform=x86_64-linux
-  fff_library=$release_root/lib/libfff_c.so
-  colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.so
-elif [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]]; then
-  platform=arm64-darwin
+os=$(uname -s)
+arch=$(uname -m)
+case $os in
+  Linux)
+    case $arch in
+      x86_64|amd64) platform=x86_64-linux ;;
+    esac
+    ;;
+  Darwin)
+    case $arch in
+      arm64|aarch64) platform=arm64-darwin ;;
+    esac
+    ;;
+  FreeBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-freebsd ;;
+    esac
+    ;;
+  NetBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-netbsd ;;
+    esac
+    ;;
+  OpenBSD)
+    case $arch in
+      amd64|x86_64) platform=x86_64-openbsd ;;
+    esac
+    ;;
+esac
+[[ -n $platform ]] ||
+  fail "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+if [[ $platform == arm64-darwin ]]; then
   fff_library=$release_root/lib/libfff_c.dylib
   colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.dylib
 else
-  fail "binary releases currently support Linux x86-64 and macOS arm64 only."
+  fff_library=$release_root/lib/libfff_c.so
+  colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.so
 fi
 
 [[ -r $release_record ]] || fail "RELEASE is missing."

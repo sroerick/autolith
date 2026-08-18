@@ -274,22 +274,43 @@ rather than failing, so existence needs the following stat first."
    (release-archive--identity-git-command source-root '("read-tree" "HEAD")))
   nil)
 
-(-> release-archive--platform () string)
-(defun release-archive--platform ()
-  "Return the canonical release platform identifier."
-  (let ((os (software-type))
-        (arch (string-downcase (machine-type))))
+(-> release-archive--x86-64-architecture-p (string) boolean)
+(defun release-archive--x86-64-architecture-p (architecture)
+  "Return true when ARCHITECTURE names an x86-64 machine."
+  (and (find (string-downcase architecture)
+             '("x86-64" "x86_64" "amd64")
+             :test #'string=)
+       t))
+
+(-> release-archive--platform-id (string string) string)
+(defun release-archive--platform-id (os architecture)
+  "Return the canonical release platform identifier for OS and ARCHITECTURE."
+  (let ((architecture (string-downcase architecture)))
     (cond
       ((and (string-equal os "Linux")
-            (member arch '("x86-64" "x86_64" "amd64") :test #'string=))
+            (release-archive--x86-64-architecture-p architecture))
        "x86_64-linux")
       ((and (string-equal os "Darwin")
-            (member arch '("arm64" "aarch64") :test #'string=))
+            (member architecture '("arm64" "aarch64") :test #'string=))
        "arm64-darwin")
+      ((and (string-equal os "FreeBSD")
+            (release-archive--x86-64-architecture-p architecture))
+       "x86_64-freebsd")
+      ((and (string-equal os "NetBSD")
+            (release-archive--x86-64-architecture-p architecture))
+       "x86_64-netbsd")
+      ((and (string-equal os "OpenBSD")
+            (release-archive--x86-64-architecture-p architecture))
+       "x86_64-openbsd")
       (t
        (error 'release-archive-error
               :stage ':prerequisites
-              :cause "Binary releases currently support Linux x86-64 and macOS arm64 only.")))))
+              :cause "Binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only.")))))
+
+(-> release-archive--platform () string)
+(defun release-archive--platform ()
+  "Return the canonical release platform identifier."
+  (release-archive--platform-id (software-type) (machine-type)))
 
 (-> release-archive--validate-platform () null)
 (defun release-archive--validate-platform ()
