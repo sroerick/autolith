@@ -26,8 +26,8 @@ This is the Autolith system prompt.
 | =:lisp=                       | JSON string | =lisp-implementation-type=                                     |
 | =:lisp-version=               | JSON string | =lisp-implementation-version=                                  |
 | =:lang=                       | JSON string | =LANG=                                                         |
-| =:lisp-image-entries=         | text        | image rows from =lisp-image-prompt-notes=, without the lead-in |
-| =:agenda=                     | text        | item lines from =agenda-prompt-context=, without the lead-in   |
+| =:lisp-image-entries=         | text        | rows from =lisp-image-prompt-entries=                            |
+| =:agenda=                     | text        | item lines from =agenda-prompt-item-lines=                       |
 | =:agenda-p=                   | boolean     | current workspace agenda has items                           |
 | =:immutable-p=                | boolean     | =configuration-immutable-p=                                    |
 | =:source-root=                | JSON string | =configuration-source-root=                                    |
@@ -35,22 +35,16 @@ This is the Autolith system prompt.
 | =:current-date=               | date        | local ISO-8601 day                                           |
 | =:workspace-instructions=     | text or nil | bounded AGENTS.md concatenation                              |
 
-Hosted web search takes precedence over web.run, matching the =cond=
-in =system-prompt--hosted-web-search-guidance=.
+Hosted web search takes precedence over web.run, matching
+=:hosted-web-search-p= over =:web-run-p=.
 
-=:rlm-available= is true when the request registers the rlm tools.
-There is no corresponding binding in master prompt.lisp. This
-section follows the ChatGPT share =RLM in AI Agents=
+=:rlm-available= is bound to NIL until the rlm tools are registered.
+The RLM section follows the ChatGPT share =RLM in AI Agents=
 (=6a846c8b-9884-83ed-8c6b-faa053e720f7=), =docs/rlm.org=, and the
 inference tools on =lho/rlm=.
 
-=lisp-image-prompt-notes= currently emits its lead-in even when there
-are no images. This draft keeps that lead-in in Org and interpolates
-only the rows.
-
-=agenda-prompt-context= currently emits either the full lead-in plus
-items, or the sentence =Current workspace agenda: empty.= This draft
-keeps both lead-ins in Org.
+Image and agenda lead-ins live in Org. The Lisp bindings supply only
+the item rows.
 
 Always bind =:agenda-p= and =:immutable-p=. An omitted key hides both
 variants of that pair.
