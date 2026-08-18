@@ -1517,6 +1517,25 @@ esac
   (dolist (os '("Darwin" "FreeBSD" "NetBSD" "OpenBSD"))
     (test-assert (release-archive--gnu-tar-required-p os)
                  (format nil "~A requires GNU tar for reproducible archives" os)))
+    (let ((missing (merge-pathnames "no-sandbox/" root))
+          (present (merge-pathnames "has-sandbox/" root)))
+      (test-assert (null (release-archive--sandbox-helper missing))
+                   "sandbox helper lookup is silent when the helper is absent")
+      (release-script-tests--write-file
+       (merge-pathnames
+        ".qlot/dists/cl-exec-sandbox/software/v1/cl-exec-sandbox-helper"
+        present)
+       "helper")
+      (test-assert
+       (equal
+        (namestring
+         (truename (release-archive--sandbox-helper present)))
+        (namestring
+         (truename
+          (merge-pathnames
+           ".qlot/dists/cl-exec-sandbox/software/v1/cl-exec-sandbox-helper"
+           present))))
+       "sandbox helper lookup finds a nested helper without GNU find"))
   (let* ((bin (merge-pathnames "sha256-only/" root))
          (empty (merge-pathnames "no-digest/" root))
          (sha256 (merge-pathnames "sha256" bin))

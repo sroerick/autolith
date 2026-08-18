@@ -96,6 +96,28 @@
               value)
        t))
 
+(-> release-archive--symlink-p (pathname) boolean)
+(defun release-archive--symlink-p (pathname)
+  "Return true when PATHNAME is a symbolic link."
+  (let ((stat (ignore-errors (sb-posix:lstat (namestring pathname)))))
+    (and stat
+         (not (null (sb-posix:s-islnk (sb-posix:stat-mode stat))))
+         t)))
+
+(-> release-archive--file-named (pathname string) (option pathname))
+(defun release-archive--file-named (root name)
+  "Return the first file named NAME below ROOT."
+  (when (uiop:directory-exists-p root)
+    (labels ((walk (directory)
+               (let ((candidate (merge-pathnames name directory)))
+                 (when (and (uiop:file-exists-p candidate)
+                            (not (uiop:directory-exists-p candidate)))
+                   (return-from release-archive--file-named candidate)))
+               (dolist (subdirectory (uiop:subdirectories directory))
+                 (walk subdirectory))))
+      (walk (uiop:ensure-directory-pathname root))))
+  nil)
+
 (-> release-archive--sandbox-helper (pathname) (option pathname))
 (defun release-archive--sandbox-helper (source-root)
   "Locate the private sandbox helper built below SOURCE-ROOT."
@@ -103,23 +125,9 @@
     (or (and configured
              (plusp (length configured))
              (probe-file configured))
-        (let* ((software-root
-                 (merge-pathnames
-                  ".qlot/dists/cl-exec-sandbox/software/"
-                  source-root))
-               (output
-                 (when (uiop:directory-exists-p software-root)
-                   (release-archive--run
-                    (list "find" "-L" (namestring software-root)
-                          "-type" "f" "-name" "cl-exec-sandbox-helper"
-                          "-print" "-quit")
-                    :output ':string
-                    :error-output ':output)))
-               (pathname
-                 (and output
-                      (plusp (length (string-trim '(#\Newline #\Return) output)))
-                      (pathname (string-trim '(#\Newline #\Return) output)))))
-          (and pathname (probe-file pathname))))))
+        (release-archive--file-named
+         (merge-pathnames ".qlot/dists/cl-exec-sandbox/software/" source-root)
+         "cl-exec-sandbox-helper"))))
 
 
 (-> release-archive--colorlisp-library () pathname)
@@ -141,14 +149,18 @@
 (-> release-archive--dependency-links (pathname) list)
 (defun release-archive--dependency-links (dependency-root)
   "Return every symbolic link below DEPENDENCY-ROOT."
-  (remove-if
-   (lambda (value) (zerop (length value)))
-   (uiop:split-string
-    (release-archive--run
-     (list "find" (namestring dependency-root) "-type" "l" "-print0")
-     :output ':string
-     :error-output ':output)
-    :separator (list (code-char 0)))))
+  (let ((links nil))
+    (when (uiop:directory-exists-p dependency-root)
+      (labels ((walk (directory)
+                 (dolist (file (uiop:directory-files directory))
+                   (when (release-archive--symlink-p file)
+                     (push (namestring file) links)))
+                 (dolist (subdirectory (uiop:subdirectories directory))
+                   (when (release-archive--symlink-p subdirectory)
+                     (push (namestring subdirectory) links))
+                   (walk subdirectory))))
+        (walk (uiop:ensure-directory-pathname dependency-root))))
+    (nreverse links)))
 
 (-> release-archive--link-target (pathname) (option pathname))
 (defun release-archive--link-target (link)
