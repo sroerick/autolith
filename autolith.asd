@@ -23,6 +23,7 @@
                #:bordeaux-threads
                #:mcparen
                #:opticl
+               #:org-templater
                #:parenchek
                #:quri
                #:serapeum

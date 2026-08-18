@@ -141,6 +141,17 @@ let
     ];
   };
 
+  orgTemplater = pkgs.sbcl.buildASDFSystem {
+    pname = "org-templater";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "org-templater";
+      rev = "918d456528474e880014fe8377e4810e4a55e6a9";
+      hash = "sha256-M9kMLo9bBnxIMUVCVFdXqLpFi2/mJSx+iBcOCBw7feQ=";
+    };
+  };
+
   structlisp = pkgs.sbcl.buildASDFSystem {
     pname = "structlisp";
     version = "0.1.0";
@@ -315,6 +326,7 @@ let
       ironclad
       opticl
       parenchek
+      orgTemplater
       quri
       serapeum
       yason
