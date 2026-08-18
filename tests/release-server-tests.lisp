@@ -14,6 +14,20 @@
     (write-string content stream))
   pathname)
 
+(-> release-server-tests--delete-tree (pathname) null)
+(defun release-server-tests--delete-tree (root)
+  "Make ROOT writable, then delete it. Published release fixtures are read-only."
+  (when (uiop:directory-exists-p root)
+    (ignore-errors
+      (uiop:run-program
+       (list "chmod" "-R" "u+w" (namestring root))
+       :output nil
+       :error-output nil)))
+  (uiop:delete-directory-tree root
+                              :validate t
+                              :if-does-not-exist ':ignore)
+  nil)
+
 (-> release-server-tests--write-artifact
     (pathname string string string)
     (values pathname pathname))
@@ -117,9 +131,7 @@
         (if (rest entry)
             (sb-posix:setenv (first entry) (rest entry) 1)
             (sb-posix:unsetenv (first entry))))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   nil)
 
 (-> release-server-tests--test-service-runtime-isolation () null)
@@ -179,6 +191,18 @@
                "release tags reject extra components")
   (test-assert (release-tag< "v0.9.12" "v0.10.1")
                "release tags compare numeric components")
+    (let ((root
+            (uiop:ensure-directory-pathname
+             (merge-pathnames
+              (format nil "autolith-release-readonly-cleanup-~A/"
+                      (make-identifier))
+              (uiop:temporary-directory)))))
+      (ensure-directories-exist root)
+      (release-server-tests--write-file (merge-pathnames "file" root) "x")
+      (uiop:run-program (list "chmod" "-R" "a-w" (namestring root)))
+      (release-server-tests--delete-tree root)
+      (test-assert (not (uiop:directory-exists-p root))
+                   "read-only published fixtures can be deleted after making them writable"))
   (release-server-tests--test-git-configuration-isolation)
   (let* ((root
            (uiop:ensure-directory-pathname
@@ -356,7 +380,7 @@
               (release-server-request-error ()
                 t))
             "malformed HTTP request lines signal a structured condition"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -400,9 +424,7 @@
             (and (not (probe-file (merge-pathnames ".git/hooks/" source-a)))
                  (not (probe-file (merge-pathnames ".git/logs/" source-a))))
             "packaged source identities omit template and reflog state"))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -428,7 +450,7 @@
            (test-assert
             (not (probe-file broken-link))
             "release archives remove broken dependency links"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   (let* ((commit-a "0123456789abcdef0123456789abcdef01234567")
            (commit-b "89abcdef0123456789abcdef0123456789abcdef")
            (tag-object "fedcba9876543210fedcba9876543210fedcba98")
@@ -505,7 +527,7 @@
            (test-assert
             (string= (release-builder--source-version source-root) "0.11.2")
             "builder source validation reads the declared ASDF version"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
     (test-assert
      (search "lambda-symbolics/autolith" *release-builder-default-repository*)
      "the builder default repository is the live GitHub origin")
@@ -658,7 +680,7 @@
                 (test-assert
                  (null (release-builder-build builder waiting-tag))
                  "the builder waits when GitHub has not published the Linux archive")))
-        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+          (release-server-tests--delete-tree root)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -714,7 +736,7 @@
                    cleanup
                    (member "--force" cleanup :test #'string=))
               "container builds have a deadline, managed name, and force cleanup")))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -899,9 +921,7 @@
                (release-updater--checkout-valid-p
                 annotated-path annotated-tag))
               "host deployments reject annotated release tags")))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   (let* ((root
            (uiop:ensure-directory-pathname
             (merge-pathnames
@@ -1018,7 +1038,5 @@
                (test-assert
                 (not (uiop:directory-exists-p failed-path))
                 "a failed updater-owned final candidate is removed for retry")))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+        (release-server-tests--delete-tree root)))
   nil))
