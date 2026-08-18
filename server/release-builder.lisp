@@ -596,8 +596,8 @@ tree intact lets one tag's object files fail a later tag's checks."
   (handler-case
       (progn
         (funcall *release-builder-command-function*
-                 (list "curl" "--fail" "--location" "--show-error" "--retry" "3"
-                       "--proto" "=https" "--tlsv1.2"
+                   (list "curl" "--fail" "--silent" "--location" "--show-error" "--retry" "3"
+                         "--proto" "=https" "--tlsv1.2"
                        "--output" (namestring destination)
                        url)
                  :output ':interactive
