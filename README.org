@@ -32,6 +32,15 @@ Autolith has a moderate focus on good ergonomics, good visuals, following XDG
 standards and similar, and minimal intrusiveness. It is not a "small game engine",
 but it is pretty close to a Lisp Machine.
 
+Autolith supports the following platforms
+- Linux (x86_64 + aarch64)
+- MacOS (x86_64 + aarch64)
+- FreeBSD (x86_64)
+- NetBSD (x86_64)
+- OpenBSD (x86_64)
+
+Adding more platform support is always welcome!
+
 * Sections
 
 - [[file:docs/guide.org][Guide]]
