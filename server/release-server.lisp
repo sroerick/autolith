@@ -194,6 +194,14 @@
   "Return the archive name belonging to TAG and PLATFORM."
   (format nil "autolith-~A-~A.tar.gz" tag platform))
 
+(-> release-server--artifact-name-p (string string) boolean)
+(defun release-server--artifact-name-p (tag name)
+  "Return true when NAME is a known archive or checksum for TAG."
+  (loop for platform in *release-server-platform-ids*
+        for archive = (release-server--archive-name tag platform)
+        thereis (or (string= name archive)
+                    (string= name (format nil "~A.sha256" archive)))))
+
 (-> release-server--release-directory
     (release-server-configuration string)
     pathname)
@@ -287,13 +295,14 @@
        (let* ((separator (position #\/ remainder))
               (tag (and separator (subseq remainder 0 separator)))
               (name (and separator (subseq remainder (1+ separator)))))
-         (if (and tag
-                  name
-                  (release-server--release-complete-p configuration tag)
-                  (member name
-                          (let ((archive (release-server--archive-name tag)))
-                            (list archive (format nil "~A.sha256" archive)))
-                          :test #'string=))
+           (if (and tag
+                    name
+                    (release-server--release-complete-p configuration tag)
+                    (release-server--artifact-name-p tag name)
+                    (uiop:file-exists-p
+                     (merge-pathnames
+                      name
+                      (release-server--release-directory configuration tag))))
              (release-server--response
               200
               (if (uiop:string-suffix-p name ".sha256")

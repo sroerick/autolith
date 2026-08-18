@@ -290,6 +290,43 @@
               (string= (release-server-response-content-type response)
                        "text/plain; charset=utf-8")
               "checksum responses use the plain-text media type"))
+             (let* ((tag "v0.10.1")
+                    (directory
+                      (release-server--release-directory configuration tag))
+                    (archive (release-server--archive-name tag "arm64-darwin")))
+               (release-server-tests--write-file
+                (merge-pathnames archive directory)
+                "darwin-archive")
+               (release-server-tests--write-file
+                (merge-pathnames (format nil "~A.sha256" archive) directory)
+                "darwin-checksum")
+               (let ((response
+                       (release-server-route
+                        configuration "GET"
+                        (format nil "/releases/~A/~A" tag archive))))
+                 (test-assert (= (release-server-response-status response) 200)
+                              "published non-Linux archives are served")
+                 (test-assert
+                  (string= (release-server-response-content-type response)
+                           "application/gzip")
+                  "non-Linux archives use the gzip media type"))
+               (test-assert
+                (= (release-server-response-status
+                    (release-server-route
+                     configuration "GET"
+                     (format nil "/releases/~A/~A"
+                             tag
+                             (release-server--archive-name tag "x86_64-freebsd"))))
+                   404)
+                "missing platform archives stay unpublished")
+               (test-assert
+                (= (release-server-response-status
+                    (release-server-route
+                     configuration "GET"
+                     (format nil "/releases/~A/autolith-~A-sparc-sunos.tar.gz"
+                             tag tag)))
+                   404)
+                "unknown platform archives are rejected"))
            (test-assert
             (= (release-server-response-status
                 (release-server-route
