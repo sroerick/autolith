@@ -153,12 +153,22 @@ grandchild processes all land under the rail."
                   (symbol-value library-directories)
                   :test #'equal)))))
   (uiop:with-current-directory (source-root)
-    (bootstrap-section "Materializing locked Lisp dependencies")
-    (bootstrap-run-railed
-     (list sbcl-command
-           "--script"
-           (namestring (merge-pathnames "script/qlot-install.lisp"
-                                        source-root))))
+      (bootstrap-section "Materializing locked Lisp dependencies")
+      (loop for attempt from 1 to 3
+            do (handler-case
+                   (progn
+                     (bootstrap-run-railed
+                      (list sbcl-command
+                            "--script"
+                            (namestring (merge-pathnames "script/qlot-install.lisp"
+                                                         source-root))))
+                     (return))
+                 (error (condition)
+                   (when (= attempt 3)
+                     (error condition))
+                   (bootstrap-note
+                    (format nil "qlot install failed (~A); retrying."
+                            condition)))))
     (bootstrap-call-railed
      (lambda ()
        (load (merge-pathnames ".qlot/setup.lisp" source-root))))

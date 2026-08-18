@@ -18,9 +18,11 @@
                (symbol-value library-directories)
                :test #'equal)))
   (uiop:symbol-call '#:ql '#:quickload :qlot :silent t)
-  (let ((qlot-project-root (find-symbol "*PROJECT-ROOT*" "QLOT")))
-    (unless qlot-project-root
-      (error "The loaded Qlot does not expose its project root."))
-    (progv (list qlot-project-root) (list source-root)
-      (uiop:with-current-directory (source-root)
-        (uiop:symbol-call '#:qlot '#:install)))))
+    (let ((qlot-project-root (find-symbol "*PROJECT-ROOT*" "QLOT")))
+      (unless qlot-project-root
+        (error "The loaded Qlot does not expose its project root."))
+      (progv (list qlot-project-root) (list source-root)
+        (uiop:with-current-directory (source-root)
+          (if (member :bsd *features*)
+              (uiop:symbol-call '#:qlot '#:install :jobs 1)
+                (uiop:symbol-call '#:qlot '#:install))))))
