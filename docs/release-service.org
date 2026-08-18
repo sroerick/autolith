@@ -8,38 +8,40 @@ The release service has three independent long-running processes:
 - =server/run serve= runs the Common Lisp HTTP server on loopback. It serves
   the installer, health check, latest-release redirect, archives, and checksum
   records. Caddy supplies public TLS.
-- =server/run build= polls immutable semantic Git tags. It checks out each new
-  tag, runs the complete repository check in the pinned Ubuntu 22 builder
-  container with Rust 1.97.1, verifies the archive checksum, and publishes the
-  two artifacts by one atomic directory rename.
+- =server/run build= polls immutable semantic Git tags and their GitHub Release
+  assets. When a tag's Linux archive appears on GitHub, it validates each
+  checksum and publishes every available platform archive by one atomic
+  directory rename. Later polls add new platform files into that published
+  directory. Existing files stay immutable.
 - =server/run update= polls those tags for release-host implementation updates.
   It prepares the newest tag as a versioned deployment, atomically selects it,
   verifies the restarted services, and rolls back to the preceding deployment
   if activation fails.
 
-Inside the container, Common Lisp coordinates dependency setup, repository
-checks, and archive construction. Building the pinned SBCL runtime also moves
-into Lisp immediately after a small shell boundary downloads and installs the
-first bootstrap compiler. The installer, service entrypoints, and initial
-bootstrap remain shell because they must run before a Lisp image is available
-or replace the current Unix process.
+GitHub Actions is the factory for release archives. The tag workflow validates
+the tag, creates the GitHub release, and uploads Linux x86-64, macOS arm64,
+FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 archives through
+=script/ci-package-release=. It does not run the complete repository check.
+The host updater still bootstraps and checks a selected deployment before
+activating it.
+
+The installer, service entrypoints, and initial bootstrap remain shell because
+they must run before a Lisp image is available or replace the current Unix
+process.
 
 The HTTP process runs as the unprivileged =autolith-release= user. It can read
 the selected checkout and published artifacts but cannot write them.
 The updater runs as root because it owns deployments and controls s6 services,
 but it performs bootstrap, checks, and candidate probes as =autolith-release=.
-Docker authority must not be given to the HTTP process.
 
 The builder and updater hold the same process-shared host-operation lock. An
-update therefore waits for an in-flight container build to finish before
-changing the selected source or restarting the builder. The builder cannot
-begin another build until promotion or rollback releases that lock.
+update therefore waits for an in-flight publication to finish before changing
+the selected source or restarting the builder. The builder cannot begin another
+publication until promotion or rollback releases that lock.
 
-The GitHub tag workflow does not build or host binaries. It waits until the
-checksum is reachable from this service, then creates a metadata-only GitHub
-release from the required =docs/releases/TAG.md= changelog. That compatibility
-record lets launchers from before version 0.11.2 continue to discover new
-releases through GitHub.
+A release is complete, and therefore visible as =latest=, only when its Linux
+x86-64 archive and checksum are published. Other platform archives may arrive
+later.
 
 * Filesystem layout
 
@@ -54,10 +56,9 @@ releases through GitHub.
 /var/lib/autolith-release-server/updater/            private update transaction
 #+END_SRC
 
-The builder reuses its container image, pinned SBCL build, Quicklisp tree, and
-locked dependency cache. A failed build remains private under the builder state
-root. The server considers a release visible only when both its archive and
-checksum exist in the final release directory.
+The builder fetches only missing GitHub assets. A failed fetch remains private
+under the builder state root. The server considers a release visible only when
+both its Linux archive and checksum exist in the final release directory.
 
 The updater retains the current and previous deployments. A failed activation
 is also retained for diagnosis. After a later successful activation it prunes
@@ -217,8 +218,11 @@ curl -fsSIL https://sh.lambda-symbolics.com/releases/latest
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh -n
 #+END_SRC
 
-An empty publication root builds only the newest remote tag. After the first
-successful publication, the builder processes every newer missed tag in order.
+An empty publication root publishes only the newest remote tag, and only after
+GitHub has its Linux archive. After the first successful publication, the
+builder processes every newer missed tag in order and merges later platform
+files into already-published tags.
+
 The updater independently chooses the newest release-host tag. It clones into a
 same-filesystem incoming path, verifies the exact direct tag and commit, renames
 the checkout to its final versioned pathname, and only then runs bootstrap and
