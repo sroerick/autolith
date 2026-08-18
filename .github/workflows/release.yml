@@ -140,11 +140,13 @@ jobs:
           prepare: |
             set -eu
             if command -v pkgin >/dev/null 2>&1; then
-              pkgin -y install bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu openssl mozilla-rootcerts
-            else
-              pkg_add bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu openssl mozilla-rootcerts
-            fi
-            mozilla-rootcerts install
+                pkgin -y install bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
+              else
+                pkg_add bash curl git gmake rust cmake zstd sbcl pkgconf coreutils gtar icu mozilla-rootcerts
+              fi
+              if [ ! -d /etc/openssl/certs ] || [ -z "$(ls -A /etc/openssl/certs 2>/dev/null)" ]; then
+                mozilla-rootcerts install
+              fi
           run: |
             set -eu
             export PATH="$HOME/bin:/usr/pkg/bin:/usr/local/bin:$PATH"
@@ -177,14 +179,16 @@ jobs:
             set -eu
             pkg_add bash curl git gmake rust cmake zstd sbcl coreutils gtar icu4c
           run: |
-            set -eu
-            for mountpoint in /usr/local /home /tmp; do
-              if mount | grep " $mountpoint "; then
-                mount -u -o wxallowed "$mountpoint" || true
-              fi
-            done
-            export PATH="$HOME/bin:/usr/local/bin:$PATH"
-            ./script/ci-package-release dist/
+              set -eu
+              export HOME=/tmp/autolith-home
+              mkdir -p "$HOME"
+              for mountpoint in / /usr/local /home /tmp; do
+                if mount | grep " $mountpoint "; then
+                  mount -u -o wxallowed "$mountpoint" || true
+                fi
+              done
+              export PATH="$HOME/bin:/usr/local/bin:$PATH"
+              ./script/ci-package-release dist/
 
       - name: Upload OpenBSD release artifacts
         env:

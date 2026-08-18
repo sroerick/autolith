@@ -45,6 +45,10 @@ source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 output_directory=${1:-dist/}
 
 cd "$source_root"
+if [[ $(uname -s) == OpenBSD && ${HOME:-} == /root ]]; then
+  export HOME=/tmp/autolith-home
+  mkdir -p "$HOME"
+fi
 export PATH="$HOME/bin:/usr/local/bin:/usr/pkg/bin:$PATH"
 ensure_sha256sum
 
