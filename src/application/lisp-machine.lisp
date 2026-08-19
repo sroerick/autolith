@@ -157,8 +157,31 @@ available restart names, and the selected restart name."
                                 (abort-operation)))))
                    (setf handling-condition-p nil)))))
       (restart-case
-          (handler-bind ((serious-condition #'handle-condition))
-            (setf raw-values (multiple-value-list (funcall function))))
+          ;; CL:ERROR accepts conditions outside SERIOUS-CONDITION, and callers
+          ;; do exactly that: asdf/source-registry:invalid-source-registry is a
+          ;; WARNING signaled through ERROR whenever a source-registry form
+          ;; omits its terminating :INHERIT-CONFIGURATION. Such a condition
+          ;; passes the handler below untouched and reaches the debugger, which
+          ;; SB-EXT:DISABLE-DEBUGGER has turned into an immediate process exit,
+          ;; so one malformed user form would kill the image. Report it at this
+          ;; boundary and leave control conditions to the outer hooks.
+          (let* ((outer-invoke-hook sb-ext:*invoke-debugger-hook*)
+                 (outer-debugger-hook *debugger-hook*)
+                 (report-to-prompt
+                   (lambda (condition hook)
+                     (if (application-lisp--control-condition-p condition)
+                         (let ((outer (or outer-invoke-hook outer-debugger-hook)))
+                           (when outer
+                             (funcall outer condition hook)))
+                         (progn
+                           (handle-condition condition)
+                           (unless condition-text
+                             (setf condition-text (princ-to-string condition)))
+                           (abort-operation)))))
+                 (sb-ext:*invoke-debugger-hook* report-to-prompt)
+                 (*debugger-hook* report-to-prompt))
+            (handler-bind ((serious-condition #'handle-condition))
+              (setf raw-values (multiple-value-list (funcall function)))))
         (abort-user-operation ()
           :report "Return to the Autolith prompt."
           (setf status ':aborted

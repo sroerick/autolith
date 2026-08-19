@@ -2,6 +2,12 @@
 
 ;;;; -- Lisp Machine Test Support --
 
+(define-condition lisp-machine-tests--warning-condition (warning)
+  ()
+  (:report "signaled through ERROR")
+  (:documentation
+   "A warning signaled through ERROR, mirroring ASDF's invalid configurations."))
+
 (defvar *lisp-machine-test-value* nil
   "Active-image value used to verify direct local evaluation side effects.")
 
@@ -113,6 +119,20 @@
            (application-lisp-evaluation-selected-restart-name evaluation)
            "ABORT-USER-OPERATION"))
      "declining restart selection records the prompt abort restart"))
+  (let ((evaluation
+          (application-lisp-evaluate
+           "(error 'lisp-machine-tests--warning-condition)")))
+    (test-assert
+     (and (eq (application-lisp-evaluation-status evaluation) ':aborted)
+          (non-empty-string-p
+           (application-lisp-evaluation-condition evaluation)))
+     "a warning signaled through ERROR aborts one evaluation instead of the image"))
+  (let ((evaluation
+          (application-lisp-evaluate "(progn (warn \"noticed\") :done)")))
+    (test-assert
+     (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+          (equal (application-lisp-evaluation-values evaluation) '(":DONE")))
+     "ordinary warnings still complete their evaluation"))
   nil)
 
 
