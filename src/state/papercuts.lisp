@@ -280,15 +280,25 @@
 
 ;;;; -- Selection and Mutation --
 
+(-> papercut--workspace (configuration) non-empty-string)
+(defun papercut--workspace (configuration)
+  "Return CONFIGURATION's current workspace identity used by papercut records."
+  (namestring (configuration-working-directory configuration)))
+
+(-> papercut--list-unlocked (configuration) list)
+(defun papercut--list-unlocked (configuration)
+  "Return current-workspace papercuts while the caller holds the papercut lock."
+  (let ((workspace (papercut--workspace configuration)))
+    (remove-if-not
+     (lambda (papercut)
+       (string= workspace (papercut-workspace papercut)))
+     (papercut--load-unlocked configuration))))
+
 (-> papercut-list (configuration) list)
 (defun papercut-list (configuration)
   "Return papercuts reported in CONFIGURATION's current workspace, newest first."
-  (let ((workspace (namestring (configuration-working-directory configuration))))
-    (with-lock-held (*papercut-lock*)
-      (remove-if-not
-       (lambda (papercut)
-         (string= workspace (papercut-workspace papercut)))
-       (papercut--load-unlocked configuration)))))
+  (with-lock-held (*papercut-lock*)
+    (papercut--list-unlocked configuration)))
 
 (-> papercut-find (configuration string) (option papercut))
 (defun papercut-find (configuration identifier)
@@ -323,6 +333,23 @@ matching reports for :AMBIGUOUS."
            (values nil ':ambiguous matches))))
       (values nil ':missing nil)))
 
+(-> papercut--report-unlocked
+    (configuration non-empty-string non-empty-string (option string))
+    papercut)
+(defun papercut--report-unlocked (configuration title content source-conversation)
+  "Append one validated report while the caller holds the papercut lock."
+  (let ((papercut
+          (make-instance
+           'papercut
+           :identifier (make-identifier)
+           :reported-at (get-universal-time)
+           :workspace (papercut--workspace configuration)
+           :title title
+           :content content
+           :source-conversation source-conversation)))
+    (papercut--append-record configuration (papercut--record papercut))
+    papercut))
+
 (-> papercut-report
     (configuration &key (:title string) (:content string)
                    (:source-conversation (option string)))
@@ -340,17 +367,32 @@ matching reports for :AMBIGUOUS."
              :pathname (configuration-papercut-path configuration)
              :identifier nil))
     (with-lock-held (*papercut-lock*)
-      (let ((papercut
-              (make-instance
-               'papercut
-               :identifier (make-identifier)
-               :reported-at (get-universal-time)
-               :workspace (namestring (configuration-working-directory configuration))
-               :title validated-title
-               :content validated-content
-               :source-conversation source-conversation)))
-        (papercut--append-record configuration (papercut--record papercut))
-        papercut))))
+      (papercut--report-unlocked
+       configuration validated-title validated-content source-conversation))))
+
+(-> papercut--mark-closed-unlocked
+    (configuration non-empty-string non-empty-string)
+    papercut)
+(defun papercut--mark-closed-unlocked (configuration identifier resolution)
+  "Close one validated active report while the caller holds the papercut lock."
+  (let* ((workspace (papercut--workspace configuration))
+         (papercut
+           (find-if
+            (lambda (candidate)
+              (and (string= identifier (papercut-identifier candidate))
+                   (string= workspace (papercut-workspace candidate))))
+            (papercut--load-unlocked configuration))))
+    (unless papercut
+      (error 'papercut-error
+             :message (format nil
+                              "No active papercut ~A exists in this workspace."
+                              identifier)
+             :pathname (configuration-papercut-path configuration)
+             :identifier identifier))
+    (papercut--append-record
+     configuration
+     (papercut--closed-record identifier resolution (get-universal-time)))
+    papercut))
 
 (-> papercut-mark-closed (configuration string &key (:resolution string)) papercut)
 (defun papercut-mark-closed (configuration identifier &key resolution)
@@ -362,27 +404,10 @@ matching reports for :AMBIGUOUS."
            :identifier nil))
   (let ((validated-resolution
           (papercut--validate-text
-           resolution "closure resolution" *papercut-resolution-limit*))
-        (workspace (namestring (configuration-working-directory configuration))))
+           resolution "closure resolution" *papercut-resolution-limit*)))
     (with-lock-held (*papercut-lock*)
-      (let ((papercut
-              (find-if
-               (lambda (candidate)
-                 (and (string= identifier (papercut-identifier candidate))
-                      (string= workspace (papercut-workspace candidate))))
-               (papercut--load-unlocked configuration))))
-        (unless papercut
-          (error 'papercut-error
-                 :message (format nil
-                                  "No active papercut ~A exists in this workspace."
-                                  identifier)
-                 :pathname (configuration-papercut-path configuration)
-                 :identifier identifier))
-        (papercut--append-record
-         configuration
-         (papercut--closed-record
-          identifier validated-resolution (get-universal-time)))
-        papercut))))
+      (papercut--mark-closed-unlocked
+       configuration identifier validated-resolution))))
 
 
 ;;;; -- Presentation Values --
