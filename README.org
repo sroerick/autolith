@@ -41,6 +41,10 @@ Autolith supports the following platforms
 
 Adding more platform support is always welcome!
 
+Autolith questions and issues can be discussed on the
+[[https://zulip.lambda-symbolics.com][Lambda Symbolics Zulip]]. Account confirmation emails are likely to land
+in spam.
+
 * Sections
 
 - [[file:docs/guide.org][Guide]]
