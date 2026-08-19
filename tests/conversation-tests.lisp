@@ -1296,28 +1296,81 @@
        :reasoning-effort ,*default-reasoning-effort*
        :provider-endpoint ,*codex-responses-endpoint*))))
 
-(-> test-conversation--run-child-form (string) (integer 0 255))
-(defun test-conversation--run-child-form (form)
-  "Evaluate FORM in a fresh SBCL and return its exit status."
-  (nth-value
-   2
-   (uiop:run-program
+(-> test-conversation--child-project-setup () pathname)
+(defun test-conversation--child-project-setup ()
+  "Return the locked project setup loaded by fresh test children."
+  (let ((pathname
+          (merge-pathnames ".qlot/setup.lisp"
+                           (asdf:system-source-directory :autolith))))
+    (or (probe-file pathname)
+        (error "Autolith child tests need locked dependencies at ~A" pathname))))
+
+(-> test-conversation--child-command (string) list)
+(defun test-conversation--child-command (form)
+  "Return a fresh-SBCL command loading locked Autolith dependencies and FORM."
+  (let ((source-root (asdf:system-source-directory :autolith)))
     (list (test-conversation--sbcl-command)
           "--noinform"
+          "--no-sysinit"
+          "--no-userinit"
           "--disable-debugger"
           "--non-interactive"
           "--eval" "(require :asdf)"
           "--eval"
+          (format nil "(load ~S)"
+                  (namestring (test-conversation--child-project-setup)))
+          "--eval"
           (format nil "(asdf:load-asd ~S)"
-                  (namestring
-                   (merge-pathnames "autolith.asd"
-                                    (asdf:system-source-directory :autolith))))
+                  (namestring (merge-pathnames "autolith.asd" source-root)))
           "--eval" "(asdf:load-system :autolith)"
           "--eval" form
-          "--quit")
-    :output ':string
-    :error-output ':output
-    :ignore-error-status t)))
+          "--quit")))
+
+(-> test-conversation--run-child-form
+    (string &key (:environment list))
+    (integer 0 255))
+(defun test-conversation--run-child-form (form &key environment)
+  "Evaluate FORM in a fresh SBCL and return its status and captured output."
+  (multiple-value-bind (output error-output status)
+      (uiop:run-program
+       (let ((command (test-conversation--child-command form)))
+         (if environment
+             (append (list "env") environment command)
+             command))
+       :output ':string
+       :error-output ':output
+       :ignore-error-status t)
+    (declare (ignore error-output))
+    (values status output)))
+
+(-> test-conversation-child-project-setup () null)
+(defun test-conversation-child-project-setup ()
+  "Test fresh children load Autolith through the locked project setup."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (home (merge-pathnames "isolated-home/" root)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist (merge-pathnames "placeholder" home))
+           (multiple-value-bind (status output)
+               (test-conversation--run-child-form
+                "(uiop:quit 0)"
+                :environment
+                (list (format nil "HOME=~A" (namestring home))
+                      (format nil "XDG_CONFIG_HOME=~A"
+                              (namestring (merge-pathnames "config/" home)))
+                      (format nil "XDG_CACHE_HOME=~A"
+                              (namestring (merge-pathnames "cache/" home)))
+                      "CL_SOURCE_REGISTRY=(:source-registry :ignore-inherited-configuration)"))
+             (test-assert
+              (zerop status)
+              (format nil
+                      "the clean child loads locked Autolith dependencies:~%~A"
+                      output))))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
 
 (-> test-conversation--call-with-child-lease/fork
     (configuration string function)
@@ -1391,27 +1444,14 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
         (delete-file pathname)))
     (setf process
           (uiop:launch-program
-           (list (test-conversation--sbcl-command)
-                 "--noinform"
-                 "--disable-debugger"
-                 "--non-interactive"
-                 "--eval" "(require :asdf)"
-                 "--eval"
-                 (format nil "(asdf:load-asd ~S)"
-                         (namestring
-                          (merge-pathnames
-                           "autolith.asd"
-                           (asdf:system-source-directory :autolith))))
-                 "--eval" "(asdf:load-system :autolith)"
-                 "--eval"
-                 (format
-                  nil
-                  "(let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S) (with-open-file (stream ~S :direction :output :if-exists :supersede :if-does-not-exist :create) (write-line \"ready\" stream)) (loop until (probe-file ~S) do (sleep 0.05)) (uiop:quit 0))"
-                  (test-conversation--child-configuration-form configuration)
-                  identifier
-                  (namestring ready-path)
-                  (namestring release-path))
-                 "--quit")
+           (test-conversation--child-command
+            (format
+             nil
+             "(let ((configuration ~A)) (autolith::conversation-lease-acquire configuration ~S) (with-open-file (stream ~S :direction :output :if-exists :supersede :if-does-not-exist :create) (write-line \"ready\" stream)) (loop until (probe-file ~S) do (sleep 0.05)) (uiop:quit 0))"
+             (test-conversation--child-configuration-form configuration)
+             identifier
+             (namestring ready-path)
+             (namestring release-path)))
            :output output-path
            :error-output ':output))
     (unwind-protect
@@ -1433,8 +1473,12 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                                 :if-does-not-exist ':create)
           (write-line "release" stream)))
       (let ((status (uiop:wait-process process)))
-        (test-assert (zerop status)
-                     "the child conversation owner exited cleanly"))))
+        (test-assert
+         (zerop status)
+         (format nil "the child conversation owner exited cleanly:~%~A"
+                 (if (probe-file output-path)
+                     (uiop:read-file-string output-path)
+                      "<no child output>"))))))
   nil)
 
 (-> test-conversation--call-with-child-lease
@@ -1757,6 +1801,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
   (test-conversation-ephemeral-append-interruption)
   (test-conversation-malformed-tool-projections)
   (test-conversation-concurrent-appends)
+  (test-conversation-child-project-setup)
   (test-conversation-process-lease)
   (test-conversation-interrupted-tool-call)
   (test-conversation-late-duplicate-tool-output)
