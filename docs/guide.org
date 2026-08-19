@@ -148,6 +148,21 @@ Use =//= to send a message beginning with a literal slash.
 The clanker sees both your source input and its evaluated result apart
 from any other effects it may have.
 
+** Managed resources
+
+=resource.read= observes durable state and returns an opaque revision.
+=resource.edit= applies a resource-specific operation only against that exact
+observation.
+
+Papercuts use current-workspace resource URIs:
+
+- =papercut:current= lists active reports and accepts =papercut-report=.
+- =papercut:id/<percent-encoded-stable-id>= reads one active report and accepts
+  =papercut-close= with a complete resolution.
+
+The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
+=/papercut-close= commands remain convenient direct interfaces.
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.

@@ -1236,6 +1236,10 @@ structural discriminator as a readable heading instead."
                "replace memory")
               ((string= name "memory-forget")
                "forget memory")
+              ((string= name "papercut-report")
+               "report papercut")
+              ((string= name "papercut-close")
+               "close papercut")
               ((non-empty-string-p name)
                name)
               (t

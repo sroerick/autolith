@@ -180,6 +180,7 @@
     (test-agenda-resources)
     (test-memory-resources)
     (test-memory-resource-mutations)
+    (test-papercut-resources)
     (test-tool-registry)
     (test-workspace-tools)
     (test-search-tools)

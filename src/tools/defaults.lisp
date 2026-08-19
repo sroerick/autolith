@@ -50,7 +50,7 @@
 
 (-> default-tools--resource-operation-schema () json-object)
 (defun default-tools--resource-operation-schema ()
-  "Return the closed workspace, scratchpad, agenda, and memory resource.edit variants."
+  "Return the closed workspace, scratchpad, agenda, memory, and papercut resource.edit variants."
   (labels ((line-property (description)
              "Return one positive original-snapshot line schema."
              (json-object "type" "integer"
@@ -189,7 +189,19 @@
       (operation-schema
        "memory-forget"
        (json-object)
-       nil)))))
+       nil)
+      (operation-schema
+       "papercut-report"
+       (json-object
+        "title" (tool-string-property "Complete bounded papercut title.")
+        "content" (tool-string-property "Complete bounded papercut report."))
+       '("title" "content"))
+      (operation-schema
+       "papercut-close"
+       (json-object
+        "resolution" (tool-string-property
+                      "Complete bounded closure resolution."))
+       '("resolution"))))))
 
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
@@ -209,6 +221,9 @@
      (make-instance 'memory-resolver :scheme "memory"))
     (resource-registry-register
      resource-registry
+     (make-instance 'papercut-resolver :scheme "papercut"))
+    (resource-registry-register
+     resource-registry
      (make-instance 'inference-trace-resolver :scheme "inference"))
     (resource-registry-register
      resource-registry
@@ -219,11 +234,11 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. Every read establishes a transient conversation-local revision."
+           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, or canonical memory:id/<percent-encoded-stable-id>.")
+                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, papercut:current, or a canonical memory:id/<percent-encoded-stable-id> or papercut:id/<percent-encoded-stable-id> URI.")
              "start-line" (tool-integer-property
                            "The first line to return, starting at 1.")
              "line-count" (tool-integer-property
@@ -237,7 +252,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, while canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
+           "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -247,7 +262,7 @@
              "operations" (json-object
                            "type" "array"
                            "description"
-                           "Resource-specific operations. Agenda and memory resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
+                           "Resource-specific operations. Agenda, memory, and papercut resources accept exactly one; workspace: files and observed missing targets accept non-overlapping original-line operations; scratchpad: resources additionally accept one scratchpad-delete operation."
                            "minItems" 1
                            "items" (default-tools--resource-operation-schema)))
             '("uri" "base-revision" "operations"))

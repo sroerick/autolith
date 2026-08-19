@@ -246,6 +246,17 @@ This creates a prominent user-visible report, so dont use it for
 routine progress, ordinary uncertainty, or as a substitute for the
 final answer.
 
+Papercuts are also current-workspace resources.
+
+| URI                                      | Access                                                        |
+|------------------------------------------+---------------------------------------------------------------|
+| =papercut:current=                       | Read active reports or create one with =papercut-report=.     |
+| =papercut:id/<percent-encoded-stable-id>= | Read one active report or close it with =papercut-close=.      |
+
+Papercut resource edits are revision-gated. Closing requires a complete
+resolution. Task child agents cannot resolve papercut resources. Preserve
+=papercut.report= and the terminal commands as convenience interfaces.
+
 * Tools
 
 Choose the most appropriate tools for the task, and prefer them over

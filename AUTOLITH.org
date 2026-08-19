@@ -141,7 +141,7 @@ a user-local init.lisp change, or a private image commit.
   state, ownership, and rollback guarantees.
 
 
-** Revision-gated workspace, agenda, and memory resources
+** Revision-gated workspace, agenda, memory, and papercut resources
 
 - Problem: exact-text editing requires models to reproduce existing source,
   indentation, and line endings, causing avoidable retries and output token use.
@@ -177,12 +177,21 @@ a user-local init.lisp change, or a private image commit.
   replacement or tombstone. Every memory operation validates before persistence,
   rechecks the exact snapshot, attributes writes to the source conversation, and
   appends under the recursive process-local memory lock. This lock does not
-  provide interprocess CAS. Existing =agenda.*= and =memory.*= tools stay
-  available as convenience paths.
+  provide interprocess CAS. =papercut:= resources expose the active current-workspace
+  collection and exact active reports through canonical
+  =papercut:id/<percent-encoded-stable-id>= URIs. Collection observations retain
+  compact ordered identifier snapshots and render canonical item URIs with bounded
+  excerpts; exact observations return the complete immutable report. The current
+  collection accepts one revision-gated report attributed to the source conversation,
+  while exact items accept one revision-gated closure with a required complete
+  resolution. Closed, missing, and other-workspace items are unavailable, task child
+  agents cannot resolve the scheme, and append plus revision validation occur under
+  the process-local papercut lock. Existing =papercut.report= and terminal commands,
+  =agenda.*=, and =memory.*= tools stay available as convenience paths.
 - Scope and location: tracked project work in =src/resource/=,
   =src/state/agendas.lisp=, =src/state/memories.lisp=,
-  =src/conversation/store.lisp=, =src/tools/defaults.lisp=, and the resource
-  schemas, prompt, guide, and regressions.
+  =src/state/papercuts.lisp=, =src/conversation/store.lisp=,
+  =src/tools/defaults.lisp=, and the resource schemas, prompt, guide, and regressions.
 - Verification: workspace URI confinement, observation isolation and expiry,
   visible-range gating, original-snapshot multi-operation edits, stale and
   protected paths, bounded UTF-8 snapshots, empty files, atomic publish failures,
@@ -191,8 +200,11 @@ a user-local init.lisp change, or a private image commit.
   agenda empty and complete reads, revisions, confinement, add/update/remove,
   memory links, shared locking, and convenience tools pass. Memory collection
   scopes, exact IDs, empty and missing states, child denial, typed mixed
-  observation retention, schemas, and existing memory tools also pass within
-  the complete 3,559-test repository check.
+  observation retention, schemas, and existing memory tools pass within
+  the complete 3,559-test repository check. Papercut collection and exact-item
+  reads, canonical IDs, reporting, closure, stale revisions, conversation and
+  workspace confinement, child denial, schemas, and existing interfaces pass in
+  focused regressions.
 - Removal condition: a provider-native editing protocol supplies the same exact
   revision, visibility, authority, atomicity, and recovery guarantees with lower
   harness complexity.
