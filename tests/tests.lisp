@@ -2,6 +2,37 @@
 
 ;;;; -- Test Entry --
 
+(-> test-configuration-source-platform-reading () null)
+(defun test-configuration-source-platform-reading ()
+  "Test settings source reads under each supported platform feature set."
+  (let ((settings-path
+          (merge-pathnames
+           "src/configuration/settings.lisp"
+           (asdf:system-source-directory :autolith)))
+        (native-features
+          (remove-if
+           (lambda (feature)
+             (member feature
+                     '(:linux :darwin :macos :macosx :bsd
+                       :freebsd :netbsd :openbsd)))
+           *features*)))
+    (dolist (platform-features
+             '((:linux) (:darwin :bsd) (:bsd) nil))
+      (test-assert
+       (handler-case
+           (let ((*features* (append platform-features native-features))
+                 (*read-eval* nil))
+             (with-open-file (stream settings-path
+                                     :direction ':input
+                                     :external-format ':utf-8)
+               (loop until (eq (read stream nil ':eof) ':eof)))
+             t)
+         (error ()
+           nil))
+       "configuration source reads with each supported platform feature set")))
+  nil)
+
+
 (-> run-tests () boolean)
 (defun run-tests ()
   "Run Autolith's dependency-free unit tests and return true on success."
@@ -64,6 +95,7 @@
                  "the default reasoning effort is ultra")
     (test-assert (not (configuration-immutable-p configuration))
                  "ordinary configuration enables active-image mutation tools")
+    (test-configuration-source-platform-reading)
     (test-assert
      (configuration-immutable-p
       (configuration-with-model

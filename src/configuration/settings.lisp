@@ -777,13 +777,25 @@ reasoning effort only when that effort is supported by the selected model."
 (-> make-identifier () string)
 (defun make-identifier ()
   "Return a process-independent identifier suitable for conversations and requests."
-  (handler-case
-      (with-open-file (stream #P"/proc/sys/kernel/random/uuid"
-                              :direction ':input
-                              :external-format ':utf-8)
-        (string-trim '(#\Space #\Tab #\Newline #\Return)
-                     (read-line stream)))
-    (error ()
-      (format nil "~36R-~16,'0X"
-              (get-universal-time)
-              (random (ash 1 64))))))
+  (flet ((fallback ()
+           (format nil "~36R-~16,'0X"
+                   (get-universal-time)
+                   (random (ash 1 64)))))
+    (handler-case
+        (cond
+          #+linux
+          (t
+           (with-open-file (stream #P"/proc/sys/kernel/random/uuid"
+                                   :direction ':input
+                                   :external-format ':utf-8)
+             (string-trim '(#\Space #\Tab #\Newline #\Return)
+                          (read-line stream))))
+          #+(and (not linux) (or darwin macos macosx bsd))
+          (t
+           (string-trim
+            '(#\Space #\Tab #\Newline #\Return)
+            (uiop:run-program '("/usr/bin/uuidgen") :output :string)))
+          (t
+           (fallback)))
+      (error ()
+        (fallback)))))
