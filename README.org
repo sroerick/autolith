@@ -129,6 +129,38 @@ and can maintain multiple.
 =lisp.*= uses named, heap-isolated SBCL workers and can target read-only active
 inspection explicitly. =self.*= changes or reports the active Autolith image.
 
+** Recursive inference
+
+Autolith can treat a large input as an environment instead of a prompt. =infer= runs one
+bounded inference over context you pass explicitly, returns a Lisp value, and never touches
+your conversation:
+
+#+BEGIN_SRC lisp
+(infer "List the invariants this file maintains."
+       :context (list #p"src/conversation/store.lisp"))
+#+END_SRC
+
+Frames recurse, fan out through =rlm-map=, and return validated data instead of prose when you
+give them a JSON Schema contract. Calls, tokens, and recursion depth come out of one shared
+budget, so a fan-out cannot outspend its allocation, and the private frame conversations cannot
+pollute yours or your prompt cache.
+
+=rlm-complete= is the full form: the input is interned as a content-addressed object, the root
+model sees only its label, size, and digest, and it writes Lisp in an isolated environment to
+slice, search and sub-infer over it. Inputs larger than the provider context window are processed
+this way.
+
+#+BEGIN_SRC lisp
+(rlm-complete "Summarize every incident in this log."
+              :context #p"/var/log/huge.log")
+#+END_SRC
+
+The model reaches the same operations through the =rlm.infer=, =rlm.map= and =rlm.complete= tools.
+Every frame persists its own trace under =data/inferences/=, readable afterwards through
+=inference:<trace-id>= URIs, so you can still ask why an inference concluded what it did.
+
+See [[file:docs/rlm.org][RLM]] for contracts, budgets, policies and the design decisions.
+
 ** Messages are just syntax sugar
 When you type a message like:
 #+BEGIN_SRC lisp
