@@ -139,39 +139,36 @@ grandchild processes all land under the rail."
   (format t "~&~A~%" (bootstrap-style "35;1" "Autolith bootstrap"))
   (bootstrap-note (format nil "SBCL ~A" (lisp-implementation-version)))
   (bootstrap-note (format nil "Source ~A" (namestring source-root)))
-  (bootstrap-section "Loading bootstrap dependencies")
-  (bootstrap-call-railed
-   (lambda ()
-     (load quicklisp-setup)
-     (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
-     (let ((profile-library-directory
-             (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
-           (library-directories
-             (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
-       (when (probe-file profile-library-directory)
-         (pushnew profile-library-directory
-                  (symbol-value library-directories)
-                  :test #'equal)))))
   (uiop:with-current-directory (source-root)
-      (bootstrap-section "Materializing locked Lisp dependencies")
-      (loop for attempt from 1 to 3
-            do (handler-case
-                   (progn
-                     (bootstrap-run-railed
-                      (list sbcl-command
-                            "--script"
-                            (namestring (merge-pathnames "script/qlot-install.lisp"
-                                                         source-root))))
-                     (return))
-                 (error (condition)
-                   (when (= attempt 3)
-                     (error condition))
-                   (bootstrap-note
-                    (format nil "qlot install failed (~A); retrying."
-                            condition)))))
+    (bootstrap-section "Materializing locked Lisp dependencies")
+    (loop for attempt from 1 to 3
+          do (handler-case
+                 (progn
+                   (bootstrap-run-railed
+                    (list sbcl-command
+                          "--script"
+                          (namestring (merge-pathnames "script/qlot-install.lisp"
+                                                       source-root))))
+                   (return))
+               (error (condition)
+                 (when (= attempt 3)
+                   (error condition))
+                 (bootstrap-note
+                  (format nil "qlot install failed (~A); retrying."
+                          condition)))))
+    (bootstrap-section "Loading bootstrap dependencies")
     (bootstrap-call-railed
      (lambda ()
-       (load (merge-pathnames ".qlot/setup.lisp" source-root))))
+       (load (merge-pathnames ".qlot/setup.lisp" source-root))
+       (uiop:symbol-call '#:ql '#:quickload :cffi :silent t)
+       (let ((profile-library-directory
+               (merge-pathnames ".guix-profile/lib/" (user-homedir-pathname)))
+             (library-directories
+               (find-symbol "*FOREIGN-LIBRARY-DIRECTORIES*" "CFFI")))
+         (when (probe-file profile-library-directory)
+           (pushnew profile-library-directory
+                    (symbol-value library-directories)
+                    :test #'equal)))))
     (bootstrap-section "Building the private command sandbox helper")
     (bootstrap-call-railed
      (lambda ()
