@@ -256,6 +256,156 @@ fi
      "the source release catalog retains the minimum runtime source identity"))
   nil)
 
+(-> release-script-tests--bootstrap-dependency-order (pathname pathname) null)
+(defun release-script-tests--bootstrap-dependency-order (source-root root)
+  "Exercise project dependency setup before bootstrap CFFI loading."
+  (let* ((fixture (merge-pathnames "bootstrap-dependency-order/" root))
+         (script-directory (merge-pathnames "script/" fixture))
+         (home (merge-pathnames "home/" fixture))
+         (quicklisp-directory (merge-pathnames "quicklisp/" home))
+         (qlot-directory (merge-pathnames ".qlot/" fixture))
+         (cache-home (merge-pathnames "cache/" fixture))
+         (data-home (merge-pathnames "data/" fixture))
+         (state-home (merge-pathnames "state/" fixture))
+         (event-log (merge-pathnames "events.log" fixture))
+         (bootstrap (merge-pathnames "bootstrap.lisp" script-directory))
+         (fake-sbcl (merge-pathnames "fake-sbcl" fixture)))
+    (ensure-directories-exist (merge-pathnames "placeholder" quicklisp-directory))
+    (ensure-directories-exist (merge-pathnames "placeholder" qlot-directory))
+    (ensure-directories-exist bootstrap)
+    (uiop:copy-file (merge-pathnames "script/bootstrap.lisp" source-root)
+                    bootstrap)
+    (release-script-tests--write-file
+     (merge-pathnames "runtime-requirement.lisp" script-directory)
+     "(defun autolith-require-minimum-runtime (pathname)
+  (declare (ignore pathname))
+  nil)
+")
+    (dolist (relative '("build-sandbox.lisp" "build-fff.lisp"))
+      (release-script-tests--write-file
+       (merge-pathnames relative script-directory)
+       "nil
+"))
+    (release-script-tests--write-file
+     (merge-pathnames "setup.lisp" quicklisp-directory)
+     "(defpackage #:ql
+  (:use #:cl)
+  (:export #:quickload))
+(in-package #:ql)
+
+(defun record-event (event)
+  (with-open-file (stream (uiop:getenv \"AUTOLITH_TEST_EVENT_LOG\")
+                          :direction :output
+                          :if-exists :append
+                          :if-does-not-exist :create)
+    (format stream \"~A~%\" event)))
+
+(defun quickload (system &key silent)
+  (declare (ignore silent))
+  (when (eql system :cffi)
+    (record-event \"global-cffi\")
+    (unless (find-package \"CFFI\")
+      (make-package \"CFFI\" :use '(\"CL\")))
+    (setf (symbol-value
+           (intern \"*FOREIGN-LIBRARY-DIRECTORIES*\" \"CFFI\"))
+          nil))
+  system)
+")
+    (release-script-tests--write-file
+     (merge-pathnames "setup.lisp" qlot-directory)
+     "(defpackage #:ql
+  (:use #:cl)
+  (:export #:quickload))
+(in-package #:ql)
+
+(defun record-event (event)
+  (with-open-file (stream (uiop:getenv \"AUTOLITH_TEST_EVENT_LOG\")
+                          :direction :output
+                          :if-exists :append
+                          :if-does-not-exist :create)
+    (format stream \"~A~%\" event)))
+
+(record-event \"locked-setup\")
+
+(let* ((setup (truename *load-truename*))
+       (directory (uiop:pathname-directory-pathname setup))
+       (root (uiop:pathname-parent-directory-pathname directory)))
+  (pushnew root asdf:*central-registry* :test #'equal))
+
+(defun quickload (system &key silent)
+  (declare (ignore silent))
+  (when (eql system :cffi)
+    (record-event \"locked-cffi\")
+    (unless (find-package \"CFFI\")
+      (make-package \"CFFI\" :use '(\"CL\")))
+    (setf (symbol-value
+           (intern \"*FOREIGN-LIBRARY-DIRECTORIES*\" \"CFFI\"))
+          nil))
+  system)
+")
+    (release-script-tests--write-file
+     (merge-pathnames "colorlisp.asd" fixture)
+     "(asdf:defsystem #:colorlisp
+  :components ((:file \"colorlisp\")))
+")
+    (release-script-tests--write-file
+     (merge-pathnames "colorlisp.lisp" fixture)
+     "(defpackage #:colorlisp
+  (:use #:cl)
+  (:export #:native-library-path))
+(in-package #:colorlisp)
+
+(defun native-library-path ()
+  nil)
+")
+    (release-script-tests--write-file
+     fake-sbcl
+     "#!/bin/sh
+set -eu
+printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
+")
+    (release-script-tests--chmod "755" fake-sbcl)
+    (release-script-tests--write-file
+     (merge-pathnames "sbcl.version" fixture)
+     (format nil "~A~%" (lisp-implementation-version)))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (lisp-worker-sbcl-command)
+               "--noinform"
+               "--no-sysinit"
+               "--no-userinit"
+               "--disable-debugger"
+               "--script"
+               (namestring bootstrap))
+         :environment
+         (list (format nil "HOME=~A" (namestring home))
+               (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+               (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+               (format nil "XDG_STATE_HOME=~A" (namestring state-home))
+               (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+               (format nil "AUTOLITH_TEST_EVENT_LOG=~A"
+                       (namestring event-log))
+               "NO_COLOR=1")
+         :ignore-error-status t)
+      (test-assert
+       (zerop status)
+       (format nil "the bootstrap dependency-order fixture succeeds:~%~A~%~A"
+               output error-output)))
+    (let* ((events (uiop:read-file-string event-log))
+           (qlot-install (search "script/qlot-install.lisp" events))
+           (locked-setup (search "locked-setup" events))
+           (locked-cffi (search "locked-cffi" events)))
+      (test-assert
+       (and qlot-install
+            locked-setup
+            locked-cffi
+            (< qlot-install locked-setup locked-cffi)
+            (not (search "global-cffi" events)))
+       (format nil
+               "bootstrap materializes and activates locked dependencies before loading CFFI:~%~A"
+               events))))
+  nil)
+
 (-> release-script-tests--source-launcher (pathname pathname) null)
 (defun release-script-tests--source-launcher (source-root root)
   "Exercise source-image selection, bootstrap prompting, and forced source use."
@@ -1674,6 +1824,7 @@ esac
     (unwind-protect
          (progn
              (release-script-tests--syntax source-root)
+              (release-script-tests--bootstrap-dependency-order source-root root)
              (release-script-tests--github-release-workflow source-root)
              (release-script-tests--runtime-adapter source-root root)
              (release-script-tests--runtime-bootstrap source-root root)
