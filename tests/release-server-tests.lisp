@@ -89,7 +89,7 @@
      deployment '("config" "user.email" "release-test@invalid"))
     (release-server-tests--git deployment '("add" "."))
     (release-server-tests--git
-     deployment '("commit" "--quiet" "-m" "Create release fixture"))
+     deployment '("commit" "--quiet" "--no-gpg-sign" "-m" "Create release fixture"))
     (if annotated-p
         (release-server-tests--git
          deployment (list "tag" "-a" tag "-m" "Annotated fixture"))
@@ -1010,7 +1010,7 @@
               '("add" "autolith.asd"))
              (release-server-tests--git
               (merge-pathnames "v0.18.0/" remote-root)
-              '("commit" "--quiet" "-m" "Advance release fixture"))
+              '("commit" "--quiet" "--no-gpg-sign" "-m" "Advance release fixture"))
              (release-server-tests--git
               (merge-pathnames "v0.18.0/" remote-root)
               '("tag" "v0.18.1"))

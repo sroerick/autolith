@@ -990,7 +990,7 @@
             '("config" "user.email" "autolith-test@example.invalid"))
            (self-git-command configuration '("add" "src/definitions.lisp"))
            (self-git-command configuration
-                             '("commit" "--quiet" "-m" "Create baseline"))
+                             '("commit" "--quiet" "--no-gpg-sign" "-m" "Create baseline"))
            (let* ((conversation
                     (conversation-create configuration
                                          :identifier "durable-mutation"))
@@ -1522,7 +1522,7 @@
             '("config" "user.email" "autolith-test@example.invalid"))
            (self-git-command configuration '("add" "src/baseline.lisp"))
            (self-git-command configuration
-                             '("commit" "--quiet" "-m" "Create baseline"))
+                             '("commit" "--quiet" "--no-gpg-sign" "-m" "Create baseline"))
            (when (fboundp 'test-self-published-definition)
              (fmakunbound 'test-self-published-definition))
            (remhash target *exploratory-definitions*)
