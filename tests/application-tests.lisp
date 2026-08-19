@@ -8770,10 +8770,14 @@
                    (string= (later-entry-input (first entries)) "second"))
               "successfully persisted follow-ups retain submission order"))
            (test-assert
-            (some (lambda (text)
-                    (search "Deferred 1 queued follow-up" text))
+            (some (lambda (entry)
+                    (and (consp entry)
+                         (every #'terminal-span-p entry)
+                         (eq (terminal-span-style (first entry)) ':notice)
+                         (search "Deferred 1 queued follow-up"
+                                 (terminal--spans-text entry))))
                   presented)
-            "the user is told that follow-ups were deferred"))
+            "deferred follow-ups are reported as one styled notice"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

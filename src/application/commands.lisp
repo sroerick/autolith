@@ -1527,10 +1527,13 @@ to TERMINAL-UI-SELECT."
                     :window window)))
              (application-present
               application
-              (format nil "Scheduled deferred input ~A for ~A after the ~A reset."
-                      (later-entry-identifier entry)
-                      (application--calendar-description due-at)
-                      window))))))))
+              (list (terminal-span
+                     ':notice
+                     (format nil
+                             "Scheduled deferred input ~A for ~A after the ~A reset."
+                             (later-entry-identifier entry)
+                             (application--calendar-description due-at)
+                             window))))))))))
   nil)
 
 (-> application-set-hurry-up (application boolean) null)

@@ -3294,12 +3294,17 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
            (input (later-entry-input entry)))
       (application-present
        application
-       (format nil "Running deferred input ~A after its ~A reset.~%  ~A"
-               (later-entry-identifier entry)
-               (later-entry-window entry)
-               (text-cell-prefix
-                (sanitize-text input :single-line-p t)
-                72)))
+       (list (terminal-span
+              ':notice
+              (format nil "Running deferred input ~A after its ~A reset.~%"
+                      (later-entry-identifier entry)
+                      (later-entry-window entry)))
+             (terminal-span
+              ':dim
+              (format nil "  ~A"
+                      (text-cell-prefix
+                       (sanitize-text input :single-line-p t)
+                       72)))))
       (handler-case
           (application-set-working-directory
            application (later-entry-directory entry))
@@ -3401,10 +3406,12 @@ the next application boundary because it does not depend on the provider."
         (when (plusp deferred-count)
           (application-present
            application
-           (format nil
-                   "Deferred ~D queued follow-up~:P until the ~A reset."
-                   deferred-count
-                   window-label))))))
+           (list (terminal-span
+                  ':notice
+                  (format nil
+                          "Deferred ~D queued follow-up~:P until the ~A reset."
+                          deferred-count
+                          window-label))))))))
   nil)
 
 (-> application-input-controller--interactive-prompt-work-p (list) boolean)
