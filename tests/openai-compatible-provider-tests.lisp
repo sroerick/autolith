@@ -241,7 +241,9 @@
                            :model model
                            :reasoning-effort "minimal"))
            (let ((authenticated-configuration nil)
-                 (authenticated-selection :unset))
+                 (authenticated-selection :unset)
+                 (live-application (make-instance 'application))
+                 (reconnect-called-p nil))
              (test-call-with-function-replacements
               (list
                (list 'configuration-create
@@ -275,14 +277,24 @@
                        (setf authenticated-configuration configuration
                              authenticated-selection selection)
                        nil))
+               (list 'application-reconnect
+                     (lambda (application &rest arguments)
+                       (declare (ignore arguments))
+                       (setf reconnect-called-p t)
+                       application))
                ;; Authentication continues into a session; a real interactive
                ;; loop against the test's non-terminal stdin can wait forever.
                (list 'application-run
                      (lambda (application &rest arguments)
                        (declare (ignore application arguments))
                        nil)))
-              (lambda ()
-                (main-dispatch '("auth"))))
+               (lambda ()
+                 (let ((*active-application* live-application))
+                   (let ((*active-application* nil))
+                     (main-dispatch '("auth"))))))
+             (test-assert
+              (not reconnect-called-p)
+              "bare auth does not reconnect the active application")
              (test-assert
               (and authenticated-configuration
                    (null authenticated-selection)
