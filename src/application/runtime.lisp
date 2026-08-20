@@ -1498,6 +1498,31 @@ command replaced the active conversation."
          :rollback-cause (nreverse rollback-failures)))
       directory)))
 
+(-> application--conversation-input-history
+    (conversation &key (:limit (integer 0)))
+    list)
+(defun application--conversation-input-history
+    (conversation &key (limit *terminal-history-limit*))
+  "Return bounded editable input history recovered from durable CONVERSATION."
+  (let ((entries (make-deque :maximum-count limit)))
+    (conversation-map-records
+     conversation
+     (lambda (record)
+       (let ((properties (rest record)))
+         (case (first record)
+           (:message
+            (let ((content (getf properties :content)))
+              (when (and (eq (getf properties :role) ':user)
+                         (non-empty-string-p content))
+                (deque-push-back entries (copy-seq content)))))
+           (:user-operation
+            (let ((source (getf properties :source)))
+              (when (and (member (getf properties :kind) '(:command :lisp))
+                         (non-empty-string-p source))
+                (deque-push-back entries (copy-seq source)))))))))
+    (deque->list entries)))
+
+
 (-> application--install-owned-conversation
     (application conversation &key (:conversation-lease conversation-lease))
     application)
@@ -1508,6 +1533,14 @@ command replaced the active conversation."
            (application--configuration-for-conversation
             (application-configuration application)
             conversation))
+         (ui (application-ui application))
+         (history-limit
+           (if ui
+               (line-editor-history-limit (terminal-ui-editor ui))
+               *terminal-history-limit*))
+         (input-history
+           (application--conversation-input-history
+            conversation :limit history-limit))
          (previous-configuration (application-configuration application))
          (previous-conversation (application-conversation application))
          (previous-conversation-lease
@@ -1572,6 +1605,8 @@ command replaced the active conversation."
                (application--load-goal application)
                (context-runtime-reset)
                (application-publish-recovery-session application)
+               (when ui
+                 (terminal-ui-load-history ui input-history))
                (setf committed-p t))
            (serious-condition (condition)
              (setf failure condition)))

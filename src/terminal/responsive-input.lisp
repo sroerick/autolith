@@ -1645,6 +1645,17 @@ new input resumes them."
                   (application-input-controller-forced-exit-message controller)
                   message)))))
     (when accepted-p
+      (let ((application
+              (application-input-controller-application controller)))
+        (when (slot-boundp application 'ui)
+          (handler-case
+              (terminal-ui-set-notice
+               (application-ui application)
+               "Interrupting request."
+               :duration-seconds
+               *application-interrupted-queue-notice-seconds*)
+            (error ()
+              nil))))
       (handler-case
           (application-input-controller--interrupt-main-for-turn-cancellation
            controller)
@@ -2346,6 +2357,11 @@ may execute immediately; other Lisp waits for the idle boundary."
                    :force-exit-window-p t
                    :pause-queued-work-p t))
              nil)
+             ((and (eq event ':escape)
+                   (terminal-ui-completion-menu-present-p ui))
+              (terminal-ui-process-event
+               ui event :queue-editing-p follow-up-editing-p)
+              nil)
             ((and (eq event ':escape)
                   (or
                    (application-input-controller--turn-cancellation-active-p

@@ -100,6 +100,7 @@
                 #:line-editor-text
                 #:line-editor-cursor
                 #:line-editor-history
+                #:line-editor-history-limit
                 #:line-editor-set-text
                 #:line-editor-clear
                 #:line-editor-handle-event

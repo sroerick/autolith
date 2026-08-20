@@ -149,12 +149,40 @@
                     :visible-count *terminal-ui-visible-completions*
                     :arrangement ':vertical))))
 
+
 (defmacro with-terminal-ui-locked ((ui) &body body)
   "Run BODY while holding UI's recursive presentation lock."
   (let ((locked-ui (gensym "UI")))
     `(let ((,locked-ui ,ui))
        (with-recursive-lock-held ((terminal-ui-lock ,locked-ui))
          ,@body))))
+
+
+(-> terminal-ui-load-history (terminal-ui list) terminal-ui)
+(defun terminal-ui-load-history (ui entries)
+  "Replace UI's editable history while preserving its current draft and cursor."
+  (with-terminal-ui-locked (ui)
+    (let* ((editor (terminal-ui-editor ui))
+           (navigating-p
+             (not
+              (null (slot-value editor 'clinedi::history-index))))
+           (text
+             (copy-seq
+              (if navigating-p
+                  (slot-value editor 'clinedi::history-stash)
+                  (line-editor-text editor))))
+           (cursor
+             (if navigating-p
+                 (slot-value editor 'clinedi::history-stash-cursor)
+                 (line-editor-cursor editor)))
+           (history-editor
+             (line-editor-create
+              :history (mapcar #'sanitize-text entries)
+              :history-limit (line-editor-history-limit editor))))
+      (line-editor-set-text editor text :cursor cursor)
+      (setf (slot-value editor 'clinedi::history)
+            (slot-value history-editor 'clinedi::history))))
+  ui)
 
 (-> terminal-ui--call-with-lock-if-available
     (terminal-ui function)
@@ -673,11 +701,62 @@ columns: name, tally, and description."
                      row-width)))
                 (setf previous-group group)))))))
 
+(-> terminal-ui--editor-history-navigating-p (line-editor) boolean)
+(defun terminal-ui--editor-history-navigating-p (editor)
+  "Return true when EDITOR is currently traversing history."
+  (and (slot-boundp editor 'clinedi::history-index)
+       (not (null (slot-value editor 'clinedi::history-index)))
+       t))
+
+
+(-> terminal-ui--snapshot-history-state (line-editor) (option list))
+(defun terminal-ui--snapshot-history-state (editor)
+  "Return EDITOR's history traversal state, or NIL outside history recall."
+  (when (terminal-ui--editor-history-navigating-p editor)
+    (list (copy-seq (line-editor-text editor))
+          (line-editor-cursor editor)
+          (slot-value editor 'clinedi::history-index)
+          (copy-seq (slot-value editor 'clinedi::history-stash))
+          (slot-value editor 'clinedi::history-stash-cursor))))
+
+
+(-> terminal-ui--restore-history-state (line-editor list) null)
+(defun terminal-ui--restore-history-state (editor state)
+  "Restore EDITOR's history traversal STATE after completion is cancelled."
+  (destructuring-bind (text cursor index stash stash-cursor) state
+    (line-editor-set-text editor text :cursor cursor)
+    (setf (slot-value editor 'clinedi::history-index) index
+          (slot-value editor 'clinedi::history-stash) stash
+          (slot-value editor 'clinedi::history-stash-cursor) stash-cursor))
+  nil)
+
+(-> terminal-ui--completion-offered-p (terminal-ui) boolean)
+(defun terminal-ui--completion-offered-p (ui)
+  "Return true when UI may paint or begin command completion."
+  (or (terminal-ui-completion-active-p ui)
+      (and (not (terminal-ui-completion-dismissed-p ui))
+           (not (terminal-ui--editor-history-navigating-p
+                 (terminal-ui-editor ui))))))
+
+
+(-> terminal-ui-completion-menu-present-p (terminal-ui) boolean)
+(defun terminal-ui-completion-menu-present-p (ui)
+  "Return true when UI currently renders command completion candidates."
+  (and (terminal-ui--completion-offered-p ui)
+       (not
+        (null
+         (selector-items (terminal-ui-completion-selector ui))))))
+
+
 (-> terminal-ui--completion-rows (terminal-ui integer) list)
 (defun terminal-ui--completion-rows (ui row-width)
   "Return styled rows for UI's matching command completions."
-  (terminal-ui--reconcile-completions ui)
-  (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width))
+  (block nil
+    (unless (terminal-ui--completion-offered-p ui)
+      (selector-set-items (terminal-ui-completion-selector ui) nil)
+      (return nil))
+    (terminal-ui--reconcile-completions ui)
+    (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width)))
 
 (-> terminal-ui--accept-completion (terminal-ui list) null)
 (defun terminal-ui--accept-completion (ui entry)
@@ -696,26 +775,37 @@ columns: name, tally, and description."
 (defun terminal-ui--begin-completion (ui)
   "Begin choosing among UI's current command completion candidates."
   (unless (terminal-ui-completion-active-p ui)
-    (setf (terminal-ui-completion-prefix ui)
-          (line-editor-text (terminal-ui-editor ui))
-          (terminal-ui-completion-active-p ui) t))
+    (let ((editor (terminal-ui-editor ui)))
+      (setf (terminal-ui-completion-prefix ui)
+            (line-editor-text editor)
+            (terminal-ui-completion-history-state ui)
+            (terminal-ui--snapshot-history-state editor)
+            (terminal-ui-completion-dismissed-p ui) nil
+            (terminal-ui-completion-active-p ui) t)))
   nil)
 
 (-> terminal-ui--end-completion (terminal-ui) null)
 (defun terminal-ui--end-completion (ui)
   "Leave UI's active command completion selection without changing input."
   (setf (terminal-ui-completion-active-p ui) nil
-        (terminal-ui-completion-prefix ui) nil)
+        (terminal-ui-completion-prefix ui) nil
+        (terminal-ui-completion-history-state ui) nil)
   nil)
 
 (-> terminal-ui--cancel-completion (terminal-ui) null)
 (defun terminal-ui--cancel-completion (ui)
-  "Cancel UI's completion selection and restore its original command prefix."
-  (let ((prefix (terminal-ui-completion-prefix ui)))
-    (when prefix
-      (line-editor-set-text (terminal-ui-editor ui) prefix)))
+  "Cancel completion and restore its original input or history traversal state."
+  (let ((prefix (terminal-ui-completion-prefix ui))
+        (history-state (terminal-ui-completion-history-state ui))
+        (editor (terminal-ui-editor ui)))
+    (cond
+      (history-state
+       (terminal-ui--restore-history-state editor history-state))
+      (prefix
+       (line-editor-set-text editor prefix))))
   (selector-set-items (terminal-ui-completion-selector ui) nil)
   (terminal-ui--end-completion ui)
+  (setf (terminal-ui-completion-dismissed-p ui) t)
   nil)
 
 (-> terminal-ui--handle-completion-event
@@ -723,18 +813,20 @@ columns: name, tally, and description."
     (values (option keyword) (option string)))
 (defun terminal-ui--handle-completion-event (ui event)
   "Apply EVENT to UI's completion suggestions and return its action when consumed."
-  (terminal-ui--reconcile-completions ui)
-  (let ((selector (terminal-ui-completion-selector ui)))
-    (block nil
+  (block nil
+    (unless (or (terminal-ui--completion-offered-p ui)
+                (member event '(:complete :complete-previous)))
+      (return (values nil nil)))
+    (terminal-ui--reconcile-completions ui)
+    (let ((selector (terminal-ui-completion-selector ui)))
       (unless (selector-items selector)
         (return (values nil nil)))
-      (unless (or (terminal-ui-completion-active-p ui)
-                  (member event
-                          '(:up :down :history-previous :history-next
-                            :complete :complete-previous :submit)))
-        (return (values nil nil)))
-      (when (member event '(:up :down :history-previous :history-next
-                            :complete :complete-previous))
+        (unless (or (terminal-ui-completion-active-p ui)
+                    (member event
+                            '(:up :down :complete :complete-previous
+                              :submit :escape)))
+          (return (values nil nil)))
+      (when (member event '(:up :down :complete :complete-previous))
         (terminal-ui--begin-completion ui))
       (multiple-value-bind (selector-action entry)
           (selector-handle-event selector event)
@@ -2310,6 +2402,7 @@ frames, so this function never paints directly from a child thread."
   "Replace UI's editable input with INPUT and repaint it."
   (with-terminal-ui-locked (ui)
     (terminal-ui--set-draft-input ui input)
+    (setf (terminal-ui-completion-dismissed-p ui) nil)
     (terminal-ui--paint-live ui))
   ui)
 
@@ -2462,6 +2555,9 @@ frames, so this function never paints directly from a child thread."
                 (terminal-ui--apply-editor-event ui effective-event)
               (when (eq action :changed)
                 (terminal-ui--restore-history-images ui))
+                (when (and (eq action :changed)
+                           (not (string= text-before (line-editor-text editor))))
+                  (setf (terminal-ui-completion-dismissed-p ui) nil))
               (when (and (member action '(:submit :queue))
                          (stringp payload))
                 (terminal-ui--remember-image-submission

@@ -169,6 +169,17 @@
     :accessor terminal-ui-completion-prefix
     :type (option string)
     :documentation "Input restored when active completion selection is cancelled.")
+   (completion-history-state
+    :initform nil
+    :accessor terminal-ui-completion-history-state
+    :type (option list)
+    :documentation
+    "Clinedi history traversal state restored when completion is cancelled.")
+   (completion-dismissed-p
+    :initform nil
+    :accessor terminal-ui-completion-dismissed-p
+    :type boolean
+    :documentation "Whether Escape has hidden passive completion suggestions.")
    (selector
     :initform nil
     :accessor terminal-ui-selector

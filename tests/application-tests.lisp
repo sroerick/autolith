@@ -1483,22 +1483,27 @@
                  (application-input-controller-interrupt-hint-time controller)))
            (eq event ':interrupt))
        "only active Ctrl-C schedules the transient force-exit notice")
-      (test-assert (null (terminal-ui-notice ui))
-                   "no stop key shows the force-exit notice immediately")
+      (test-assert
+       (string= (terminal-ui-notice ui) "Interrupting request.")
+       "an accepted stop immediately announces request interruption")
       (application-input-controller--refresh-interrupt-hint controller)
-      (test-assert (null (terminal-ui-notice ui))
-                   "a cancellation inside the hint delay stays silent")
+      (test-assert
+       (string= (terminal-ui-notice ui) "Interrupting request.")
+       "a cancellation inside the hint delay keeps its interruption notice")
       (setf now 21/2)
       (application-input-controller--refresh-interrupt-hint controller)
       (test-assert
-       (eq (not (null (terminal-ui-notice ui)))
-           (eq event ':interrupt))
-       "only active Ctrl-C announces forced exit once cancellation persists")
+       (string=
+        (terminal-ui-notice ui)
+        (if (eq event ':interrupt)
+            "Press Ctrl-C again within 2.5 seconds to force exit."
+            "Interrupting request."))
+       "a persistent Ctrl-C replaces the interruption notice with its force hint")
       (test-assert
        (or (eq event ':escape)
            (= (terminal-ui-notice-deadline ui)
               (application-input-controller-interrupt-deadline controller)))
-       "the visible notice expires exactly with the force-exit window")
+       "the visible Ctrl-C force hint expires exactly with the force-exit window")
       (test-assert
        (application-input-controller--consume-turn-cancellation-delivery-p
         controller)
@@ -1534,6 +1539,88 @@
           (not (application-input-controller-queued-work-paused-p controller))
           (null (terminal-ui-notice ui)))
          "new explicit input resumes held queued work and clears its notice"))))
+  nil)
+
+(-> test-active-turn-cancellation-side-effects () null)
+(defun test-active-turn-cancellation-side-effects ()
+  "Test cancellation delivery survives notice failure and follows menu dismissal."
+  (let* ((terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :main-thread (current-thread)))
+         (interrupt-count 0))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (test-call-with-function-replacements
+     (list
+      (list 'terminal-ui-set-notice
+            (lambda (&rest arguments)
+              (declare (ignore arguments))
+              (error "notice rendering failed")))
+      (list 'application-input-controller--interrupt-main-for-turn-cancellation
+            (lambda (observed-controller)
+              (test-assert (eq observed-controller controller)
+                           "cancellation interrupts the requesting controller")
+              (incf interrupt-count))))
+     (lambda ()
+       (test-assert
+        (application-input-controller--request-active-turn-cancellation controller)
+        "notice failure does not reject an active cancellation request")))
+    (test-assert (= interrupt-count 1)
+                 "notice failure does not block cancellation interrupt delivery")
+    (test-assert
+     (application-input-controller--consume-turn-cancellation-delivery-p controller)
+     "notice failure preserves pending cancellation delivery"))
+  (let* ((terminal (make-instance 'recording-terminal :columns 80))
+         (ui
+           (terminal-ui-create
+            :terminal terminal
+            :completions
+            '((:name "/help" :argument nil :description "show help"))))
+         (application (make-instance 'application :ui ui))
+         (controller
+           (make-instance
+            'application-input-controller
+            :application application
+            :later-state (make-instance 'later-state)
+            :main-thread (current-thread)))
+         (interrupt-count 0))
+    (setf (application-input-controller application) controller
+          (application-input-controller-active-p controller) t)
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (terminal-ui-process-event ui '(:insert "/h"))
+           (test-assert (terminal-ui-completion-menu-present-p ui)
+                        "typed command input presents a passive completion menu")
+           (test-call-with-function-replacements
+            (list
+             (list
+              'application-input-controller--interrupt-main-for-turn-cancellation
+              (lambda (observed-controller)
+                (test-assert (eq observed-controller controller)
+                             "Escape interrupts the active controller")
+                (incf interrupt-count))))
+            (lambda ()
+              (application-input-controller--process-event controller ':escape)
+              (test-assert
+               (and
+                (zerop interrupt-count)
+                (not
+                 (application-input-controller-turn-cancellation-p controller))
+                (not (terminal-ui-completion-menu-present-p ui)))
+               "the first Escape dismisses the passive completion menu only")
+              (application-input-controller--process-event controller ':escape)))
+           (test-assert
+            (and (= interrupt-count 1)
+                 (application-input-controller-turn-cancellation-p controller))
+            "the second Escape interrupts the active request"))
+      (terminal-ui-stop ui)))
   nil)
 
 (-> test-idle-interrupt-exits-without-force-hint () null)
@@ -2105,8 +2192,9 @@
              (loop until holding-p
                    do (condition-wait gate-condition gate :timeout 2)))
            (application-input-controller--refresh-interrupt-hint controller)
-           (test-assert (null (terminal-ui-notice ui))
-                        "contended presentation drops the due hint")
+            (test-assert
+             (string= (terminal-ui-notice ui) "Interrupting request.")
+             "contended presentation retains the earlier interruption notice")
            (test-assert
             (application-input-controller-interrupt-hint-time controller)
             "a dropped hint stays due for a later reader pass"))
@@ -6634,6 +6722,43 @@
       :detach-function (lambda () nil)))
     (task-augment-tool-registry registry)))
 
+(-> test-application-conversation-input-history () null)
+(defun test-application-conversation-input-history ()
+  "Test durable editable history filtering, order, and bounds."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "input-history")))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "first user")
+           (conversation-append-record
+            conversation
+            '(:message :role :assistant :content "ignored assistant"))
+           (conversation-append-user-operation
+            conversation
+            :kind ':command
+            :source "/help"
+            :status ':ok
+            :result "shown")
+           (conversation-append-summary conversation "ignored summary")
+           (conversation-append-user-operation
+            conversation
+            :kind ':lisp
+            :source "(+ 1 2)"
+            :status ':ok
+            :result "3")
+           (conversation-append-user-message conversation "last user")
+           (test-assert
+            (equal
+             (application--conversation-input-history conversation :limit 3)
+             '("/help" "(+ 1 2)" "last user"))
+            "editable history keeps only bounded user inputs in durable order"))
+      (uiop:delete-directory-tree
+       root :validate t :if-does-not-exist :ignore)))
+  nil)
+
+
 (-> test-application-runtime-replacement-transactions () null)
 (defun test-application-runtime-replacement-transactions ()
   "Test workspace and conversation switches prepare fresh runtimes atomically."
@@ -6660,6 +6785,9 @@
          (third-conversation
            (conversation-create configuration
                                 :identifier "runtime-transaction-third"))
+          (terminal (make-instance 'recording-terminal :columns 80))
+          (editor (line-editor-create :history-limit 4))
+          (ui (terminal-ui-create :terminal terminal :editor editor))
          (provider (provider-create configuration))
          (application
            (make-instance
@@ -6675,7 +6803,7 @@
                           :conversation first-conversation
                           :tool-registry old-registry
                           :worker nil)
-            :ui nil))
+            :ui ui))
          (owned-registries (list old-registry)))
     (ensure-directories-exist workspace-one)
     (ensure-directories-exist workspace-two)
@@ -6799,13 +6927,26 @@
                     (workspace-orchestrator
                       (application--task-orchestrator application)))
                (push conversation-registry owned-registries)
+               (conversation-append-user-message
+                second-conversation "second conversation history")
+               (terminal-ui-load-history ui '("workspace history"))
+               (terminal-ui-set-input ui "draft before install")
                (test-call-with-function-replacements
                 (list
                  (list
                   'application--create-tool-registry
                   (lambda (configuration)
                     (declare (ignore configuration))
-                    conversation-registry)))
+                    conversation-registry))
+                 (list
+                  'application-publish-recovery-session
+                  (lambda (installed-application)
+                    (test-assert
+                     (eq installed-application application)
+                     "the late installation hook receives the active application")
+                    (terminal-ui-set-input ui "concurrent draft")
+                    (terminal-ui-process-event ui :left)
+                    nil)))
                 (lambda ()
                   (application-install-conversation
                    application second-conversation)))
@@ -6842,6 +6983,15 @@
                   "conversation installation advertises only fresh tool schemas")
                  (test-assert
                   (and
+                   (equalp
+                    (line-editor-history editor)
+                    #("second conversation history"))
+                   (string= (line-editor-text editor) "concurrent draft")
+                   (= (line-editor-cursor editor) 15)
+                   (not (terminal-ui--editor-history-navigating-p editor)))
+                  "conversation installation preserves input entered before its final history commit")
+                 (test-assert
+                  (and
                    (eq
                     (job-pool-lifecycle-state
                      (task-orchestrator-pool workspace-orchestrator))
@@ -6854,6 +7004,56 @@
                     (eq workspace-orchestrator
                         conversation-orchestrator)))
                   "conversation installation replaces and restarts task runtimes")
+                 (terminal-ui-load-history ui '("old one" "old two"))
+                 (terminal-ui-set-input ui "draft before failed install")
+                 (terminal-ui-process-event ui :left)
+                 (let* ((expected-history
+                          (copy-seq (line-editor-history editor)))
+                        (failed-close-count 0)
+                        (failed-registry
+                          (application-tests--replacement-registry
+                           "conversation-failed"
+                           (lambda () (incf failed-close-count)))))
+                   (push failed-registry owned-registries)
+                   (conversation-append-user-message
+                    third-conversation "replacement history")
+                   (test-call-with-function-replacements
+                    (list
+                     (list
+                      'application--create-tool-registry
+                      (lambda (configuration)
+                        (declare (ignore configuration))
+                        failed-registry))
+                     (list
+                      'context-runtime-reset
+                      (lambda ()
+                        (terminal-ui-set-input
+                         ui "input during failed install")
+                        (terminal-ui-process-event ui :left)
+                        (error "late conversation install failure"))))
+                    (lambda ()
+                      (test-assert
+                       (handler-case
+                           (progn
+                             (application-install-conversation
+                              application third-conversation)
+                             nil)
+                         (application-runtime-replacement-error (condition)
+                           (eq
+                            (application-runtime-replacement-error-stage condition)
+                            ':install)))
+                       "late conversation failure enters installation rollback")))
+                   (test-assert
+                    (and
+                     (= failed-close-count 1)
+                     (equalp (line-editor-history editor) expected-history)
+                     (string=
+                      (line-editor-text editor)
+                      "input during failed install")
+                     (= (line-editor-cursor editor)
+                        (1- (length "input during failed install")))
+                     (not (terminal-ui--editor-history-navigating-p editor)))
+                    "conversation rollback leaves history and concurrent input untouched"))
                  (let ((active-configuration
                          (application-configuration application))
                        (active-provider
@@ -6864,6 +7064,7 @@
                          (application-agent application))
                        (active-rendered-sequence
                          (application-rendered-sequence application))
+                       (active-close-count conversation-close-count)
                        (attempted-lease nil)
                        (lease-acquire-function
                          (symbol-function 'conversation-lease-acquire)))
@@ -6915,7 +7116,7 @@
                       (conversation-identifier second-conversation))
                      attempted-lease
                      (not (conversation-lease-held-p attempted-lease))
-                     (zerop conversation-close-count)
+                     (= conversation-close-count active-close-count)
                      (eq
                       (job-pool-lifecycle-state
                        (task-orchestrator-pool conversation-orchestrator))
@@ -8937,6 +9138,7 @@
   (test-forced-exit-without-durable-conversation)
   (test-graceful-shutdown-retains-interrupt-escape)
   (test-active-turn-interrupt-events)
+  (test-active-turn-cancellation-side-effects)
   (test-idle-interrupt-exits-without-force-hint)
   (test-active-turn-stop-keys)
   (test-active-command-stop-key)
@@ -8976,6 +9178,7 @@
   (test-application-busy-conversation-resume)
   (test-application-fresh-conversation-lease-collision)
   (test-application-tool-runtime-lifecycle)
+  (test-application-conversation-input-history)
   (test-application-runtime-replacement-transactions)
   (test-application-runtime-retirement-failures)
   (test-application-create-unwind-safety)
