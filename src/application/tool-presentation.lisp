@@ -2050,11 +2050,10 @@ re-emitting untrusted serialized JSON."
                      *application-tool-output-lines*
                      :gutter "│ ")
                     (list (list
-                           (terminal-span
-                            ':hint
-                            (format nil
-                                    "Read full: /papercut ~A"
-                                    (papercut-short-identifier papercut))))))
+                            (terminal-span
+                             ':hint
+                             (format nil "Read full: ~A"
+                                     (papercut-call-source papercut))))))
                    (application--preview-rows
                     output
                     ':plain

@@ -83,9 +83,9 @@
                            :single-line-p t)))
    (terminal-span
     ':dim
-    (format nil "    reported ~A  ·  /papercut ~A~%"
+    (format nil "    reported ~A  ·  ~A~%"
             (papercut-timestamp-string (papercut-reported-at papercut))
-            (papercut-short-identifier papercut)))))
+            (papercut-call-source papercut)))))
 
 (-> application-papercuts-entry (application) (or string list))
 (defun application-papercuts-entry (application)
@@ -101,7 +101,7 @@
                 (format nil "PAPERCUTS  ~D~%" (length papercuts)))
                (terminal-span
                 ':dim
-                (format nil "  newest first · use /papercut ID for the full report~%")))
+                (format nil "  newest first · use (papercut \"ID\") for the full report~%")))
          (loop for papercut in papercuts
                append (application--papercut-list-row papercut))))))
 
@@ -138,7 +138,7 @@
                 append (application--papercut-list-row match))))
         (otherwise
          (format nil
-                 "No papercut matches ~S. Run /papercuts to list current reports."
+                 "No papercut matches ~S. Run (papercuts) to list current reports."
                  identifier))))))
 
 (-> application-papercut-close-entry (application string) (or string list))
@@ -152,7 +152,9 @@
          (papercut-mark-closed
           configuration
           (papercut-identifier papercut)
-          :resolution "Closed through /papercut-close.")
+          :resolution
+          (format nil "Closed through (papercut-close ~S)."
+                  (papercut-identifier papercut)))
          (list
           (terminal-span ':success "PAPERCUT CLOSED  ")
           (terminal-span
@@ -170,7 +172,7 @@
                 append (application--papercut-list-row match))))
         (otherwise
          (format nil
-                 "No active papercut matches ~S. Run /papercuts to list reports."
+                 "No active papercut matches ~S. Run (papercuts) to list reports."
                  identifier))))))
 
 
@@ -1950,7 +1952,7 @@ to TERMINAL-UI-SELECT."
     (:name "/papercut"
      :argument "ID"
      :description "show one complete papercut report"
-     :tip "opens the full report named by /papercuts."
+     :tip "opens the full report named by (papercuts)."
      :busy-behavior :inspect
      :terminal-behavior :shared
      :call-lambda-list (identifier)
@@ -1962,14 +1964,14 @@ to TERMINAL-UI-SELECT."
        (application-papercut-entry application identifier))
       (application-present
        application
-       "Usage: /papercut ID. Run /papercuts to list reports."))
+       "Usage: (papercut \"ID\"). Run (papercuts) to list reports."))
   ':continue)
 
 (define-application-command application--builtin-papercut-close-command
     (:name "/papercut-close"
      :argument "ID"
      :description "close one resolved papercut report"
-     :tip "removes a fixed or obsolete report from /papercuts."
+     :tip "removes a fixed or obsolete report from (papercuts)."
      :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (identifier)
@@ -1981,7 +1983,7 @@ to TERMINAL-UI-SELECT."
        (application-papercut-close-entry application identifier))
       (application-present
        application
-       "Usage: /papercut-close ID. Run /papercuts to list reports."))
+       "Usage: (papercut-close \"ID\"). Run (papercuts) to list reports."))
   ':continue)
 
 (define-application-command application--builtin-skills-command

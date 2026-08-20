@@ -176,9 +176,7 @@
                 (and (search "! PAPERCUT RECORDED" text)
                      (search "Provider limit" text)
                      (search "The provider returned a rate limit twice." text)
-                     (search (format nil "/papercut ~A"
-                                     (papercut-short-identifier report))
-                             text))
+                     (search (papercut-call-source report) text))
                 "successful papercut reports render as prominent complete cards")
                (test-assert
                 (and (application--record-visible-p application record)
@@ -215,41 +213,42 @@
            (let ((list-output (recording-terminal-output terminal)))
              (test-assert
               (and (search "PAPERCUTS" list-output)
-                   (search "/papercut" list-output)
+                   (search "(papercut \"" list-output)
                    (search "Provider retry is opaque" list-output)
                    (not (search "~%" list-output)))
-              "/papercuts lists current-workspace reports and expansion commands"))
+              "papercut listing shows canonical expansion calls"))
            (recording-terminal-reset terminal)
-           (let ((report (first (papercut-list configuration))))
+           (let* ((report (first (papercut-list configuration)))
+                  (evaluation
+                    (application-lisp-evaluate
+                     (papercut-call-source report)
+                     :application application)))
              (test-assert
-              (eq (application-command
-                   application
-                   (format nil "/papercut ~A"
-                           (papercut-short-identifier report)))
-                  ':continue)
-              "/papercut remains inside the interactive application")
+              (eq (application-lisp-evaluation-status evaluation) ':ok)
+              "the displayed papercut call evaluates successfully")
              (let ((detail-output (recording-terminal-output terminal)))
                (test-assert
                 (and (search "PAPERCUT" detail-output)
                      (search (papercut-title report) detail-output)
                      (search (papercut-content report) detail-output)
                      (not (search "~%" detail-output)))
-                "/papercut expands the complete report body")))
+                "the displayed papercut call expands the complete report body")))
            (recording-terminal-reset terminal)
-           (let ((report (first (papercut-list configuration))))
+           (let* ((report (first (papercut-list configuration)))
+                  (source
+                    (format nil "(papercut-close ~S)"
+                            (papercut-short-identifier report)))
+                  (evaluation
+                    (application-lisp-evaluate source :application application)))
              (test-assert
-              (eq (application-command
-                   application
-                   (format nil "/papercut-close ~A"
-                           (papercut-short-identifier report)))
-                  ':continue)
-              "/papercut-close remains inside the interactive application")
+              (eq (application-lisp-evaluation-status evaluation) ':ok)
+              "the canonical papercut-close call evaluates successfully")
              (test-assert
               (and (search "PAPERCUT CLOSED"
                            (recording-terminal-output terminal))
                    (null (papercut-find
                           configuration (papercut-identifier report))))
-              "/papercut-close persists a closure tombstone"))
+              "the canonical papercut-close call persists a closure tombstone"))
            (test-assert (search "/papercuts" (application-help))
                         "interactive help includes /papercuts")
            (test-assert (search "/papercut ID" (application-help))

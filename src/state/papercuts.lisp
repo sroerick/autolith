@@ -428,6 +428,11 @@ matching reports for :AMBIGUOUS."
           (min *papercut-short-identifier-length*
                (length (papercut-identifier papercut)))))
 
+(-> papercut-call-source (papercut) string)
+(defun papercut-call-source (papercut)
+  "Return the canonical Lisp call that opens PAPERCUT."
+  (format nil "(papercut ~S)" (papercut-short-identifier papercut)))
+
 (-> papercut-excerpt (string integer) string)
 (defun papercut-excerpt (content limit)
   "Return a single-line prefix of CONTENT no longer than LIMIT characters."
