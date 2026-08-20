@@ -2568,48 +2568,61 @@ may execute immediately; other Lisp waits for the idle boundary."
         (when restart-p
           (application-input-controller--start-reader controller))))))
 
-(-> application--command-authorization-items (string pathname) list)
-(defun application--command-authorization-items (command directory)
-  "Return the modal choices for COMMAND in DIRECTORY."
+(-> application--command-authorization-items
+    (string pathname &key (:sandbox-available-p boolean))
+    list)
+(defun application--command-authorization-items
+    (command directory &key sandbox-available-p)
+  "Return the available modal choices for COMMAND in DIRECTORY."
   (declare (ignore command))
-  (list
-   (list :name "pick"
-         :argument nil
-         :description "pick for me; the model chooses sandbox, full access, or refusal")
-   (list :name "once"
-         :argument nil
-         :description "allow once inside the workspace sandbox")
-   (list :name "always"
-         :argument nil
-         :description
-         (format nil "always allow this exact command in ~A"
-                 (application--abbreviated-directory (namestring directory))))
-   (list :name "sandbox"
-         :argument nil
-         :description "allow sandboxed commands for this session")
-   (list :name "full"
-         :argument nil
-         :description "let it ride with full user privileges for this session")
-   (list :name "deny"
-         :argument nil
-         :description "do not run the command")))
+  (append
+   (list
+    (list :name "pick"
+          :argument nil
+          :description
+          (if sandbox-available-p
+              "pick for me; the model chooses sandbox, full access, or refusal"
+              "pick for me; the model chooses full access or refusal")))
+   (when sandbox-available-p
+     (list
+      (list :name "once"
+            :argument nil
+            :description "allow once inside the workspace sandbox")
+      (list :name "always"
+            :argument nil
+            :description
+            (format nil "always allow this exact command in ~A"
+                    (application--abbreviated-directory (namestring directory))))
+      (list :name "sandbox"
+            :argument nil
+            :description "allow sandboxed commands for this session")))
+   (list
+    (list :name "full"
+          :argument nil
+          :description "let it ride with full user privileges for this session")
+    (list :name "deny"
+          :argument nil
+          :description "do not run the command"))))
 
 (-> application--apply-classified-command-permission
-    (application string keyword string)
+    (application string pathname keyword string)
     keyword)
 (defun application--apply-classified-command-permission
-    (application command decision reason)
+    (application command directory decision reason)
   "Apply one classifier DECISION for COMMAND with a terse dim notice.
 
 The command already appears with its tool call, so the notice never
-restates it; only a refusal carries the classifier's short reason."
-  (declare (ignore command))
+restates it; only a refusal carries the classifier's short reason. A
+sandbox grant is revalidated at this final authorization boundary."
   (ecase decision
     (:sandboxed
-     (application-present
-      application
-      (list (terminal-span ':dim "auto-permission sandbox")))
-     ':sandboxed)
+     (if (application--command-sandbox-available-p)
+         (progn
+           (application-present
+            application
+            (list (terminal-span ':dim "auto-permission sandbox")))
+           ':sandboxed)
+         (application--ask-command-permission application command directory)))
     (:full-access
      (application-present
       application
@@ -2633,8 +2646,12 @@ restates it; only a refusal carries the classifier's short reason."
                (application-provider application))
     (return-from application--model-command-permission
       (values ':ask "no provider is available to classify commands")))
-  (let* ((cache (application-command-classifications application))
-         (key (format nil "~A~%~A" command (namestring directory)))
+  (let* ((sandbox-available-p
+           (application--command-sandbox-available-p))
+         (cache (application-command-classifications application))
+         (key
+           (format nil "~:[unavailable~;available~]~%~A~%~A"
+                   sandbox-available-p command (namestring directory)))
          (cached (gethash key cache)))
     (if cached
         (values (car cached) (cdr cached))
@@ -2642,8 +2659,9 @@ restates it; only a refusal carries the classifier's short reason."
           (multiple-value-bind (decision reason)
               (permissions-model-classify-command
                command directory
-               :provider (application-provider application)
-               :configuration (application-configuration application))
+               :provider            (application-provider application)
+               :configuration       (application-configuration application)
+               :sandbox-available-p sandbox-available-p)
             (unless (eq decision ':ask)
               (setf (gethash key cache) (cons decision reason)))
             (values decision reason))))))
@@ -2658,7 +2676,42 @@ restates it; only a refusal carries the classifier's short reason."
     (if (eq decision ':ask)
         (application--ask-command-permission application command directory)
         (application--apply-classified-command-permission
-         application command decision reason))))
+         application command directory decision reason))))
+
+(-> application--apply-command-authorization-choice
+    (application string pathname (option string))
+    keyword)
+(defun application--apply-command-authorization-choice
+    (application command directory choice)
+  "Apply interactive command authorization CHOICE, failing closed when stale."
+  (cond
+    ((or (string= (or choice "") "pick")
+         (string= (or choice "") "auto"))
+     (multiple-value-bind (decision reason)
+         (application--model-command-permission application command directory)
+       (application--apply-classified-command-permission
+        application command directory
+        (if (eq decision ':ask) ':deny decision)
+        reason)))
+    ((string= (or choice "") "full")
+     (setf (application-permission-mode application) ':full-access)
+     ':full-access)
+    ((not (application--command-sandbox-available-p))
+     ':deny)
+    ((string= (or choice "") "once")
+     ':sandboxed)
+    ((string= (or choice "") "always")
+     (permissions-allow
+      :configuration (application-configuration application)
+      :state         (application-permission-state application)
+      :command       command
+      :directory     directory)
+     ':sandboxed)
+    ((string= (or choice "") "sandbox")
+     (setf (application-permission-mode application) ':sandboxed)
+     ':sandboxed)
+    (t
+     ':deny)))
 
 (-> application--ask-command-permission
     (application string pathname)
@@ -2672,47 +2725,26 @@ restates it; only a refusal carries the classifier's short reason."
                    ui
                    (terminal-interactive-p (terminal-ui-terminal ui)))
         (return ':deny))
-      (let ((choice
-              (application-input-controller-call-with-reader-paused
-               controller
-               (lambda ()
-                 (terminal-ui-select
-                  ui
-                  :title
-                  (format nil "run ~A"
-                          (text-cell-prefix
-                           (sanitize-text command :single-line-p t)
-                           56))
-                  :items (application--command-authorization-items
-                          command directory)
-                  :resize-callback #'application-pending-terminal-size)))))
-        (cond
-          ((or (string= (or choice "") "pick")
-               (string= (or choice "") "auto"))
-           (multiple-value-bind (decision reason)
-               (application--model-command-permission
-                application command directory)
-             (application--apply-classified-command-permission
-              application command
-              (if (eq decision ':ask) ':deny decision)
-              reason)))
-          ((string= (or choice "") "once")
-           ':sandboxed)
-          ((string= (or choice "") "always")
-           (permissions-allow
-            :configuration (application-configuration application)
-            :state         (application-permission-state application)
-            :command       command
-            :directory     directory)
-           ':sandboxed)
-          ((string= (or choice "") "sandbox")
-           (setf (application-permission-mode application) ':sandboxed)
-           ':sandboxed)
-          ((string= (or choice "") "full")
-           (setf (application-permission-mode application) ':full-access)
-           ':full-access)
-          (t
-           ':deny))))))
+      (let* ((sandbox-available-p
+               (application--command-sandbox-available-p))
+             (choice
+               (application-input-controller-call-with-reader-paused
+                controller
+                (lambda ()
+                  (terminal-ui-select
+                   ui
+                   :title
+                   (format nil "run ~A"
+                           (text-cell-prefix
+                            (sanitize-text command :single-line-p t)
+                            56))
+                   :items
+                   (application--command-authorization-items
+                    command directory
+                    :sandbox-available-p sandbox-available-p)
+                   :resize-callback #'application-pending-terminal-size)))))
+        (application--apply-command-authorization-choice
+         application command directory choice)))))
 
 (-> application-authorize-command (application string pathname) keyword)
 (defun application-authorize-command (application command directory)
@@ -2722,13 +2754,18 @@ restates it; only a refusal carries the classifier's short reason."
       (:full-access
        ':full-access)
       (:sandboxed
-       ':sandboxed)
+       (if (application--command-sandbox-available-p)
+           ':sandboxed
+           (application--ask-command-permission application command directory)))
       (:auto
        (if (permissions-allowed-p
             (application-permission-state application)
             command
             directory)
-           ':sandboxed
+           (if (application--command-sandbox-available-p)
+               ':sandboxed
+               (application--auto-command-permission
+                application command directory))
            (application--auto-command-permission
             application command directory)))
       (:ask
@@ -2736,7 +2773,10 @@ restates it; only a refusal carries the classifier's short reason."
             (application-permission-state application)
             command
             directory)
-           ':sandboxed
+           (if (application--command-sandbox-available-p)
+               ':sandboxed
+               (application--ask-command-permission
+                application command directory))
            (application--ask-command-permission
             application command directory))))))
 

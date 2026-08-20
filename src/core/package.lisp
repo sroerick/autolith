@@ -21,6 +21,7 @@
                 #:sandbox-result-output
                 #:sandbox-result-output-truncated-p
                 #:sandbox-result-timed-out-p
+                #:sandbox-supported-p
                 #:workspace-write-sandbox-policy)
   (:import-from #:cl-jobpond
                 #:job

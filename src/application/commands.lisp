@@ -1369,29 +1369,34 @@ to TERMINAL-UI-SELECT."
 
 (-> application--permission-mode-items (application) list)
 (defun application--permission-mode-items (application)
-  "Return session command permission choices for APPLICATION."
-  (let ((current (application-permission-mode application)))
-    (list
-     (list :name "ask"
-           :argument nil
-           :description (if (eq current ':ask)
-                            "current; prompt unless this exact command was saved"
-                            "prompt unless this exact command was saved"))
-     (list :name "auto"
-           :argument nil
-           :description (if (eq current ':auto)
-                            "current; pick for me and save that choice"
-                            "pick for me; allow safe inspection and ask about the rest"))
-     (list :name "sandbox"
-           :argument nil
-           :description (if (eq current ':sandboxed)
-                            "current; allow commands inside the workspace sandbox"
-                            "allow commands inside the workspace sandbox"))
-     (list :name "full"
-           :argument nil
-           :description (if (eq current ':full-access)
-                            "current; let it ride with full user privileges"
-                            "let it ride with full user privileges")))))
+  "Return available session command permission choices for APPLICATION."
+  (let ((current             (application-permission-mode application))
+        (sandbox-available-p (application--command-sandbox-available-p)))
+    (append
+     (list
+      (list :name "ask"
+            :argument nil
+            :description (if (eq current ':ask)
+                             "current; prompt unless this exact command was saved"
+                             "prompt unless this exact command was saved"))
+      (list :name "auto"
+            :argument nil
+            :description (if (eq current ':auto)
+                             "current; pick for me and save that choice"
+                             "pick for me; allow safe inspection and ask about the rest")))
+     (when sandbox-available-p
+       (list
+        (list :name "sandbox"
+              :argument nil
+              :description (if (eq current ':sandboxed)
+                               "current; allow commands inside the workspace sandbox"
+                               "allow commands inside the workspace sandbox"))))
+     (list
+      (list :name "full"
+            :argument nil
+            :description (if (eq current ':full-access)
+                             "current; let it ride with full user privileges"
+                             "let it ride with full user privileges"))))))
 
 (-> application--saved-permissions-text (application) string)
 (defun application--saved-permissions-text (application)
@@ -1435,8 +1440,13 @@ to TERMINAL-UI-SELECT."
        (application--set-durable-permission-mode application ':auto)
        (application-present
         application
-        "Commands will pick for me: safe inspection runs in the sandbox, and the rest asks."))
+        (if (application--command-sandbox-available-p)
+            "Commands will pick for me: safe inspection runs in the sandbox, and the rest asks."
+            "Commands will pick for me: routine commands may use full privileges, and the rest asks.")))
       ((string= choice "sandbox")
+       (unless (application--command-sandbox-available-p)
+         (error 'configuration-error
+                :message "The workspace sandbox is unavailable."))
        (setf (application-permission-mode application) ':sandboxed)
        (application-present
         application

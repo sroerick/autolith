@@ -765,6 +765,24 @@
                      "sandbox decisions map to the sandboxed grant")
         (test-assert (string= reason "workspace build")
                      "the model's reason is passed through"))
+      (multiple-value-bind (decision reason)
+          (permissions-model-classify-command
+           "git status" #p"/root/project/"
+           :provider
+           (make-instance
+            'rlm-inference-test-provider
+            :results
+            (list
+             (rlm-inference-test-result
+              "unavailable-sandbox"
+              "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+              20)))
+           :configuration configuration
+           :sandbox-available-p nil)
+        (test-assert (eq decision ':ask)
+                     "unavailable sandbox decisions fall back to asking")
+        (test-assert (string= reason "the workspace sandbox is unavailable")
+                     "unavailable sandbox fallback explains the missing grant"))
       (test-assert (eq (classify
                         "{\"decision\": \"full\", \"reason\": \"network\"}")
                        ':full-access)

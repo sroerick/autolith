@@ -1173,6 +1173,22 @@
                                  (rlm-inference-test-result
                                   "classify-2"
                                   "{\"decision\": \"deny\", \"reason\": \"privilege escalation\"}"
+                                  20)
+                                 (rlm-inference-test-result
+                                  "classify-3"
+                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                  20)
+                                 (rlm-inference-test-result
+                                  "classify-4"
+                                  "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
+                                  20)
+                                 (rlm-inference-test-result
+                                  "classify-5"
+                                  "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
+                                  20)
+                                 (rlm-inference-test-result
+                                  "classify-6"
+                                  "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
                                   20))))))
     (unwind-protect
          (progn
@@ -1197,28 +1213,131 @@
                  application "printf any" root)
                 ':sandboxed)
             "/permissions sandbox allows sandboxed commands for the session")
+           (test-call-with-function-replacements
+            (list
+             (list 'sandbox-supported-p
+                   (lambda (&optional capability)
+                     (declare (ignore capability))
+                     nil)))
+            (lambda ()
+              (test-assert
+               (eq (application-authorize-command
+                    application "printf any" root)
+                   ':deny)
+               "session sandbox mode fails closed after helper loss")
+              (test-assert
+               (equal (mapcar (lambda (item) (getf item ':name))
+                              (application--permission-mode-items application))
+                      '("ask" "auto" "full"))
+               "the permission mode picker omits an unavailable sandbox")
+              (test-assert
+               (handler-case
+                   (progn
+                     (application-permissions-command application "sandbox")
+                     nil)
+                 (configuration-error ()
+                   t))
+               "direct sandbox mode selection rejects unavailable containment")))
            (application-command application "/permissions full")
            (test-assert
             (eq (application-authorize-command
                  application "printf any" root)
                 ':full-access)
             "/permissions full grants full command access for the session")
-             (application-command application "/permissions auto")
-             (test-assert (eq (application-permission-mode application) ':auto)
-                          "/permissions auto selects pick-for-me mode")
-             (test-assert
-              (eq (application-authorize-command
-                   application "git status" root)
-                  ':sandboxed)
-              "auto mode allows safe inspection inside the sandbox")
-             (test-assert
-              (eq (application-authorize-command
-                   application "sudo ls" root)
-                  ':deny)
-              "auto mode refuses privilege-escalation commands")
-             (application-command application "/permissions ask")
-             (test-assert (eq (application-permission-mode application) ':ask)
-                          "/permissions ask restores prompt mode")
+           (application-command application "/permissions auto")
+           (test-assert (eq (application-permission-mode application) ':auto)
+                        "/permissions auto selects pick-for-me mode")
+           (test-assert
+            (eq (application-authorize-command
+                 application "git status" root)
+                ':sandboxed)
+            "auto mode allows safe inspection inside the sandbox")
+           (test-assert
+            (eq (application-authorize-command
+                 application "sudo ls" root)
+                ':deny)
+            "auto mode refuses privilege-escalation commands")
+           (let ((capability-checks 0))
+             (test-call-with-function-replacements
+              (list
+               (list 'sandbox-supported-p
+                     (lambda (&optional capability)
+                       (declare (ignore capability))
+                       (= (incf capability-checks) 1))))
+              (lambda ()
+                (test-assert
+                 (eq (application-authorize-command
+                      application "git diff" root)
+                     ':deny)
+                 "auto mode revalidates containment after classification")
+                (test-assert
+                 (= capability-checks 2)
+                 "a sandbox grant is checked at the final authorization boundary"))))
+           (test-call-with-function-replacements
+            (list
+             (list 'sandbox-supported-p
+                   (lambda (&optional capability)
+                     (eq capability ':network-isolated))))
+            (lambda ()
+              (test-assert
+               (application--command-sandbox-available-p)
+               "optional sandbox capabilities do not disable auto containment")))
+           (let ((authorization-item-names nil)
+                 (saved-rule-count (length (permission-state-rules state))))
+             (test-call-with-function-replacements
+              (list
+               (list 'sandbox-supported-p
+                     (lambda (&optional capability)
+                       (declare (ignore capability))
+                       nil))
+               (list 'application-input-controller
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       ':test-controller))
+               (list 'terminal-interactive-p
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       t))
+               (list 'application-input-controller-call-with-reader-paused
+                     (lambda (ignored function)
+                       (declare (ignore ignored))
+                       (funcall function)))
+               (list 'terminal-ui-select
+                     (lambda (ignored &key items &allow-other-keys)
+                       (declare (ignore ignored))
+                       (setf authorization-item-names
+                             (mapcar (lambda (item) (getf item ':name)) items))
+                       "once")))
+              (lambda ()
+                (test-assert
+                 (eq (application-authorize-command
+                      application "git status" root)
+                     ':full-access)
+                 "sandbox availability separates cached auto decisions")
+                (test-assert
+                 (eq (application-authorize-command
+                      application "printf saved" root)
+                     ':full-access)
+                 "auto mode reclassifies saved commands without a sandbox")
+                (test-assert
+                 (eq (application-authorize-command
+                      application "git log" root)
+                     ':deny)
+                 "auto mode rejects a stale sandbox picker choice")
+                (test-assert
+                 (equal authorization-item-names '("pick" "full" "deny"))
+                 "the command picker omits unavailable sandbox choices")
+                (test-assert
+                 (eq (application--apply-command-authorization-choice
+                      application "git log" root "always")
+                     ':deny)
+                 "programmatic sandbox choices fail closed when unavailable")
+                (test-assert
+                 (= (length (permission-state-rules state)) saved-rule-count)
+                 "an unavailable always choice saves no permission rule"))))
+           (application-command application "/permissions ask")
+           (test-assert (eq (application-permission-mode application) ':ask)
+                        "/permissions ask restores prompt mode")
            (application-command application "/permissions clear")
            (test-assert (null (permission-state-rules state))
                         "/permissions clear removes saved exact approvals")
