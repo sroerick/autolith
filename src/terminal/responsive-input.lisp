@@ -2809,7 +2809,10 @@ restates it; only a refusal carries the classifier's short reason."
                :directory (configuration-working-directory
                            (application-configuration application))
                :due-at due-at
-               :window window)))
+               :window window
+               :conversation
+               (application-input-controller--conversation-identifier
+                controller))))
         (sb-thread:condition-broadcast
          (application-input-controller-condition-variable controller))
         entry))))
@@ -2831,6 +2834,19 @@ restates it; only a refusal carries the classifier's short reason."
            (application-input-controller-condition-variable controller)))
         cancelled-p))))
 
+
+(-> application-input-controller--conversation-identifier
+    (application-input-controller)
+    (option string))
+(defun application-input-controller--conversation-identifier (controller)
+  "Return the identifier of the conversation CONTROLLER currently serves."
+  (let* ((application (application-input-controller-application controller))
+         (conversation (and application
+                            ;; Startup and tests both run controllers before a
+                            ;; conversation is attached.
+                            (slot-boundp application 'conversation)
+                            (application-conversation application))))
+    (and conversation (conversation-identifier conversation))))
 
 (-> application-input-controller--complete-later
     (application-input-controller later-entry)
@@ -2931,7 +2947,9 @@ restates it; only a refusal carries the classifier's short reason."
         (let ((entry
                 (later-pop-due
                  (application-input-controller-later-state controller)
-                 (get-universal-time))))
+                 (get-universal-time)
+                 (application-input-controller--conversation-identifier
+                  controller))))
           (when entry
             (deque-push-back
              (application-input-controller-work-items controller)
@@ -3011,7 +3029,10 @@ restates it; only a refusal carries the classifier's short reason."
         (let* ((state (application-input-controller-later-state controller))
                 (entry
                   (unless (later-state-active-entry state)
-                    (priority-queue-peek (later-state-queue state))))
+                    (later-next-entry
+                     state
+                     (application-input-controller--conversation-identifier
+                      controller))))
                 (later-wait
                   (and entry
                        (max 0.01 (- (later-entry-due-at entry)
@@ -3392,7 +3413,10 @@ the next application boundary because it does not depend on the provider."
                               :input input
                               :directory directory
                               :due-at due-at
-                              :window window-label)
+                              :window window-label
+                              :conversation
+                              (application-input-controller--conversation-identifier
+                               controller))
                              (incf deferred-count))
                          (later-error (condition)
                            (push condition failures)

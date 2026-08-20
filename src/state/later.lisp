@@ -2,8 +2,11 @@
 
 ;;;; -- Persistent Deferred Inputs --
 
-(defparameter *later-version* 1
+(defparameter *later-version* 2
   "The readable deferred-input state format version.")
+
+(defparameter *later-supported-versions* (list 1 2)
+  "Readable deferred-input state versions this image can restore.")
 
 (defclass later-entry ()
   ((identifier
@@ -35,7 +38,16 @@
     :initarg :window
     :accessor later-entry-window
     :type non-empty-string
-    :documentation "The rate-limit window or estimate governing DUE-AT."))
+    :documentation "The rate-limit window or estimate governing DUE-AT.")
+   (conversation
+    :initarg :conversation
+    :initform nil
+    :reader later-entry-conversation
+    :type (option non-empty-string)
+    :documentation
+    "The conversation that scheduled this input. Version 1 entries carry NIL
+and stay runnable from any conversation, because their origin was never
+recorded."))
   (:documentation "One durable input waiting for a rate-limit reset."))
 
 (defclass later-state ()
@@ -59,7 +71,7 @@
       (and (consp form)
            (eq (first form) ':entry)
            (let ((properties (rest form)))
-             (and (= (length properties) 12)
+             (and (member (length properties) '(12 14))
                   (every (lambda (property)
                            (readable-state-property-present-p properties
                                                               property))
@@ -69,7 +81,14 @@
                   (non-empty-string-p (getf properties :directory))
                   (typep (getf properties :due-at) 'timestamp)
                   (typep (getf properties :created-at) 'timestamp)
-                  (non-empty-string-p (getf properties :window)))))
+                  (non-empty-string-p (getf properties :window))
+                  ;; Version 1 entries predate origin scoping and omit the
+                  ;; property entirely.
+                  (or (= (length properties) 12)
+                      (and (readable-state-property-present-p properties
+                                                              ':conversation)
+                           (typep (getf properties :conversation)
+                                  '(or null non-empty-string)))))))
     (error ()
       nil)))
 
@@ -81,7 +100,7 @@
            (= (length form) 5)
            (eq (first form) ':later)
            (eq (second form) ':version)
-           (= (third form) *later-version*)
+           (member (third form) *later-supported-versions*)
            (eq (fourth form) ':entries)
            (listp (fifth form))
            (every #'later--entry-form-p (fifth form))
@@ -104,7 +123,11 @@
                    :directory (copy-seq (getf properties :directory))
                    :due-at (getf properties :due-at)
                    :created-at (getf properties :created-at)
-                   :window (copy-seq (getf properties :window)))))
+                   :window (copy-seq (getf properties :window))
+                   :conversation
+                   (let ((conversation (getf properties :conversation)))
+                     (and (non-empty-string-p conversation)
+                          (copy-seq conversation))))))
 
 (-> later--entry< (later-entry later-entry) boolean)
 (defun later--entry< (left right)
@@ -180,7 +203,8 @@
         :directory (later-entry-directory entry)
         :due-at (later-entry-due-at entry)
         :created-at (later-entry-created-at entry)
-        :window (later-entry-window entry)))
+        :window (later-entry-window entry)
+        :conversation (later-entry-conversation entry)))
 
 (-> later--state-form (later-state &optional list) list)
 (defun later--state-form (state &optional (entries (later-state-entries state)))
@@ -208,12 +232,17 @@
 (-> later-schedule
     (&key (:configuration configuration) (:state later-state)
           (:input string) (:directory pathname) (:due-at timestamp)
-          (:window string) (:created-at timestamp))
+          (:window string) (:conversation (option string))
+          (:created-at timestamp))
     later-entry)
 (defun later-schedule
-    (&key configuration state input directory due-at window
+    (&key configuration state input directory due-at window conversation
           (created-at (get-universal-time)))
-  "Persist INPUT in DIRECTORY for DUE-AT and return its new deferred entry."
+  "Persist INPUT in DIRECTORY for DUE-AT and return its new deferred entry.
+
+CONVERSATION records the origin so the input runs only there. Omitting it
+leaves the entry runnable from any conversation, which only version 1 state
+relies on."
   (unless (and (non-empty-string-p input)
                (non-empty-string-p window))
     (error 'later-error
@@ -239,7 +268,10 @@
                              (truename existing-directory)))
                            :due-at due-at
                            :created-at created-at
-                           :window (copy-seq window))))
+                           :window (copy-seq window)
+                           :conversation
+                           (and (non-empty-string-p conversation)
+                                (copy-seq conversation)))))
       (priority-queue-push (later-state-queue state) entry entry)
       (handler-case
           (progn (later--write configuration state) entry)
@@ -263,11 +295,31 @@
         (setf (later-state-active-entry state) nil))
       t)))
 
-(-> later-pop-due (later-state timestamp) (option later-entry))
-(defun later-pop-due (state now)
-  "Mark STATE's next entry active when it is due at NOW."
+(-> later-entry-runnable-p (later-entry (option string)) boolean)
+(defun later-entry-runnable-p (entry conversation)
+  "Return true when CONVERSATION may run ENTRY.
+
+An entry runs only in the conversation that scheduled it. Version 1 entries
+recorded no origin and stay runnable anywhere."
+  (let ((origin (later-entry-conversation entry)))
+    (or (null origin)
+        (and (non-empty-string-p conversation)
+             (string= origin conversation)))))
+
+(-> later-next-entry (later-state (option string)) (option later-entry))
+(defun later-next-entry (state conversation)
+  "Return STATE's earliest entry CONVERSATION may run, due or not.
+
+The scheduler waits on this entry rather than the queue head, so a deadline
+belonging to another conversation never wakes this one."
+  (find-if (lambda (entry) (later-entry-runnable-p entry conversation))
+           (later-state-entries state)))
+
+(-> later-pop-due (later-state timestamp (option string)) (option later-entry))
+(defun later-pop-due (state now conversation)
+  "Mark STATE's next entry for CONVERSATION active when it is due at NOW."
   (unless (later-state-active-entry state)
-    (let ((entry (priority-queue-peek (later-state-queue state))))
+    (let ((entry (later-next-entry state conversation)))
       (when (and entry (<= (later-entry-due-at entry) now))
         (setf (later-state-active-entry state) entry)))))
 (-> later--window-exhausted-p ((option list)) boolean)

@@ -115,6 +115,7 @@
     (test-command-permission-persistence)
     (test-command-permission-corruption)
     (test-later-persistence)
+    (test-later-conversation-scope)
     (test-later-malformed-state)
     (test-later-reset-selection)
     (test-request-local-context)

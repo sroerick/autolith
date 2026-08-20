@@ -24,7 +24,7 @@
                                    :directory directory :due-at 100 :window "5h" :created-at 5))
                  (loaded (later-load configuration)))
              (later-reschedule :configuration configuration :state loaded
-                               :entry (later-pop-due loaded 90)
+                               :entry (later-pop-due loaded 90 nil)
                                :due-at 100 :window "5h")
              (test-call-with-function-replacements
               (list (list 'later--write (lambda (&rest arguments)
@@ -55,6 +55,62 @@
                                    #o777)
                            #o600)
                         "deferred state is private to the current user"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-later-conversation-scope () null)
+(defun test-later-conversation-scope ()
+  "Test deferred inputs run only in the conversation that scheduled them."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (pathname (configuration-later-path configuration)))
+    (unwind-protect
+         (let* ((state (later-load configuration))
+                (directory (configuration-working-directory configuration))
+                (entry
+                  (later-schedule :configuration configuration :state state
+                                  :input "then make a release"
+                                  :directory directory :due-at 100
+                                  :window "weekly" :created-at 10
+                                  :conversation "z-2x75cm")))
+           (test-assert
+            (null (later-pop-due state 200 "fresh-session"))
+            "a due entry stays queued outside its own conversation")
+           (test-assert
+            (null (later-pop-due state 200 nil))
+            "a due entry stays queued when no conversation is active")
+           (test-assert
+            (null (later-next-entry state "fresh-session"))
+            "the scheduler never waits on another conversation's deadline")
+           (test-assert
+            (eq (later-pop-due state 200 "z-2x75cm") entry)
+            "a due entry runs in the conversation that scheduled it")
+           (setf (later-state-active-entry state) nil)
+           (test-assert
+            (string= (later-entry-conversation
+                      (first (later-state-entries (later-load configuration))))
+                     "z-2x75cm")
+            "the scheduling conversation survives a reload")
+           ;; Version 1 entries recorded no origin, so they must stay runnable
+           ;; instead of stranding in the queue forever.
+           (snapshot-write
+            pathname
+            (list :later :version 1 :entries
+                  (list (list :entry
+                              :id "legacy-entry"
+                              :input "legacy input"
+                              :directory (namestring directory)
+                              :due-at 100
+                              :created-at 10
+                              :window "weekly"))))
+           (let ((legacy (later-load configuration)))
+             (test-assert
+              (null (later-entry-conversation
+                     (first (later-state-entries legacy))))
+              "version 1 entries load without an origin conversation")
+             (test-assert
+              (and (later-pop-due legacy 200 "any-conversation") t)
+              "version 1 entries remain runnable from any conversation")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
