@@ -939,6 +939,17 @@
                  "terminal failures retain their structured error code"))
   nil)
 
+(define-condition test-provider-tls-error (cl+ssl-error)
+  ((detail
+    :initarg :detail
+    :reader test-provider-tls-error-detail
+    :type string
+    :documentation "The synthetic TLS diagnostic shown by the condition."))
+  (:report
+   (lambda (condition stream)
+     (write-string (test-provider-tls-error-detail condition) stream)))
+  (:documentation "A TLS failure with deterministic model-visible detail."))
+
 (defclass test-transport-provider (codex-subscription-provider)
   ((outcomes
     :initarg :outcomes
@@ -969,7 +980,10 @@
               :handle nil
               :syscall 'connect))
       ((eq outcome ':tls)
-       (error 'cl+ssl-error))
+       (error 'test-provider-tls-error
+              :detail "certificate verification failed"))
+      ((and (consp outcome) (eq (first outcome) ':tls))
+       (error 'test-provider-tls-error :detail (second outcome)))
       ((eq outcome ':name-service)
        (error 'sb-bsd-sockets:name-service-error
               :errno 1
@@ -990,12 +1004,19 @@
   (declare (ignore request credentials conversation))
   (incf (test-transport-provider-attempt-count provider))
   (let ((outcome (pop (test-transport-provider-outcomes provider))))
-    (if (eq outcome ':name-service)
-        (error 'sb-bsd-sockets:name-service-error
-               :errno 1
-               :symbol 'getaddrinfo
-               :syscall 'getaddrinfo)
-        (values outcome 200 nil))))
+    (cond
+      ((eq outcome ':name-service)
+       (error 'sb-bsd-sockets:name-service-error
+              :errno 1
+              :symbol 'getaddrinfo
+              :syscall 'getaddrinfo))
+      ((eq outcome ':tls)
+       (error 'test-provider-tls-error
+              :detail "compaction certificate verification failed"))
+      ((and (consp outcome) (eq (first outcome) ':tls))
+       (error 'test-provider-tls-error :detail (second outcome)))
+      (t
+       (values outcome 200 nil)))))
 
 (-> provider-tests--completed-sse-source (string) string)
 (defun provider-tests--completed-sse-source (response-id)
@@ -1096,6 +1117,46 @@
                  (test-assert
                   (= (test-transport-provider-attempt-count provider) 2)
                   "an SBCL name-service error remains inside the retry boundary"))))
+            (let* ((*provider-active-credential-values* '("tls-secret"))
+                   (*provider-active-credential-redaction-marker* "[redacted]")
+                   (provider
+                     (provider-tests--transport-provider
+                      configuration
+                      (list '(:tls "certificate rejected tls-secret")))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (provider--open-response-stream
+                      provider
+                      (json-object)
+                      :credentials credentials
+                      :conversation conversation)
+                     nil)
+                 (provider-error (condition)
+                   (and
+                    (not (typep condition 'provider-retryable-error))
+                    (string=
+                     (autolith-error-message condition)
+                     "The provider TLS connection could not be established: certificate rejected [redacted]"))))
+               "TLS failures append useful credential-redacted condition detail"))
+            (let ((provider
+                    (provider-tests--transport-provider
+                     configuration
+                     (list '(:tls "compaction certificate expired")))))
+              (test-assert
+               (handler-case
+                   (progn
+                     (provider--open-native-compaction
+                      provider
+                      (json-object)
+                      :credentials credentials
+                      :conversation conversation)
+                     nil)
+                 (provider-error (condition)
+                   (string=
+                    (autolith-error-message condition)
+                    "The provider TLS connection could not be established: compaction certificate expired")))
+               "native compaction preserves TLS condition detail"))
            (let ((provider
                    (provider-tests--transport-provider
                     configuration
@@ -1127,10 +1188,10 @@
                      nil)
                  (provider-error (condition)
                    (and (not (typep condition 'provider-retryable-error))
-                        (string=
-                         (autolith-error-message condition)
-                         "The provider transport failed before a response was received."))))
-               "a raw transport SIMPLE-ERROR becomes a terminal provider failure"))
+                         (string=
+                          (autolith-error-message condition)
+                          "The provider transport failed before a response was received: Synthetic provider transport failure."))))
+                 "a raw transport SIMPLE-ERROR becomes a terminal provider failure"))
            (let* ((stream
                     (make-instance
                      'test-failing-close-stream

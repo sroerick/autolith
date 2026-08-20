@@ -1297,9 +1297,31 @@ abandon the looping stream; the default reaction ignores the report."))
          :request-id (provider--response-request-id headers)
          :response nil))
 
+(-> provider--transport-failure-message (string condition) string)
+(defun provider--transport-failure-message (message condition)
+  "Append bounded credential-redacted CONDITION detail to transport MESSAGE."
+  (let* ((reported-detail
+           (handler-case
+               (format nil "~A" condition)
+             (error ()
+               "")))
+         (detail
+           (bounded-string
+            (provider--sanitize-wire-string reported-detail)
+            :limit *provider-error-detail-limit*))
+         (trimmed-detail
+           (string-trim '(#\Space #\Tab #\Newline #\Return) detail)))
+    (if (non-empty-string-p trimmed-detail)
+        (format nil "~A: ~A"
+                (string-right-trim
+                 '(#\. #\Space #\Tab #\Newline #\Return)
+                 message)
+                trimmed-detail)
+        message)))
+
 (-> provider--signal-transport-failure (string &key (:retryable-p boolean)) null)
 (defun provider--signal-transport-failure (message &key retryable-p)
-  "Signal a credential-free provider transport failure described by MESSAGE."
+  "Signal a credential-redacted provider transport failure described by MESSAGE."
   (error (if retryable-p
              'provider-transport-error
              'provider-error)
@@ -1322,29 +1344,41 @@ abandon the looping stream; the default reaction ignores the report."))
        request
        :credentials credentials
        :conversation conversation)
-    (ssl-error-syscall ()
+    (ssl-error-syscall (condition)
       (provider--signal-transport-failure
-       "The provider connection failed before a response was received."
+       (provider--transport-failure-message
+        "The provider connection failed before a response was received."
+        condition)
        :retryable-p t))
-    (socket-error ()
+    (socket-error (condition)
       (provider--signal-transport-failure
-       "The provider connection failed before a response was received."
+       (provider--transport-failure-message
+        "The provider connection failed before a response was received."
+        condition)
        :retryable-p t))
-    (sb-bsd-sockets:name-service-error ()
+    (sb-bsd-sockets:name-service-error (condition)
       (provider--signal-transport-failure
-       "The provider address could not be resolved."
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
        :retryable-p t))
-    (ns-error ()
+    (ns-error (condition)
       (provider--signal-transport-failure
-       "The provider address could not be resolved."
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
        :retryable-p t))
-    (cl+ssl-error ()
+    (cl+ssl-error (condition)
       (provider--signal-transport-failure
-       "The provider TLS connection could not be established."
+       (provider--transport-failure-message
+        "The provider TLS connection could not be established."
+        condition)
        :retryable-p nil))
-    (simple-error ()
+    (simple-error (condition)
       (provider--signal-transport-failure
-       "The provider transport failed before a response was received."
+       (provider--transport-failure-message
+        "The provider transport failed before a response was received."
+        condition)
        :retryable-p nil))))
 
 (-> provider--open-native-compaction
@@ -1357,29 +1391,41 @@ abandon the looping stream; the default reaction ignores the report."))
   (handler-case
       (provider-open-native-compaction
        provider request :credentials credentials :conversation conversation)
-    (ssl-error-syscall ()
+    (ssl-error-syscall (condition)
       (provider--signal-transport-failure
-       "The provider connection failed before compaction began."
+       (provider--transport-failure-message
+        "The provider connection failed before compaction began."
+        condition)
        :retryable-p t))
-    (socket-error ()
+    (socket-error (condition)
       (provider--signal-transport-failure
-       "The provider connection failed before compaction began."
+       (provider--transport-failure-message
+        "The provider connection failed before compaction began."
+        condition)
        :retryable-p t))
-    (sb-bsd-sockets:name-service-error ()
+    (sb-bsd-sockets:name-service-error (condition)
       (provider--signal-transport-failure
-       "The provider address could not be resolved."
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
        :retryable-p t))
-    (ns-error ()
+    (ns-error (condition)
       (provider--signal-transport-failure
-       "The provider address could not be resolved."
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
        :retryable-p t))
-    (cl+ssl-error ()
+    (cl+ssl-error (condition)
       (provider--signal-transport-failure
-       "The provider TLS connection could not be established."
+       (provider--transport-failure-message
+        "The provider TLS connection could not be established."
+        condition)
        :retryable-p nil))
-    (simple-error ()
+    (simple-error (condition)
       (provider--signal-transport-failure
-       "The provider transport failed before compaction began."
+       (provider--transport-failure-message
+        "The provider transport failed before compaction began."
+        condition)
        :retryable-p nil))))
 
 (-> provider--read-sse-data (stream t) t)
