@@ -183,16 +183,19 @@ rather than failing, so existence needs the following stat first."
   nil)
 
 (-> release-archive--write-record
-    (pathname &key (:version string) (:tag string) (:commit string))
+    (pathname &key (:version string) (:tag string) (:commit string)
+                   (:platform string))
     null)
-(defun release-archive--write-record (pathname &key version tag commit)
-  "Write the strict VERSION, TAG, and COMMIT release record to PATHNAME."
+(defun release-archive--write-record
+    (pathname &key version tag commit platform)
+  "Write the strict VERSION, TAG, COMMIT, and PLATFORM record to PATHNAME."
   (with-open-file (stream pathname
                           :direction ':output
                           :if-exists ':supersede
                           :if-does-not-exist ':create
                           :external-format ':utf-8)
-    (format stream "version=~A~%tag=~A~%commit=~A~%" version tag commit))
+    (format stream "version=~A~%tag=~A~%commit=~A~%platform=~A~%"
+            version tag commit platform))
   nil)
 
 (-> release-archive--make-temporary-root (pathname) pathname)
@@ -226,7 +229,9 @@ rather than failing, so existence needs the following stat first."
    (list "env"
          "GIT_CONFIG_NOSYSTEM=1"
          "GIT_CONFIG_GLOBAL=/dev/null"
-         "git" "-C" (namestring source-root))
+         "git"
+         "-c" "safe.directory=*"
+         "-C" (string-right-trim "/" (namestring source-root)))
    arguments))
 
 (-> release-archive--create-source-identity (pathname string string) null)
@@ -236,7 +241,11 @@ rather than failing, so existence needs the following stat first."
   (release-archive--run
    (release-archive--identity-git-command
     source-root
-    '("init" "--quiet" "--initial-branch=master" "--template=")))
+    '("init" "--quiet" "--template=")))
+  (release-archive--run
+   (release-archive--identity-git-command
+    source-root
+    '("symbolic-ref" "HEAD" "refs/heads/master")))
   (dolist (setting
            '(("user.name" "Autolith release build")
              ("user.email" "release-build@localhost")
@@ -271,7 +280,9 @@ rather than failing, so existence needs the following stat first."
                     "TZ=UTC"
                     (format nil "GIT_AUTHOR_DATE=@~A +0000" commit-time)
                     (format nil "GIT_COMMITTER_DATE=@~A +0000" commit-time)
-                    "git" "-C" (namestring source-root)
+                    "git"
+                    "-c" "safe.directory=*"
+                    "-C" (string-right-trim "/" (namestring source-root))
                     "commit-tree" tree
                     "-m" (format nil "Autolith ~A source" tag)))
              :output ':string
@@ -297,14 +308,56 @@ rather than failing, so existence needs the following stat first."
              :test #'string=)
        t))
 
-(-> release-archive--platform-id (string string) string)
-(defun release-archive--platform-id (os architecture)
-  "Return the canonical release platform identifier for OS and ARCHITECTURE."
-  (let ((architecture (string-downcase architecture)))
+(-> release-archive--linux-libc-output->identity (string) string)
+(defun release-archive--linux-libc-output->identity (output)
+  "Return the Linux C library identity established by ldd OUTPUT."
+  (cond
+    ((search "musl" output :test #'char-equal)
+     "musl")
+    ((or (search "libc.so.6" output :test #'char-equal)
+         (search "ld-linux" output :test #'char-equal))
+     "glibc")
+    (t
+     (error 'release-archive-error
+            :stage ':prerequisites
+            :cause (format nil "Could not identify the Linux C library from: ~A"
+                           output)))))
+
+(-> release-archive--linux-libc () string)
+(defun release-archive--linux-libc ()
+  "Return the detected native Linux C library identity."
+  (unless (release-archive--command-pathname "ldd")
+    (error 'release-archive-error
+           :stage ':prerequisites
+           :cause "ldd is required to identify the Linux C library."))
+  (let* ((output
+           (release-archive--run
+            (list "sh" "-c" "ldd /bin/sh 2>&1 || true")
+            :output ':string
+            :error-output ':output))
+         (detected (release-archive--linux-libc-output->identity output))
+         (configured (uiop:getenv "AUTOLITH_LIBC")))
+    (when (and configured
+               (plusp (length configured))
+               (not (string-equal configured detected)))
+      (error 'release-archive-error
+             :stage ':prerequisites
+             :cause (format nil "AUTOLITH_LIBC names ~A, but this host uses ~A."
+                            configured detected)))
+    detected))
+
+(-> release-archive--platform-id (string string &optional string) string)
+(defun release-archive--platform-id (os architecture &optional libc)
+  "Return the canonical release identifier for OS, ARCHITECTURE, and LIBC."
+  (let ((architecture (string-downcase architecture))
+        (musl-p (and libc (string-equal libc "musl"))))
     (cond
       ((and (string-equal os "Linux")
             (release-archive--x86-64-architecture-p architecture))
-       "x86_64-linux")
+       (if musl-p "x86_64-linux-musl" "x86_64-linux"))
+      ((and (string-equal os "Linux")
+            (member architecture '("arm64" "aarch64") :test #'string=))
+       (if musl-p "aarch64-linux-musl" "aarch64-linux"))
       ((and (string-equal os "Darwin")
             (member architecture '("arm64" "aarch64") :test #'string=))
        "arm64-darwin")
@@ -320,12 +373,24 @@ rather than failing, so existence needs the following stat first."
       (t
        (error 'release-archive-error
               :stage ':prerequisites
-              :cause "Binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only.")))))
+              :cause "Binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only.")))))
 
 (-> release-archive--platform () string)
 (defun release-archive--platform ()
-  "Return the canonical release platform identifier."
-  (release-archive--platform-id (software-type) (machine-type)))
+  "Return the validated native release platform identifier."
+  (let* ((os (software-type))
+         (libc (and (string-equal os "Linux")
+                    (release-archive--linux-libc)))
+         (detected (release-archive--platform-id os (machine-type) libc))
+         (configured (uiop:getenv "AUTOLITH_RELEASE_PLATFORM")))
+    (when (and configured
+               (plusp (length configured))
+               (not (string= configured detected)))
+      (error 'release-archive-error
+             :stage ':prerequisites
+             :cause (format nil "AUTOLITH_RELEASE_PLATFORM names ~A, but this host is ~A."
+                            configured detected)))
+    detected))
 
 (-> release-archive--validate-platform () null)
 (defun release-archive--validate-platform ()
@@ -640,9 +705,9 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                         (namestring
                          (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
                                           release-root))))
-                 (release-archive--write-record
-                  (merge-pathnames "RELEASE" release-root)
-                  :version version :tag tag :commit commit)
+                (release-archive--write-record
+                 (merge-pathnames "RELEASE" release-root)
+                 :version version :tag tag :commit commit :platform platform)
                  (format t "~&Creating the internal source identity.~%")
                  (finish-output)
                  (release-archive--create-source-identity

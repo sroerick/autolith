@@ -1397,6 +1397,8 @@ esac
   (dolist (case '(("Linux" "x86-64" "x86_64-linux")
                   ("Linux" "x86_64" "x86_64-linux")
                   ("Linux" "amd64" "x86_64-linux")
+                  ("Linux" "aarch64" "aarch64-linux")
+                  ("Linux" "arm64" "aarch64-linux")
                   ("Darwin" "arm64" "arm64-darwin")
                   ("Darwin" "aarch64" "arm64-darwin")
                   ("FreeBSD" "amd64" "x86_64-freebsd")
@@ -1409,6 +1411,33 @@ esac
       (test-assert
        (string= (release-archive--platform-id os architecture) expected)
        (format nil "~A/~A maps to ~A" os architecture expected))))
+  (test-assert
+   (string= (release-archive--platform-id "Linux" "x86_64" "musl")
+            "x86_64-linux-musl")
+   "Linux/x86_64 with musl maps to x86_64-linux-musl")
+  (test-assert
+   (string= (release-archive--platform-id "Linux" "aarch64" "musl")
+            "aarch64-linux-musl")
+   "Linux/aarch64 with musl maps to aarch64-linux-musl")
+  (test-assert
+   (string= (release-archive--linux-libc-output->identity
+             "/lib/ld-musl-x86_64.so.1")
+            "musl")
+   "musl ldd output establishes musl identity")
+  (test-assert
+   (string= (release-archive--linux-libc-output->identity
+             "libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6")
+            "glibc")
+   "glibc ldd output establishes glibc identity")
+  (test-assert
+   (handler-case
+       (progn
+         (release-archive--linux-libc-output->identity "unknown")
+         nil)
+     (release-archive-error (condition)
+       (search "Could not identify the Linux C library"
+               (release-archive-error-cause condition))))
+   "unrecognized ldd output is rejected")
   (dolist (case '(("Linux" "i686")
                   ("Darwin" "x86_64")
                   ("SunOS" "amd64")
@@ -1425,6 +1454,41 @@ esac
                 (search "Binary releases currently support"
                         (release-archive-error-cause condition)))))
        (format nil "~A/~A is not a release target" os architecture))))
+  (let ((old-platform (uiop:getenv "AUTOLITH_RELEASE_PLATFORM")))
+    (unwind-protect
+         (progn
+           (sb-posix:setenv "AUTOLITH_RELEASE_PLATFORM" "sparc-sunos" 1)
+           (test-assert
+            (handler-case
+                (progn
+                  (release-archive--platform)
+                  nil)
+              (release-archive-error (condition)
+                (search "AUTOLITH_RELEASE_PLATFORM names"
+                        (release-archive-error-cause condition))))
+            "release platform overrides must match the native host"))
+      (if old-platform
+          (sb-posix:setenv "AUTOLITH_RELEASE_PLATFORM" old-platform 1)
+          (sb-posix:unsetenv "AUTOLITH_RELEASE_PLATFORM"))))
+  (when (string-equal (software-type) "Linux")
+    (let* ((old-libc (uiop:getenv "AUTOLITH_LIBC"))
+           (detected (release-archive--linux-libc))
+           (mismatch (if (string= detected "musl") "glibc" "musl")))
+      (unwind-protect
+           (progn
+             (sb-posix:setenv "AUTOLITH_LIBC" mismatch 1)
+             (test-assert
+              (handler-case
+                  (progn
+                    (release-archive--linux-libc)
+                    nil)
+                (release-archive-error (condition)
+                  (search "but this host uses"
+                          (release-archive-error-cause condition))))
+              "release libc overrides must match the native host"))
+        (if old-libc
+            (sb-posix:setenv "AUTOLITH_LIBC" old-libc 1)
+            (sb-posix:unsetenv "AUTOLITH_LIBC")))))
   nil)
 
 (-> release-script-tests--launcher-bsd (pathname pathname) null)
@@ -1590,7 +1654,7 @@ esac
 
 (-> release-script-tests--runtime-bootstrap (pathname pathname) null)
 (defun release-script-tests--runtime-bootstrap (source-root root)
-  "Exercise BSD host-SBCL bootstrap selection and unsupported rejection."
+  "Exercise pinned and host runtime bootstrap selection and validation."
   (let* ((fixture (merge-pathnames "runtime-bootstrap/" root))
          (bin (merge-pathnames "bin/" fixture))
          (installation (merge-pathnames "installation/" fixture))
@@ -1598,50 +1662,117 @@ esac
          (curl-log (merge-pathnames "curl.log" fixture))
          (sbcl (merge-pathnames "sbcl" bin))
          (curl (merge-pathnames "curl" bin))
+         (ldd (merge-pathnames "ldd" bin))
          (script (merge-pathnames "script/build-release-runtime" source-root))
          (path (format nil "~A:/bin:/usr/bin"
                        (string-right-trim "/" (namestring bin)))))
     (uiop:ensure-all-directories-exist (list bin installation))
     (release-script-tests--write-uname bin "FreeBSD" "amd64")
-      (release-script-tests--write-file
-       sbcl
-       (format nil "#!/bin/sh~%printf '%s\\n' \"$*\" > \"${AUTOLITH_TEST_BOOTSTRAP_LOG:?}\"~%exit 0~%"))
-      (release-script-tests--write-file
-       curl
-       (format nil "#!/bin/sh~%printf 'curl invoked\\n' > \"${AUTOLITH_TEST_CURL_LOG:?}\"~%exit 1~%"))
-    (dolist (pathname (list sbcl curl))
+    (release-script-tests--write-file
+     sbcl
+     (format nil "#!/bin/sh~%case \" $* \" in~%  *lisp-implementation-version*) printf '%s' \"${AUTOLITH_TEST_SBCL_VERSION:-2.6.6}\"; exit 0 ;;~%esac~%printf '%s\\n' \"$*\" > \"${AUTOLITH_TEST_BOOTSTRAP_LOG:?}\"~%exit 0~%"))
+    (release-script-tests--write-file
+     curl
+     (format nil "#!/bin/sh~%printf 'curl invoked\\n' > \"${AUTOLITH_TEST_CURL_LOG:?}\"~%exit 1~%"))
+    (release-script-tests--write-file
+     ldd
+     "#!/bin/sh
+case ${AUTOLITH_TEST_LIBC:-glibc} in
+  musl) printf 'musl libc\\n' ;;
+  glibc) printf 'libc.so.6\\n' ;;
+  *) printf 'unknown libc\\n'; exit 1 ;;
+esac
+")
+    (dolist (pathname (list sbcl curl ldd))
       (release-script-tests--chmod "755" pathname))
-    (multiple-value-bind (output error-output status)
-        (release-script-tests--run
-         (list (namestring script) (namestring installation))
-         :environment
-         (list (format nil "PATH=~A" path)
-               (format nil "AUTOLITH_SBCL=~A" (namestring sbcl))
-               (format nil "AUTOLITH_TEST_BOOTSTRAP_LOG=~A" (namestring log))
-               (format nil "AUTOLITH_TEST_CURL_LOG=~A" (namestring curl-log)))
-         :ignore-error-status t)
-      (declare (ignore error-output))
-      (test-assert (zerop status)
-                   "BSD runtime bootstrap uses the host SBCL")
-      (test-assert (search "Using host SBCL as the FreeBSD bootstrap compiler."
-                           output)
-                   "BSD runtime bootstrap reports the host compiler")
-      (test-assert (not (probe-file curl-log))
-                   "BSD runtime bootstrap does not download an official binary")
-      (test-assert
-       (and (probe-file log)
-            (search "build-release-runtime.lisp" (uiop:read-file-string log)))
-       "BSD runtime bootstrap invokes the runtime builder"))
-      (release-script-tests--write-uname bin "SunOS" "amd64")
+    (labels ((environment (&rest extra)
+               (append
+                (list (format nil "PATH=~A" path)
+                      (format nil "AUTOLITH_SBCL=~A" (namestring sbcl))
+                      (format nil "AUTOLITH_TEST_BOOTSTRAP_LOG=~A"
+                              (namestring log))
+                      (format nil "AUTOLITH_TEST_CURL_LOG=~A"
+                              (namestring curl-log)))
+                extra))
+
+             (run-bootstrap (&rest extra)
+               (release-script-tests--run
+                (list (namestring script) (namestring installation))
+                :environment (apply #'environment extra)
+                :ignore-error-status t)))
       (multiple-value-bind (output error-output status)
-          (release-script-tests--run
-           (list (namestring script) (namestring installation))
-           :environment (list (format nil "PATH=~A" path))
-           :ignore-error-status t)
-        (let ((diagnostic (concatenate 'string (or output "") (or error-output ""))))
+          (run-bootstrap)
+        (declare (ignore error-output))
+        (test-assert (zerop status)
+                     "BSD runtime bootstrap uses the host SBCL")
+        (test-assert
+         (search "Using host SBCL 2.6.6 as the FreeBSD bootstrap compiler."
+                 output)
+         "BSD runtime bootstrap reports the validated host compiler")
+        (test-assert (not (probe-file curl-log))
+                     "BSD runtime bootstrap does not download an official binary")
+        (test-assert
+         (and (probe-file log)
+              (search "build-release-runtime.lisp" (uiop:read-file-string log)))
+         "BSD runtime bootstrap invokes the runtime builder"))
+      (when (probe-file log)
+        (delete-file log))
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_TEST_SBCL_VERSION=1.9.9")
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
           (test-assert
            (and (not (zerop status))
-                (search "currently supports Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64"
+                (search "needs host SBCL 2.0.0 or newer" diagnostic)
+                (not (probe-file log)))
+           "host runtime bootstrap rejects an unsupported compiler")))
+      (release-script-tests--write-uname bin "Linux" "x86_64")
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_HOST_BOOTSTRAP=1")
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "Installing the pinned SBCL 2.4.0 bootstrap compiler."
+                        diagnostic)
+                (probe-file curl-log)
+                (not (probe-file log)))
+           "Linux x86-64 ignores an external host-bootstrap bypass")))
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_LIBC=musl")
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "expected musl but detected glibc" diagnostic))
+           "runtime bootstrap rejects a mismatched libc override")))
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_TEST_LIBC=unknown")
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "could not identify the Linux C library" diagnostic))
+           "runtime bootstrap rejects unrecognized libc output")))
+      (when (probe-file curl-log)
+        (delete-file curl-log))
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_LIBC=musl" "AUTOLITH_TEST_LIBC=musl")
+        (declare (ignore error-output))
+        (test-assert
+         (and (zerop status)
+              (search "Using host SBCL 2.6.6 as the Linux bootstrap compiler."
+                      output)
+              (not (probe-file curl-log)))
+         "Linux musl runtime bootstrap uses a validated host compiler"))
+      (release-script-tests--write-uname bin "SunOS" "amd64")
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap)
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
+          (test-assert
+           (and (not (zerop status))
+                (search "currently supports Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64"
                         diagnostic))
            "runtime bootstrap rejects unsupported platforms")))
       (release-script-tests--write-uname bin "OpenBSD" "amd64")
@@ -1652,11 +1783,12 @@ esac
            (list (format nil "PATH=~A" path)
                  "AUTOLITH_SBCL=/no/such/sbcl")
            :ignore-error-status t)
-        (let ((diagnostic (concatenate 'string (or output "") (or error-output ""))))
+        (let ((diagnostic (concatenate 'string (or output "")
+                                       (or error-output ""))))
           (test-assert
            (and (not (zerop status))
                 (search "needs a host SBCL on OpenBSD" diagnostic))
-           "BSD runtime bootstrap requires a host SBCL")))
+           "BSD runtime bootstrap requires a host SBCL"))))
     nil))
 
 (-> release-script-tests--archive-helpers (pathname) null)
@@ -1667,6 +1799,17 @@ esac
   (dolist (os '("Darwin" "FreeBSD" "NetBSD" "OpenBSD"))
     (test-assert (release-archive--gnu-tar-required-p os)
                  (format nil "~A requires GNU tar for reproducible archives" os)))
+  (let ((record (merge-pathnames "release-record" root)))
+    (release-archive--write-record
+     record
+     :version "0.11.0"
+     :tag "v0.11.0"
+     :commit *release-script-tests-commit*
+     :platform "aarch64-linux-musl")
+    (test-assert
+     (search "platform=aarch64-linux-musl"
+             (uiop:read-file-string record))
+     "release records preserve the exact archive platform"))
     (let ((missing (merge-pathnames "no-sandbox/" root))
           (present (merge-pathnames "has-sandbox/" root)))
       (test-assert (null (release-archive--sandbox-helper missing))

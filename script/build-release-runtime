@@ -28,16 +28,44 @@ launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 installation=${1:?usage: build-release-runtime INSTALLATION}
 bootstrap_version=2.4.0
+host_bootstrap_minimum=2.0.0
+unset AUTOLITH_HOST_BOOTSTRAP || true
 
 os=$(uname -s)
 arch=$(uname -m)
 host_bootstrap=false
 case $os in
   Linux)
+    command -v ldd >/dev/null 2>&1 || {
+      printf 'build-release-runtime needs ldd to identify the Linux C library.\n' >&2
+      exit 1
+    }
+    ldd_output=$(ldd /bin/sh 2>&1 || true)
+    if grep -iq musl <<< "$ldd_output"; then
+      detected_libc=musl
+    elif grep -Eq 'libc\.so\.6|ld-linux' <<< "$ldd_output"; then
+      detected_libc=glibc
+    else
+      printf 'build-release-runtime could not identify the Linux C library from: %s\n' \
+        "$ldd_output" >&2
+      exit 1
+    fi
+    if [[ -n ${AUTOLITH_LIBC:-} && ${AUTOLITH_LIBC} != "$detected_libc" ]]; then
+      printf 'build-release-runtime expected %s but detected %s.\n' \
+        "$AUTOLITH_LIBC" "$detected_libc" >&2
+      exit 1
+    fi
     case $arch in
       x86_64|amd64)
-        bootstrap_arch=x86-64-linux
-        bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
+        if [[ $detected_libc == musl ]]; then
+          host_bootstrap=true
+        else
+          bootstrap_arch=x86-64-linux
+          bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
+        fi
+        ;;
+      aarch64|arm64)
+        host_bootstrap=true
         ;;
     esac
     ;;
@@ -56,7 +84,7 @@ case $os in
     ;;
 esac
 if [[ $host_bootstrap != true && -z ${bootstrap_arch:-} ]]; then
-  printf 'build-release-runtime currently supports Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.\n' >&2
+  printf 'build-release-runtime currently supports Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.\n' >&2
   exit 1
 fi
 
@@ -98,7 +126,32 @@ if [[ $host_bootstrap == true ]]; then
     printf 'build-release-runtime needs a host SBCL on %s.\n' "$os" >&2
     exit 1
   fi
-  printf 'Using host SBCL as the %s bootstrap compiler.\n' "$os"
+  host_version=$(env -u SBCL_HOME "$host_sbcl" \
+    --noinform --no-userinit --no-sysinit --non-interactive \
+    --eval '(write-string (lisp-implementation-version))') || {
+      printf 'build-release-runtime could not inspect the host SBCL on %s.\n' "$os" >&2
+      exit 1
+    }
+  if [[ ! $host_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\..*)?$ ]]; then
+    printf 'build-release-runtime needs a release host SBCL, but found %s.\n' "$host_version" >&2
+    exit 1
+  fi
+  host_major=${BASH_REMATCH[1]}
+  host_minor=${BASH_REMATCH[2]}
+  host_patch=${BASH_REMATCH[3]}
+  IFS=. read -r minimum_major minimum_minor minimum_patch <<< "$host_bootstrap_minimum"
+  if ((host_major < minimum_major ||
+       (host_major == minimum_major && host_minor < minimum_minor) ||
+       (host_major == minimum_major &&
+        host_minor == minimum_minor &&
+        host_patch < minimum_patch))); then
+    printf 'build-release-runtime needs host SBCL %s or newer on %s, but found %s.\n' \
+      "$host_bootstrap_minimum" "$os" "$host_version" >&2
+    exit 1
+  fi
+  export AUTOLITH_HOST_BOOTSTRAP=1
+  export AUTOLITH_HOST_BOOTSTRAP_MINIMUM=$host_bootstrap_minimum
+  printf 'Using host SBCL %s as the %s bootstrap compiler.\n' "$host_version" "$os"
   mkdir -p "$bootstrap_installation/bin"
   ln -s "$host_sbcl" "$bootstrap_installation/bin/sbcl"
 else

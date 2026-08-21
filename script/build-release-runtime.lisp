@@ -33,6 +33,31 @@
                            components)
                     t)))
 
+           (host-version-components (value)
+             "Return the first three numeric components of host SBCL VALUE."
+             (let ((components
+                     (uiop:split-string value :separator '(#\.))))
+               (when (and (>= (length components) 3)
+                          (every (lambda (component)
+                                   (and (plusp (length component))
+                                        (every #'digit-char-p component)))
+                                 (subseq components 0 3)))
+                 (mapcar #'parse-integer (subseq components 0 3)))))
+
+           (host-version-at-least-p (candidate minimum)
+             "Return true when host SBCL CANDIDATE satisfies MINIMUM."
+             (let ((candidate-components (host-version-components candidate))
+                   (minimum-components (host-version-components minimum)))
+               (and candidate-components
+                    minimum-components
+                    (loop for candidate-component in candidate-components
+                          for minimum-component in minimum-components
+                          when (> candidate-component minimum-component)
+                            return t
+                          when (< candidate-component minimum-component)
+                            return nil
+                          finally (return t)))))
+
            (sha256-p (value)
              "Return true when VALUE is a lowercase SHA-256 identity."
              (and (= (length value) 64)
@@ -63,42 +88,39 @@
                                              (uiop:ensure-directory-pathname
                                               directory-name))))))
 
-(check-archive (archive expected-sha256)
-               "Require ARCHIVE to match EXPECTED-SHA256."
-               (cond
-                 ((command-available-p "sha256sum")
-                  (run (list "sha256sum" "--check" "--status" "-")
-                       :output nil
-                       :error-output ':output
-                       :directory temporary-root
-                       :input
-                       (make-string-input-stream
-                        (format nil "~A  ~A~%"
-                                expected-sha256
-                                (file-namestring archive)))))
-                 ((command-available-p "shasum")
-                  (run (list "shasum" "-a" "256" "--check" "--status" "-")
-                       :output nil
-                       :error-output ':output
-                       :directory temporary-root
-                       :input
-                       (make-string-input-stream
-                        (format nil "~A  ~A~%"
-                                expected-sha256
-                                (file-namestring archive)))))
-                 ((command-available-p "sha256")
-                  (let ((actual
-                          (string-trim
-                           '(#\Space #\Tab #\Newline #\Return)
-                           (run (list "sha256" "-q" (file-namestring archive))
+           (check-archive (archive expected-sha256)
+             "Require ARCHIVE to match EXPECTED-SHA256."
+             (let ((actual
+                     (string-trim
+                      '(#\Space #\Tab #\Newline #\Return)
+                      (cond
+                        ((command-available-p "sha256sum")
+                         (first
+                          (uiop:split-string
+                           (run (list "sha256sum" (namestring archive))
                                 :output ':string
                                 :error-output ':output
-                                :directory temporary-root))))
-                    (unless (string-equal actual expected-sha256)
-                      (fail "~A does not match the expected SHA-256."
-                            (file-namestring archive)))))
-                 (t
-                  (fail "sha256sum, shasum, or sha256 is required."))))
+                                :directory temporary-root)
+                           :separator '(#\Space #\Tab))))
+                        ((command-available-p "shasum")
+                         (first
+                          (uiop:split-string
+                           (run (list "shasum" "-a" "256"
+                                      (namestring archive))
+                                :output ':string
+                                :error-output ':output
+                                :directory temporary-root)
+                           :separator '(#\Space #\Tab))))
+                        ((command-available-p "sha256")
+                         (run (list "sha256" "-q" (file-namestring archive))
+                              :output ':string
+                              :error-output ':output
+                              :directory temporary-root))
+                        (t
+                         (fail "sha256sum, shasum, or sha256 is required."))))))
+               (unless (string-equal actual expected-sha256)
+                 (fail "~A does not match the expected SHA-256."
+                       (file-namestring archive)))))
 
              (runtime-version (command)
                "Return the implementation version reported by SBCL COMMAND."
@@ -129,21 +151,22 @@
                        source-root installation temporary-root
                        bootstrap-installation)
             (fail "usage: build-release-runtime.lisp SOURCE INSTALLATION TEMP BOOTSTRAP"))
-            (unless (or (and (string-equal (software-type) "Linux")
-                             (member (string-downcase (machine-type))
-                                     '("x86-64" "x86_64" "amd64")
-                                     :test #'string=))
-                        (and (string-equal (software-type) "Darwin")
-                             (member (string-downcase (machine-type))
-                                     '("arm64" "aarch64")
-                                     :test #'string=))
-                        (and (member (software-type)
-                                     '("FreeBSD" "NetBSD" "OpenBSD")
-                                     :test #'string-equal)
-                             (member (string-downcase (machine-type))
-                                     '("x86-64" "x86_64" "amd64")
-                                     :test #'string=)))
-              (fail "release runtimes currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."))
+          (unless (or (and (string-equal (software-type) "Linux")
+                           (member (string-downcase (machine-type))
+                                   '("x86-64" "x86_64" "amd64"
+                                     "aarch64" "arm64")
+                                   :test #'string=))
+                      (and (string-equal (software-type) "Darwin")
+                           (member (string-downcase (machine-type))
+                                   '("arm64" "aarch64")
+                                   :test #'string=))
+                      (and (member (software-type)
+                                   '("FreeBSD" "NetBSD" "OpenBSD")
+                                   :test #'string-equal)
+                           (member (string-downcase (machine-type))
+                                   '("x86-64" "x86_64" "amd64")
+                                   :test #'string=)))
+            (fail "release runtimes currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."))
           (let* ((runtime-version
                    (trimmed-file (merge-pathnames "sbcl.version" source-root)))
                  (runtime-sha256
@@ -162,11 +185,18 @@
               (fail "sbcl.version is malformed."))
             (unless (sha256-p runtime-sha256)
               (fail "sbcl-source.sha256 is malformed."))
-              (unless (or (member (software-type)
-                                  '("FreeBSD" "NetBSD" "OpenBSD")
-                                  :test #'string-equal)
-                          (string= (runtime-version bootstrap-command) "2.4.0"))
-                (fail "the bootstrap compiler does not report version 2.4.0."))
+            (let* ((bootstrap-version (runtime-version bootstrap-command))
+                   (host-bootstrap-p
+                     (equal (uiop:getenv "AUTOLITH_HOST_BOOTSTRAP") "1"))
+                   (host-minimum
+                     (or (uiop:getenv "AUTOLITH_HOST_BOOTSTRAP_MINIMUM")
+                         "2.0.0")))
+              (if host-bootstrap-p
+                  (unless (host-version-at-least-p bootstrap-version host-minimum)
+                    (fail "the host bootstrap compiler ~A does not satisfy SBCL ~A or newer."
+                          bootstrap-version host-minimum))
+                  (unless (string= bootstrap-version "2.4.0")
+                    (fail "the bootstrap compiler does not report version 2.4.0."))))
             (format t "~&Building the pinned SBCL ~A release runtime.~%"
                     runtime-version)
             (finish-output)

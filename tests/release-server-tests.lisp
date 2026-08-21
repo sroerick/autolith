@@ -314,43 +314,45 @@
               (string= (release-server-response-content-type response)
                        "text/plain; charset=utf-8")
               "checksum responses use the plain-text media type"))
-             (let* ((tag "v0.10.1")
-                    (directory
-                      (release-server--release-directory configuration tag))
-                    (archive (release-server--archive-name tag "arm64-darwin")))
-               (release-server-tests--write-file
-                (merge-pathnames archive directory)
-                "darwin-archive")
-               (release-server-tests--write-file
-                (merge-pathnames (format nil "~A.sha256" archive) directory)
-                "darwin-checksum")
-               (let ((response
-                       (release-server-route
-                        configuration "GET"
-                        (format nil "/releases/~A/~A" tag archive))))
-                 (test-assert (= (release-server-response-status response) 200)
-                              "published non-Linux archives are served")
-                 (test-assert
-                  (string= (release-server-response-content-type response)
-                           "application/gzip")
-                  "non-Linux archives use the gzip media type"))
-               (test-assert
-                (= (release-server-response-status
-                    (release-server-route
-                     configuration "GET"
-                     (format nil "/releases/~A/~A"
-                             tag
-                             (release-server--archive-name tag "x86_64-freebsd"))))
-                   404)
-                "missing platform archives stay unpublished")
-               (test-assert
-                (= (release-server-response-status
-                    (release-server-route
-                     configuration "GET"
-                     (format nil "/releases/~A/autolith-~A-sparc-sunos.tar.gz"
-                             tag tag)))
-                   404)
-                "unknown platform archives are rejected"))
+            (let* ((tag "v0.10.1")
+                   (directory
+                     (release-server--release-directory configuration tag)))
+              (dolist (platform '("aarch64-linux"
+                                  "x86_64-linux-musl"
+                                  "aarch64-linux-musl"
+                                  "arm64-darwin"))
+                (let ((archive (release-server--archive-name tag platform)))
+                  (release-server-tests--write-file
+                   (merge-pathnames archive directory)
+                   (format nil "~A-archive" platform))
+                  (release-server-tests--write-file
+                   (merge-pathnames (format nil "~A.sha256" archive) directory)
+                   (format nil "~A-checksum" platform))
+                  (dolist (name (list archive (format nil "~A.sha256" archive)))
+                    (let ((response
+                            (release-server-route
+                             configuration "GET"
+                             (format nil "/releases/~A/~A" tag name))))
+                      (test-assert
+                       (= (release-server-response-status response) 200)
+                       (format nil "published ~A artifacts are served" platform))))))
+              (test-assert
+               (= (release-server-response-status
+                   (release-server-route
+                    configuration "GET"
+                    (format nil "/releases/~A/~A"
+                            tag
+                            (release-server--archive-name tag "x86_64-freebsd"))))
+                  404)
+               "missing platform archives stay unpublished")
+              (test-assert
+               (= (release-server-response-status
+                   (release-server-route
+                    configuration "GET"
+                    (format nil "/releases/~A/autolith-~A-sparc-sunos.tar.gz"
+                            tag tag)))
+                  404)
+               "unknown platform archives are rejected"))
            (test-assert
             (= (release-server-response-status
                 (release-server-route
@@ -646,30 +648,40 @@
                        (lambda (command &rest arguments)
                          (declare (ignore arguments))
                          (let* ((url (first (last command)))
-                                (output (nth (1+ (position "--output" command
-                                                           :test #'string=))
-                                             command)))
+                                (output
+                                  (nth (1+ (position "--output" command
+                                                      :test #'string=))
+                                       command))
+                                (platform
+                                  (find-if
+                                   (lambda (candidate)
+                                     (search
+                                      (release-server--archive-name
+                                       fetch-tag candidate)
+                                      url))
+                                   *release-server-platform-ids*)))
                            (push url fetched)
-                           (unless (search "x86_64-linux" url)
+                           (unless platform
                              (error "missing"))
                            (release-server-tests--write-artifact
                             (uiop:pathname-directory-pathname output)
-                            fetch-tag "x86_64-linux" "fetched-linux")))))
+                            fetch-tag platform
+                            (format nil "fetched-~A" platform))))))
                 (let ((directory
                         (release-builder--fetch-github-assets builder fetch-source)))
                   (test-assert
-                   (and (uiop:file-exists-p
-                         (merge-pathnames
-                          (release-server--archive-name fetch-tag "x86_64-linux")
-                          directory))
-                        (not (uiop:file-exists-p
-                              (merge-pathnames
-                               (release-server--archive-name fetch-tag "arm64-darwin")
-                               directory)))
-                        (find-if (lambda (url)
-                                   (search "lambda-symbolics/autolith" url))
-                                 fetched))
-                   "the builder fetches GitHub assets from the configured owner/repo")))
+                   (and
+                    (every
+                     (lambda (platform)
+                       (uiop:file-exists-p
+                        (merge-pathnames
+                         (release-server--archive-name fetch-tag platform)
+                         directory)))
+                     *release-server-platform-ids*)
+                    (find-if (lambda (url)
+                               (search "lambda-symbolics/autolith" url))
+                             fetched))
+                   "the builder fetches every recognized GitHub platform asset")))
               (let* ((waiting-tag
                        (release-server-tests--source-tag
                         "v0.32.3" "89abcdef0123456789abcdef0123456789abcdef"))
