@@ -60,6 +60,18 @@ release_tag_valid_p()
   [[ $1 =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
+legacy_release_platform_p()
+{
+  case $1 in
+    x86_64-linux|arm64-darwin|x86_64-freebsd|x86_64-netbsd|x86_64-openbsd)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 semantic_version_newer_p()
 {
   local candidate=$1
@@ -94,6 +106,7 @@ release_update()
 {
   local requested_tag=${1:-}
   local updated_launcher
+  local -a install_arguments
 
   if [[ -z $requested_tag ]]; then
     if ! requested_tag=$(release_latest_tag); then
@@ -108,9 +121,12 @@ release_update()
     printf 'Autolith %s is already the newest release.\n' "$release_version" >&2
     release_restart
   fi
+  install_arguments=(--without-command-link --version "$requested_tag")
+  if [[ $release_platform == *-linux-musl ]]; then
+    install_arguments=(--musl "${install_arguments[@]}")
+  fi
   if ! AUTOLITH_INSTALL_ROOT="$install_root" \
-       "$source_root/script/install" \
-       --without-command-link --version "$requested_tag"; then
+       "$source_root/script/install" "${install_arguments[@]}"; then
     printf 'Autolith could not install %s. Continuing with %s.\n' \
       "${requested_tag#v}" "$release_version" >&2
     release_restart
@@ -142,7 +158,7 @@ release_images_usable_p()
   active_manifest=$(dirname -- "$active_core")/manifest.sexp
   recovery_manifest=$(dirname -- "$recovery_core")/manifest.sexp
   [[ -r $image_marker ]] || return 1
-  [[ $(<"$image_marker") == "$release_tag" ]] || return 1
+  [[ $(<"$image_marker") == "$release_tag:$release_platform" ]] || return 1
   [[ -f $active_core && -f $active_manifest ]] || return 1
   [[ -f $recovery_core && -f $recovery_manifest ]] || return 1
   grep -Eq '^\(:ACTIVE-IMAGE :VERSION 1([[:space:]]|$)' \
@@ -169,45 +185,57 @@ release_images_build()
   marker_directory=$(dirname -- "$image_marker")
   mkdir -p -- "$marker_directory"
   temporary_marker=$marker_directory/.release-images.$$
-  printf '%s\n' "$release_tag" > "$temporary_marker"
+  printf '%s:%s\n' "$release_tag" "$release_platform" > "$temporary_marker"
   chmod 600 "$temporary_marker"
   mv -f -- "$temporary_marker" "$image_marker"
 }
 
 [[ -n $home ]] || fail "HOME is not set."
-platform=
+host_platform=
 os=$(uname -s)
 arch=$(uname -m)
 case $os in
   Linux)
     case $arch in
-      x86_64|amd64) platform=x86_64-linux ;;
+      x86_64|amd64) host_platform=x86_64-linux ;;
+      aarch64|arm64) host_platform=aarch64-linux ;;
     esac
+    if [[ -n $host_platform ]]; then
+      command -v ldd >/dev/null 2>&1 ||
+        fail "Linux libc could not be identified because ldd is unavailable."
+      libc_description=$(ldd /bin/sh 2>&1 || true)
+      if grep -iq musl <<< "$libc_description"; then
+        host_platform=${host_platform}-musl
+      elif ! grep -Eiq 'glibc|gnu libc|ld-linux|libc\.so\.6' \
+             <<< "$libc_description"; then
+        fail "Linux libc could not be identified as glibc or musl."
+      fi
+    fi
     ;;
   Darwin)
     case $arch in
-      arm64|aarch64) platform=arm64-darwin ;;
+      arm64|aarch64) host_platform=arm64-darwin ;;
     esac
     ;;
   FreeBSD)
     case $arch in
-      amd64|x86_64) platform=x86_64-freebsd ;;
+      amd64|x86_64) host_platform=x86_64-freebsd ;;
     esac
     ;;
   NetBSD)
     case $arch in
-      amd64|x86_64) platform=x86_64-netbsd ;;
+      amd64|x86_64) host_platform=x86_64-netbsd ;;
     esac
     ;;
   OpenBSD)
     case $arch in
-      amd64|x86_64) platform=x86_64-openbsd ;;
+      amd64|x86_64) host_platform=x86_64-openbsd ;;
     esac
     ;;
 esac
-[[ -n $platform ]] ||
-  fail "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
-if [[ $platform == arm64-darwin ]]; then
+[[ -n $host_platform ]] ||
+  fail "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+if [[ $host_platform == arm64-darwin ]]; then
   fff_library=$release_root/lib/libfff_c.dylib
   colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.dylib
 else
@@ -222,19 +250,29 @@ release_commit=$(release_field commit)
 semantic_version_valid_p "$release_version" || fail "RELEASE has an invalid version."
 [[ $release_tag == "v$release_version" ]] || fail "RELEASE has an inconsistent tag."
 [[ $release_commit =~ ^[0-9a-f]{40}$ ]] || fail "RELEASE has an invalid commit."
+if grep -q '^platform=' "$release_record"; then
+  release_platform=$(release_field platform)
+  [[ -n $release_platform ]] || fail "RELEASE has an invalid platform."
+else
+  legacy_release_platform_p "$host_platform" ||
+    fail "RELEASE lacks platform identity for this release variant."
+  release_platform=$host_platform
+fi
+[[ $release_platform == "$host_platform" ]] ||
+  fail "RELEASE platform $release_platform does not match host $host_platform."
 [[ -x $sbcl_command ]] || fail "the bundled SBCL runtime is missing."
 [[ -f $runtime_source_root/version.lisp-expr ]] ||
   fail "the bundled SBCL source is missing."
 [[ -f $source_root/autolith.asd && -f $source_root/.qlot/setup.lisp ]] ||
   fail "the bundled Autolith source or dependencies are missing."
 [[ -x $source_root/script/install ]] || fail "the bundled installer is missing."
-if [[ $platform == x86_64-linux ]]; then
+if [[ $release_platform == *-linux* ]]; then
   [[ -x $sandbox_helper ]] || fail "the private sandbox helper is missing."
 fi
 [[ -f $fff_library ]] || fail "the private search library is missing."
 [[ -f $colorlisp_library ]] || fail "the private syntax library is missing."
 command -v git >/dev/null 2>&1 || fail "Git is required."
-if [[ $platform == x86_64-linux ]]; then
+if [[ $release_platform == *-linux* ]]; then
   command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap is required."
 fi
 
@@ -242,7 +280,8 @@ releases_root=$(CDPATH= cd -P -- "$release_root/.." && pwd)
 install_root=$(CDPATH= cd -P -- "$releases_root/.." && pwd)
 selected_release_p=false
 current_selected=$(resolve_path "$install_root/current" 2>/dev/null || true)
-if [[ ${release_root##*/} == "$release_tag" &&
+if [[ (${release_root##*/} == "$release_tag" ||
+       ${release_root##*/} == "$release_tag-$release_platform") &&
       ${releases_root##*/} == releases &&
       "$current_selected" == "$release_root" ]]; then
   selected_release_p=true
@@ -260,7 +299,7 @@ export AUTOLITH_FFF_LIBRARY=$fff_library
 export COLORLISP_NATIVE_LIBRARY=$colorlisp_library
 export AUTOLITH_ACTIVE_CORE=$active_core
 export AUTOLITH_RECOVERY_CORE=$recovery_core
-if [[ $platform == x86_64-linux ]]; then
+if [[ $release_platform == *-linux* ]]; then
   export CL_EXEC_SANDBOX_BWRAP
   CL_EXEC_SANDBOX_BWRAP=$(command -v bwrap)
   export CL_EXEC_SANDBOX_HELPER=$sandbox_helper
@@ -269,8 +308,8 @@ export GIT_OPTIONAL_LOCKS=0
 
 remaining_arguments=("$@")
 if [[ ${1:-} == --autolith-release-probe ]]; then
-  printf 'version=%s\ntag=%s\ncommit=%s\nsource=%s\nruntime=%s\n' \
-    "$release_version" "$release_tag" "$release_commit" \
+  printf 'version=%s\ntag=%s\ncommit=%s\nplatform=%s\nsource=%s\nruntime=%s\n' \
+    "$release_version" "$release_tag" "$release_commit" "$release_platform" \
     "$source_root" "$sbcl_command"
   exit 0
 fi

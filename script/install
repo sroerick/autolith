@@ -11,6 +11,7 @@ bin_directory=${AUTOLITH_BIN_DIR:-$home/.local/bin}
 requested_tag=
 temporary_root=
 publish_command_p=true
+musl_requested_p=false
 
 fail()
 {
@@ -41,24 +42,47 @@ release_latest_tag()
   printf '%s\n' "$latest_tag"
 }
 
+legacy_release_platform_p()
+{
+  case $1 in
+    x86_64-linux|arm64-darwin|x86_64-freebsd|x86_64-netbsd|x86_64-openbsd)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 release_installed_p()
 {
   release_installed_target=$1
   release_installed_expected_tag=$2
+  release_installed_expected_platform=$3
+  release_installed_record=$release_installed_target/RELEASE
 
   [ -x "$release_installed_target/bin/autolith" ] || return 1
-  [ -r "$release_installed_target/RELEASE" ] || return 1
+  [ -r "$release_installed_record" ] || return 1
   grep -Fx "tag=$release_installed_expected_tag" \
-    "$release_installed_target/RELEASE" >/dev/null 2>&1
+    "$release_installed_record" >/dev/null 2>&1 || return 1
+  if grep -q '^platform=' "$release_installed_record"; then
+    release_installed_platform=$(sed -n 's/^platform=//p' \
+      "$release_installed_record")
+    [ "$release_installed_platform" = "$release_installed_expected_platform" ]
+  else
+    legacy_release_platform_p "$release_installed_expected_platform"
+  fi
 }
 
 check_sha256()
 {
   check_checksum=$1
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum --check --status "$check_checksum"
+    sha256sum -c -s "$check_checksum" 2>/dev/null || \
+      sha256sum -c "$check_checksum" >/dev/null 2>&1
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 --check --status "$check_checksum"
+    shasum -a 256 -c -s "$check_checksum" 2>/dev/null || \
+      shasum -a 256 -c "$check_checksum" >/dev/null 2>&1
   elif command -v sha256 >/dev/null 2>&1; then
     check_expected=$(awk '{print $1}' "$check_checksum")
     check_file=$(awk '{print $2}' "$check_checksum")
@@ -73,14 +97,14 @@ check_sha256()
 publish_links()
 {
   publish_target=$1
-  publish_tag=$2
+  publish_directory=${publish_target##*/}
   current_temporary=$install_root/.current.$$
   command_temporary=$bin_directory/.autolith.$$
 
   if [ -d "$install_root/current" ] && [ ! -L "$install_root/current" ]; then
     fail "$install_root/current is a directory, not an installation link."
   fi
-  ln -s "releases/$publish_tag" "$current_temporary"
+  ln -s "releases/$publish_directory" "$current_temporary"
   # GNU mv -T renames over the current link atomically. BSD mv has no -T
   # and would descend into the resolved directory, so it degrades to a
   # remove-then-rename pair with a brief unlinked window.
@@ -102,13 +126,17 @@ while [ "$#" -gt 0 ]; do
       requested_tag=$2
       shift 2
       ;;
+    --musl)
+      musl_requested_p=true
+      shift
+      ;;
     --without-command-link)
       publish_command_p=false
       shift
       ;;
     --help)
       printf '%s\n' \
-        'usage: install [--version vMAJOR.MINOR.PATCH] [--without-command-link]' \
+        'usage: install [--version vMAJOR.MINOR.PATCH] [--musl] [--without-command-link]' \
         '' \
         'Install or update the Autolith binary release.'
       exit 0
@@ -121,13 +149,28 @@ done
 
 [ -n "$home" ] || fail "HOME is not set."
 platform=
+detected_libc=
 os=$(uname -s)
 arch=$(uname -m)
 case $os in
   Linux)
     case $arch in
       x86_64|amd64) platform=x86_64-linux ;;
+      aarch64|arm64) platform=aarch64-linux ;;
     esac
+    if [ -n "$platform" ]; then
+      command -v ldd >/dev/null 2>&1 ||
+        fail "Linux libc could not be identified because ldd is unavailable."
+      libc_description=$(ldd /bin/sh 2>&1 || true)
+      if printf '%s\n' "$libc_description" | grep -iq musl; then
+        detected_libc=musl
+      elif printf '%s\n' "$libc_description" |
+           grep -Eiq 'glibc|gnu libc|ld-linux|libc\.so\.6'; then
+        detected_libc=glibc
+      else
+        fail "Linux libc could not be identified as glibc or musl."
+      fi
+    fi
     ;;
   Darwin)
     case $arch in
@@ -151,12 +194,30 @@ case $os in
     ;;
 esac
 [ -n "$platform" ] ||
-  fail "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+  fail "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+requested_libc=${AUTOLITH_LIBC:-}
+if [ "$musl_requested_p" = true ]; then
+  requested_libc=musl
+fi
+case $requested_libc in
+  "") ;;
+  glibc|musl) ;;
+  *) fail "AUTOLITH_LIBC must be glibc or musl." ;;
+esac
+if [ "$os" != Linux ] && [ -n "$requested_libc" ]; then
+  fail "libc selection is supported only on Linux."
+fi
+if [ -n "$requested_libc" ] && [ "$requested_libc" != "$detected_libc" ]; then
+  fail "requested libc $requested_libc does not match detected libc $detected_libc."
+fi
+if [ "$detected_libc" = musl ]; then
+  platform=${platform}-musl
+fi
 
 required_commands="bash curl git grep openssl tar"
-if [ "$platform" = x86_64-linux ]; then
-  required_commands="$required_commands bwrap"
-fi
+case $platform in
+  *-linux*) required_commands="$required_commands bwrap" ;;
+esac
 for command in $required_commands; do
   command -v "$command" >/dev/null 2>&1 ||
     fail "$command is required. Nix is the recommended installation path when system dependencies are unavailable."
@@ -181,12 +242,19 @@ release_name=autolith-$requested_tag-$platform
 archive_name=$release_name.tar.gz
 checksum_name=$archive_name.sha256
 releases_root=$install_root/releases
-target=$releases_root/$requested_tag
+qualified_target=$releases_root/$requested_tag-$platform
+legacy_target=$releases_root/$requested_tag
+target=$qualified_target
 mkdir -p -- "$releases_root"
 chmod 700 "$install_root" "$releases_root"
 
-if release_installed_p "$target" "$requested_tag"; then
-  publish_links "$target" "$requested_tag"
+if release_installed_p "$qualified_target" "$requested_tag" "$platform"; then
+  target=$qualified_target
+  publish_links "$target"
+  printf 'Autolith %s is already installed.\n' "${requested_tag#v}"
+elif release_installed_p "$legacy_target" "$requested_tag" "$platform"; then
+  target=$legacy_target
+  publish_links "$target"
   printf 'Autolith %s is already installed.\n' "${requested_tag#v}"
 else
   temporary_root=$(mktemp -d "$releases_root/.install.XXXXXX")
@@ -206,8 +274,8 @@ else
     check_sha256 "$checksum_name"
   ) || fail "the release archive has the wrong SHA-256 identity."
   tar -xzf "$archive" -C "$temporary_root"
-  release_installed_p "$extracted" "$requested_tag" ||
-    fail "the release archive has an unexpected layout."
+  release_installed_p "$extracted" "$requested_tag" "$platform" ||
+    fail "the release archive has an unexpected platform identity or layout."
   chmod u+w "$extracted" ||
     fail "the verified release directory could not be prepared for publication."
 
@@ -224,7 +292,7 @@ else
   fi
   chmod u-w "$target" ||
     fail "the published release permissions could not be restored."
-  publish_links "$target" "$requested_tag"
+  publish_links "$target"
   if [ -n "$stale_target" ] && [ -e "$stale_target" ]; then
     chmod -R u+w "$stale_target" 2>/dev/null || true
     rm -rf -- "$stale_target"

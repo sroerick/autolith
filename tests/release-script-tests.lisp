@@ -60,15 +60,18 @@ can assert on the exact failure message through the second return value."
    :output nil)
   nil)
 
-(-> release-script-tests--record (pathname string) pathname)
-(defun release-script-tests--record (pathname tag)
-  "Write a fixture release record with TAG to PATHNAME."
+(-> release-script-tests--record
+    (pathname string &key (:platform (option string)))
+    pathname)
+(defun release-script-tests--record (pathname tag &key platform)
+  "Write a fixture release record with TAG and optional PLATFORM to PATHNAME."
   (release-script-tests--write-file
    pathname
-   (format nil "version=~A~%tag=~A~%commit=~A~%"
+   (format nil "version=~A~%tag=~A~%commit=~A~@[~%platform=~A~]~%"
            *release-script-tests-version*
            tag
-           *release-script-tests-commit*)))
+           *release-script-tests-commit*
+           platform)))
 
 (-> release-script-tests--fixture-curl () string)
 (defun release-script-tests--fixture-curl ()
@@ -76,23 +79,37 @@ can assert on the exact failure message through the second return value."
   (format nil
           "#!/bin/sh~%set -eu~%output=~%write_out=~%url=~%while [ \"$#\" -gt 0 ]; do~%  case $1 in~%    --output) output=$2; shift 2 ;;~%    --write-out) write_out=$2; shift 2 ;;~%    --retry|--proto|--max-time) shift 2 ;;~%    --*) shift ;;~%    *) url=$1; shift ;;~%  esac~%done~%case $url in~%  */latest)~%    [ -n \"$write_out\" ]~%    printf \"%s\" \"https://example.invalid/releases/${AUTOLITH_TEST_LATEST_TAG:-v0.11.0}\"~%    exit 0~%    ;;~%esac~%cp \"$AUTOLITH_TEST_RELEASE_FIXTURE/${url##*/}\" \"$output\"~%"))
 
-(-> release-script-tests--install-linux-host-tools (pathname) pathname)
-(defun release-script-tests--install-linux-host-tools (directory)
-  "Install fixture commands reporting and satisfying the binary release target."
+(-> release-script-tests--install-linux-host-tools
+    (pathname &key (:architecture string) (:libc string))
+    pathname)
+(defun release-script-tests--install-linux-host-tools
+    (directory &key (architecture "x86_64") (libc "glibc"))
+  "Install fixture commands reporting and satisfying one Linux release target."
   (let* ((directory (uiop:ensure-directory-pathname directory))
          (uname (merge-pathnames "uname" directory))
+         (ldd (merge-pathnames "ldd" directory))
          (bwrap (merge-pathnames "bwrap" directory))
          (chmod (merge-pathnames "chmod" directory))
          (move (merge-pathnames "mv" directory)))
     (release-script-tests--write-file
      uname
-     "#!/bin/sh
+     (format nil "#!/bin/sh
 case ${1:-} in
   -s) printf 'Linux\\n' ;;
-  -m) printf 'x86_64\\n' ;;
+  -m) printf '~A\\n' ;;
   *) exit 64 ;;
 esac
-")
+"
+             architecture))
+    (release-script-tests--write-file
+     ldd
+     (format nil "#!/bin/sh
+printf '~A\\n'
+"
+             (ecase (intern (string-upcase libc) '#:keyword)
+               (:glibc "libc.so.6 => /lib/libc.so.6 /lib64/ld-linux-x86-64.so.2")
+               (:musl "musl libc")
+               (:unknown "unrecognized libc"))))
     (release-script-tests--write-file bwrap "#!/bin/sh
 exit 0
 ")
@@ -133,7 +150,7 @@ else
   exec /bin/mv \"$@\"
 fi
 ")
-    (dolist (pathname (list uname bwrap chmod move))
+    (dolist (pathname (list uname ldd bwrap chmod move))
       (release-script-tests--chmod "755" pathname))
     directory))
 
@@ -159,10 +176,11 @@ fi
   nil)
 
 (-> release-script-tests--make-release
-    (pathname pathname &key (:library-extension string))
+    (pathname pathname &key (:library-extension string)
+                            (:platform (option string)))
     pathname)
 (defun release-script-tests--make-release
-    (source-root release-root &key (library-extension "so"))
+    (source-root release-root &key (library-extension "so") platform)
   "Create a minimal packaged release fixture below RELEASE-ROOT."
   (dolist (relative
            (list "libexec/autolith/.qlot/setup.lisp"
@@ -193,7 +211,8 @@ fi
    "755" (merge-pathnames "libexec/cl-exec-sandbox-helper" release-root))
   (release-script-tests--record
    (merge-pathnames "RELEASE" release-root)
-   (format nil "v~A" *release-script-tests-version*))
+   (format nil "v~A" *release-script-tests-version*)
+   :platform platform)
   release-root)
 
 (-> release-script-tests--syntax (pathname) null)
@@ -561,7 +580,8 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
            (list "AUTOLITH_NO_UPDATE_CHECK=1"
                  (format nil "PATH=~A" path))))
     (release-script-tests--install-linux-host-tools host-bin)
-    (release-script-tests--make-release source-root release-root)
+    (release-script-tests--make-release source-root release-root
+                                        :platform "x86_64-linux")
     (let ((output
             (release-script-tests--run
              (list (namestring launcher) "--autolith-release-probe")
@@ -571,6 +591,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                 (format nil "version=~A" *release-script-tests-version*)
                 (format nil "tag=v~A" *release-script-tests-version*)
                 (format nil "commit=~A" *release-script-tests-commit*)
+                 "platform=x86_64-linux"
                 (format nil "source=~A"
                         (string-right-trim
                          "/"
@@ -586,6 +607,41 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                                               :separator '(#\Newline #\Return))
                            :test #'string=)
                      (format nil "release probe reports ~A" line))))
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" release-root)
+     (format nil "v~A" *release-script-tests-version*)
+     :platform "aarch64-linux")
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring launcher) "--autolith-release-probe")
+         :environment environment
+         :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert
+       (and (not (eql status 0))
+            (search "RELEASE platform aarch64-linux does not match host x86_64-linux."
+                    error-output))
+       "the release launcher rejects a mismatched platform record"))
+    (release-script-tests--install-linux-host-tools host-bin :libc "musl")
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" release-root)
+     (format nil "v~A" *release-script-tests-version*))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring launcher) "--autolith-release-probe")
+         :environment environment
+         :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert
+       (and (not (eql status 0))
+            (search "RELEASE lacks platform identity for this release variant."
+                    error-output))
+       "a musl launcher rejects legacy metadata without platform identity"))
+    (release-script-tests--install-linux-host-tools host-bin)
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" release-root)
+     (format nil "v~A" *release-script-tests-version*)
+     :platform "x86_64-linux")
     (let ((library
             (merge-pathnames "lib/libcolorlisp-tree-sitter.so" release-root)))
       (delete-file library)
@@ -634,7 +690,8 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                  (format nil "PATH=~A" path))))
     (release-script-tests--install-darwin-host-tools host-bin)
     (release-script-tests--make-release source-root release-root
-                                        :library-extension "dylib")
+                                        :library-extension "dylib"
+                                        :platform "arm64-darwin")
     (let ((output
             (release-script-tests--run
              (list (namestring launcher) "--autolith-release-probe")
@@ -644,6 +701,7 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
                 (format nil "version=~A" *release-script-tests-version*)
                 (format nil "tag=v~A" *release-script-tests-version*)
                 (format nil "commit=~A" *release-script-tests-commit*)
+                 "platform=arm64-darwin"
                 (format nil "source=~A"
                         (string-right-trim
                          "/"
@@ -746,7 +804,7 @@ esac
           (test-assert
            (and (not (eql status 0))
                 (search
-                 "binary releases currently support Linux x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+                 "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
                  output))
            "the binary installer rejects unsupported platforms")))
     (release-script-tests--install-linux-host-tools fixture-bin)
@@ -792,13 +850,14 @@ esac
        :output nil)
       (test-assert
        (probe-file
-        (merge-pathnames (format nil "releases/~A/bin/autolith" tag)
-                         install-root))
+         (merge-pathnames
+          (format nil "releases/~A-x86_64-linux/bin/autolith" tag)
+          install-root))
        "the installer publishes the requested release")
       (test-assert
        (string= (release-script-tests--readlink
                  (merge-pathnames "current" install-root))
-                (format nil "releases/~A" tag))
+                (format nil "releases/~A-x86_64-linux" tag))
        "the installer selects the requested version atomically")
       (test-assert
        (string= (release-script-tests--readlink
@@ -814,8 +873,10 @@ esac
                                            install-root)))
         (release-script-tests--run
          (list "cp" "-a"
-               (namestring (merge-pathnames (format nil "releases/~A/" tag)
-                                             install-root))
+                (namestring
+                 (merge-pathnames
+                  (format nil "releases/~A-x86_64-linux/" tag)
+                  install-root))
                (namestring next-target))
          :output nil)
         (release-script-tests--run
@@ -971,19 +1032,32 @@ fi
                       (string-right-trim "/" (namestring install-root)))
               (format nil "AUTOLITH_BIN_DIR=~A"
                       (string-right-trim "/" (namestring bin-directory))))))
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring installer) "--musl" "--version" tag)
+           :environment base-environment
+           :ignore-error-status t
+           :output nil)
+        (declare (ignore output))
+        (test-assert
+         (and (not (eql status 0))
+              (search "libc selection is supported only on Linux."
+                      error-output))
+         "the Darwin installer rejects Linux libc selection"))
       (release-script-tests--run
        (list (namestring installer) "--version" tag)
        :environment base-environment
        :output nil)
       (test-assert
        (probe-file
-        (merge-pathnames (format nil "releases/~A/bin/autolith" tag)
-                         install-root))
+         (merge-pathnames
+          (format nil "releases/~A-arm64-darwin/bin/autolith" tag)
+          install-root))
        "the Darwin installer publishes the requested release")
       (test-assert
        (string= (release-script-tests--readlink
                  (merge-pathnames "current" install-root))
-                (format nil "releases/~A" tag))
+                (format nil "releases/~A-arm64-darwin" tag))
        "the Darwin installer selects the requested version")
       (test-assert
        (string= (release-script-tests--readlink
@@ -1088,7 +1162,7 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
        "(:RECOVERY-IMAGE :VERSION 2)\n")
       (release-script-tests--write-file
        (merge-pathnames "autolith/release-images" data-home)
-       (format nil "~A~%" tag)))
+       (format nil "~A:x86_64-linux~%" tag)))
     (let ((path (format nil "~A:~A"
                         (string-right-trim "/" (namestring fixture-bin))
                         (or (uiop:getenv "PATH") ""))))
@@ -1135,6 +1209,201 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
                (merge-pathnames "current" install-root))
               (format nil "releases/~A" next-tag))
      "the verified updater atomically selects the new release"))
+  nil)
+
+(-> release-script-tests--musl-update-handoff (pathname pathname) null)
+(defun release-script-tests--musl-update-handoff (source-root root)
+  "Exercise musl-preserving update from a platform-qualified installation."
+  (let* ((tag (format nil "v~A" *release-script-tests-version*))
+         (next-tag "v0.12.0")
+         (platform "x86_64-linux-musl")
+         (fixture-root (merge-pathnames "musl-update-handoff/" root))
+         (install-root (merge-pathnames "installation/" fixture-root))
+         (release-root
+           (merge-pathnames (format nil "releases/~A-~A/" tag platform)
+                            install-root))
+         (packaged-source (merge-pathnames "libexec/autolith/" release-root))
+         (inner-launcher (merge-pathnames "bin/autolith" packaged-source))
+         (bundled-installer (merge-pathnames "script/install" packaged-source))
+         (launcher (merge-pathnames "bin/autolith" release-root))
+         (data-home (merge-pathnames "data/" fixture-root))
+         (fixture-bin (merge-pathnames "fixture-bin/" fixture-root))
+         (curl (merge-pathnames "curl" fixture-bin))
+         (updated-launcher (merge-pathnames "updated-autolith" fixture-root))
+         (log (merge-pathnames "handoff.log" fixture-root)))
+    (release-script-tests--make-release
+     source-root release-root :platform platform)
+    (uiop:ensure-all-directories-exist (list data-home fixture-bin))
+    (release-script-tests--install-linux-host-tools fixture-bin :libc "musl")
+    (release-script-tests--write-file
+     curl (release-script-tests--fixture-curl))
+    (release-script-tests--chmod "755" curl)
+    (sb-posix:symlink
+     (format nil "releases/~A-~A" tag platform)
+     (namestring (merge-pathnames "current" install-root)))
+    (release-script-tests--write-file
+     inner-launcher
+     "#!/bin/sh
+exit 76
+")
+    (release-script-tests--write-file
+     updated-launcher
+     "#!/bin/sh
+printf 'UPDATED_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
+")
+    (release-script-tests--write-file
+     bundled-installer
+     "#!/bin/sh
+set -eu
+printf 'INSTALL_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
+[ \"$1\" = --musl ]
+[ \"$2\" = --without-command-link ]
+[ \"$3\" = --version ]
+requested=$4
+[ \"$requested\" = \"$AUTOLITH_TEST_LATEST_TAG\" ]
+target=$AUTOLITH_INSTALL_ROOT/releases/${requested}-x86_64-linux-musl
+mkdir -p \"$target/bin\"
+cp \"$AUTOLITH_TEST_UPDATED_LAUNCHER\" \"$target/bin/autolith\"
+chmod 755 \"$target/bin/autolith\"
+temporary=$AUTOLITH_INSTALL_ROOT/.current.$$
+ln -s \"releases/${requested}-x86_64-linux-musl\" \"$temporary\"
+mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
+")
+    (dolist (pathname (list inner-launcher bundled-installer updated-launcher))
+      (release-script-tests--chmod "755" pathname))
+    (let* ((active-root (merge-pathnames "autolith/active/" data-home))
+           (recovery-root (merge-pathnames "autolith/recovery/" data-home)))
+      (dolist (pathname (list (merge-pathnames "autolith-active.core" active-root)
+                              (merge-pathnames "autolith-recovery.core"
+                                               recovery-root)))
+        (release-script-tests--write-file pathname "core"))
+      (release-script-tests--write-file
+       (merge-pathnames "manifest.sexp" active-root)
+       "(:ACTIVE-IMAGE :VERSION 1)\n")
+      (release-script-tests--write-file
+       (merge-pathnames "manifest.sexp" recovery-root)
+       "(:RECOVERY-IMAGE :VERSION 2)\n")
+      (release-script-tests--write-file
+       (merge-pathnames "autolith/release-images" data-home)
+       (format nil "~A:~A~%" tag platform)))
+    (release-script-tests--run
+     (list (namestring launcher) "resume" "fixture-conversation")
+     :environment
+     (list
+      (format nil "PATH=~A:~A"
+              (string-right-trim "/" (namestring fixture-bin))
+              (or (uiop:getenv "PATH") ""))
+      (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+      (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))
+      (format nil "AUTOLITH_TEST_UPDATED_LAUNCHER=~A"
+              (namestring updated-launcher))
+      (format nil "AUTOLITH_TEST_LATEST_TAG=~A" next-tag)
+      "AUTOLITH_RELEASE_LATEST_URL=https://example.invalid/releases/latest")
+     :output nil)
+    (let ((events (uiop:read-file-string log)))
+      (test-assert
+       (search (format nil
+                       "INSTALL_ARGS=--musl --without-command-link --version ~A"
+                       next-tag)
+               events)
+       "a musl release preserves its variant during self-update")
+      (test-assert
+       (search "UPDATED_ARGS=resume fixture-conversation" events)
+       "the updated musl release receives the original arguments"))
+    (test-assert
+     (string=
+      (release-script-tests--readlink
+       (merge-pathnames "current" install-root))
+      (format nil "releases/~A-~A" next-tag platform))
+     "the musl updater selects the platform-qualified target"))
+  nil)
+
+(-> release-script-tests--image-marker-platform (pathname pathname) null)
+(defun release-script-tests--image-marker-platform (source-root root)
+  "Exercise saved-image rebuilds when one tag switches Linux libc variants."
+  (let* ((tag (format nil "v~A" *release-script-tests-version*))
+         (fixture-root (merge-pathnames "image-marker-platform/" root))
+         (release-root (merge-pathnames "release/" fixture-root))
+         (launcher (merge-pathnames "bin/autolith" release-root))
+         (inner-launcher
+           (merge-pathnames "libexec/autolith/bin/autolith" release-root))
+         (runtime (merge-pathnames "runtime/bin/sbcl" release-root))
+         (fixture-bin (merge-pathnames "fixture-bin/" fixture-root))
+         (data-home (merge-pathnames "data/" fixture-root))
+         (log (merge-pathnames "sbcl.log" fixture-root))
+         (marker (merge-pathnames "autolith/release-images" data-home)))
+    (release-script-tests--make-release
+     source-root release-root :platform "x86_64-linux")
+    (uiop:ensure-all-directories-exist (list fixture-bin data-home))
+    (release-script-tests--install-linux-host-tools fixture-bin)
+    (release-script-tests--write-file
+     inner-launcher
+     "#!/bin/sh
+exit 0
+")
+    (release-script-tests--write-file
+     runtime
+     "#!/bin/sh
+set -eu
+printf '%s\\n' \"$*\" >> \"$AUTOLITH_TEST_SBCL_LOG\"
+target=
+for argument in \"$@\"; do target=$argument; done
+case \" $* \" in
+  *'build-recovery.lisp'*)
+    mkdir -p \"$(dirname \"$target\")\"
+    : > \"$target\"
+    printf '(:RECOVERY-IMAGE :VERSION 2)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
+    ;;
+  *'build-active.lisp'*)
+    mkdir -p \"$(dirname \"$target\")\"
+    : > \"$target\"
+    printf '(:ACTIVE-IMAGE :VERSION 1)\\n' > \"$(dirname \"$target\")/manifest.sexp\"
+    ;;
+esac
+")
+    (dolist (pathname (list inner-launcher runtime))
+      (release-script-tests--chmod "755" pathname))
+    (labels ((environment ()
+               (list
+                "AUTOLITH_NO_UPDATE_CHECK=1"
+                (format nil "PATH=~A:~A"
+                        (string-right-trim "/" (namestring fixture-bin))
+                        (or (uiop:getenv "PATH") ""))
+                (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                (format nil "AUTOLITH_TEST_SBCL_LOG=~A" (namestring log))))
+
+             (build-count ()
+               (let ((content (uiop:read-file-string log)))
+                 (loop with start = 0
+                       for position = (search "--script" content :start2 start)
+                       while position
+                       count t
+                       do (setf start (+ position 8))))))
+      (release-script-tests--run
+       (list (namestring launcher))
+       :environment (environment)
+       :output nil)
+      (test-assert
+       (and (string= (string-trim '(#\Newline #\Return)
+                                  (uiop:read-file-string marker))
+                     (format nil "~A:x86_64-linux" tag))
+            (= (build-count) 2))
+       "the first glibc launch builds and marks both saved images")
+      (release-script-tests--record
+       (merge-pathnames "RELEASE" release-root)
+       tag
+       :platform "x86_64-linux-musl")
+      (release-script-tests--install-linux-host-tools fixture-bin :libc "musl")
+      (release-script-tests--run
+       (list (namestring launcher))
+       :environment (environment)
+       :output nil)
+      (test-assert
+       (and (string= (string-trim '(#\Newline #\Return)
+                                  (uiop:read-file-string marker))
+                     (format nil "~A:x86_64-linux-musl" tag))
+            (= (build-count) 4))
+       "switching one tag from glibc to musl rebuilds both saved images")))
   nil)
 
 (-> release-script-tests--runtime-adapter (pathname pathname) null)
@@ -1391,6 +1660,174 @@ esac
         (release-script-tests--write-file checksum output)))
   checksum)
 
+(-> release-script-tests--write-release-archive
+    (pathname pathname &key (:tag string) (:platform string)
+                            (:record-platform (option string)))
+    (values pathname pathname))
+(defun release-script-tests--write-release-archive
+    (release-root fixture-root &key tag platform record-platform)
+  "Package RELEASE-ROOT as TAG's PLATFORM archive below FIXTURE-ROOT."
+  (let* ((release-name (format nil "autolith-~A-~A" tag platform))
+         (fixture-source (merge-pathnames "source/" fixture-root))
+         (fixture-release
+           (merge-pathnames (format nil "~A/" release-name) fixture-source))
+         (archive
+           (merge-pathnames (format nil "~A.tar.gz" release-name) fixture-root))
+         (checksum
+           (merge-pathnames (format nil "~A.tar.gz.sha256" release-name)
+                            fixture-root)))
+    (release-script-tests--cleanup fixture-release)
+    (dolist (pathname (list archive checksum))
+      (when (probe-file pathname)
+        (delete-file pathname)))
+    (uiop:ensure-all-directories-exist (list fixture-root fixture-source))
+    (release-script-tests--run
+     (list "cp" "-a" (format nil "~A." (namestring release-root))
+           (namestring fixture-release))
+     :output nil)
+    (release-script-tests--run
+     (list "chmod" "-R" "u+w" (namestring fixture-release))
+     :output nil)
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" fixture-release)
+     tag
+     :platform record-platform)
+    (release-script-tests--chmod "a-w" fixture-release)
+    (release-script-tests--run
+     (list "tar" "-czf" (namestring archive)
+           "-C" (namestring fixture-source) release-name)
+     :output nil)
+    (release-script-tests--write-checksum archive checksum)
+    (values archive checksum)))
+
+(-> release-script-tests--installer-platform-identity (pathname pathname) null)
+(defun release-script-tests--installer-platform-identity (source-root root)
+  "Exercise installer platform validation and same-tag Linux variant isolation."
+  (let* ((tag (format nil "v~A" *release-script-tests-version*))
+         (release-root (merge-pathnames "identity-release/" root))
+         (fixture-root (merge-pathnames "identity-fixture/" root))
+         (fixture-bin (merge-pathnames "identity-bin/" root))
+         (install-root (merge-pathnames "identity-installation/" root))
+         (bin-directory (merge-pathnames "identity-command-bin/" root))
+         (curl (merge-pathnames "curl" fixture-bin))
+         (installer (merge-pathnames "script/install" source-root)))
+    (release-script-tests--make-release source-root release-root)
+    (uiop:ensure-all-directories-exist
+     (list fixture-root fixture-bin install-root bin-directory))
+    (release-script-tests--write-file
+     curl (release-script-tests--fixture-curl))
+    (release-script-tests--chmod "755" curl)
+    (labels ((environment ()
+               (list
+                (format nil "PATH=~A:~A"
+                        (string-right-trim "/" (namestring fixture-bin))
+                        (or (uiop:getenv "PATH") ""))
+                (format nil "AUTOLITH_TEST_RELEASE_FIXTURE=~A"
+                        (namestring fixture-root))
+                "AUTOLITH_RELEASE_BASE_URL=https://example.invalid"
+                (format nil "AUTOLITH_INSTALL_ROOT=~A"
+                        (string-right-trim "/" (namestring install-root)))
+                (format nil "AUTOLITH_BIN_DIR=~A"
+                        (string-right-trim "/" (namestring bin-directory)))))
+
+             (install-fails (arguments diagnostic description)
+               (multiple-value-bind (output error-output status)
+                   (release-script-tests--run
+                    (append (list (namestring installer)) arguments)
+                    :environment (environment)
+                    :ignore-error-status t
+                    :output nil)
+                 (declare (ignore output))
+                 (test-assert
+                  (and (not (eql status 0))
+                       (search diagnostic error-output))
+                  description))))
+      (release-script-tests--write-release-archive
+       release-root fixture-root
+       :tag tag
+       :platform "aarch64-linux")
+      (release-script-tests--install-linux-host-tools
+       fixture-bin :architecture "aarch64")
+      (install-fails
+       (list "--version" tag)
+       "unexpected platform identity or layout"
+       "Linux aarch64 rejects a legacy archive without platform identity")
+      (release-script-tests--write-release-archive
+       release-root fixture-root
+       :tag tag
+       :platform "x86_64-linux"
+       :record-platform "aarch64-linux")
+      (release-script-tests--install-linux-host-tools fixture-bin)
+      (install-fails
+       (list "--version" tag)
+       "unexpected platform identity or layout"
+       "the installer rejects extracted platform metadata that mismatches the archive")
+      (release-script-tests--write-release-archive
+       release-root fixture-root
+       :tag tag
+       :platform "x86_64-linux"
+       :record-platform "x86_64-linux")
+      (release-script-tests--run
+       (list (namestring installer) "--version" tag)
+       :environment (environment)
+       :output nil)
+      (release-script-tests--write-release-archive
+       release-root fixture-root
+       :tag tag
+       :platform "x86_64-linux-musl")
+      (release-script-tests--install-linux-host-tools fixture-bin :libc "musl")
+      (install-fails
+       (list "--musl" "--version" tag)
+       "unexpected platform identity or layout"
+       "musl rejects a legacy archive without platform identity")
+      (release-script-tests--write-release-archive
+       release-root fixture-root
+       :tag tag
+       :platform "x86_64-linux-musl"
+       :record-platform "x86_64-linux-musl")
+      (release-script-tests--install-linux-host-tools fixture-bin)
+      (install-fails
+       (list "--musl" "--version" tag)
+       "requested libc musl does not match detected libc glibc"
+       "the installer rejects musl selection on a glibc host")
+      (release-script-tests--install-linux-host-tools fixture-bin :libc "unknown")
+      (install-fails
+       (list "--version" tag)
+       "Linux libc could not be identified as glibc or musl"
+       "the installer fails closed on unknown Linux libc output")
+      (release-script-tests--install-linux-host-tools fixture-bin :libc "musl")
+      (release-script-tests--run
+       (list (namestring installer) "--musl" "--version" tag)
+       :environment (environment)
+       :output nil)
+      (test-assert
+       (and
+        (probe-file
+         (merge-pathnames
+          (format nil "releases/~A-x86_64-linux/bin/autolith" tag)
+          install-root))
+        (probe-file
+         (merge-pathnames
+          (format nil "releases/~A-x86_64-linux-musl/bin/autolith" tag)
+          install-root))
+        (string=
+         (release-script-tests--readlink
+          (merge-pathnames "current" install-root))
+         (format nil "releases/~A-x86_64-linux-musl" tag)))
+       "glibc and musl installations of one tag remain distinct")
+      (release-script-tests--install-linux-host-tools fixture-bin)
+      (release-script-tests--run
+       (list (namestring installer) "--version" tag)
+       :environment (environment)
+       :output nil)
+      (test-assert
+       (string=
+        (release-script-tests--readlink
+         (merge-pathnames "current" install-root))
+        (format nil "releases/~A-x86_64-linux" tag))
+       "the installer can reselect the glibc variant without collision")))
+  nil)
+
 (-> release-script-tests--platform-ids () null)
 (defun release-script-tests--platform-ids ()
   "Exercise canonical release platform identifiers."
@@ -1494,42 +1931,47 @@ esac
 (-> release-script-tests--launcher-bsd (pathname pathname) null)
 (defun release-script-tests--launcher-bsd (source-root root)
   "Exercise BSD packaged launcher validation without Bubblewrap."
-  (dolist (os '("FreeBSD" "NetBSD" "OpenBSD"))
-    (let* ((release-root
-             (merge-pathnames (format nil "bsd-launcher-~A/" os) root))
-           (launcher (merge-pathnames "bin/autolith" release-root))
-           (host-bin (merge-pathnames (format nil "bsd-host-~A/" os) root))
-           (path (format nil "~A:~A"
-                         (string-right-trim "/" (namestring host-bin))
-                         (or (uiop:getenv "PATH") "")))
-           (environment
-             (list "AUTOLITH_NO_UPDATE_CHECK=1"
-                   (format nil "PATH=~A" path))))
-      (release-script-tests--write-uname host-bin os "amd64")
-      (release-script-tests--make-release source-root release-root)
-      (let ((output
+  (dolist (spec '(("FreeBSD" "x86_64-freebsd")
+                  ("NetBSD" "x86_64-netbsd")
+                  ("OpenBSD" "x86_64-openbsd")))
+    (destructuring-bind (os platform) spec
+      (let* ((release-root
+               (merge-pathnames (format nil "bsd-launcher-~A/" os) root))
+             (launcher (merge-pathnames "bin/autolith" release-root))
+             (host-bin (merge-pathnames (format nil "bsd-host-~A/" os) root))
+             (path (format nil "~A:~A"
+                           (string-right-trim "/" (namestring host-bin))
+                           (or (uiop:getenv "PATH") "")))
+             (environment
+               (list "AUTOLITH_NO_UPDATE_CHECK=1"
+                     (format nil "PATH=~A" path))))
+        (release-script-tests--write-uname host-bin os "amd64")
+        (release-script-tests--make-release
+         source-root release-root :platform platform)
+        (let ((output
+                (release-script-tests--run
+                 (list (namestring launcher) "--autolith-release-probe")
+                 :environment environment)))
+          (test-assert
+           (and (search (format nil "version=~A" *release-script-tests-version*)
+                        output)
+                (search (format nil "platform=~A" platform) output))
+           (format nil "the ~A release launcher reports its platform" os)))
+        (let ((library
+                (merge-pathnames "lib/libcolorlisp-tree-sitter.so" release-root)))
+          (delete-file library)
+          (multiple-value-bind (output error-output status)
               (release-script-tests--run
                (list (namestring launcher) "--autolith-release-probe")
-               :environment environment)))
-        (test-assert
-         (search (format nil "version=~A" *release-script-tests-version*)
-                 output)
-         (format nil "the ~A release launcher probes a packaged release" os)))
-      (let ((library
-              (merge-pathnames "lib/libcolorlisp-tree-sitter.so" release-root)))
-        (delete-file library)
-        (multiple-value-bind (output error-output status)
-            (release-script-tests--run
-             (list (namestring launcher) "--autolith-release-probe")
-             :environment environment
-             :ignore-error-status t
-             :output nil)
-          (declare (ignore output error-output))
-          (test-assert (not (eql status 0))
-                       (format nil
-                               "the ~A release launcher requires its private syntax library"
-                               os)))
-        (release-script-tests--write-file library ""))))
+               :environment environment
+               :ignore-error-status t
+               :output nil)
+            (declare (ignore output error-output))
+            (test-assert (not (eql status 0))
+                         (format nil
+                                 "the ~A release launcher requires its private syntax library"
+                                 os)))
+          (release-script-tests--write-file library "")))))
   nil)
 
 (-> release-script-tests--installer-bsd (pathname pathname) null)
@@ -1599,13 +2041,14 @@ esac
            :output nil)
           (test-assert
            (probe-file
-            (merge-pathnames (format nil "releases/~A/bin/autolith" tag)
-                             install-root))
+             (merge-pathnames
+              (format nil "releases/~A-~A/bin/autolith" tag platform)
+              install-root))
            (format nil "the ~A installer publishes the requested release" os))
           (test-assert
            (string= (release-script-tests--readlink
                      (merge-pathnames "current" install-root))
-                    (format nil "releases/~A" tag))
+                    (format nil "releases/~A-~A" tag platform))
            (format nil "the ~A installer selects the requested version" os))))))
   nil)
 
@@ -1966,22 +2409,25 @@ esac
              (uiop:temporary-directory)))))
     (unwind-protect
          (progn
-             (release-script-tests--syntax source-root)
+              (release-script-tests--syntax source-root)
               (release-script-tests--bootstrap-dependency-order source-root root)
-             (release-script-tests--github-release-workflow source-root)
-             (release-script-tests--runtime-adapter source-root root)
-             (release-script-tests--runtime-bootstrap source-root root)
-             (release-script-tests--source-launcher source-root root)
-             (release-script-tests--platform-ids)
-             (release-script-tests--archive-helpers root)
-             (release-script-tests--portable-copy root)
-             (release-script-tests--checksum-format root)
-             (release-script-tests--launcher source-root root)
-             (release-script-tests--launcher-darwin source-root root)
-             (release-script-tests--launcher-bsd source-root root)
-             (release-script-tests--update-handoff source-root root)
-             (release-script-tests--installer source-root root)
-             (release-script-tests--installer-darwin source-root root)
-             (release-script-tests--installer-bsd source-root root))
+              (release-script-tests--github-release-workflow source-root)
+              (release-script-tests--runtime-adapter source-root root)
+              (release-script-tests--runtime-bootstrap source-root root)
+              (release-script-tests--source-launcher source-root root)
+              (release-script-tests--platform-ids)
+              (release-script-tests--archive-helpers root)
+              (release-script-tests--portable-copy root)
+              (release-script-tests--checksum-format root)
+              (release-script-tests--launcher source-root root)
+              (release-script-tests--launcher-darwin source-root root)
+              (release-script-tests--launcher-bsd source-root root)
+              (release-script-tests--update-handoff source-root root)
+              (release-script-tests--musl-update-handoff source-root root)
+              (release-script-tests--image-marker-platform source-root root)
+              (release-script-tests--installer source-root root)
+              (release-script-tests--installer-platform-identity source-root root)
+              (release-script-tests--installer-darwin source-root root)
+              (release-script-tests--installer-bsd source-root root))
       (release-script-tests--cleanup root)))
   nil)
