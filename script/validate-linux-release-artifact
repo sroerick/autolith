@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+fail()
+{
+  printf 'Linux release validation failed: %s\n' "$1" >&2
+  exit 1
+}
+
+[[ $# -eq 4 ]] ||
+  fail "usage: validate-linux-release-artifact ARCHIVE PLATFORM ARCHITECTURE INTERPRETER"
+
+archive=$1
+expected_platform=$2
+expected_architecture=$3
+expected_interpreter=$4
+
+[[ -f $archive ]] || fail "$archive does not exist."
+case $expected_architecture in
+  x86_64) expected_machine='Advanced Micro Devices X86-64' ;;
+  aarch64) expected_machine='AArch64' ;;
+  *) fail "unsupported expected architecture $expected_architecture." ;;
+esac
+
+for command in file readelf tar grep sed; do
+  command -v "$command" >/dev/null 2>&1 || fail "$command is required."
+done
+
+archive_name=$(basename -- "$archive")
+release_name=${archive_name%.tar.gz}
+[[ $release_name != "$archive_name" ]] || fail "$archive is not a .tar.gz archive."
+archive_members=$(tar -tzf "$archive") || fail "$archive cannot be listed."
+[[ -n $archive_members ]] || fail "$archive is empty."
+while IFS= read -r member; do
+  [[ -n $member ]] || fail "the archive contains an empty member name."
+  case "/$member/" in
+    */../*|*/./*) fail "archive member $member contains an unsafe path component." ;;
+  esac
+  case $member in
+    "$release_name"|"$release_name/"|"$release_name/"*) ;;
+    *) fail "archive member $member is outside $release_name/." ;;
+  esac
+done <<< "$archive_members"
+
+temporary_root=$(mktemp -d)
+cleanup()
+{
+  rm -rf -- "$temporary_root"
+}
+trap cleanup EXIT HUP INT TERM
+
+release_root=$temporary_root/$release_name
+tar -xzf "$archive" -C "$temporary_root" || fail "$archive cannot be extracted."
+shopt -s dotglob nullglob
+top_level=("$temporary_root"/*)
+shopt -u dotglob nullglob
+[[ ${#top_level[@]} -eq 1 && ${top_level[0]} == "$release_root" &&
+   -d $release_root && ! -L $release_root ]] ||
+  fail "the archive does not contain exactly one top-level directory named $release_name."
+
+release_record=$release_root/RELEASE
+runtime=$release_root/runtime/bin/sbcl
+[[ -r $release_record ]] || fail "RELEASE is missing."
+[[ -x $runtime ]] || fail "the bundled SBCL runtime is missing."
+platform_count=$(grep -c '^platform=' "$release_record" || true)
+[[ $platform_count -eq 1 ]] ||
+  fail "RELEASE must contain exactly one platform field."
+platform_record=$(grep '^platform=' "$release_record")
+[[ $platform_record == "platform=$expected_platform" ]] ||
+  fail "RELEASE does not identify $expected_platform."
+
+file_description=$(file --brief "$runtime")
+case $expected_architecture in
+  x86_64)
+    grep -q 'x86-64' <<< "$file_description" ||
+      fail "the bundled SBCL file identity is not x86-64: $file_description"
+    ;;
+  aarch64)
+    grep -Eq 'ARM aarch64|AArch64' <<< "$file_description" ||
+      fail "the bundled SBCL file identity is not aarch64: $file_description"
+    ;;
+esac
+
+machine=$(readelf -h "$runtime" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+[[ $machine == "$expected_machine" ]] ||
+  fail "the bundled SBCL ELF machine is $machine, expected $expected_machine."
+interpreter=$(readelf -l "$runtime" |
+  sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')
+[[ $interpreter == "$expected_interpreter" ]] ||
+  fail "the bundled SBCL interpreter is $interpreter, expected $expected_interpreter."
+
+runtime_version=$(env -u SBCL_HOME "$runtime" \
+  --noinform --no-userinit --no-sysinit --non-interactive \
+  --eval '(write-string (lisp-implementation-version))')
+[[ $runtime_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+  fail "the bundled SBCL smoke test returned $runtime_version."
+printf 'Validated %s as %s (%s, %s).\n' \
+  "$archive_name" "$expected_platform" "$expected_architecture" "$runtime_version"
