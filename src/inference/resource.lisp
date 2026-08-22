@@ -271,14 +271,15 @@ requested window rather than the complete trace."
 (-> rlm--context-object-text (context-object-resource tool-context) string)
 (defun rlm--context-object-text (resource context)
   "Return RESOURCE's verified stored content."
-  (let ((object (rlm-context-object-find
-                 (tool-context-configuration context)
-                 (context-object-resource-digest resource))))
+  (multiple-value-bind (object content)
+      (rlm-context-object-find
+       (tool-context-configuration context)
+       (context-object-resource-digest resource))
     (unless object
       (error 'rlm-view-error
              :designator (context-object-resource-digest resource)
              :message "no stored context object has this digest"))
-    (uiop:read-file-string (rlm-context-object-pathname object))))
+    content))
 
 (defmethod resource-observe
     ((resource context-object-resource) (context tool-context))

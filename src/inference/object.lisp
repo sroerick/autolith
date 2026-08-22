@@ -90,13 +90,14 @@ place from CONTENT."
 
 (-> rlm-context-object-find
     (configuration string)
-    (option rlm-context-object))
+    (values (option rlm-context-object) (option string)))
 (defun rlm-context-object-find (configuration digest)
   "Return the stored object handle for DIGEST, or NIL when absent.
 
 The stored content is re-hashed rather than trusted by filename, so a
 mutated object is detected instead of silently breaking the
-content-address invariant."
+content-address invariant. Returns the handle and the verified content
+as two values, so callers never read the object file twice."
   (let ((pathname (rlm-object--pathname configuration digest)))
     (when (probe-file pathname)
       (let ((content (uiop:read-file-string pathname)))
@@ -104,11 +105,13 @@ content-address invariant."
           (error 'rlm-view-error
                  :designator digest
                  :message "the stored context object no longer matches its digest"))
-        (make-instance 'rlm-context-object
-                       :digest digest
-                       :label "context"
-                       :characters (length content)
-                       :pathname pathname)))))
+        (values
+         (make-instance 'rlm-context-object
+                        :digest digest
+                        :label "context"
+                        :characters (length content)
+                        :pathname pathname)
+         content)))))
 
 (-> rlm-context-designator-object (configuration t) rlm-context-object)
 (defun rlm-context-designator-object (configuration designator)
