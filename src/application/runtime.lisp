@@ -1660,6 +1660,9 @@ command replaced the active conversation."
        :stage failure-stage
        :cause failure
        :rollback-causes rollback-failures))
+    (when (and previous-conversation
+               (not (eq previous-conversation conversation)))
+      (conversation-picker-search-close previous-conversation))
     (when (and previous-conversation-lease
                (not
                 (eq previous-conversation-lease conversation-lease)))

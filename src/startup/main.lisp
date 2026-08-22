@@ -337,6 +337,8 @@
                       (when worker
                         (lisp-worker-manager-stop worker))
                    (setf worker-stopped-p t)))
+               (conversation-picker-search-close
+                (application-conversation application))
                (application-release-conversation-lease application)
                nil)
 

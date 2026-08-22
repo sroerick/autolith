@@ -395,9 +395,7 @@
                       "Finish chunk storage.")
                      (= (conversation-picker-search-message-count loaded) 1)
                      (string= (conversation-picker-preview loaded)
-                              "before compaction")
-                     (null (conversation-picker-search-messages loaded))
-                     (not (conversation-picker-search-materialized-p loaded)))
+                              "before compaction"))
                 "the newest chunk restores all cumulative resumable state alone")
                (with-open-file (stream initial-chunk
                                        :direction ':output
@@ -410,14 +408,11 @@
                    (delete-file search-pathname)))
                (conversation-append-user-message loaded "after compaction")
                (test-assert
-                (and (conversation-picker-search-materialized-p loaded)
-                     (equal (conversation-picker-search-messages loaded)
-                            '("before compaction" "after compaction"))
-                     (equal
-                      (conversation-picker-search-index-messages
-                       (conversation-picker-search-read identity))
-                      '("before compaction" "after compaction")))
-                "the next searchable append lazily rebuilds complete cross-chunk search"))
+                (equal
+                 (conversation-picker-search-index-messages
+                  (conversation-picker-search-find identity))
+                 '("before compaction" "after compaction"))
+                "a search after a compacted append rebuilds cross-chunk text"))
               (let* ((loaded (conversation-load-by-id configuration identifier))
                      (log-append-function (symbol-function 'log-append))
                      (failure-injected-p nil)
@@ -2109,6 +2104,10 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                 (= (conversation-picker-search-revision-read pathname)
                    message-revision)
                 "non-message records do not advance the search revision"))
+             (test-assert
+              (null (conversation-picker-search-read pathname))
+              "searchable appends leave the sidecar stale for on-demand rebuilding")
+             (conversation-picker-search-close conversation)
              (let ((index (conversation-picker-search-read pathname)))
                (test-assert
                 (and index
@@ -2118,7 +2117,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
                       (conversation-picker-search-index-text index)
                       "user needle
 assistant needle"))
-                "append publication indexes only chronological visible messages"))
+                "closing publishes only chronological visible messages"))
              (multiple-value-bind (index scan-count)
                  (find-with-scan-count)
                (test-assert
@@ -2126,18 +2125,22 @@ assistant needle"))
                 "a valid search sidecar avoids scanning the conversation log"))
              (let ((loaded (conversation-load pathname)))
                (test-assert
-                (and (= (conversation-picker-search-message-count loaded) 2)
-                     (null (conversation-picker-search-messages loaded))
-                     (not (conversation-picker-search-materialized-p loaded)))
-                "newest-chunk replay defers the complete historical search corpus")
+                (= (conversation-picker-search-message-count loaded) 2)
+                "newest-chunk replay restores the searchable message count")
                (conversation-append-user-message loaded "later user")
                (setf expected (append expected (list "later user")))
                (test-assert
-                (equal
-                 (conversation-picker-search-index-messages
-                  (conversation-picker-search-read pathname))
-                 expected)
-                "a loaded conversation publishes historical and newly appended text")
+                (null (conversation-picker-search-read pathname))
+                "an append invalidates the published search sidecar")
+               (multiple-value-bind (index scan-count)
+                   (find-with-scan-count)
+                 (test-assert
+                  (and index
+                       (plusp scan-count)
+                       (equal
+                        (conversation-picker-search-index-messages index)
+                        expected))
+                  "a search after appends rebuilds old and new text on demand"))
                (delete-file search-pathname)
                (multiple-value-bind (index scan-count)
                    (find-with-scan-count)
@@ -2226,11 +2229,11 @@ assistant needle"))
                    (find-with-scan-count)
                  (test-assert
                   (and index
-                       (zerop scan-count)
+                       (plusp scan-count)
                        (equal
                         (conversation-picker-search-index-messages index)
                         expected))
-                  "the racing append publishes the complete current corpus"))
+                  "a search after the racing append rebuilds the current corpus"))
                (let ((log-append-function (symbol-function 'log-append))
                      (pre-append-index nil)
                      (append-failed-p nil))
@@ -2303,8 +2306,7 @@ assistant needle"))
                  (test-assert
                   (and (conversation-incomplete-tail-p reloaded)
                        (= (conversation-picker-search-message-count reloaded)
-                          (length expected))
-                       (not (conversation-picker-search-materialized-p reloaded)))
+                          (length expected)))
                   "newest-chunk replay retains cumulative search state before tail repair")
                  (conversation-append-user-message reloaded "after repair")
                  (setf expected (append expected (list "after repair")))
@@ -2312,9 +2314,9 @@ assistant needle"))
                   (and (not (conversation-incomplete-tail-p reloaded))
                        (equal
                         (conversation-picker-search-index-messages
-                         (conversation-picker-search-read pathname))
+                         (conversation-picker-search-find pathname))
                         expected))
-                  "tail repair republishes the complete searchable history"))))
+                  "tail repair leaves the complete history searchable on demand"))))
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
@@ -2338,8 +2340,9 @@ assistant needle"))
     (unwind-protect
          (progn
            (conversation-append-user-message conversation "temporary")
+           (conversation-picker-search-close conversation)
            (test-assert (every #'probe-file sidecars)
-                        "conversation appends publish all picker sidecars")
+                        "appending and closing publish all picker sidecars")
            (snapshot-write (merge-pathnames "image.sexp" image-root)
                            '(:image))
            (snapshot-write (merge-pathnames "task/result.sexp" task-root)

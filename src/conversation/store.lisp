@@ -139,26 +139,11 @@
     :type (integer 0)
     :documentation
     "Accumulated seconds of agent work, excluding gaps before user messages.")
-   (picker-search-messages
-    :initform nil
-    :accessor conversation-picker-search-messages
-    :type list
-    :documentation "Chronological durable user and assistant message text.")
-   (picker-search-messages-tail
-    :initform nil
-    :accessor conversation-picker-search-messages-tail
-    :type list
-    :documentation "The final message-text cons for constant-time search indexing.")
    (picker-search-message-count
     :initform 0
     :accessor conversation-picker-search-message-count
     :type (integer 0)
     :documentation "The count of durable user and assistant search messages.")
-   (picker-search-materialized-p
-    :initform t
-    :accessor conversation-picker-search-materialized-p
-    :type boolean
-    :documentation "Whether retained picker search messages cover the full conversation.")
    (pending-input-identifiers
     :initform nil
     :accessor conversation-durable-pending-input-identifiers
@@ -196,11 +181,7 @@
     (setf (conversation-prompt-cache-key conversation)
           (conversation-identifier conversation)))
   (setf (conversation-input-items-tail conversation)
-        (last (conversation-input-items conversation))
-        (conversation-picker-search-messages-tail conversation)
-        (last (conversation-picker-search-messages conversation))
-        (conversation-picker-search-message-count conversation)
-        (length (conversation-picker-search-messages conversation))))
+        (last (conversation-input-items conversation))))
 
 (defmethod (setf conversation-input-items)
     :around ((items list) (conversation conversation))
@@ -527,16 +508,10 @@ reports an operating-system failure."
 
 (-> conversation--note-picker-search-message (conversation string) string)
 (defun conversation--note-picker-search-message (conversation message)
-  "Retain MESSAGE as the newest preview and append it to the search corpus."
+  "Retain MESSAGE as the newest preview and count it for search staleness."
   (setf (conversation-picker-preview conversation) message)
-  (let ((cell (list message))
-        (tail (conversation-picker-search-messages-tail conversation)))
-    (if tail
-        (setf (rest tail) cell)
-        (setf (conversation-picker-search-messages conversation) cell))
-    (setf (conversation-picker-search-messages-tail conversation) cell)
-    (incf (conversation-picker-search-message-count conversation))
-    message))
+  (incf (conversation-picker-search-message-count conversation))
+  message)
 
 (-> conversation--note-pending-input-identifier (conversation list) null)
 (defun conversation--note-pending-input-identifier (conversation record)
@@ -1020,52 +995,6 @@ reports an operating-system failure."
     index))
 
 
-(-> conversation-picker-search-publish (conversation) null)
-(defun conversation-picker-search-publish (conversation)
-  "Best-effort publish CONVERSATION's durable user/assistant search corpus."
-  (ignore-errors
-    (let ((pathname (conversation-pathname conversation)))
-      (conversation-picker-search-write
-       pathname
-       (make-instance
-        'conversation-picker-search-index
-        :source-revision (conversation-picker-search-revision-read pathname)
-        :message-count (conversation-picker-search-message-count conversation)
-        :messages (copy-list
-                   (conversation-picker-search-messages conversation))))))
-  nil)
-
-(-> conversation--picker-search-materialize (conversation) null)
-(defun conversation--picker-search-materialize (conversation)
-  "Load CONVERSATION's complete picker-search corpus before changing it."
-  (unless (conversation-picker-search-materialized-p conversation)
-    (let ((expected-count
-            (conversation-picker-search-message-count conversation)))
-      (if (zerop expected-count)
-          (setf (conversation-picker-search-messages conversation) nil
-                (conversation-picker-search-messages-tail conversation) nil
-                (conversation-picker-search-materialized-p conversation) t)
-          (let ((index
-                  (conversation-picker-search-find
-                   (conversation-pathname conversation))))
-            (unless (and index
-                         (= expected-count
-                            (conversation-picker-search-index-message-count
-                             index)))
-              (error 'conversation-invariant-error
-                     :message
-                     "Could not reconstruct the complete conversation search index."
-                     :pathname (conversation-pathname conversation)
-                     :sequence (conversation-next-sequence conversation)))
-            (let ((messages
-                    (mapcar #'copy-seq
-                            (conversation-picker-search-index-messages index))))
-              (setf (conversation-picker-search-messages conversation) messages
-                    (conversation-picker-search-messages-tail conversation)
-                    (last messages)
-                    (conversation-picker-search-materialized-p conversation) t))))))
-  nil)
-
 (-> conversation-create
     (configuration &key (:identifier (option string))
                         (:prompt-cache-key (option string))
@@ -1127,8 +1056,6 @@ reports an operating-system failure."
                              :time (get-universal-time)
                              (rest record)))
            (picker-search-message (conversation--record-preview sequenced)))
-      (when picker-search-message
-        (conversation--picker-search-materialize conversation))
       ;; Advance durable sidecar revisions before the log changes so a concurrent
       ;; scan cannot stamp pre-append state with a post-append revision.
       (when picker-search-message
@@ -1170,8 +1097,6 @@ reports an operating-system failure."
         (when (eq (first sequenced) :goal)
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-picker-metadata-publish conversation)
-      (when picker-search-message
-        (conversation-picker-search-publish conversation))
       sequenced)))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
@@ -2280,6 +2205,18 @@ record count."
                   (conversation-picker-search-write pathname index))
                 (conversation-picker-search-read pathname)))))))
 
+(-> conversation-picker-search-close (conversation) null)
+(defun conversation-picker-search-close (conversation)
+  "Best-effort publish CONVERSATION's search sidecar before its release.
+
+Appends only advance the search revision and leave the sidecar stale by
+design; searches rebuild it on demand. Closing pre-warms the sidecar so
+later picker searches read it without scanning the log."
+  (when (conversation-persisted-p conversation)
+    (ignore-errors
+      (conversation-picker-search-find (conversation-pathname conversation))))
+  nil)
+
 
 (-> conversation-picker-search-index-text
     (conversation-picker-search-index)
@@ -2736,8 +2673,6 @@ record count."
                 search-message-count
                 (conversation-picker-preview conversation)
                 (and preview (copy-seq preview))
-                (conversation-picker-search-materialized-p conversation)
-                (zerop search-message-count)
                 (conversation-durable-pending-input-identifiers conversation)
                 (mapcar #'copy-seq pending-identifiers)
                 (conversation-latest-goal-record conversation)
