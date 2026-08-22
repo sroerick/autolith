@@ -207,47 +207,65 @@ pass (context-slice ...) directly instead of wrapping it in a list."
   "Compose the repair message for one contract violation PROBLEM."
   (format nil "~A Reply again in exactly the requested shape." problem))
 
+(-> rlm--note-activity ((option function) string) null)
+(defun rlm--note-activity (callback activity)
+  "Report bounded inference ACTIVITY without affecting the inference outcome."
+  (when callback
+    (handler-case
+        (funcall callback activity)
+      (serious-condition ()
+        nil)))
+  nil)
+
 (-> rlm--run-direct-inference
-    (string string t rlm-budget model-provider conversation)
+    (string string t rlm-budget model-provider conversation
+     &key (:activity-callback (option function)))
     (values t string))
 (defun rlm--run-direct-inference
-    (task request contract budget provider conversation)
+    (task request contract budget provider conversation &key activity-callback)
   "Run a tool-free frame as bare provider calls over CONVERSATION."
   (conversation-append-user-message conversation request)
-  (loop
-    (let ((tranche (rlm-budget-acquire-request budget :task task))
-          (settled-p nil))
-      (multiple-value-bind (value done-p)
-          (unwind-protect
-               (let ((result
-                       (let ((*provider-maximum-output-tokens* tranche))
-                         (provider-stream-turn provider conversation
-                                               :tool-namespaces #()
-                                               :event-callback
-                                               (lambda (event)
-                                                 (declare (ignore event))
-                                                 nil)))))
-                 (rlm--record-response conversation result)
-                 (rlm-budget-settle-output budget tranche
-                                           (conversation--usage-total
-                                            (provider-result-usage result)))
-                 (setf settled-p t)
-                 (multiple-value-bind (value valid-p problem)
-                     (rlm--contract-value contract
-                                          (provider-result-assistant-text
-                                           result))
-                   (if valid-p
-                       (values value t)
-                       (progn
-                         (conversation-append-user-message
-                          conversation
-                          (rlm--repair-request problem))
-                         (values nil nil)))))
-            (unless settled-p
-              (rlm-budget-settle-output budget tranche nil)))
-        (when done-p
-          (return (values value
-                          (conversation-identifier conversation))))))))
+  (loop with request-count = 0
+        do
+           (let ((tranche (rlm-budget-acquire-request budget :task task))
+                 (settled-p nil))
+             (rlm--note-activity
+              activity-callback
+              (format nil "request ~D · ~D calls left"
+                      (incf request-count)
+                      (rlm-budget-remaining-calls budget)))
+             (multiple-value-bind (value done-p)
+                 (unwind-protect
+                      (let ((result
+                              (let ((*provider-maximum-output-tokens* tranche))
+                                (provider-stream-turn provider conversation
+                                                      :tool-namespaces #()
+                                                      :event-callback
+                                                      (lambda (event)
+                                                        (declare (ignore event))
+                                                        nil)))))
+                        (rlm--record-response conversation result)
+                        (rlm-budget-settle-output
+                         budget tranche
+                         (conversation--usage-total
+                          (provider-result-usage result)))
+                        (setf settled-p t)
+                        (multiple-value-bind (value valid-p problem)
+                            (rlm--contract-value
+                             contract
+                             (provider-result-assistant-text result))
+                          (if valid-p
+                              (values value t)
+                              (progn
+                                (conversation-append-user-message
+                                 conversation
+                                 (rlm--repair-request problem))
+                                (values nil nil)))))
+                   (unless settled-p
+                     (rlm-budget-settle-output budget tranche nil)))
+               (when done-p
+                 (return (values value
+                                 (conversation-identifier conversation))))))))
 
 (defclass rlm-frame-agent (agent)
   ()
@@ -260,28 +278,40 @@ Compaction would also call the provider outside the frame budget's
 request accounting, so disabling it keeps the budget invariant exact."
   nil)
 
-(-> rlm--frame-budget-callback (rlm-budget string) (values function function))
-(defun rlm--frame-budget-callback (budget task)
-  "Return an observer status callback charging BUDGET per provider request.
+(-> rlm--frame-budget-callback
+    (rlm-budget string &key (:activity-callback (option function)))
+    (values function function))
+(defun rlm--frame-budget-callback (budget task &key activity-callback)
+  "Return an observer callback charging BUDGET and reporting provider requests.
 
-Each request atomically reserves one call and an output tranche
-before it starts, so an exhausted subtree stops the frame's agent
-loop mid-turn and concurrent frames can never overspend the pool.
-The reserved tranche is installed as the request's provider output
-ceiling through the caller's dynamic binding. The second value
-flushes an unsettled tranche after an aborted turn."
-  (let ((tranche nil))
+Each request atomically reserves one call and an output tranche before it
+starts, so an exhausted subtree stops the frame's agent loop mid-turn and
+concurrent frames can never overspend the pool. The reserved tranche is
+installed as the request's provider output ceiling through the caller's
+dynamic binding. The second value flushes an unsettled tranche after an
+aborted turn."
+  (let ((tranche nil)
+        (request-count 0))
     (values
      (lambda (status details)
        (case status
          (:provider-request-started
           (setf tranche (rlm-budget-acquire-request budget :task task)
-                *provider-maximum-output-tokens* tranche))
+                *provider-maximum-output-tokens* tranche)
+          (rlm--note-activity
+           activity-callback
+           (format nil "request ~D · ~D calls left"
+                   (incf request-count)
+                   (rlm-budget-remaining-calls budget))))
          (:provider-request-completed
           (when tranche
             (rlm-budget-settle-output budget (shiftf tranche nil)
                                       (conversation--usage-total
-                                       (getf details ':usage))))))
+                                       (getf details ':usage)))))
+         (:tool-call-progress
+          (let ((activity (getf details ':activity)))
+            (when (non-empty-string-p activity)
+              (rlm--note-activity activity-callback activity)))))
        nil)
      (lambda ()
        (when tranche
@@ -290,14 +320,15 @@ flushes an unsettled tranche after an aborted turn."
 
 (-> rlm--run-framed-inference
     (string string t rlm-budget model-provider configuration conversation
-     tool-registry)
+     tool-registry &key (:activity-callback (option function)))
     (values t string))
 (defun rlm--run-framed-inference
     (task request contract budget provider configuration conversation
-     source-registry)
+     source-registry &key activity-callback)
   "Run a read-capability frame as restricted agent turns over CONVERSATION."
   (multiple-value-bind (status-callback flush-tranche)
-      (rlm--frame-budget-callback budget task)
+      (rlm--frame-budget-callback budget task
+                                  :activity-callback activity-callback)
     (let ((agent
             (make-instance 'rlm-frame-agent
                            :configuration configuration
@@ -323,12 +354,12 @@ flushes an unsettled tranche after an aborted turn."
                                             :tool-allowlist allowlist
                                             :tool-restriction-p t)
                     (funcall flush-tranche)))))
-          (multiple-value-bind (value valid-p problem)
-              (rlm--contract-value contract
-                                   (provider-result-assistant-text result))
-            (when valid-p
-              (return (values value (conversation-identifier conversation))))
-            (setf request (rlm--repair-request problem))))))))
+         (multiple-value-bind (value valid-p problem)
+             (rlm--contract-value contract
+                                  (provider-result-assistant-text result))
+           (when valid-p
+             (return (values value (conversation-identifier conversation))))
+           (setf request (rlm--repair-request problem))))))))
 
 (-> infer
     (string &key (:context t)
@@ -339,11 +370,12 @@ flushes an unsettled tranche after an aborted turn."
                  (:effort (option string))
                  (:provider (option model-provider))
                  (:configuration (option configuration))
-                 (:source-registry (option tool-registry)))
+                 (:source-registry (option tool-registry))
+                 (:activity-callback (option function)))
     (values t string))
 (defun infer
     (task &key context (contract ':text) budget capabilities model effort
-               provider configuration source-registry)
+               provider configuration source-registry activity-callback)
   "Run one bounded inference frame over CONTEXT and return TASK's value.
 
 CONTEXT is a list of view designators materialized once for the frame.
@@ -351,10 +383,11 @@ CONTRACT is ':TEXT or a task output schema; schema answers return
 portable tagged native data. CAPABILITIES is NIL for a pure call over
 the views, or ':READ to let the frame use workspace resource reads,
 content search, and nested rlm.infer from SOURCE-REGISTRY's tools.
-The frame runs on a private conversation persisted under the inference
-trace root and never touches the caller's conversation; the second
-value is the trace conversation identifier. Contract violations are
-repaired by re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
+ACTIVITY-CALLBACK receives compact live request descriptions. The frame
+runs on a private conversation persisted under the inference trace root
+and never touches the caller's conversation; the second value is the
+trace conversation identifier. Contract violations are repaired by
+re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "An inference frame requires a non-empty task."))
@@ -377,6 +410,8 @@ repaired by re-asking until BUDGET signals RLM-BUDGET-EXHAUSTED."
       (if (eq capabilities ':read)
           (rlm--run-framed-inference
            task request contract budget provider configuration conversation
-           (or source-registry (rlm--environment-registry)))
+           (or source-registry (rlm--environment-registry))
+           :activity-callback activity-callback)
           (rlm--run-direct-inference
-           task request contract budget provider conversation)))))
+           task request contract budget provider conversation
+           :activity-callback activity-callback)))))

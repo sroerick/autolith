@@ -18,13 +18,22 @@
 
 (-> rlm-map--run-item
     (list t t rlm-budget (option keyword) model-provider configuration
-     (option tool-registry))
+     (option tool-registry)
+     &key (:index (integer 0)) (:total (integer 1))
+          (:activity-callback (option function)))
     list)
 (defun rlm-map--run-item
     (item context contract budget capabilities provider configuration
-     source-registry)
+     source-registry &key index total activity-callback)
   "Run one map ITEM's frame and return its result or captured failure."
-  (let ((task (getf item ':task)))
+  (let* ((task (getf item ':task))
+         (item-activity-callback
+           (and activity-callback
+                (lambda (activity)
+                  (rlm--note-activity
+                   activity-callback
+                   (format nil "frame ~D/~D · ~A"
+                           (1+ index) total activity))))))
     (handler-case
         (multiple-value-bind (value trace-identifier)
             (infer task
@@ -36,7 +45,8 @@
                    :capabilities capabilities
                    :provider provider
                    :configuration configuration
-                   :source-registry source-registry)
+                   :source-registry source-registry
+                   :activity-callback item-activity-callback)
           (list ':task task ':value value ':trace trace-identifier))
       (error (condition)
         (list ':task task ':error (format nil "~A" condition))))))
@@ -49,22 +59,27 @@
                (:provider (option model-provider))
                (:configuration (option configuration))
                (:source-registry (option tool-registry))
-               (:concurrency (integer 1)))
+               (:concurrency (integer 1))
+               (:activity-callback (option function)))
     list)
 (defun rlm-map
     (tasks &key context contract budget capabilities provider configuration
-                source-registry (concurrency *rlm-map-default-concurrency*))
+                source-registry (concurrency *rlm-map-default-concurrency*)
+                activity-callback)
   "Fan TASKS out as inference frames sharing one budget subtree.
 
-TASKS elements are task strings or (:task ... :context ...) plists
-whose views are appended to the shared CONTEXT. Results keep TASKS'
-order; each is (:task ... :value ... :trace ...) for a completed
-frame or (:task ... :error ...) for one that failed, so exhausting
-the shared BUDGET fails the remaining frames without discarding the
-finished ones."
+TASKS elements are task strings or (:task ... :context ...) plists whose views
+are appended to the shared CONTEXT. ACTIVITY-CALLBACK receives compact live
+frame and request descriptions. Results keep TASKS' order; each is
+(:task ... :value ... :trace ...) for a completed frame or
+(:task ... :error ...) for one that failed, so exhausting the shared BUDGET
+fails the remaining frames without discarding the finished ones."
   (let ((items (map 'vector #'rlm-map--normalize-task tasks)))
     (when (zerop (length items))
       (return-from rlm-map nil))
+    (rlm--note-activity
+     activity-callback
+     (format nil "starting ~D frame~:P" (length items)))
     (multiple-value-bind (environment-provider environment-configuration)
         (if (and provider configuration)
             (values provider configuration)
@@ -93,8 +108,10 @@ finished ones."
                      (setf (aref results index)
                            (rlm-map--run-item
                             (aref items index) context contract budget
-                            capabilities provider configuration
-                            source-registry))))))
+                            capabilities provider configuration source-registry
+                            :index index
+                            :total (length items)
+                            :activity-callback activity-callback))))))
           (if (= worker-count 1)
               (work)
               (mapc #'join-thread

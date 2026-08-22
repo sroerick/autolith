@@ -2927,6 +2927,10 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (application-set-activity
              application
              (format nil "running ~A" (getf details :tool))))
+           (:tool-call-progress
+            (let ((activity (getf details :activity)))
+              (when (non-empty-string-p activity)
+                (application-set-activity application activity))))
            (:tool-call-completed
             (application-render-records application)
             (when (string= (or (getf details :tool) "")

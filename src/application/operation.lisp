@@ -858,6 +858,14 @@ serialized application boundary."
    :registry (application-tool-registry application)
    :agent (and (slot-boundp application 'agent)
                (application-agent application))
+   :observer
+   (callback-agent-observer-create
+    :status-callback
+    (lambda (status details)
+      (when (eq status ':tool-call-progress)
+        (let ((activity (getf details :activity)))
+          (when (non-empty-string-p activity)
+            (application-set-local-activity application activity))))))
    :command-authorization-function
    (lambda (command directory)
      (application-authorize-command application command directory))

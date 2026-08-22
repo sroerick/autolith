@@ -468,6 +468,19 @@ filesystem paths are only a programmatic Lisp designator."
                  arguments "depth" depth
                  0 *rlm-tool-maximum-depth-budget*)))))
 
+(-> rlm--tool-activity-callback (rlm-frame-tool tool-context) (option function))
+(defun rlm--tool-activity-callback (tool context)
+  "Return a callback publishing TOOL's compact live inference activity."
+  (let ((observer (tool-context-observer context))
+        (tool-name (tool-canonical-name tool)))
+    (when observer
+      (lambda (activity)
+        (agent-observer-status
+         observer
+         ':tool-call-progress
+         (list ':tool tool-name
+               ':activity (format nil "~A · ~A" tool-name activity)))))))
+
 (defmethod tool-execute
     ((tool rlm-infer-tool) (context tool-context) (arguments hash-table))
   "Run one inference frame and return its value, trace, and remaining budget."
@@ -486,7 +499,9 @@ filesystem paths are only a programmatic Lisp designator."
                             (gethash "capabilities" arguments)))
              (budget (rlm--tool-budget tool arguments task))
              (provider (or (rlm-frame-tool--provider tool)
-                           (rlm--environment))))
+                           (rlm--environment)))
+             (activity-callback
+               (rlm--tool-activity-callback tool context)))
         (multiple-value-bind (value trace-identifier)
             (infer task
                    :context views
@@ -495,7 +510,8 @@ filesystem paths are only a programmatic Lisp designator."
                    :capabilities capabilities
                    :provider provider
                    :configuration (tool-context-configuration context)
-                   :source-registry (tool-context-registry context))
+                   :source-registry (tool-context-registry context)
+                   :activity-callback activity-callback)
           (tool-success
            (rlm--result-sexp
             (list ':value value
@@ -553,13 +569,16 @@ filesystem paths are only a programmatic Lisp designator."
                                        :tokens *rlm-complete-token-budget*
                                        :depth *rlm-complete-depth-budget*))
              (provider (or (rlm-frame-tool--provider tool)
-                           (rlm--environment))))
+                           (rlm--environment)))
+             (activity-callback
+               (rlm--tool-activity-callback tool context)))
         (multiple-value-bind (value trace-identifier)
             (rlm-complete task
                           :context object
                           :budget budget
                           :provider provider
-                          :configuration (tool-context-configuration context))
+                          :configuration (tool-context-configuration context)
+                          :activity-callback activity-callback)
           (let* ((printed (rlm--result-sexp value))
                  (value-fields
                    ;; A large final value is externalized as a stored context
@@ -639,6 +658,8 @@ filesystem paths are only a programmatic Lisp designator."
                            arguments "concurrency"
                            *rlm-map-default-concurrency*
                            1 *rlm-map-maximum-concurrency*))
+             (activity-callback
+               (rlm--tool-activity-callback tool context))
              (results
                (rlm-map tasks
                         :contract contract
@@ -647,7 +668,8 @@ filesystem paths are only a programmatic Lisp designator."
                         :provider provider
                         :configuration (tool-context-configuration context)
                         :source-registry (tool-context-registry context)
-                        :concurrency concurrency)))
+                        :concurrency concurrency
+                        :activity-callback activity-callback)))
         (tool-success
          (rlm--result-sexp
           (list ':results results

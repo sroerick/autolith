@@ -42,6 +42,22 @@
     :reader rlm-endpoint--ledger
     :type (option function)
     :documentation "An optional function recording one plist per served operation.")
+   (activity-callback
+    :initarg :activity-callback
+    :initform nil
+    :reader rlm-endpoint--activity-callback
+    :type (option function)
+    :documentation "An optional function receiving compact proxied activity.")
+   (activity-lock
+    :initform (make-recursive-lock "Autolith inference endpoint activity")
+    :reader rlm-endpoint--activity-lock
+    :type t
+    :documentation "The lock serializing activity publication with revocation.")
+   (activity-enabled-p
+    :initform t
+    :accessor rlm-endpoint--activity-enabled-p
+    :type boolean
+    :documentation "True while proxied operations may publish activity.")
    (lock
     :initform (make-lock "Autolith inference endpoint")
     :reader rlm-endpoint--lock
@@ -141,12 +157,28 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                   "~&The inference run ledger failed: ~A~%" condition)))))
   nil)
 
+(-> rlm-endpoint--operation-activity-callback
+    (rlm-endpoint keyword)
+    (option function))
+(defun rlm-endpoint--operation-activity-callback (endpoint operation)
+  "Return ENDPOINT's revocable activity callback for proxied OPERATION."
+  (let ((callback (rlm-endpoint--activity-callback endpoint)))
+    (when callback
+      (lambda (activity)
+        (with-lock-held ((rlm-endpoint--activity-lock endpoint))
+          (when (rlm-endpoint--activity-enabled-p endpoint)
+            (rlm--note-activity
+             callback
+             (format nil "~(~A~) · ~A" operation activity))))))))
+
 (-> rlm-endpoint--dispatch (rlm-endpoint keyword list) list)
 (defun rlm-endpoint--dispatch (endpoint operation arguments)
   "Serve one authenticated environment OPERATION and return its response."
   (let ((provider (rlm-endpoint--provider endpoint))
         (configuration (rlm-endpoint--configuration endpoint))
-        (budget (rlm-endpoint--budget endpoint)))
+        (budget (rlm-endpoint--budget endpoint))
+        (activity-callback
+          (rlm-endpoint--operation-activity-callback endpoint operation)))
     (rlm-endpoint--call-admitted
      endpoint
      (member operation '(:infer :map))
@@ -155,64 +187,66 @@ leaves a machine-readable invocation tree instead of orphaned frames."
          (:infer
           (let ((task (getf arguments ':task)))
             (unless (and (stringp task) (non-empty-string-p task))
-           (error 'rlm-inference-error
-                  :message "An environment infer call requires task text."))
-         (multiple-value-bind (value trace-identifier)
-             (infer task
-                    :context (getf arguments ':context)
-                    :contract (or (getf arguments ':contract) ':text)
-                    :budget (rlm-budget-descend budget :task task)
-                    :provider provider
-                    :configuration configuration)
-           (rlm-endpoint--record endpoint
-                                 (list :operation :infer
-                                       :task task
-                                       :child-trace trace-identifier))
-           (list :rlm-response :status :ok
-                 :value value :trace trace-identifier))))
-      (:map
-       (let ((tasks (getf arguments ':tasks)))
-         (unless (and (listp tasks)
-                      (plusp (length tasks))
-                      (<= (length tasks) *rlm-endpoint-map-maximum-tasks*))
-           (error 'rlm-inference-error
-                  :message
-                  (format nil "An environment map call fans out 1 to ~D tasks."
-                          *rlm-endpoint-map-maximum-tasks*)))
-         (let ((results
-                 (rlm-map tasks
-                          :contract (or (getf arguments ':contract) ':text)
-                          :budget (rlm-budget-descend budget :task "rlm-map")
-                          :provider provider
-                          :configuration configuration
-                          :concurrency
-                          (let ((requested (getf arguments ':concurrency)))
-                            (if (and (integerp requested) (plusp requested))
-                                requested
-                                *rlm-map-default-concurrency*)))))
-           (rlm-endpoint--record
-            endpoint
-            (list :operation :map
-                  :children
-                  (loop for result in results
-                        collect (append
-                                 (list :task (getf result ':task))
-                                 (if (getf result ':error)
-                                     (list :error (getf result ':error))
-                                     (list :child-trace
-                                           (getf result ':trace)))))))
-           (list :rlm-response :status :ok :value results))))
-      (:finish
-       (with-lock-held ((rlm-endpoint--lock endpoint))
-         ;; The first finish wins, atomically with the admission check, so
-         ;; no operation can start after the terminal state commits.
-         (when (rlm-endpoint--final-p endpoint)
-           (error 'rlm-inference-error
-                  :message "The run already recorded its final value."))
-         (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
-               (rlm-endpoint--final-p endpoint) t))
-       (rlm-endpoint--record endpoint (list :operation :finish))
-       (list :rlm-response :status :ok :value ':finished)))))))
+              (error 'rlm-inference-error
+                     :message "An environment infer call requires task text."))
+            (multiple-value-bind (value trace-identifier)
+                (infer task
+                       :context (getf arguments ':context)
+                       :contract (or (getf arguments ':contract) ':text)
+                       :budget (rlm-budget-descend budget :task task)
+                       :provider provider
+                       :configuration configuration
+                       :activity-callback activity-callback)
+              (rlm-endpoint--record endpoint
+                                    (list :operation :infer
+                                          :task task
+                                          :child-trace trace-identifier))
+              (list :rlm-response :status :ok
+                    :value value :trace trace-identifier))))
+         (:map
+          (let ((tasks (getf arguments ':tasks)))
+            (unless (and (listp tasks)
+                         (plusp (length tasks))
+                         (<= (length tasks) *rlm-endpoint-map-maximum-tasks*))
+              (error 'rlm-inference-error
+                     :message
+                     (format nil "An environment map call fans out 1 to ~D tasks."
+                             *rlm-endpoint-map-maximum-tasks*)))
+            (let ((results
+                    (rlm-map tasks
+                             :contract (or (getf arguments ':contract) ':text)
+                             :budget (rlm-budget-descend budget :task "rlm-map")
+                             :provider provider
+                             :configuration configuration
+                             :concurrency
+                             (let ((requested (getf arguments ':concurrency)))
+                               (if (and (integerp requested) (plusp requested))
+                                   requested
+                                   *rlm-map-default-concurrency*))
+                             :activity-callback activity-callback)))
+              (rlm-endpoint--record
+               endpoint
+               (list :operation :map
+                     :children
+                     (loop for result in results
+                           collect (append
+                                    (list :task (getf result ':task))
+                                    (if (getf result ':error)
+                                        (list :error (getf result ':error))
+                                        (list :child-trace
+                                              (getf result ':trace)))))))
+              (list :rlm-response :status :ok :value results))))
+         (:finish
+          (with-lock-held ((rlm-endpoint--lock endpoint))
+            ;; The first finish wins, atomically with the admission check, so
+            ;; no operation can start after the terminal state commits.
+            (when (rlm-endpoint--final-p endpoint)
+              (error 'rlm-inference-error
+                     :message "The run already recorded its final value."))
+            (setf (rlm-endpoint--final-value endpoint) (getf arguments ':value)
+                  (rlm-endpoint--final-p endpoint) t))
+          (rlm-endpoint--record endpoint (list :operation :finish))
+          (list :rlm-response :status :ok :value ':finished)))))))
 
 (-> rlm-endpoint--handle-client (rlm-endpoint sb-bsd-sockets:socket) null)
 (defun rlm-endpoint--handle-client (endpoint socket)
@@ -278,9 +312,11 @@ leaves a machine-readable invocation tree instead of orphaned frames."
     (&key (:provider model-provider)
           (:configuration configuration)
           (:budget rlm-budget)
-          (:ledger (option function)))
+          (:ledger (option function))
+          (:activity-callback (option function)))
     rlm-endpoint)
-(defun rlm-endpoint-start (&key provider configuration budget ledger)
+(defun rlm-endpoint-start
+    (&key provider configuration budget ledger activity-callback)
   "Start a loopback endpoint proxying environment calls into BUDGET."
   (let ((listener (make-instance 'sb-bsd-sockets:inet-socket
                                  :type ':stream
@@ -302,7 +338,8 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                                             :provider provider
                                             :configuration configuration
                                             :budget budget
-                                            :ledger ledger)))
+                                            :ledger ledger
+                                            :activity-callback activity-callback)))
                (setf (rlm-endpoint--accept-thread endpoint)
                      (make-thread (lambda ()
                                     (rlm-endpoint--serve endpoint))
@@ -333,6 +370,8 @@ never wakes is abandoned rather than deadlocking the caller, holding
 nothing but a dead listener until process exit."
   (with-lock-held ((rlm-endpoint--lock endpoint))
     (setf (rlm-endpoint--stopping-p endpoint) t))
+  (with-lock-held ((rlm-endpoint--activity-lock endpoint))
+    (setf (rlm-endpoint--activity-enabled-p endpoint) nil))
   (let ((thread (rlm-endpoint--accept-thread endpoint)))
     (when thread
       (loop repeat 3

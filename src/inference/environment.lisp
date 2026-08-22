@@ -190,19 +190,21 @@ Decompose the task programmatically: slice or partition the context, fan sub-inf
                  (:model (option string))
                  (:effort (option string))
                  (:provider (option model-provider))
-                 (:configuration (option configuration)))
+                 (:configuration (option configuration))
+                 (:activity-callback (option function)))
     (values t string))
 (defun rlm-complete
-    (task &key context budget model effort provider configuration)
+    (task &key context budget model effort provider configuration
+               activity-callback)
   "Run TASK as the root of a recursive language model over CONTEXT.
 
-CONTEXT is one context designator interned as an immutable
-content-addressed object; the root model receives only its metadata
-and drives a dedicated Lisp environment where the content, every
-intermediate value, and the recursion live. Sub-inferences proxy back
-to the host and descend BUDGET's subtree. Returns the value the
-environment recorded through finish plus the root trace conversation
-identifier."
+CONTEXT is one context designator interned as an immutable content-addressed
+object; the root model receives only its metadata and drives a dedicated Lisp
+environment where the content, every intermediate value, and the recursion
+live. Sub-inferences proxy back to the host and descend BUDGET's subtree.
+ACTIVITY-CALLBACK receives compact environment and request descriptions.
+Returns the value the environment recorded through finish plus the root trace
+conversation identifier."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "A root completion requires a non-empty task."))
@@ -227,10 +229,12 @@ identifier."
                       (lambda (record)
                         (conversation-append-provider-metadata
                          conversation
-                         (list :rlm-call record)))))
+                         (list :rlm-call record)))
+                      :activity-callback activity-callback))
            (worker nil))
       (unwind-protect
            (progn
+             (rlm--note-activity activity-callback "starting environment")
              (setf worker (lisp-worker-create configuration
                                               :name "rlm-environment"))
              (lisp-worker-start worker)
@@ -246,7 +250,8 @@ identifier."
                           (format nil "The environment prelude failed: ~A"
                                   (getf (rest response) ':message))))))
              (multiple-value-bind (status-callback flush-tranche)
-                 (rlm--frame-budget-callback budget task)
+                 (rlm--frame-budget-callback
+                  budget task :activity-callback activity-callback)
                (let* ((registry (make-instance 'tool-registry))
                       (agent
                         (make-instance 'rlm-root-agent
@@ -274,14 +279,14 @@ identifier."
                                                (list "env.eval")
                                                :tool-restriction-p t)
                        (funcall flush-tranche)))
-                 (multiple-value-bind (value final-p)
-                     (rlm-endpoint-final endpoint)
-                   (when final-p
-                     (return (values value
-                                     (conversation-identifier
-                                      conversation)))))
-                 (setf request
-                       "No final value is recorded yet. Continue in the environment and call (finish value) once the answer is complete.")))))
+                   (multiple-value-bind (value final-p)
+                       (rlm-endpoint-final endpoint)
+                     (when final-p
+                       (return (values value
+                                       (conversation-identifier
+                                        conversation)))))
+                   (setf request
+                         "No final value is recorded yet. Continue in the environment and call (finish value) once the answer is complete.")))))
         (when worker
           (ignore-errors (lisp-worker-stop worker)))
         (rlm-endpoint-stop endpoint)))))

@@ -55,6 +55,21 @@
     (rlm-budget-settle-output budget second-tranche nil)
     (test-assert (zerop (rlm-budget-remaining-tokens budget))
                  "a later refund does not erase an earlier token overdraft"))
+  (let ((budget (rlm-budget-create :calls 2 :tokens 100 :depth 1))
+        (activities nil))
+    (multiple-value-bind (status-callback flush-tranche)
+        (rlm--frame-budget-callback
+         budget "nested activity"
+         :activity-callback
+         (lambda (activity)
+           (push activity activities)))
+      (funcall status-callback
+               ':tool-call-progress
+               (list ':activity "rlm.infer · request 1 · 1 call left"))
+      (funcall flush-tranche)
+      (test-assert
+       (equal activities '("rlm.infer · request 1 · 1 call left"))
+       "framed inference forwards nested RLM tool progress")))
   nil)
 
 (-> test-rlm-budget-contention () null)
@@ -200,7 +215,8 @@
              (list (rlm-inference-test-result "resp-1" "not json" 100)
                    (rlm-inference-test-result
                     "resp-2" "{\"answer\": \"42\"}" 150))))
-          (budget (rlm-budget-create :calls 4 :tokens 1000 :depth 1)))
+          (budget (rlm-budget-create :calls 4 :tokens 1000 :depth 1))
+          (activities nil))
       (multiple-value-bind (value trace-identifier)
           (infer "Answer the question."
                  :context (list "the question is six times seven")
@@ -209,13 +225,21 @@
                              :required ("answer"))
                  :budget budget
                  :provider provider
-                 :configuration configuration)
+                 :configuration configuration
+                 :activity-callback
+                 (lambda (activity)
+                   (push activity activities)))
         (test-assert (equal value '(:object ("answer" "42")))
                      "schema contracts return portable tagged native data")
         (test-assert (= (rlm-budget-remaining-calls budget) 2)
                      "the repair round charges a second call")
         (test-assert (= (rlm-budget-remaining-tokens budget) 750)
                      "reported usage drains the token pool")
+        (test-assert
+         (equal (reverse activities)
+                '("request 1 · 3 calls left"
+                  "request 2 · 2 calls left"))
+         "direct inference reports each provider request and remaining calls")
         (test-assert (equal (reverse
                              (rlm-inference-test-provider-output-limits
                               provider))
@@ -227,6 +251,30 @@
                  (configuration-inference-root configuration))))
           (test-assert (not (null (conversation-storage-pathnames identity)))
                        "the frame persists its trace conversation"))))
+    (let ((provider
+            (make-instance
+             'rlm-inference-test-provider
+             :results (list (rlm-inference-test-result "resp-1" "plain" 10))))
+          (budget (rlm-budget-create :calls 2 :tokens 100 :depth 1))
+          (callback-count 0))
+      (test-assert
+       (string=
+        (infer "Ignore activity callback failures."
+               :budget budget
+               :provider provider
+               :configuration configuration
+               :activity-callback
+               (lambda (activity)
+                 (declare (ignore activity))
+                 (incf callback-count)
+                 (error "synthetic activity callback failure")))
+        "plain")
+       "activity callback failures do not abort direct inference")
+      (test-assert
+       (and (= callback-count 1)
+            (= (rlm-budget-remaining-calls budget) 1)
+            (= (rlm-budget-remaining-tokens budget) 90))
+       "activity callback failures do not alter inference budget accounting"))
     (let ((provider
             (make-instance
              'rlm-inference-test-provider
@@ -533,6 +581,8 @@
   (let* ((configuration (test-configuration))
          (provider (make-instance 'rlm-map-test-provider))
          (budget (rlm-budget-create :calls 10 :tokens 1000 :depth 1))
+         (activity-lock (make-lock "Autolith inference activity test"))
+         (activities nil)
          (results
            (rlm-map (list "alpha"
                           (list ':task "beta"
@@ -542,7 +592,11 @@
                     :budget budget
                     :provider provider
                     :configuration configuration
-                    :concurrency 3)))
+                    :concurrency 3
+                    :activity-callback
+                    (lambda (activity)
+                      (with-lock-held (activity-lock)
+                        (push activity activities))))))
     (test-assert (equal (mapcar (lambda (result) (getf result ':task))
                                 results)
                         '("alpha" "beta" "gamma explode" "delta"))
@@ -563,7 +617,20 @@
     (test-assert (= (rlm-budget-remaining-calls budget) 6)
                  "every attempted request holds its reservation, failures included")
     (test-assert (= (rlm-budget-remaining-tokens budget) 970)
-                 "the three completed frames drained the shared token pool"))
+                 "the three completed frames drained the shared token pool")
+    (let ((activities
+            (with-lock-held (activity-lock)
+              (copy-list activities))))
+      (test-assert
+       (member "starting 4 frames" activities :test #'string=)
+       "map activity reports the fan width before workers start")
+      (test-assert
+       (some (lambda (activity)
+               (and (search "frame " activity)
+                    (search "request 1" activity)
+                    (search "calls left" activity)))
+             activities)
+       "map activity reports live frame request progress")))
   (let* ((configuration (test-configuration))
          (provider (make-instance 'rlm-map-test-provider))
          (budget (rlm-budget-create :calls 2 :tokens 1000 :depth 1))
@@ -596,11 +663,21 @@
   (let* ((configuration (test-configuration))
          (conversation (conversation-create configuration
                                             :identifier "rlm-map-tool-test"))
+         (activity-lock (make-lock "Autolith inference tool activity test"))
+         (activities nil)
+         (observer
+           (callback-agent-observer-create
+            :status-callback
+            (lambda (status details)
+              (when (eq status ':tool-call-progress)
+                (with-lock-held (activity-lock)
+                  (push (getf details :activity) activities))))))
          (context (make-instance 'tool-context
                                  :configuration configuration
                                  :worker nil
                                  :conversation conversation
-                                 :registry (make-instance 'tool-registry))))
+                                 :registry (make-instance 'tool-registry)
+                                 :observer observer)))
     (let* ((provider (make-instance 'rlm-map-test-provider))
            (tool (rlm-map-tool-create :provider provider))
            (result
@@ -624,6 +701,16 @@
                           (search ":RESULTS" content)
                           (search ":TRACE" content))
                      "rlm.map reports ordered values with traces")))
+      (let ((activities
+              (with-lock-held (activity-lock)
+                (copy-list activities))))
+        (test-assert
+         (some (lambda (activity)
+                 (and (stringp activity)
+                      (search "rlm.map · " activity)
+                      (search "frame" activity)))
+               activities)
+         "rlm.map publishes compact live activity through its tool observer"))
     (let* ((provider (make-instance 'rlm-map-test-provider))
            (tool (rlm-map-tool-create :provider provider))
            (result
@@ -996,6 +1083,29 @@
                                 (getf infer-record ':calls-remaining)))
                           "ledger records link child traces and budget state")))
       (rlm-endpoint-stop endpoint)))
+  (let* ((configuration (test-configuration))
+         (activities nil)
+         (endpoint
+           (rlm-endpoint-start
+            :provider (make-instance 'rlm-map-test-provider)
+            :configuration configuration
+            :budget (rlm-budget-create :calls 1 :tokens 100 :depth 1)
+            :activity-callback
+            (lambda (activity)
+              (push activity activities))))
+         (retained-callback
+           (rlm-endpoint--operation-activity-callback endpoint ':infer))
+         (stopped-p nil))
+    (unwind-protect
+         (progn
+           (rlm-endpoint-stop endpoint)
+           (setf stopped-p t)
+           (funcall retained-callback "request 2 · 0 calls left")
+           (test-assert
+            (null activities)
+            "a retained handler callback cannot publish after endpoint shutdown"))
+      (unless stopped-p
+        (rlm-endpoint-stop endpoint))))
   nil)
 
 (defclass rlm-litmus-provider (model-provider)
@@ -1117,9 +1227,10 @@
                           :name "eval"
                           :arguments (json-encode
                                       (json-object "form" code))))))))
-         ;; Exactly one root request plus four sub-inferences: a finish on
-         ;; the last remaining call must end the run without another request.
-         (budget (rlm-budget-create :calls 5 :tokens 100000 :depth 2)))
+          ;; Exactly one root request plus four sub-inferences: a finish on
+          ;; the last remaining call must end the run without another request.
+          (budget (rlm-budget-create :calls 5 :tokens 100000 :depth 2))
+          (activities nil))
     (test-assert (= (length corpus) 160000)
                  "the corpus is four exact provider-window-sized blocks")
     (test-assert (> (length corpus) window-limit)
@@ -1131,7 +1242,10 @@
                       :context (list ':label "corpus" ':content corpus)
                       :budget budget
                       :provider provider
-                      :configuration configuration)
+                      :configuration configuration
+                      :activity-callback
+                      (lambda (activity)
+                        (push activity activities)))
       (test-assert (eql value expected)
                    "the recursive run returns the exact marker count")
       (test-assert (<= (rlm-litmus-provider-largest-request provider)
@@ -1141,6 +1255,11 @@
                    "the run used four sub-inferences and one root request")
       (test-assert (zerop (rlm-budget-remaining-calls budget))
                    "a finish on the last call ends the run without failing")
+      (test-assert
+       (some (lambda (activity)
+               (search "infer · request" activity))
+             activities)
+       "root completion reports proxied sub-inference request progress")
       (let ((trace (rlm--trace-content configuration trace-identifier)))
         (test-assert (and trace (not (search "lorem" trace)))
                      "corpus content never entered the root conversation")
@@ -1205,11 +1324,19 @@
   (let* ((configuration (test-configuration))
          (conversation (conversation-create configuration
                                             :identifier "rlm-complete-tool"))
+         (activities nil)
+         (observer
+           (callback-agent-observer-create
+            :status-callback
+            (lambda (status details)
+              (when (eq status ':tool-call-progress)
+                (push (getf details :activity) activities)))))
          (context (make-instance 'tool-context
                                  :configuration configuration
                                  :worker nil
                                  :conversation conversation
-                                 :registry (make-instance 'tool-registry)))
+                                 :registry (make-instance 'tool-registry)
+                                 :observer observer))
          (provider
            (make-instance
             'rlm-litmus-provider
@@ -1241,6 +1368,12 @@
     (test-assert (and (search ":VALUE 200" (tool-result-content result))
                       (search ":TRACE" (tool-result-content result)))
                  "rlm.complete reports the recorded value and root trace")
+    (test-assert
+     (and (member "rlm.complete · starting environment"
+                  activities :test #'string=)
+          (member "rlm.complete · request 1 · 5 calls left"
+                  activities :test #'string=))
+     "rlm.complete publishes environment startup and root request progress")
     (test-assert (not (tool-result-success-p
                        (tool-execute tool context
                                      (json-object "task" "No context."))))

@@ -4877,6 +4877,16 @@
                        (null (terminal-ui-preview-rows
                               (application-ui application))))
                 "tool-only provider steps finalize one trace before the tool call")))
+            (funcall send-status :tool-call-started (list :tool "rlm.map"))
+            (funcall send-status
+                     :tool-call-progress
+                     (list :tool "rlm.map"
+                           :activity
+                           "rlm.map · frame 2/4 · request 1 · 6 calls left"))
+            (test-assert
+             (string= (terminal-ui-status (application-ui application))
+                      "rlm.map · frame 2/4 · request 1 · 6 calls left")
+             "tool progress replaces the generic live activity with a compact hint")
            (conversation-append-tool-result
             conversation
             "call-live"
