@@ -60,8 +60,8 @@ Autolith supports Linux x86-64 and macOS arm64 via standalone binary releases
 and Nix.
 
 The curl-into-sh installer installs or updates the packaged release for your
-platform (Linux x86-64 and macOS arm64). Inspect the
-[[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell, or trust us with your life.
+platform. Inspect the [[https://sh.lambda-symbolics.com/autolith][installer script]] before piping it into a shell, or trust
+us with your life, hehe.
 
 #+BEGIN_SRC sh
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
