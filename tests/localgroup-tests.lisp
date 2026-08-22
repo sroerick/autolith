@@ -234,6 +234,7 @@
            (status
              (list :localgroup-status
                    :session-id (identifier-from-seed timestamp 0)
+                   :pid 41234
                    :state ':idle
                    :created-at timestamp
                    :conversation-display-id "n-ew1234"
@@ -260,6 +261,7 @@
       (test-assert
        (and (search "┌" plain-output)
             (search (identifier-display (getf (rest status) :session-id)) plain-output)
+            (search "41234" plain-output)
             (search "/tmp/example" plain-output)
             (not (search (string #\Escape) plain-output)))
        "localgroup status renders a plain box-drawing table without ANSI controls")

@@ -151,6 +151,7 @@
   "Return FIELD's compact human-readable table heading."
   (ecase field
     (:session "SESSION")
+    (:pid "PID")
     (:state "STATE")
     (:started "STARTED")
     (:conversation "CONVERSATION")
@@ -164,6 +165,11 @@
     (ecase field
       (:session
        (localgroup-session-identifier-display (getf values :session-id)))
+      (:pid
+       (let ((pid (getf values :pid)))
+         (if (typep pid '(integer 1))
+             (format nil "~D" pid)
+             "unknown")))
       (:state (localgroup--status-state-text status))
       (:started (localgroup--status-started-text status))
       (:conversation (getf values :conversation-display-id))
@@ -175,6 +181,7 @@
   "Return the semantic style for STATUS's FIELD."
   (case field
     (:session ':code)
+    (:pid ':code)
     (:state (localgroup--status-state-style status))
     (:started ':timestamp-time)
     (:conversation ':code)
@@ -185,9 +192,9 @@
 (defun localgroup--status-table-fields (columns)
   "Return the table fields that fit within COLUMNS, or NIL for compact cards."
   (cond ((>= columns 100)
-         '(:session :state :started :conversation :activity :workspace))
+         '(:session :pid :state :started :conversation :activity :workspace))
         ((>= columns 76)
-         '(:session :state :started :activity :workspace))
+         '(:session :pid :state :started :activity :workspace))
         ((>= columns 52)
          '(:session :state :activity :workspace))
         ((>= columns 36)
@@ -199,6 +206,7 @@
   "Return the minimum useful cell width for FIELD."
   (ecase field
     (:session 8)
+    (:pid 5)
     (:state 8)
     (:started 17)
     (:conversation 8)
