@@ -2748,9 +2748,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   "Return a terminal observer streaming one APPLICATION turn as stable lines."
   (let ((ui (application-ui application))
         (activity-label (application-thinking-label))
-        (reasoning-text "")
+        (reasoning-text (text-buffer-create))
         (presented-reasoning-text nil)
-        (stream-text "")
+        (stream-text (text-buffer-create))
         (stream-pending "")
         (stream-open-p nil)
         (stream-started-at nil)
@@ -2761,18 +2761,18 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                (when (and (application-reasoning-traces-p application)
                           (plusp (length reasoning-text))
                           (null presented-reasoning-text))
-                 (application-present
-                  application
-                  (application--reasoning-summary-entry application reasoning-text))
-                 (setf presented-reasoning-text reasoning-text)))
+                 (let ((summary (text-buffer-string reasoning-text)))
+                   (application-present
+                    application
+                    (application--reasoning-summary-entry application summary))
+                   (setf presented-reasoning-text summary))))
 
              (stream-text-delta (delta)
                "Commit DELTA's completed markdown rows and repaint the fluid tail."
                (when (plusp (length delta))
                  (terminal-ui-note-status-progress ui)
-                 (setf stream-text
-                       (concatenate 'string stream-text delta)
-                       stream-pending
+                 (text-buffer-append stream-text delta)
+                 (setf stream-pending
                        (sanitize-text
                         (concatenate 'string stream-pending delta)))
                  (let ((rows nil))
@@ -2829,7 +2829,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
          (when (and (application-reasoning-traces-p application)
                     (null presented-reasoning-text)
                     (plusp (length delta)))
-           (setf reasoning-text (concatenate 'string reasoning-text delta))
+           (text-buffer-append reasoning-text delta)
            (terminal-ui-set-preview-rows
             ui
             (application--reasoning-preview-rows application reasoning-text))))
@@ -2876,9 +2876,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
             (terminal-ui-note-status-progress ui))
            (:provider-request-started
             (terminal-ui-set-preview-rows ui nil)
-            (setf reasoning-text ""
-                  presented-reasoning-text nil
-                  stream-text ""
+            (text-buffer-clear reasoning-text)
+            (text-buffer-clear stream-text)
+            (setf presented-reasoning-text nil
                   activity-label (application-thinking-label))
             (application-publish-recovery-session application)
             (application-set-activity application activity-label))
@@ -2898,9 +2898,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                            "∙ provider stream interrupted; retrying ~D/~D"
                            (getf details :attempt)
                            (getf details :maximum-attempts))))))
-              (setf reasoning-text ""
-                    presented-reasoning-text nil
-                    stream-text ""
+              (text-buffer-clear reasoning-text)
+              (text-buffer-clear stream-text)
+              (setf presented-reasoning-text nil
                     stream-pending ""
                     stream-open-p nil
                     stream-renderer nil)
@@ -2912,7 +2912,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                        (getf details :delay)))))
            (:provider-request-completed
             (reasoning-flush)
-            (let ((completed-stream-text (and stream-open-p stream-text))
+            (let ((completed-stream-text
+                    (and stream-open-p (text-buffer-string stream-text)))
                   (completed-reasoning-text presented-reasoning-text))
               (stream-flush)
               (application-render-records

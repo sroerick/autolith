@@ -47,6 +47,7 @@
                              (:file "core/time")
                              (:file "core/source-files")
                              (:file "core/streams")
+                             (:file "core/text-buffer")
                              (:file "configuration/settings")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
