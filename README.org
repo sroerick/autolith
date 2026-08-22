@@ -4,7 +4,7 @@
 
 #+begin_src
 
-    :::.      :::        AUTOLITH v0.36.1
+    :::.      :::        AUTOLITH v0.36.2
   ;;`;;     ;;;        ─────────────────────────────────────────
  ,[[ '[[,   [[[        model         gpt-5.6-terra (effort high)
 c$$$cc$$$c  $$'        workspace     ~/src/autolith/
