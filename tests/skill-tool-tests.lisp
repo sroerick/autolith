@@ -142,9 +142,12 @@
                  (and (< (length (tool-result-content result)) 256)
                       (not (search secret-body
                                    (tool-result-content result)))
-                      (null (tool-result-details result))
+                      (equal (tool-result-details result)
+                             '(:kind :skill-load
+                               :name "alpha"
+                               :newly-selected-p t))
                       (null (tool-result-image-attachments result)))
-                 "the request-local tool result contains only bounded confirmation")
+                 "the request-local result contains bounded presentation metadata")
                 (let* ((after
                          (skill-request-contributions
                           configuration
@@ -168,6 +171,10 @@
                    (and (tool-result-success-p duplicate)
                         (search "already selected"
                                 (tool-result-content duplicate))
+                        (equal (tool-result-details duplicate)
+                               '(:kind :skill-load
+                                 :name "alpha"
+                                 :newly-selected-p nil))
                         (equal *skill-logical-turn-selection-names*
                                '("alpha")))
                      "repeated selection is idempotent")))))
@@ -194,6 +201,134 @@
                           (eq (context-contribution-class warning)
                               ':mandatory))
                      "deferred body failure becomes request-local warning")))))))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-skill-load-presentation () null)
+(defun test-skill-load-presentation ()
+  "Test compact transcript markers and malformed Skill result rejection."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "skill-load-presentation"))
+         (registry (skill-augment-tool-registry
+                    (make-instance 'tool-registry)))
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry
+                          :ui ui))
+         (observer
+           (application-agent-observer
+            application
+            :user-message-input (user-message-input-create :text "pending")))
+         (send-status
+           (callback-agent-observer-status-callback observer)))
+    (unwind-protect
+         (progn
+           (terminal-ui-start ui)
+           (recording-terminal-reset terminal)
+           (funcall
+            send-status
+            ':tool-call-completed
+            (list :tool "skill.load"
+                  :success-p t
+                  :details
+                  '(:kind :skill-load
+                    :name "code-review"
+                    :newly-selected-p t)))
+           (let ((identifier
+                   (list ':presentation
+                         (application-presentation-counter application))))
+             (test-assert
+              (search "◆ loaded skill: code-review"
+                      (recording-terminal-output terminal))
+              "a successful compact Skill selection finalizes a visible marker")
+             (test-assert
+              (gethash identifier (terminal-ui-finalized-identifiers ui))
+              "the Skill marker is retained as finalized scrollback")
+             (recording-terminal-reset terminal)
+             (terminal-ui-refresh-size ui (lambda () (cons 25 79)))
+             (test-assert
+              (and (gethash identifier
+                            (terminal-ui-finalized-identifiers ui))
+                   (null (search "◆ loaded skill"
+                                 (recording-terminal-output terminal))))
+              "a live repaint preserves finalized scrollback without replaying it"))
+           (recording-terminal-reset terminal)
+           (funcall
+            send-status
+            ':tool-call-completed
+            (list :tool "skill.load"
+                  :success-p t
+                  :details
+                  '(:kind :skill-load
+                    :name "code-review"
+                    :newly-selected-p nil)))
+           (test-assert
+            (search "◆ skill already loaded: code-review"
+                    (recording-terminal-output terminal))
+            "a repeated Skill selection remains visibly distinguishable")
+           (dolist (details
+                    (list
+                     (list :tool "skill.load"
+                           :success-p nil
+                           :details
+                           '(:kind :skill-load
+                             :name "failed"
+                             :newly-selected-p t))
+                     (list :tool "skill.load"
+                           :success-p t
+                           :details
+                           '(:kind :skill-load
+                             :name "missing-state"))
+                     (list :tool "skill.load"
+                           :success-p t
+                           :details
+                           '(:kind :other
+                             :name "wrong-kind"
+                             :newly-selected-p t))
+                     (list :tool "skill.load"
+                           :success-p t
+                           :details
+                           '(:kind :skill-load
+                             :name "invalid-state"
+                             :newly-selected-p :yes))
+                     (list :tool "skill.load"
+                           :success-p t
+                           :details "not-a-property-list")))
+             (recording-terminal-reset terminal)
+             (funcall send-status ':tool-call-completed details)
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert
+                (and (null (search "◆ " output))
+                     (= (terminal-tests--substring-count "skill.load" output) 1))
+                "failed and malformed Skill results use one ordinary result")))
+           (setf (application-compact-view-p application) nil)
+           (recording-terminal-reset terminal)
+           (funcall
+            send-status
+            ':tool-call-completed
+            (list :tool "skill.load"
+                  :success-p t
+                  :output "Selected skill expanded-view for this logical turn."
+                  :details
+                  '(:kind :skill-load
+                    :name "expanded-view"
+                    :newly-selected-p t)))
+           (let ((output (recording-terminal-output terminal)))
+             (test-assert
+              (and (null (search "◆ loaded skill" output))
+                   (= (terminal-tests--substring-count "✓ skill.load" output) 1)
+                   (search "Selected skill expanded-view" output))
+              "expanded tool view presents its ordinary result exactly once")))
+      (ignore-errors (terminal-ui-stop ui))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist ':ignore)))

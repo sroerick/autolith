@@ -1378,9 +1378,25 @@
               (list (agent-test-message "Applied selected instructions."))
               :turn-completion ':end))))
          (registry
-           (skill-augment-tool-registry (agent-test-registry))))
+           (skill-augment-tool-registry (agent-test-registry)))
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry
+                          :ui ui))
+         (observer
+           (application-agent-observer
+            application
+            :user-message-input
+            (user-message-input-create
+             :text "Select the relevant Skill, then continue."))))
     (unwind-protect
          (progn
+           (terminal-ui-start ui)
+           (recording-terminal-reset terminal)
            (skill-tests--write
             skill-root
             "alpha/SKILL.sexp"
@@ -1394,7 +1410,13 @@
                           :conversation conversation
                           :tool-registry registry
                           :worker nil)
-            "Select the relevant Skill, then continue.")
+            "Select the relevant Skill, then continue."
+            :observer observer)
+           (let ((terminal-output (recording-terminal-output terminal)))
+             (test-assert
+              (and (search "◆ loaded skill: alpha" terminal-output)
+                   (null (search "✓ skill.load" terminal-output)))
+              "the real Skill result path emits one compact transcript marker"))
            (let* ((snapshots
                     (reverse
                      (scripted-provider-input-snapshots provider)))
@@ -1458,10 +1480,20 @@
               (and (= (length (conversation-input-items conversation)) 4)
                    (null (conversation-ephemeral-input-entries conversation)))
               "the next successful provider response consumes ephemeral correlation")
-             (let ((reloaded
-                     (conversation-load-by-id
-                      configuration
-                      "agent-skill-barrier")))
+             (let* ((reloaded
+                      (conversation-load-by-id
+                       configuration
+                       "agent-skill-barrier"))
+                    (replay-terminal
+                      (make-instance 'recording-terminal :columns 80))
+                    (replay-ui
+                      (terminal-ui-create :terminal replay-terminal))
+                    (replay-application
+                      (make-instance 'application
+                                     :configuration configuration
+                                     :conversation reloaded
+                                     :tool-registry registry
+                                     :ui replay-ui)))
                (test-assert
                 (and (= (length (conversation-input-items reloaded)) 4)
                      (find "before-call"
@@ -1475,7 +1507,21 @@
                             :key (lambda (item)
                                    (json-get item "call_id"))
                             :test #'string=)))
-                "crash replay retains only the complete durable call pair"))))
+                "crash replay retains only the complete durable call pair")
+               (unwind-protect
+                    (progn
+                      (terminal-ui-start replay-ui)
+                      (recording-terminal-reset replay-terminal)
+                      (application-render-records replay-application)
+                      (let ((replay-output
+                              (recording-terminal-output replay-terminal)))
+                        (test-assert
+                         (and (null (search "◆ loaded skill" replay-output))
+                              (null (search "BARRIER-SKILL-INSTRUCTIONS"
+                                            replay-output)))
+                         "conversation reload does not replay Skill presentation or instructions")))
+                 (ignore-errors (terminal-ui-stop replay-ui))))))
+      (ignore-errors (terminal-ui-stop ui))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist ':ignore)))

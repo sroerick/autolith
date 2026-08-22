@@ -2734,6 +2734,46 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           application
           (application-tool-result-entry tool application record)))))
 
+(-> application--skill-load-result-details
+    (t)
+    (values (option string) boolean boolean))
+(defun application--skill-load-result-details (details)
+  "Return a validated Skill name, selection state, and validity flag."
+  (let ((missing (gensym "MISSING-SKILL-LOAD-DETAIL-")))
+    (handler-case
+        (let ((kind (getf details ':kind missing))
+              (name (getf details ':name missing))
+              (newly-selected-p
+                (getf details ':newly-selected-p missing)))
+          (if (and (listp details)
+                   (evenp (length details))
+                   (eq kind ':skill-load)
+                   (non-empty-string-p name)
+                   (not (eq newly-selected-p missing))
+                   (typep newly-selected-p 'boolean))
+              (values name newly-selected-p t)
+              (values nil nil nil)))
+      (type-error ()
+        (values nil nil nil)))))
+
+(-> application--present-skill-load-result (application t) boolean)
+(defun application--present-skill-load-result (application details)
+  "Present a finalized marker for one valid request-local Skill selection."
+  (multiple-value-bind (name newly-selected-p valid-p)
+      (application--skill-load-result-details (getf details :details))
+    (and valid-p
+         (application-present
+          application
+          (list
+           (terminal-span
+            ':notice
+            (if newly-selected-p
+                "◆ loaded skill: "
+                "◆ skill already loaded: "))
+           (terminal-span
+            ':strong
+            (sanitize-text name :single-line-p t)))))))
+
 (-> application-agent-observer
     (application
      &key (:steering-function (option function))
@@ -2933,9 +2973,22 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                 (application-set-activity application activity))))
            (:tool-call-completed
             (application-render-records application)
-            (when (string= (or (getf details :tool) "")
-                           "papercut.report")
-              (application--present-transient-tool-result application details))
+            (let ((tool-name (or (getf details :tool) "")))
+              (cond
+                ((string= tool-name "papercut.report")
+                 (application--present-transient-tool-result
+                  application details))
+                ((string= tool-name "skill.load")
+                 (if (and (getf details :success-p)
+                          (application-compact-view-p application)
+                          (nth-value
+                           2
+                           (application--skill-load-result-details
+                            (getf details :details))))
+                     (application--present-skill-load-result
+                      application details)
+                     (application--present-transient-tool-result
+                      application details)))))
             (application-set-activity application activity-label))
            (:steering-applied
             (application-render-records application)
