@@ -4,6 +4,7 @@
   (:import-from #:cl-base64
                 #:base64-string-to-usb8-array
                 #:base64-string-to-string
+                #:usb8-array-to-base64-stream
                 #:usb8-array-to-base64-string)
   (:import-from #:cl+ssl
                 #:cl+ssl-error

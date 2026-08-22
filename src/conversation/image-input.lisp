@@ -662,11 +662,16 @@
 
 (-> image-input--data-url (image-attachment) string)
 (defun image-input--data-url (attachment)
-  "Return ATTACHMENT as a base64 data URL for one provider request."
+  "Return ATTACHMENT as a base64 data URL for one provider request.
+
+The URL is pure ASCII, so it is built as a compact base string without
+materializing a separate intermediate base64 string."
   (let ((bytes (image-input--read-file (image-attachment-pathname attachment))))
-    (format nil "data:~A;base64,~A"
-            (image-attachment-mime-type attachment)
-            (usb8-array-to-base64-string bytes))))
+    (with-output-to-string (stream nil :element-type 'base-char)
+      (write-string "data:" stream)
+      (write-string (image-attachment-mime-type attachment) stream)
+      (write-string ";base64," stream)
+      (usb8-array-to-base64-stream bytes stream))))
 
 (-> image-input-content-item (image-attachment) json-object)
 (defun image-input-content-item (attachment)
