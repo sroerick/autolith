@@ -241,7 +241,10 @@ Register a OpenAI-compatible provider:
  :models-endpoint "https://api.example.com/v1/models")
 #+END_SRC
 
-Authenticate with =autolith auth my-provider= or =(auth "my-provider")=.
+Inside a session, =/auth= and =(auth)= are the same operation. Omit the
+provider to pick one interactively, or use =/auth my-provider= and
+=(auth "my-provider")= for an explicit selection. Use
+=autolith auth my-provider= to authenticate during startup.
 
 After a key is saved, static metadata or the last good cache keeps models
 available. =(models)= triggers discovery. You can also pass non-secret

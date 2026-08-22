@@ -1720,6 +1720,21 @@ removes it."
         t)
       nil))
 
+(-> terminal-ui--defer-live-append (terminal-ui string string) null)
+(defun terminal-ui--defer-live-append (ui text display)
+  "Retain appended plain TEXT and styled DISPLAY until live output resumes."
+  (when (plusp (length text))
+    (setf (terminal-ui-deferred-live-appended-text ui)
+          (concatenate 'string
+                       (terminal-ui-deferred-live-appended-text ui)
+                       text)))
+  (when (plusp (length display))
+    (setf (terminal-ui-deferred-live-appended-display ui)
+          (concatenate 'string
+                       (terminal-ui-deferred-live-appended-display ui)
+                       display)))
+  nil)
+
 (-> terminal-ui--present-live
     (terminal-ui &key (:status-now (option real))
                       (:appended-text string)
@@ -1728,30 +1743,43 @@ removes it."
 (defun terminal-ui--present-live
     (ui &key status-now (appended-text "") (appended-display ""))
   "Present UI live content, atomically preceding it with appended scrollback."
-  (let* ((status-now (or status-now
-                         (and (or (terminal-ui--status-row-visible-p ui)
-                                  (terminal-ui-notice ui))
-                              (funcall (terminal-ui-clock-function ui)))))
-         (terminal (terminal-ui-terminal ui)))
-    (terminal-ui--expire-notice-at ui status-now)
-    (setf (terminal-ui-status-rendered-signature ui)
-          (and status-now
-               (terminal-ui--animation-signature-at ui status-now)))
-    (when (terminal-interactive-p terminal)
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content ui status-now)
-        (if (plusp (length appended-text))
-            (live-region-append-and-present
-             (terminal-ui-live-region ui)
-             appended-text
-             text
-             :appended-display appended-display
-             :cursor cursor
-             :display display)
-            (live-region-present (terminal-ui-live-region ui)
-                                 text
-                                 :cursor cursor
-                                 :display display)))))
+  (if (terminal-ui-live-output-suspended-p ui)
+      (terminal-ui--defer-live-append ui appended-text appended-display)
+      (let* ((appended-text
+               (concatenate 'string
+                            (terminal-ui-deferred-live-appended-text ui)
+                            appended-text))
+             (appended-display
+               (concatenate 'string
+                            (terminal-ui-deferred-live-appended-display ui)
+                            appended-display))
+             (status-now
+               (or status-now
+                   (and (or (terminal-ui--status-row-visible-p ui)
+                            (terminal-ui-notice ui))
+                        (funcall (terminal-ui-clock-function ui)))))
+             (terminal (terminal-ui-terminal ui)))
+        (terminal-ui--expire-notice-at ui status-now)
+        (setf (terminal-ui-status-rendered-signature ui)
+              (and status-now
+                   (terminal-ui--animation-signature-at ui status-now)))
+        (when (terminal-interactive-p terminal)
+          (multiple-value-bind (text display cursor)
+              (terminal-ui--live-content ui status-now)
+            (if (plusp (length appended-text))
+                (live-region-append-and-present
+                 (terminal-ui-live-region ui)
+                 appended-text
+                 text
+                 :appended-display appended-display
+                 :cursor cursor
+                 :display display)
+                (live-region-present (terminal-ui-live-region ui)
+                                     text
+                                     :cursor cursor
+                                     :display display)))
+          (setf (terminal-ui-deferred-live-appended-text ui) ""
+                (terminal-ui-deferred-live-appended-display ui) ""))))
   nil)
 
 (-> terminal-ui--paint-live
@@ -2081,11 +2109,12 @@ when no resize needs to be applied."
              (terminal-write-prompt-marker
               (terminal-ui-terminal ui) ':command-finished 1))
            (live-region-dismiss (terminal-ui-live-region ui)))
-      (setf (terminal-ui-started-p ui) nil
-            (terminal-ui-prompt-marker-state ui) ':closed
-            (terminal-ui-notice ui) nil
-            (terminal-ui-notice-deadline ui) nil)
-      (terminal-stop (terminal-ui-terminal ui))))
+       (setf (terminal-ui-started-p ui) nil
+             (terminal-ui-prompt-marker-state ui) ':closed
+             (terminal-ui-notice ui) nil
+             (terminal-ui-notice-deadline ui) nil
+             (terminal-ui-live-output-suspended-p ui) nil)
+       (terminal-stop (terminal-ui-terminal ui))))
   ui)
 
 (defmacro with-terminal-ui ((variable ui-form) &body body)
@@ -2119,9 +2148,11 @@ when no resize needs to be applied."
           (multiple-value-bind (text display)
               (terminal-ui--finalized-content ui entry)
             (if (terminal-interactive-p (terminal-ui-terminal ui))
-                (live-region-append (terminal-ui-live-region ui)
-                                    text
-                                    :display display)
+                (if (terminal-ui-live-output-suspended-p ui)
+                    (terminal-ui--defer-live-append ui text display)
+                    (live-region-append (terminal-ui-live-region ui)
+                                        text
+                                        :display display))
                 (progn
                   (terminal--write-safe-text (terminal-ui-terminal ui) display)
                   (terminal-flush (terminal-ui-terminal ui))))
@@ -2160,9 +2191,11 @@ when no resize needs to be applied."
             (handler-case
                 (progn
                   (if (terminal-interactive-p (terminal-ui-terminal ui))
-                      (live-region-append (terminal-ui-live-region ui)
-                                          text
-                                          :display display)
+                      (if (terminal-ui-live-output-suspended-p ui)
+                          (terminal-ui--defer-live-append ui text display)
+                          (live-region-append (terminal-ui-live-region ui)
+                                              text
+                                              :display display))
                       (progn
                         (terminal--write-safe-text
                          (terminal-ui-terminal ui)

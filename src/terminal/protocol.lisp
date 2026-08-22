@@ -135,6 +135,21 @@
     :accessor terminal-ui-prompt-marker-state
     :type (member :closed :prompt :input :executing)
     :documentation "The current semantic OSC 133 prompt-block boundary.")
+   (live-output-suspended-p
+    :initform nil
+    :accessor terminal-ui-live-output-suspended-p
+    :type boolean
+    :documentation "Whether transient live-region repaint is suspended for direct I/O.")
+   (deferred-live-appended-text
+    :initform ""
+    :accessor terminal-ui-deferred-live-appended-text
+    :type string
+    :documentation "Plain scrollback deferred while direct terminal I/O owns the display.")
+   (deferred-live-appended-display
+    :initform ""
+    :accessor terminal-ui-deferred-live-appended-display
+    :type string
+    :documentation "Styled scrollback deferred while direct terminal I/O owns the display.")
    (prompt-render-cache
     :initform nil
     :accessor terminal-ui-prompt-render-cache

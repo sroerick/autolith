@@ -1312,29 +1312,241 @@ to TERMINAL-UI-SELECT."
 
 ;;;; -- Authentication and Checkpoint Commands --
 
-(-> application--authentication-provider (application (option string)) model-provider)
-(defun application--authentication-provider (application provider-name)
-  "Return APPLICATION's active or named provider for authentication."
-  (if provider-name
-      (provider-authentication-provider
-       (application-configuration application)
-       provider-name
-       :reasoning-summaries-p (application-reasoning-traces-p application))
-      (application-provider application)))
+(-> application--authentication-provider-items (application) list)
+(defun application--authentication-provider-items (application)
+  "Return picker items for every effective registered provider."
+  (let ((current-provider
+          (provider-model-provider-name
+           (configuration-model
+            (application-configuration application)))))
+    (loop for registration in (provider-registrations)
+          for name = (provider-registration-name registration)
+          collect (list :name name
+                        :argument nil
+                        :description
+                        (if (and current-provider
+                                 (string= name current-provider))
+                            "current provider"
+                            "registered provider")))))
 
-(-> application-authenticate (application &optional (option string)) null)
-(defun application-authenticate (application &optional provider-name)
-  "Authenticate APPLICATION's active or named provider."
-  (let* ((ui (application-ui application))
+(-> application--pick-authentication-provider (application) (option string))
+(defun application--pick-authentication-provider (application)
+  "Prompt for one registered provider to authenticate."
+  (application--pick-identifier
+   application
+   :title "pick the provider to authenticate"
+   :items (application--authentication-provider-items application)
+   :initial-name
+   (provider-model-provider-name
+    (configuration-model
+     (application-configuration application)))
+   :search-p t
+   :usage "Usage: /auth PROVIDER"
+   :empty-notice "No registered providers exist."))
+
+(-> application--authentication-provider (application string) model-provider)
+(defun application--authentication-provider (application provider-name)
+  "Return APPLICATION's named provider for authentication."
+  (provider-authentication-provider
+   (application-configuration application)
+   provider-name
+   :reasoning-summaries-p (application-reasoning-traces-p application)))
+
+(defclass application-authentication-output-stream
+    (sb-gray:fundamental-character-output-stream)
+  ((terminal
+    :initarg :terminal
+    :reader application-authentication-output-stream-terminal
+    :type terminal
+    :documentation "The terminal receiving authentication output."))
+  (:documentation "A character stream routing authentication output through a terminal."))
+
+(defmethod sb-gray:stream-write-char
+    ((stream application-authentication-output-stream) character)
+  "Write CHARACTER through STREAM's terminal."
+  (terminal--write
+   (application-authentication-output-stream-terminal stream)
+   (string character))
+  character)
+
+(defmethod sb-gray:stream-write-string
+    ((stream application-authentication-output-stream) string
+     &optional (start 0) end)
+  "Write STRING's selected range through STREAM's terminal."
+  (terminal--write
+   (application-authentication-output-stream-terminal stream)
+   (subseq string start end))
+  string)
+
+(defmethod sb-gray:stream-force-output
+    ((stream application-authentication-output-stream))
+  "Flush STREAM's terminal output."
+  (terminal-flush
+   (application-authentication-output-stream-terminal stream)))
+
+(defmethod sb-gray:stream-finish-output
+    ((stream application-authentication-output-stream))
+  "Finish STREAM's terminal output."
+  (terminal-flush
+   (application-authentication-output-stream-terminal stream)))
+
+(defclass application-authentication-input-stream
+    (sb-gray:fundamental-character-input-stream)
+  ((terminal
+    :initarg :terminal
+    :reader application-authentication-input-stream-terminal
+    :type localgroup-terminal
+    :documentation "The attached terminal supplying hidden authentication input.")
+   (pending
+    :initform ""
+    :accessor application-authentication-input-stream-pending
+    :type string
+    :documentation "The completed input line still being consumed.")
+   (position
+    :initform 0
+    :accessor application-authentication-input-stream-position
+    :type (integer 0)
+    :documentation "The next character index in PENDING."))
+  (:documentation "A hidden line stream consuming one localgroup controller's events."))
+
+(-> application-authentication-input-stream--controller-p
+    (application-authentication-input-stream)
+    boolean)
+(defun application-authentication-input-stream--controller-p (stream)
+  "Return true while STREAM's localgroup terminal has a controller."
+  (let ((terminal (application-authentication-input-stream-terminal stream)))
+    (with-lock-held ((localgroup-terminal-lock terminal))
+      (not (null (localgroup-terminal-controller terminal))))))
+
+(-> application-authentication-input-stream--fill
+    (application-authentication-input-stream)
+    boolean)
+(defun application-authentication-input-stream--fill (stream)
+  "Read one hidden localgroup line into STREAM and report success."
+  (let ((terminal (application-authentication-input-stream-terminal stream))
+        (characters (make-array 64
+                                :element-type 'character
+                                :adjustable t
+                                :fill-pointer 0)))
+    (loop
+      (let ((event (terminal-read-event terminal)))
+        (cond
+          ((and (consp event)
+                (eq (first event) ':line)
+                (stringp (second event)))
+           (loop for character across (second event)
+                 do (vector-push-extend character characters))
+           (vector-push-extend #\Newline characters)
+           (setf (application-authentication-input-stream-pending stream)
+                 (coerce characters 'string)
+                 (application-authentication-input-stream-position stream) 0)
+           (return t))
+          ((and (consp event)
+                (member (first event) '(:insert :paste) :test #'eq)
+                (stringp (second event)))
+           (loop for character across (second event)
+                 do (vector-push-extend character characters)))
+          ((eq event ':backspace)
+           (when (plusp (fill-pointer characters))
+             (decf (fill-pointer characters))))
+          ((eq event ':submit)
+           (vector-push-extend #\Newline characters)
+           (setf (application-authentication-input-stream-pending stream)
+                 (coerce characters 'string)
+                 (application-authentication-input-stream-position stream) 0)
+           (return t))
+          ((member event '(:interrupt :escape :stream-end) :test #'eq)
+           (return nil))
+          ((eq event ':end-of-input)
+           (unless (application-authentication-input-stream--controller-p stream)
+             (return nil))
+           (sleep 0.01)))))))
+
+(defmethod sb-gray:stream-read-char
+    ((stream application-authentication-input-stream))
+  "Read the next hidden authentication character from STREAM."
+  (loop
+    for pending = (application-authentication-input-stream-pending stream)
+    for position = (application-authentication-input-stream-position stream)
+    when (< position (length pending))
+      do (setf (application-authentication-input-stream-position stream)
+               (1+ position))
+         (return (char pending position))
+    unless (application-authentication-input-stream--fill stream)
+      do (return ':eof)))
+
+(defmethod sb-gray:stream-listen
+    ((stream application-authentication-input-stream))
+  "Return true when STREAM has buffered or queued localgroup input."
+  (or (< (application-authentication-input-stream-position stream)
+         (length (application-authentication-input-stream-pending stream)))
+      (terminal-input-ready-p
+       (application-authentication-input-stream-terminal stream))))
+
+(-> application--authentication-ui-suspend (terminal-ui) null)
+(defun application--authentication-ui-suspend (ui)
+  "Dismiss UI's live rows and suppress repaint without stopping transport."
+  (with-terminal-ui-locked (ui)
+    (setf (terminal-ui-live-output-suspended-p ui) t)
+    (when (terminal-ui-started-p ui)
+      (live-region-dismiss (terminal-ui-live-region ui))))
+  nil)
+
+(-> application--authentication-ui-resume (terminal-ui) null)
+(defun application--authentication-ui-resume (ui)
+  "Resume and repaint UI's live rows after authentication output."
+  (with-terminal-ui-locked (ui)
+    (setf (terminal-ui-live-output-suspended-p ui) nil)
+    (when (terminal-ui-started-p ui)
+      (terminal-ui--paint-live ui)))
+  nil)
+
+(-> application--authentication-streams
+    (application)
+    (values stream stream boolean boolean))
+(defun application--authentication-streams (application)
+  "Return authentication input, output, UI-stop, and echo-disabled state."
+  (let ((terminal (terminal-ui-terminal (application-ui application))))
+    (typecase terminal
+      (stream-terminal
+       (values (stream-terminal-input-stream terminal)
+               (stream-terminal-output-stream terminal)
+               t nil))
+      (localgroup-terminal
+       (values
+        (make-instance 'application-authentication-input-stream
+                       :terminal terminal)
+        (make-instance 'application-authentication-output-stream
+                       :terminal terminal)
+        nil t))
+      (t
+       (values *standard-input* *standard-output* t nil)))))
+
+(-> application-authenticate (application string) null)
+(defun application-authenticate (application provider-name)
+  "Authenticate APPLICATION's explicitly named provider."
+  (let* ((ui       (application-ui application))
          (provider (application--authentication-provider application provider-name))
-         (message nil))
-    (terminal-ui-stop ui)
-    (unwind-protect
-         (setf message
-               (provider-authenticate provider
-                                      :stream *standard-output*
-                                      :open-browser-p t))
-      (terminal-ui-start ui))
+         (message  nil))
+    (application-present
+     application
+     (format nil "Authenticating provider ~A." provider-name))
+    (multiple-value-bind (input output stop-ui-p input-echo-disabled-p)
+        (application--authentication-streams application)
+      (if stop-ui-p
+          (terminal-ui-stop ui)
+          (application--authentication-ui-suspend ui))
+      (unwind-protect
+           (let ((*standard-input* input)
+                 (*standard-output* output)
+                 (*api-key-input-echo-disabled-p* input-echo-disabled-p))
+             (setf message
+                   (provider-authenticate provider
+                                          :stream output
+                                          :open-browser-p t)))
+        (if stop-ui-p
+            (terminal-ui-start ui)
+            (application--authentication-ui-resume ui))))
     (application-present application message))
   nil)
 
@@ -1743,14 +1955,20 @@ to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
      :argument "[PROVIDER]"
-     :description "authenticate the active or named provider"
-     :tip "starts direct provider authentication when credentials need attention."
+     :description "pick and authenticate a registered provider"
+     :tip "starts direct authentication for an explicitly selected provider."
      :busy-behavior :hold
      :terminal-behavior :exclusive
-     :call-lambda-list (&optional provider-name)
+     :call-lambda-list (&optional (provider-name nil provider-name-supplied-p))
      :slash-argument-mode :remainder)
-    (application &optional provider-name)
-  (application-authenticate application provider-name)
+    (application &optional (provider-name nil provider-name-supplied-p))
+  (let ((provider-name
+          (if provider-name-supplied-p
+              provider-name
+              (and *application-command-interactive-p*
+                   (application--pick-authentication-provider application)))))
+    (when provider-name
+      (application-authenticate application provider-name)))
   ':continue)
 
 (define-application-command application--builtin-model-command

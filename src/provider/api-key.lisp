@@ -192,6 +192,8 @@
 
 
 ;;;; -- Interactive API-Key Input --
+(defparameter *api-key-input-echo-disabled-p* nil
+  "Whether the dynamically bound API-key input transport already suppresses echo.")
 
 (-> api-key--strip-bracketed-paste (string) string)
 (defun api-key--strip-bracketed-paste (text)
@@ -223,11 +225,13 @@
   "Hide terminal echo for INPUT's known descriptor and return the mode to restore."
   (let ((descriptor
           (api-key--input-file-descriptor input configured-descriptor)))
-    (when (null descriptor)
+    (when (and (null descriptor)
+               (not *api-key-input-echo-disabled-p*))
       (error 'authentication-error
              :message
              "Could not identify the input descriptor for API-key entry; no key was read."))
-    (when (api-key--interactive-file-descriptor-p descriptor)
+    (when (and descriptor
+               (api-key--interactive-file-descriptor-p descriptor))
       (handler-case
           (let ((saved-mode (sb-posix:tcgetattr descriptor))
                 (hidden-mode (sb-posix:tcgetattr descriptor)))
