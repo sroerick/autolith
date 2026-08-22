@@ -301,35 +301,72 @@
                                       pathname)))
         bytes))))
 
+(defparameter *image-input-inspection-prefix-bytes* 30
+  "The leading bytes identifying every format and every non-JPEG dimension.")
+
 (-> image-input--inspect
     (pathname)
-    (values keyword integer integer
-            (simple-array (unsigned-byte 8) (*))))
+    (values keyword integer integer))
 (defun image-input--inspect (pathname)
-  "Read and identify PATHNAME, returning format, dimensions, and bytes."
-  (let* ((absolute
-           (handler-case
-               (truename pathname)
-             (error (condition)
-               (image-input--error
-                pathname ':recognition
-                (format nil "Image ~A does not exist or cannot be read." pathname)
-                condition))))
-         (bytes (image-input--read-file absolute))
-         (format (image-input--format bytes)))
-    (unless format
-      (image-input--error
-       absolute ':recognition
-       (format nil
-               "Autolith cannot attach ~A: use PNG, JPEG, GIF, or WebP."
-               absolute)))
-    (multiple-value-bind (width height)
-        (image-input--dimensions format bytes)
-      (unless (and (plusp width) (plusp height))
-        (image-input--error
-         absolute ':recognition
-         (format nil "Image ~A has no valid pixel dimensions." absolute)))
-      (values format width height bytes))))
+  "Identify PATHNAME, returning its image format and pixel dimensions.
+
+Only JPEG reads the complete file, because its dimension marker can
+follow arbitrarily large metadata segments; every other supported
+format is identified from the leading bytes alone."
+  (let ((absolute
+          (handler-case
+              (truename pathname)
+            (error (condition)
+              (image-input--error
+               pathname ':recognition
+               (format nil "Image ~A does not exist or cannot be read." pathname)
+               condition)))))
+    (with-open-file (stream absolute
+                            :direction ':input
+                            :element-type '(unsigned-byte 8))
+      (let ((length (file-length stream)))
+        (when (> length *image-input-maximum-source-bytes*)
+          (image-input--error
+           absolute
+           ':recognition
+           (format nil "Image ~A is larger than the ~:D-byte input limit."
+                   absolute
+                   *image-input-maximum-source-bytes*)))
+        (let* ((prefix-length
+                 (min length *image-input-inspection-prefix-bytes*))
+               (bytes (make-array prefix-length
+                                  :element-type '(unsigned-byte 8))))
+          (unless (= (read-sequence bytes stream) prefix-length)
+            (image-input--error
+             absolute ':recognition
+             (format nil "Image ~A could not be read completely." absolute)))
+          (let ((format (image-input--format bytes)))
+            (unless format
+              (image-input--error
+               absolute ':recognition
+               (format nil
+                       "Autolith cannot attach ~A: use PNG, JPEG, GIF, or WebP."
+                       absolute)))
+            (when (eq format ':jpeg)
+              (let ((complete (make-array length
+                                          :element-type '(unsigned-byte 8))))
+                (replace complete bytes)
+                (unless (= (read-sequence complete stream
+                                          :start prefix-length)
+                           length)
+                  (image-input--error
+                   absolute ':recognition
+                   (format nil "Image ~A could not be read completely."
+                           absolute)))
+                (setf bytes complete)))
+            (multiple-value-bind (width height)
+                (image-input--dimensions format bytes)
+              (unless (and (plusp width) (plusp height))
+                (image-input--error
+                 absolute ':recognition
+                 (format nil "Image ~A has no valid pixel dimensions."
+                         absolute)))
+              (values format width height))))))))
 
 (-> image-input--dimensions-fit-p (integer integer) boolean)
 (defun image-input--dimensions-fit-p (width height)
@@ -482,9 +519,8 @@
                source ':recognition
                (format nil "Image ~A does not exist or cannot be read." source)
                condition)))))
-    (multiple-value-bind (format width height bytes)
+    (multiple-value-bind (format width height)
         (image-input--inspect absolute)
-      (declare (ignore bytes))
       (when (and (eq format ':webp)
                  (not (image-input--dimensions-fit-p width height)))
         (image-input--error
@@ -590,9 +626,9 @@
                (format nil "Image location ~A is not a valid local pathname."
                        location)
                condition)))))
-    (multiple-value-bind (format width height bytes)
+    (multiple-value-bind (format width height)
         (image-input--inspect pathname)
-      (declare (ignore format bytes))
+      (declare (ignore format))
       (if (and (plusp width) (plusp height))
           (truename pathname)
           (image-input--error
