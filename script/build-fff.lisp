@@ -40,6 +40,10 @@
        (library-name #+darwin "libfff_c.dylib"
                      #-darwin "libfff_c.so")
        (library (merge-pathnames library-name install-root))
+       (static-build-p
+         (equal (uiop:getenv "AUTOLITH_BUILD_STATIC_NATIVE") "1"))
+       (static-library-name "libfff_c.a")
+       (static-library (merge-pathnames static-library-name install-root))
        (manifest (merge-pathnames "manifest.sexp" install-root)))
   (labels ((run (command &key directory)
              "Run one build COMMAND, preserving its output."
@@ -52,6 +56,7 @@
            (manifest-current-p ()
              "Return true when the installed private library matches COMMIT."
              (and (probe-file library)
+                  (or (not static-build-p) (probe-file static-library))
                   (probe-file manifest)
                   (handler-case
                       (with-open-file (stream manifest
@@ -112,6 +117,10 @@
             (fff--prepare-build-environment)
             (run (list "cargo" "build" "--locked" "--release" "-p" "fff-c")
                  :directory checkout)
+            (when static-build-p
+              (run (list "cargo" "rustc" "--locked" "--release"
+                         "-p" "fff-c" "--crate-type" "staticlib")
+                   :directory checkout))
           (let ((built (merge-pathnames
                         (format nil "target/release/~A" library-name)
                         checkout)))
@@ -119,6 +128,14 @@
               (error "fff did not produce ~A." built))
             (ensure-directories-exist library)
             (publish-file built library)
+            (when static-build-p
+              (let ((built-static
+                      (merge-pathnames
+                       (format nil "target/release/~A" static-library-name)
+                       checkout)))
+                (unless (probe-file built-static)
+                  (error "fff did not produce ~A." built-static))
+                (publish-file built-static static-library)))
             (let ((temporary
                     (make-pathname
                      :name (format nil ".manifest.~D" (sb-posix:getpid))

@@ -210,23 +210,49 @@
             (check-archive runtime-archive runtime-sha256)
             (run (list "tar" "-xjf" (namestring runtime-archive)
                        "-C" (namestring temporary-root)))
-              (run
-               (list "sh" "make.sh"
-                     "--with-sb-thread"
-                     (format nil "--prefix=~A" (namestring installation))
-                     (format nil "--xc-host=~A --no-userinit --no-sysinit"
-                             (namestring bootstrap-command)))
-               :directory runtime-source)
-              (run
-               (list "env" "-u" "SBCL_HOME" "sh" "install.sh"
-                     (format nil "--prefix=~A" (namestring installation)))
-               :directory runtime-source)
-              (let* ((installed (merge-pathnames "bin/sbcl" installation))
-                     (actual (runtime-version installed)))
-                (unless (string= actual runtime-version)
-                  (fail "the release runtime reports ~A." actual))
-                (unless (runtime-thread-support-p installed)
-                  (fail "the release runtime was built without threads.")))))
+            (run
+             (list "sh" "make.sh"
+                   "--with-sb-thread"
+                   (format nil "--prefix=~A" (namestring installation))
+                   (format nil "--xc-host=~A --no-userinit --no-sysinit"
+                           (namestring bootstrap-command)))
+             :directory runtime-source)
+            (run
+             (list "env" "-u" "SBCL_HOME" "sh" "install.sh"
+                   (format nil "--prefix=~A" (namestring installation)))
+             :directory runtime-source)
+            (when (equal (uiop:getenv "AUTOLITH_STATIC_MUSL") "1")
+              (run (list "make" "-C" "src/runtime" "libsbcl.a")
+                   :directory runtime-source)
+              (let* ((support-root
+                       (merge-pathnames
+                        "static-build/"
+                        (uiop:pathname-parent-directory-pathname installation)))
+                     (runtime-archive
+                       (merge-pathnames "src/runtime/libsbcl.a"
+                                        runtime-source))
+                     (installed-archive
+                       (merge-pathnames "libsbcl.a" support-root))
+                     (builder-installation
+                       (merge-pathnames "installation/" support-root))
+                     (builder-runtime
+                       (merge-pathnames "bin/sbcl" builder-installation)))
+                (unless (probe-file runtime-archive)
+                  (fail "the static runtime archive was not built."))
+                (uiop:ensure-all-directories-exist
+                 (list support-root builder-installation))
+                (uiop:copy-file runtime-archive installed-archive)
+                (run (list "cp" "-RPp"
+                           (format nil "~A." (namestring installation))
+                           (namestring builder-installation)))
+                (unless (probe-file builder-runtime)
+                  (fail "the dynamic builder runtime was not preserved."))))
+            (let* ((installed (merge-pathnames "bin/sbcl" installation))
+                   (actual (runtime-version installed)))
+              (unless (string= actual runtime-version)
+                (fail "the release runtime reports ~A." actual))
+              (unless (runtime-thread-support-p installed)
+                (fail "the release runtime was built without threads.")))))
       (error (condition)
         (format *error-output* "~&~A~%" condition)
         (finish-output *error-output*)

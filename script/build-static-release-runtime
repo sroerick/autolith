@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+resolve_path()
+{
+  local path=$1
+  local directory
+  local target
+
+  case "$path" in
+    /*) ;;
+    *) path=$PWD/$path ;;
+  esac
+  while [[ -L "$path" ]]; do
+    directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+    target=$(readlink "$path") || return 1
+    case "$target" in
+      /*) path=$target ;;
+      *) path=$directory/$target ;;
+    esac
+  done
+  directory=$(CDPATH= cd -P "$(dirname "$path")" && pwd) || return 1
+  printf '%s/%s\n' "$directory" "$(basename "$path")"
+}
+
+launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
+source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
+installation=${1:?usage: build-static-release-runtime INSTALLATION}
+installation=$(CDPATH= cd -P -- "$installation" && pwd)
+runtime=$installation/bin/sbcl
+support_root=$(dirname -- "$installation")/static-build
+builder_runtime=$support_root/installation/bin/sbcl
+libsbcl=$support_root/libsbcl.a
+home=${HOME:?HOME is not set}
+data_home=${XDG_DATA_HOME:-$home/.local/share}
+fff_shared=$data_home/autolith/native/fff/libfff_c.so
+fff_archive=$data_home/autolith/native/fff/libfff_c.a
+marker=$installation/lib/autolith-static-musl
+
+[[ $(uname -s) == Linux ]] || {
+  printf 'build-static-release-runtime supports Linux only.\n' >&2
+  exit 1
+}
+command -v ldd >/dev/null 2>&1 || {
+  printf 'build-static-release-runtime needs ldd.\n' >&2
+  exit 1
+}
+grep -iq musl <<< "$(ldd /bin/sh 2>&1 || true)" || {
+  printf 'build-static-release-runtime requires a musl host.\n' >&2
+  exit 1
+}
+for command in ar cc pkg-config strip; do
+  command -v "$command" >/dev/null 2>&1 || {
+    printf 'build-static-release-runtime needs %s.\n' "$command" >&2
+    exit 1
+  }
+done
+for file in "$runtime" "$builder_runtime" "$libsbcl" "$fff_shared" "$fff_archive"; do
+  [[ -f $file ]] || {
+    printf 'build-static-release-runtime is missing %s.\n' "$file" >&2
+    exit 1
+  }
+done
+
+work_root=$(mktemp -d)
+cleanup()
+{
+  rm -rf -- "$work_root"
+}
+trap cleanup EXIT HUP INT TERM
+
+symbols_assembly=$work_root/static-symbols.S
+color_archive=$work_root/libcolorlisp-tree-sitter.a
+export AUTOLITH_FFF_LIBRARY=$fff_shared
+"$builder_runtime" --noinform --no-userinit --no-sysinit \
+  --script "$source_root/script/build-static-release-runtime.lisp" \
+  "$source_root" "$symbols_assembly" "$color_archive"
+
+cc -std=c11 -O2 -Wall -Wextra -Werror -pedantic \
+  -c "$source_root/native/sbcl/static-dlopen.c" \
+  -o "$work_root/static-dlopen.o"
+cc -c "$symbols_assembly" -o "$work_root/static-symbols.o"
+
+read -r -a static_libraries <<< "$(pkg-config --static --libs openssl zlib libzstd)"
+temporary_runtime=$work_root/sbcl
+cc -static -no-pie -o "$temporary_runtime" \
+  "$work_root/static-dlopen.o" "$work_root/static-symbols.o" \
+  -Wl,--whole-archive "$libsbcl" -Wl,--no-whole-archive \
+  "$fff_archive" "$color_archive" \
+  "${static_libraries[@]}" -ldl -lpthread -lm
+strip --strip-unneeded "$temporary_runtime"
+
+runtime_core=$installation/lib/sbcl/sbcl.core
+"$temporary_runtime" --core "$runtime_core" \
+  --noinform --no-userinit --no-sysinit --non-interactive \
+  --eval '(write-string (lisp-implementation-version))'
+install -m 755 "$temporary_runtime" "$runtime"
+printf 'version=1\n' > "$marker"
