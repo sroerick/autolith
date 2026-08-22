@@ -117,8 +117,11 @@ its protocol-level close operation."
 
 (-> redact-exact-string-value (string string string) string)
 (defun redact-exact-string-value (source secret marker)
-  "Replace every exact SECRET occurrence in SOURCE with MARKER."
-  (if (zerop (length secret))
+  "Replace every exact SECRET occurrence in SOURCE with MARKER.
+
+Returns SOURCE itself, not a copy, when SECRET is empty or absent."
+  (if (or (zerop (length secret))
+          (null (search secret source)))
       source
       (with-output-to-string (stream)
         (loop with start = 0

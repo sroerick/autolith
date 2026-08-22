@@ -270,7 +270,10 @@
 
 (-> provider--sanitize-wire-value (t) t)
 (defun provider--sanitize-wire-value (value)
-  "Return a detached provider wire VALUE with active credentials redacted."
+  "Return a detached provider wire VALUE with active credentials redacted.
+
+Compound structure is always freshly consed, while strings holding no
+credential are shared unmodified with VALUE."
   (cond
     ((stringp value)
      (provider--sanitize-wire-string value))
