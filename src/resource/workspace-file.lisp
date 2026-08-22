@@ -179,14 +179,11 @@
 (defmethod resource-capabilities
     ((resource workspace-file-resource) (context tool-context))
   "Return workspace path operations allowed by CONTEXT for RESOURCE."
+  (declare (ignore context))
   (let ((path (workspace-file-resource-pathname resource)))
-    (cond
-      ((member (workspace-file--path-kind path) '(:directory :other))
-       '(:read))
-      ((workspace-tool-protected-path-p context path)
-       '(:read))
-      (t
-       '(:read :edit)))))
+    (if (member (workspace-file--path-kind path) '(:directory :other))
+        '(:read)
+        '(:read :edit))))
 
 
 ;;;; -- Snapshot Observation --
@@ -868,10 +865,6 @@ Autolith mutations are serialized. Existing-file replacement uses portable
 POSIX rename, which cannot conditionally reject an unrelated external writer in
 the final check-to-rename window. Missing-file publication rejects that race."
   (let ((path (workspace-file-resource-pathname resource)))
-    (when (workspace-tool-protected-path-p context path)
-      (error 'tool-error
-             :message (workspace-tool-protection-notice context path)
-             :tool-name "resource.edit"))
     (ensure-directories-exist path)
     (let ((octets (workspace-file--replacement-octets content))
           (temporary (workspace-file--temporary-path path)))

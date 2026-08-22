@@ -140,56 +140,6 @@ roots after resolving existing symlinks and the nearest existing parent."
              :tool-name "resource"))
     canonical))
 
-(-> workspace-tool-protected-path-p (tool-context pathname) boolean)
-(defun workspace-tool-protected-path-p (context path)
-  "Return true when PATH is off limits to workspace writes.
-
-The stable launcher and recovery artifacts are always read-only. The rest
-of Autolith's tracked source is writable only when the workspace itself is
-inside the source root, meaning the user deliberately runs Autolith as a
-development agent on its own repository. From any other workspace Autolith
-never reaches into its own source, and live self-modification persists
-through private image commits instead."
-  (let* ((configuration (tool-context-configuration context))
-         (path (workspace-tool--canonical-path path))
-         (source-root (workspace-tool--canonical-path
-                       (configuration-source-root configuration)))
-         (working-directory
-           (workspace-tool--canonical-path
-            (configuration-working-directory configuration))))
-    (cond
-      ((not (uiop:subpathp path source-root))
-       nil)
-      ((or (uiop:subpathp path (merge-pathnames "bin/" source-root))
-           (uiop:subpathp path (merge-pathnames "recovery/" source-root))
-           (string= (enough-namestring path source-root)
-                    "script/build-recovery"))
-       t)
-      ((uiop:subpathp working-directory source-root)
-       nil)
-      (t
-       t))))
-
-(-> workspace-tool-protection-notice (tool-context pathname) string)
-(defun workspace-tool-protection-notice (context path)
-  "Explain why PATH is refused by the workspace write tools."
-  (let* ((configuration (tool-context-configuration context))
-         (path (workspace-tool--canonical-path path))
-         (source-root
-           (workspace-tool--canonical-path
-            (configuration-source-root configuration))))
-    (if (or (uiop:subpathp path (merge-pathnames "bin/" source-root))
-            (uiop:subpathp path (merge-pathnames "recovery/" source-root))
-            (string= (enough-namestring path source-root)
-                     "script/build-recovery"))
-        (format nil "~A is a stable launcher or recovery artifact and stays ~
-                     read-only."
-                path)
-        (format nil "~A is Autolith's own source repository. Run Autolith with that ~
-                     repository as the workspace to develop it, and use ~
-                     self.persist-definition for live self changes."
-                path))))
-
 (-> workspace-tool-integer-argument
     (json-object string &key (:fallback (option integer)))
     (option integer))

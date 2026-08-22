@@ -77,9 +77,10 @@ For a durable live mutation, preserve the specified order:
    history.
 5. Atomically select the private commit and mark the journal entry durable.
 
-Autolith's runtime never patches its own tracked repository; selected private
-replay scripts load after the tracked system, and repository changes remain
-with the user and their development tools.
+Autolith's durable live mutations never patch its own tracked repository;
+selected private replay scripts load after the tracked system. The ordinary
+workspace tools may develop the tracked repository, including the launcher
+and recovery sources, exactly like any other project.
 
 Conversation files and mutation journals are append-only sequences of
 top-level readable forms. Bind `*read-eval*` to `nil` when reading persisted

@@ -394,51 +394,6 @@
                                    uri)))))
                  (when (probe-file escape)
                    (sb-posix:unlink (namestring escape)))))
-              (let* ((protected-target
-                       (merge-pathnames
-                        "recovery/"
-                        (configuration-source-root configuration)))
-                     (protected-link
-                       (merge-pathnames "protected-link" workspace))
-                     (missing-name
-                       (format nil "missing-~A.txt" (make-identifier)))
-                     (missing-target
-                       (merge-pathnames missing-name protected-target)))
-                (unwind-protect
-                     (progn
-                       (sb-posix:symlink
-                        (namestring protected-target)
-                        (namestring protected-link))
-                       (multiple-value-bind (read-result uri revision)
-                           (read-resource
-                            first-context
-                            (format nil "workspace:protected-link/~A"
-                                    missing-name))
-                         (test-assert
-                          (and (tool-result-success-p read-result)
-                               (search "Kind: missing"
-                                       (tool-result-content read-result)))
-                          "resource.read observes a missing descendant through a protected symlink")
-                         (let ((edit-result
-                                 (edit-resource
-                                  first-context uri revision
-                                  (list
-                                   (workspace-resource-tests--operation
-                                    "replace-empty"
-                                    "content" "forbidden")))))
-                           (test-assert
-                            (and (not (tool-result-success-p edit-result))
-                                 (search
-                                  "stable launcher or recovery artifact"
-                                  (tool-result-content edit-result)))
-                            "resource.edit protects a missing descendant through a symlink")
-                           (test-assert
-                            (not (probe-file missing-target))
-                            "protected symlink edits do not create the missing target"))))
-                  (when (probe-file missing-target)
-                    (delete-file missing-target))
-                  (when (probe-file protected-link)
-                    (sb-posix:unlink (namestring protected-link)))))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
                (workspace-resource-tests--write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
@@ -1053,43 +1008,6 @@
                      (join-thread read-thread))
                    (when (and edit-thread (thread-alive-p edit-thread))
                     (join-thread edit-thread)))))
-             (let* ((protected-root (merge-pathnames "protected-source/" root))
-                    (recovery-path (merge-pathnames "recovery/core.bin"
-                                                    protected-root))
-                    (protected-configuration nil)
-                    (protected-conversation nil)
-                    (protected-context nil))
-               (workspace-resource-tests--write-text recovery-path "stable")
-               (setf protected-configuration
-                     (test-configuration-for-source-root protected-root)
-                     protected-conversation
-                     (conversation-create protected-configuration
-                                          :identifier "resource-protected")
-                     protected-context
-                     (make-instance 'tool-context
-                                    :configuration protected-configuration
-                                    :worker nil
-                                    :conversation protected-conversation))
-               (multiple-value-bind (read-result uri revision)
-                   (read-resource protected-context "workspace:recovery/core.bin")
-                 (declare (ignore read-result))
-                 (let ((result
-                         (edit-resource
-                          protected-context uri revision
-                          (list
-                           (workspace-resource-tests--operation
-                            "replace-lines"
-                            "start-line" 1
-                            "end-line" 1
-                            "content" "changed")))))
-                   (test-assert
-                    (and (not (tool-result-success-p result))
-                         (search "stable launcher or recovery artifact"
-                                 (tool-result-content result)))
-                    "resource.edit preserves protected workspace write policy")
-                   (test-assert
-                    (string= (workspace-file--read-content recovery-path) "stable")
-                    "protected resource edits leave stable artifacts unchanged"))))
              (let* ((schemas (tool-registry-provider-schemas registry))
                     (resource-namespace
                       (find "resource" schemas
