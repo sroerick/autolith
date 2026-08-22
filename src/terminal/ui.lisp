@@ -423,14 +423,43 @@ emergency terminal input responsive while another thread owns presentation."
     (terminal-ui)
     (values (or list terminal-rendered-row) integer))
 (defun terminal-ui--prompt-content (ui)
-  "Return UI's word-wrapped prompt content and cursor character offset."
+  "Return UI's word-wrapped prompt content and cursor character offset.
+
+The rendered row is memoized on its exact inputs, because most repaints
+run while the draft, cursor, and terminal width are unchanged. The editor
+installs a fresh string on every text change, so identity comparison on
+the draft is exact."
+  (let* ((editor (terminal-ui-editor ui))
+         (raw-content (line-editor-text editor))
+         (lisp-draft-p
+           (not (null (or *terminal-ui-lisp-input-p*
+                          (terminal-ui--lisp-draft-p raw-content)))))
+         (key (list raw-content
+                    (line-editor-cursor editor)
+                    (terminal-columns (terminal-ui-terminal ui))
+                    lisp-draft-p
+                    (terminal-ui-prompt ui)
+                    (terminal-ui-placeholder ui)
+                    *terminal-style-table*
+                    *terminal-style-reset*))
+         (cache (terminal-ui-prompt-render-cache ui)))
+    (if (and cache (every #'eql (first cache) key))
+        (values (second cache) (third cache))
+        (multiple-value-bind (content cursor-offset)
+            (terminal-ui--render-prompt-content ui lisp-draft-p)
+          (setf (terminal-ui-prompt-render-cache ui)
+                (list key content cursor-offset))
+          (values content cursor-offset)))))
+
+(-> terminal-ui--render-prompt-content
+    (terminal-ui boolean)
+    (values (or list terminal-rendered-row) integer))
+(defun terminal-ui--render-prompt-content (ui lisp-draft-p)
+  "Render UI's word-wrapped prompt content and cursor character offset."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (terminal-columns terminal))
          (editor (terminal-ui-editor ui))
          (raw-content (line-editor-text editor))
-         (lisp-draft-p
-           (or *terminal-ui-lisp-input-p*
-               (terminal-ui--lisp-draft-p raw-content)))
          (safe-prompt (sanitize-text (terminal-ui-prompt ui)
                                      :single-line-p t)))
     (multiple-value-bind (prompt-text prompt-spans)

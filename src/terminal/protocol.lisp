@@ -135,6 +135,12 @@
     :accessor terminal-ui-prompt-marker-state
     :type (member :closed :prompt :input :executing)
     :documentation "The current semantic OSC 133 prompt-block boundary.")
+   (prompt-render-cache
+    :initform nil
+    :accessor terminal-ui-prompt-render-cache
+    :type (option list)
+    :documentation
+    "The memoized prompt row, cursor offset, and their exact render inputs.")
    (placeholder
     :initarg :placeholder
     :initform ""
