@@ -442,7 +442,8 @@ boundary cannot fit within that budget."
   (let ((text
          (or (task-completion-text completion)
              (provider-result-assistant-text result)
-             (let ((tail (task-progress-output-tail progress)))
+             (let ((tail (with-lock-held ((task-progress-lock progress))
+                           (copy-seq (task-progress-output-tail progress)))))
                (and (non-empty-string-p tail) tail)))))
     (cond ((non-empty-string-p text) (task--bounded-output text))
           ((task-completion-data-present-p completion)
@@ -498,7 +499,8 @@ boundary cannot fit within that budget."
   "Return a portable terminal failure result for JOB."
   (let* ((parent (task-job-parent-agent job))
          (progress (task-job-progress job))
-         (tail (task-progress-output-tail progress))
+         (tail (with-lock-held ((task-progress-lock progress))
+                 (copy-seq (task-progress-output-tail progress))))
          (model (and parent
                      (configuration-model (agent-configuration parent)))))
     (list :id (job-identifier job)

@@ -424,13 +424,23 @@ identifier is what an agent uses to refer to its own children."
   (round (* 1000 (- end start)) internal-time-units-per-second))
 
 (defun task-progress-append-output (progress text)
-  "Append streamed TEXT while retaining only a bounded tail."
+  "Append streamed TEXT while retaining only a bounded tail.
+
+The tail lives in one reusable growable buffer, so readers must copy it
+under the progress lock before releasing it to other threads."
   (with-lock-held ((task-progress-lock progress))
-    (let* ((combined
-            (concatenate 'string (task-progress-output-tail progress) text))
-           (start (max 0 (- (length combined) *task-progress-output-limit*))))
-      (setf (task-progress-output-tail progress) (subseq combined start)
-            (task-progress-updated-at progress) (get-internal-real-time))))
+    (let ((buffer (task-progress-output-tail progress))
+          (limit *task-progress-output-limit*))
+      (unless (and (array-has-fill-pointer-p buffer)
+                   (adjustable-array-p buffer))
+        (setf buffer (text-buffer-append (text-buffer-create) buffer)
+              (task-progress-output-tail progress) buffer))
+      (text-buffer-append buffer text)
+      (let ((excess (- (fill-pointer buffer) limit)))
+        (when (plusp excess)
+          (replace buffer buffer :start2 excess)
+          (setf (fill-pointer buffer) limit))))
+    (setf (task-progress-updated-at progress) (get-internal-real-time)))
   nil)
 
 (defun task-progress-note-status (job status details)
@@ -669,7 +679,7 @@ handed rather than storing a second copy."
                     now))
               :recent-tools
               (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
-              :recent-output (task-progress-output-tail progress)
+              :recent-output (copy-seq (task-progress-output-tail progress))
               :request-count (task-progress-request-count progress)
               :usage (copy-tree (task-progress-usage progress))
               :duration-ms
