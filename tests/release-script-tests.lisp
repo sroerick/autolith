@@ -2183,7 +2183,19 @@ esac
       (when (probe-file log)
         (delete-file log))
       (multiple-value-bind (output error-output status)
-          (run-bootstrap "AUTOLITH_TEST_SBCL_VERSION=1.9.9")
+          (run-bootstrap "AUTOLITH_TEST_SBCL_VERSION=2.6.5-85913ede1")
+        (declare (ignore error-output))
+        (test-assert
+         (and (zerop status)
+              (search "Using host SBCL 2.6.5-85913ede1 as the FreeBSD bootstrap compiler."
+                      output)
+              (not (probe-file curl-log))
+              (probe-file log))
+         "host runtime bootstrap accepts a release with a vendor suffix"))
+      (when (probe-file log)
+        (delete-file log))
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap "AUTOLITH_TEST_SBCL_VERSION=1.9.9-foo")
         (let ((diagnostic (concatenate 'string (or output "")
                                        (or error-output ""))))
           (test-assert
@@ -2193,16 +2205,15 @@ esac
            "host runtime bootstrap rejects an unsupported compiler")))
       (release-script-tests--write-uname bin "Linux" "x86_64")
       (multiple-value-bind (output error-output status)
-          (run-bootstrap "AUTOLITH_HOST_BOOTSTRAP=1")
-        (let ((diagnostic (concatenate 'string (or output "")
-                                       (or error-output ""))))
-          (test-assert
-           (and (not (zerop status))
-                (search "Installing the pinned SBCL 2.4.0 bootstrap compiler."
-                        diagnostic)
-                (probe-file curl-log)
-                (not (probe-file log)))
-           "Linux x86-64 ignores an external host-bootstrap bypass")))
+          (run-bootstrap)
+        (declare (ignore error-output))
+        (test-assert
+         (and (zerop status)
+              (search "Using host SBCL 2.6.6 as the Linux bootstrap compiler."
+                      output)
+              (not (probe-file curl-log))
+              (probe-file log))
+         "Linux x86-64 runtime bootstrap uses a validated host compiler"))
       (multiple-value-bind (output error-output status)
           (run-bootstrap "AUTOLITH_LIBC=musl")
         (let ((diagnostic (concatenate 'string (or output "")
@@ -2664,8 +2675,8 @@ esac
          (search "image: ubuntu:20.04@sha256:722ea796ac2d57eeb3627c58a582fc1acc58be51faf815e1bce1682ae5c092f7"
                  linux-aarch64)
          "aarch64 glibc packaging pins the Ubuntu 20.04 platform manifest")
-        (test-assert (not (search "AUTOLITH_HOST_BOOTSTRAP" linux-x86_64))
-                     "x86-64 glibc packaging uses the pinned bootstrap")
+        (test-assert (search "pkg-config sbcl" linux-x86_64)
+                     "x86-64 glibc packaging installs a compatible host SBCL")
         (dolist (linux (list linux-aarch64
                              linux-x86_64-musl linux-aarch64-musl))
           (test-assert (search "AUTOLITH_HOST_BOOTSTRAP" linux)

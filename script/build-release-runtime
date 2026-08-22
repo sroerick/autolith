@@ -56,15 +56,7 @@ case $os in
       exit 1
     fi
     case $arch in
-      x86_64|amd64)
-        if [[ $detected_libc == musl ]]; then
-          host_bootstrap=true
-        else
-          bootstrap_arch=x86-64-linux
-          bootstrap_sha256=50afb9765d6a2f937f609ac33ebe553326347aef23eddd49c46d76456a5b3095
-        fi
-        ;;
-      aarch64|arm64)
+      x86_64|amd64|aarch64|arm64)
         host_bootstrap=true
         ;;
     esac
@@ -132,7 +124,7 @@ if [[ $host_bootstrap == true ]]; then
       printf 'build-release-runtime could not inspect the host SBCL on %s.\n' "$os" >&2
       exit 1
     }
-  if [[ ! $host_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(\..*)?$ ]]; then
+  if [[ ! $host_version =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([.-].+)?$ ]]; then
     printf 'build-release-runtime needs a release host SBCL, but found %s.\n' "$host_version" >&2
     exit 1
   fi

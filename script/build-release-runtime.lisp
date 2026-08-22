@@ -35,14 +35,31 @@
 
            (host-version-components (value)
              "Return the first three numeric components of host SBCL VALUE."
-             (let ((components
-                     (uiop:split-string value :separator '(#\.))))
-               (when (and (>= (length components) 3)
-                          (every (lambda (component)
-                                   (and (plusp (length component))
-                                        (every #'digit-char-p component)))
-                                 (subseq components 0 3)))
-                 (mapcar #'parse-integer (subseq components 0 3)))))
+             (block invalid
+               (let ((components '())
+                     (length     (length value))
+                     (start      0))
+                 (dotimes (index 3)
+                   (when (>= start length)
+                     (return-from invalid nil))
+                   (let ((end (or (position-if-not #'digit-char-p value
+                                                   :start start)
+                                  length)))
+                     (when (= end start)
+                       (return-from invalid nil))
+                     (push (parse-integer value :start start :end end)
+                           components)
+                     (if (< index 2)
+                         (progn
+                           (unless (and (< end length)
+                                        (char= (char value end) #\.))
+                             (return-from invalid nil))
+                           (setf start (1+ end)))
+                         (unless (or (= end length)
+                                     (and (< (1+ end) length)
+                                          (find (char value end) ".-")))
+                           (return-from invalid nil)))))
+                 (nreverse components))))
 
            (host-version-at-least-p (candidate minimum)
              "Return true when host SBCL CANDIDATE satisfies MINIMUM."

@@ -363,7 +363,9 @@ rather than failing, so existence needs the following stat first."
                             configured detected)))
     detected))
 
-(-> release-archive--platform-id (string string &optional string) string)
+(-> release-archive--platform-id
+    (string string &optional (option string))
+    string)
 (defun release-archive--platform-id (os architecture &optional libc)
   "Return the canonical release identifier for OS, ARCHITECTURE, and LIBC."
   (let ((architecture (string-downcase architecture))
