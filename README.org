@@ -56,7 +56,7 @@ in spam.
 
 * Install
 
-Autolith supports Linux x86-64 and macOS arm64 via standalone binary releases
+Autolith supports Linux, MacOS and the BSDs via standalone binary releases
 and Nix.
 
 The curl-into-sh installer installs or updates the packaged release for your
