@@ -228,6 +228,7 @@ fi
                       "script/check"
                       "script/build-release"
                       "script/build-release-runtime"
+                      "script/build-static-release-runtime"
                       "script/ci-package-release"
                       "script/validate-linux-release-artifact"
                       "server/build-in-container"))
@@ -239,7 +240,9 @@ fi
          (namestring (merge-pathnames "script/install" source-root)))
    :output nil)
   (dolist (relative '("script/build-release-runtime.lisp"
+                      "script/build-static-release-runtime.lisp"
                       "script/runtime-requirement.lisp"
+                      "script/validate-static-release.lisp"
                       "server/build-in-container.lisp"))
     (with-open-file (stream (merge-pathnames relative source-root)
                             :direction ':input
@@ -248,6 +251,24 @@ fi
         (loop while (read stream nil nil))))
     (test-assert (probe-file (merge-pathnames relative source-root))
                  (format nil "release program ~A is readable Lisp" relative)))
+  (multiple-value-bind (output error-output status)
+      (release-script-tests--run
+       (list (or (uiop:getenv "AUTOLITH_SBCL")
+                 (namestring (truename (uiop:argv0)))
+                 "sbcl")
+             "--noinform" "--no-userinit" "--no-sysinit"
+             "--script"
+             (namestring
+              (merge-pathnames "script/validate-static-release.lisp"
+                               source-root)))
+       :ignore-error-status t)
+    (let ((diagnostic (concatenate 'string (or output "")
+                                   (or error-output ""))))
+      (test-assert (not (zerop status))
+                   "the static release smoke program rejects missing arguments")
+      (test-assert (search "usage: validate-static-release.lisp SOURCE"
+                           diagnostic)
+                   "the static release smoke program establishes its local functions")))
   (test-assert
    (probe-file (merge-pathnames "server/Containerfile" source-root))
    "the release container definition is readable")
@@ -2254,25 +2275,18 @@ esac
      (search "platform=aarch64-linux-musl"
              (uiop:read-file-string record))
      "release records preserve the exact archive platform"))
-    (let ((missing (merge-pathnames "no-sandbox/" root))
-          (present (merge-pathnames "has-sandbox/" root)))
+    (let ((missing (merge-pathnames "no-sandbox/" root)))
       (test-assert (null (release-archive--sandbox-helper missing))
-                   "sandbox helper lookup is silent when the helper is absent")
-      (release-script-tests--write-file
-       (merge-pathnames
-        ".qlot/dists/cl-exec-sandbox/software/v1/cl-exec-sandbox-helper"
-        present)
-       "helper")
+                   "sandbox helper lookup is silent for an unrelated source root")
       (test-assert
        (equal
-        (namestring
-         (truename (release-archive--sandbox-helper present)))
-        (namestring
-         (truename
-          (merge-pathnames
-           ".qlot/dists/cl-exec-sandbox/software/v1/cl-exec-sandbox-helper"
-           present))))
-       "sandbox helper lookup finds a nested helper without GNU find"))
+        (truename (release-archive--sandbox-helper
+                   (asdf:system-source-directory :autolith)))
+        (truename
+         (merge-pathnames
+          "build/cl-exec-sandbox-helper"
+          (asdf:system-source-directory :cl-exec-sandbox))))
+       "sandbox helper lookup uses the locked ASDF dependency"))
   (let* ((bin (merge-pathnames "sha256-only/" root))
          (empty (merge-pathnames "no-digest/" root))
          (sha256 (merge-pathnames "sha256" bin))
@@ -2375,7 +2389,18 @@ esac
     (release-script-tests--write-file
      runtime
      "#!/bin/sh
-printf '%s' \"${AUTOLITH_TEST_RUNTIME_VERSION:-2.6.6}\"
+set -eu
+static_smoke=false
+for argument do
+  [ \"$argument\" = --script ] && static_smoke=true
+done
+if [ \"$static_smoke\" = true ]; then
+  [ \"$AUTOLITH_FFF_LIBRARY\" = \"$0\" ]
+  [ \"$COLORLISP_NATIVE_LIBRARY\" = \"$0\" ]
+  printf 'Static native smoke test passed.\\n'
+else
+  printf '%s' \"${AUTOLITH_TEST_RUNTIME_VERSION:-2.6.6}\"
+fi
 ")
     (release-script-tests--write-file
      file-command
@@ -2387,22 +2412,24 @@ printf '%s\\n' \"${AUTOLITH_TEST_FILE_DESCRIPTION:-ELF 64-bit LSB pie executable
      "#!/bin/sh
 case $1 in
   -h) printf '  Machine: %s\\n' \"${AUTOLITH_TEST_MACHINE:-Advanced Micro Devices X86-64}\" ;;
-  -l) printf '      [Requesting program interpreter: %s]\\n' \"${AUTOLITH_TEST_INTERPRETER:-/lib64/ld-linux-x86-64.so.2}\" ;;
+  -l) [ \"${AUTOLITH_TEST_STATIC_HEADERS:-0}\" = 1 ] || printf '      [Requesting program interpreter: %s]\\n' \"${AUTOLITH_TEST_INTERPRETER:-/lib64/ld-linux-x86-64.so.2}\" ;;
+  -d) [ -z \"${AUTOLITH_TEST_NEEDED:-}\" ] || printf ' 0x0000000000000001 (NEEDED) Shared library: [%s]\\n' \"$AUTOLITH_TEST_NEEDED\" ;;
 esac
 ")
     (dolist (pathname (list runtime file-command readelf-command))
       (release-script-tests--chmod "755" pathname))
-    (labels ((archive-path (case-name)
+    (labels ((archive-path (case-name &optional (name release-name))
                (merge-pathnames
-                (format nil "~A/~A.tar.gz" case-name release-name)
+                (format nil "~A/~A.tar.gz" case-name name)
                 fixture-root))
 
-             (make-archive (case-name &key extra-top-level)
-               (let ((archive (archive-path case-name)))
+             (make-archive (case-name &key extra-top-level
+                                           (name release-name))
+               (let ((archive (archive-path case-name name)))
                  (ensure-directories-exist archive)
                  (release-script-tests--run
                   (append (list "tar" "-czf" (namestring archive)
-                                "-C" (namestring fixture-root) release-name)
+                                "-C" (namestring fixture-root) name)
                           (when extra-top-level
                             (list extra-top-level)))
                   :output nil)
@@ -2415,6 +2442,14 @@ esac
                       "/lib64/ld-linux-x86-64.so.2")
                 :environment (append extra-environment environment)
                 :ignore-error-status t))
+
+              (validate-static (archive &key extra-environment
+                                             (platform "x86_64-linux"))
+                (release-script-tests--run
+                 (list (namestring validator) (namestring archive)
+                       platform "x86_64" "static")
+                 :environment (append extra-environment environment)
+                 :ignore-error-status t))
 
              (assert-failure (archive diagnostic description
                               &key extra-environment)
@@ -2466,20 +2501,90 @@ esac
       (assert-failure
        (make-archive "extra-top-level" :extra-top-level "rogue")
        "is outside" "Linux artifact validation rejects extra top-level members")
-      (release-script-tests--write-file
-       release-record
-       "platform=x86_64-linux
-platform=aarch64-linux
-")
+      (release-script-tests--record
+       release-record "v0.11.0" :platform "x86_64-linux")
+      (with-open-file (stream release-record
+                              :direction ':output
+                              :if-exists ':append)
+        (write-line "platform=aarch64-linux" stream))
       (assert-failure
        (make-archive "duplicate-platform") "exactly one platform field"
        "Linux artifact validation rejects duplicate platform fields")
-      (release-script-tests--write-file release-record "platform=aarch64-linux
-")
+      (release-script-tests--record
+       release-record "v0.11.0" :platform "aarch64-linux")
       (assert-failure
        (make-archive "mismatched-platform") "does not identify x86_64-linux"
-       "Linux artifact validation rejects mismatched platform metadata")))
-  nil)
+       "Linux artifact validation rejects mismatched platform metadata")
+      (release-script-tests--record
+       release-record "v0.11.0" :platform "x86_64-linux-musl")
+      (multiple-value-bind (output error-output status)
+          (validate-static
+           (make-archive "mismatched-static-root")
+           :platform "x86_64-linux-musl"
+           :extra-environment
+           '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
+             "AUTOLITH_TEST_STATIC_HEADERS=1"))
+        (declare (ignore output))
+        (test-assert (not (zerop status))
+                     "static validation rejects a mismatched archive root")
+        (test-assert (search "archive root" error-output)
+                     "static root mismatch is explicit"))
+      (release-script-tests--record
+       release-record "v0.11.0" :platform "x86_64-linux")
+      (let* ((musl-name "autolith-v0.11.0-x86_64-linux-musl")
+             (musl-root
+               (merge-pathnames (format nil "~A/" musl-name) fixture-root))
+             (musl-record (merge-pathnames "RELEASE" musl-root)))
+        (release-script-tests--run
+         (list "cp" "-RPp" (namestring release-root) (namestring musl-root))
+         :output nil)
+        (release-script-tests--record
+         musl-record "v0.11.0" :platform "x86_64-linux-musl")
+        (let ((static (make-archive "static" :name musl-name)))
+          (multiple-value-bind (output error-output status)
+              (validate-static
+               static
+               :platform "x86_64-linux-musl"
+               :extra-environment
+               '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
+                 "AUTOLITH_TEST_STATIC_HEADERS=1"))
+            (declare (ignore error-output))
+            (test-assert (zerop status)
+                         "Linux artifact validation accepts a static musl archive")
+            (test-assert (search "Static native smoke test passed." output)
+                         "static Linux validation exercises the native smoke test")
+            (test-assert (search "Validated" output)
+                         "static Linux artifact validation reports its result"))
+          (multiple-value-bind (output error-output status)
+              (validate-static
+               static
+               :platform "x86_64-linux-musl"
+               :extra-environment
+               '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
+                 "AUTOLITH_TEST_STATIC_HEADERS=1"
+                 "AUTOLITH_TEST_NEEDED=libc.so"))
+            (declare (ignore output))
+            (test-assert (not (zerop status))
+                         "static Linux validation rejects dynamic dependencies")
+            (test-assert (search "dynamic dependency" error-output)
+                         "static Linux dependency failure is explicit")))
+        (release-script-tests--run
+         (list "ln" "-s" "/bin/sh"
+               (namestring (merge-pathnames "escaped-runtime" musl-root)))
+         :output nil)
+        (multiple-value-bind (output error-output status)
+            (validate-static
+             (make-archive "static-escaping-link" :name musl-name)
+             :platform "x86_64-linux-musl"
+             :extra-environment
+             '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
+               "AUTOLITH_TEST_STATIC_HEADERS=1"))
+          (declare (ignore output))
+          (test-assert (not (zerop status))
+                       "static validation rejects escaping symbolic links")
+          (test-assert (search "outside the release root" error-output)
+                       "escaping symbolic-link failure is explicit")))
+    nil)))
 
 (-> release-script-tests--github-release-workflow (pathname) null)
 (defun release-script-tests--github-release-workflow (source-root)
@@ -2521,7 +2626,16 @@ platform=aarch64-linux
               (job-section "package-openbsd-x86_64" nil))
             (script
               (uiop:read-file-string
-               (merge-pathnames "script/ci-package-release" source-root))))
+               (merge-pathnames "script/ci-package-release" source-root)))
+            (runtime-builder
+              (uiop:read-file-string
+               (merge-pathnames "script/build-release-runtime.lisp" source-root)))
+            (static-builder
+              (uiop:read-file-string
+               (merge-pathnames "script/build-static-release-runtime" source-root)))
+            (static-smoke
+              (uiop:read-file-string
+               (merge-pathnames "script/validate-static-release.lisp" source-root))))
         (dolist (linux (list linux-x86_64 linux-aarch64
                              linux-x86_64-musl linux-aarch64-musl))
           (test-assert (search "script/validate-linux-release-artifact" linux)
@@ -2535,10 +2649,10 @@ platform=aarch64-linux
                     "x86_64-linux x86_64 /lib64/ld-linux-x86-64.so.2")
                    (,linux-aarch64
                     "aarch64-linux aarch64 /lib/ld-linux-aarch64.so.1")
-                   (,linux-x86_64-musl
-                    "x86_64-linux-musl x86_64 /lib/ld-musl-x86_64.so.1")
-                   (,linux-aarch64-musl
-                    "aarch64-linux-musl aarch64 /lib/ld-musl-aarch64.so.1")))
+                    (,linux-x86_64-musl
+                     "x86_64-linux-musl x86_64 static")
+                    (,linux-aarch64-musl
+                     "aarch64-linux-musl aarch64 static")))
           (test-assert (search (second validation) (first validation))
                        (format nil "Linux validation checks ~A"
                                (second validation))))
@@ -2564,6 +2678,24 @@ platform=aarch64-linux
          (search "alpine:3.22.5@sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37"
                  linux-aarch64-musl)
          "aarch64 musl packaging pins the Alpine platform manifest")
+         (dolist (linux (list linux-x86_64-musl linux-aarch64-musl))
+           (dolist (package '("openssl-libs-static" "zlib-static" "zstd-static"))
+             (test-assert (search package linux)
+                          (format nil "musl packaging installs ~A" package))))
+        (dolist (needle '("runtime_builder=$runtime_root/static-build/installation/bin/sbcl"
+                          "bootstrap_sbcl=$runtime_builder"
+                          "AUTOLITH_SBCL=$bootstrap_sbcl ./script/bootstrap"
+                          "./script/build-static-release-runtime"))
+          (test-assert (search needle script)
+                       (format nil "static packaging contains ~A" needle)))
+        (test-assert (search "(merge-pathnames \"installation/\" support-root)"
+                             runtime-builder)
+                     "the runtime build preserves a complete dynamic SBCL installation")
+        (test-assert
+         (search "builder_runtime=$support_root/installation/bin/sbcl" static-builder)
+         "the static finalizer uses the preserved dynamic SBCL")
+        (test-assert (search "(find \"autolith.asd\"" static-smoke)
+                     "the static FFF smoke test verifies its search result")
         (test-assert (search "timeout-minutes: 75" linux-x86_64)
                      "Linux x86-64 packaging has a 75-minute deadline")
         (test-assert (search "gtar--" openbsd)
@@ -2591,8 +2723,8 @@ platform=aarch64-linux
                  "musl packaging never uses an unpinned Alpine latest image")
     (test-assert (not (search "AUTOLITH_RELEASE_PLATFORM" workflow))
                  "the release workflow relies on detected platform identity")
-    (test-assert (not (search "static" workflow-lower))
-                 "the release workflow does not claim static Linux artifacts")
+    (test-assert (search "static" workflow-lower)
+                 "the release workflow validates static musl artifacts")
     (test-assert (not (search "standalone" workflow-lower))
                  "the release workflow does not claim standalone Linux artifacts")
     (dolist (needle '("archive_members=$(tar -tzf"
@@ -2600,8 +2732,14 @@ platform=aarch64-linux
                       "exactly one platform field"
                       "platform_count=$(grep -c '^platform='"
                       "file --brief"
+                      "file --brief -L"
+                      "readlink -f"
+                      "-type l"
                       "readelf -h"
                       "readelf -l"
+                      "readelf -d"
+                      "statically linked"
+                      "dynamic dependency"
                       "expected_interpreter"
                       "--eval '(write-string (lisp-implementation-version))'"))
       (test-assert (search needle validator)

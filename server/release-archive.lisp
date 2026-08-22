@@ -106,30 +106,22 @@
               value)
        t))
 
-(-> release-archive--file-named (pathname string) (option pathname))
-(defun release-archive--file-named (root name)
-  "Return the first file named NAME below ROOT."
-  (when (uiop:directory-exists-p root)
-    (labels ((walk (directory)
-               (let ((candidate (merge-pathnames name directory)))
-                 (when (and (uiop:file-exists-p candidate)
-                            (not (uiop:directory-exists-p candidate)))
-                   (return-from release-archive--file-named candidate)))
-               (dolist (subdirectory (uiop:subdirectories directory))
-                 (walk subdirectory))))
-      (walk (uiop:ensure-directory-pathname root))))
-  nil)
-
 (-> release-archive--sandbox-helper (pathname) (option pathname))
 (defun release-archive--sandbox-helper (source-root)
-  "Locate the private sandbox helper built below SOURCE-ROOT."
+  "Locate the private sandbox helper for SOURCE-ROOT's locked dependency."
   (let ((configured (uiop:getenv "AUTOLITH_RELEASE_SANDBOX_HELPER")))
     (or (and configured
              (plusp (length configured))
              (probe-file configured))
-        (release-archive--file-named
-         (merge-pathnames ".qlot/dists/cl-exec-sandbox/software/" source-root)
-         "cl-exec-sandbox-helper"))))
+        (handler-case
+            (when (equal (truename source-root)
+                         (truename (asdf:system-source-directory :autolith)))
+              (let ((candidate
+                      (merge-pathnames
+                       "build/cl-exec-sandbox-helper"
+                       (asdf:system-source-directory :cl-exec-sandbox))))
+                (and (probe-file candidate) candidate)))
+          (error () nil)))))
 
 
 (-> release-archive--colorlisp-library () pathname)
@@ -146,6 +138,31 @@
   "Copy SOURCE recursively and without dereferencing it to TARGET."
   (release-archive--run
    (list "cp" "-RPp" (namestring source) (namestring target)))
+  nil)
+
+(-> release-archive--validate-static-elf (pathname) null)
+(defun release-archive--validate-static-elf (pathname)
+  "Require PATHNAME to be an ELF executable without dynamic linkage."
+  (let ((description
+          (release-archive--run
+           (list "file" "--brief" (namestring pathname))
+           :output ':string :error-output ':output))
+        (program-headers
+          (release-archive--run
+           (list "readelf" "-l" (namestring pathname))
+           :output ':string :error-output ':output))
+        (dynamic-section
+          (release-archive--run
+           (list "readelf" "-d" (namestring pathname))
+           :output ':string :error-output ':output)))
+    (unless (and (search "ELF" description)
+                 (search "statically linked" description)
+                 (not (search "INTERP" program-headers))
+                 (not (search "(NEEDED)" dynamic-section)))
+      (error 'release-archive-error
+             :stage ':runtime-validation
+             :cause (format nil "~A is not a static ELF executable."
+                            pathname))))
   nil)
 
 (-> release-archive--dependency-links (pathname) list)
@@ -531,38 +548,47 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
              (output-directory
                (uiop:ensure-directory-pathname
                 (or output-directory (merge-pathnames "dist/" source-root))))
-             (platform (release-archive--platform))
-             (lib-extension (release-archive--shared-library-extension))
-             (fff-library-name (format nil "libfff_c.~A" lib-extension))
-             (colorlisp-library-name
-               (format nil "libcolorlisp-tree-sitter.~A" lib-extension))
-             (runtime-version
-               (release-archive--trimmed-file
-                (merge-pathnames "sbcl.version" source-root)))
-             (home (user-homedir-pathname))
-             (data-home
-               (uiop:ensure-directory-pathname
-                (or (uiop:getenv "XDG_DATA_HOME")
-                    (merge-pathnames ".local/share/" home))))
-             (runtime-root
-               (merge-pathnames
-                (format nil "autolith/runtimes/~A/" runtime-version)
-                data-home))
-             (runtime-installation
-               (release-archive--environment-pathname
-                "AUTOLITH_RELEASE_RUNTIME"
-                (merge-pathnames "installation/" runtime-root)))
-             (runtime-source
-               (release-archive--environment-pathname
-                "AUTOLITH_RELEASE_SBCL_SOURCE"
-                (merge-pathnames "source/" runtime-root)))
-             (fff-library
-               (release-archive--environment-pathname
-                "AUTOLITH_RELEASE_FFF_LIBRARY"
-                (merge-pathnames (format nil "autolith/native/fff/~A" fff-library-name)
-                                 data-home)))
-             (colorlisp-library (release-archive--colorlisp-library))
-             (sandbox-helper (release-archive--sandbox-helper source-root))
+              (platform (release-archive--platform))
+              (static-musl-p
+                (not (null (search "-linux-musl" platform :from-end t))))
+              (lib-extension (release-archive--shared-library-extension))
+              (fff-library-name (format nil "libfff_c.~A" lib-extension))
+              (colorlisp-library-name
+                (format nil "libcolorlisp-tree-sitter.~A" lib-extension))
+              (runtime-version
+                (release-archive--trimmed-file
+                 (merge-pathnames "sbcl.version" source-root)))
+              (home (user-homedir-pathname))
+              (data-home
+                (uiop:ensure-directory-pathname
+                 (or (uiop:getenv "XDG_DATA_HOME")
+                     (merge-pathnames ".local/share/" home))))
+              (runtime-root
+                (merge-pathnames
+                 (format nil "autolith/runtimes/~A/" runtime-version)
+                 data-home))
+              (runtime-installation
+                (release-archive--environment-pathname
+                 "AUTOLITH_RELEASE_RUNTIME"
+                 (merge-pathnames "installation/" runtime-root)))
+              (runtime-source
+                (release-archive--environment-pathname
+                 "AUTOLITH_RELEASE_SBCL_SOURCE"
+                 (merge-pathnames "source/" runtime-root)))
+              (static-runtime-marker
+                (merge-pathnames "lib/autolith-static-musl"
+                                 runtime-installation))
+              (fff-library
+                (unless static-musl-p
+                  (release-archive--environment-pathname
+                   "AUTOLITH_RELEASE_FFF_LIBRARY"
+                   (merge-pathnames
+                    (format nil "autolith/native/fff/~A" fff-library-name)
+                    data-home))))
+              (colorlisp-library
+                (unless static-musl-p
+                  (release-archive--colorlisp-library)))
+              (sandbox-helper (release-archive--sandbox-helper source-root))
              (version (release-builder--source-version source-root))
              (tag (format nil "v~A" version))
              (commit (release-archive--git-output source-root '("rev-parse" "HEAD")))
@@ -571,6 +597,8 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                 source-root '("show" "-s" "--format=%ct" "HEAD"))))
         (release-archive--require-commands
          '("chmod" "cp" "find" "git" "gzip" "tar"))
+         (when static-musl-p
+           (release-archive--require-commands '("file" "readelf")))
         (release-archive--sha256-command)
         (release-archive--require-gnu-tar)
         (release-archive--validate-platform)
@@ -591,19 +619,29 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
           (error 'release-archive-error
                  :stage ':prerequisites
                  :cause "The managed SBCL source is absent; run ./script/bootstrap."))
-        (unless (probe-file fff-library)
-          (error 'release-archive-error
-                 :stage ':prerequisites
-                 :cause "The private fff library is absent; run ./script/bootstrap."))
-        (unless (probe-file colorlisp-library)
-          (error 'release-archive-error
-                 :stage ':prerequisites
-                 :cause "The private ColorLisp library is absent; run ./script/bootstrap."))
+         (if static-musl-p
+             (unless (probe-file static-runtime-marker)
+               (error 'release-archive-error
+                      :stage ':prerequisites
+                      :cause "The musl SBCL runtime was not statically linked."))
+             (progn
+               (unless (probe-file fff-library)
+                 (error 'release-archive-error
+                        :stage ':prerequisites
+                        :cause "The private fff library is absent; run ./script/bootstrap."))
+               (unless (probe-file colorlisp-library)
+                 (error 'release-archive-error
+                        :stage ':prerequisites
+                        :cause "The private ColorLisp library is absent; run ./script/bootstrap."))))
         (when (string-equal (software-type) "Linux")
           (unless sandbox-helper
             (error 'release-archive-error
                    :stage ':prerequisites
                    :cause "The private sandbox helper is absent; run ./script/check.")))
+         (when static-musl-p
+           (release-archive--validate-static-elf
+            (merge-pathnames "bin/sbcl" runtime-installation))
+           (release-archive--validate-static-elf sandbox-helper))
         (unless (release-archive--semantic-version-p version)
           (error 'release-archive-error
                  :stage ':source-validation
@@ -675,13 +713,15 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  (release-archive--copy
                   runtime-source
                   (merge-pathnames "libexec/sbcl-source" release-root))
-                 (release-archive--copy
-                  fff-library
-                  (merge-pathnames (format nil "lib/~A" fff-library-name) release-root))
-                 (release-archive--copy
-                  colorlisp-library
-                  (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
-                                   release-root))
+                  (unless static-musl-p
+                    (release-archive--copy
+                     fff-library
+                     (merge-pathnames (format nil "lib/~A" fff-library-name)
+                                      release-root))
+                    (release-archive--copy
+                     colorlisp-library
+                     (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
+                                      release-root)))
                  (when sandbox-helper
                    (release-archive--copy
                     sandbox-helper
@@ -697,14 +737,16 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  (release-archive--run
                   (list "chmod" "755"
                         (namestring (merge-pathnames "bin/autolith" release-root))))
-                 (release-archive--run
-                  (list "chmod" "644"
-                        (namestring
-                         (merge-pathnames (format nil "lib/~A" fff-library-name)
-                                          release-root))
-                        (namestring
-                         (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
-                                          release-root))))
+                  (unless static-musl-p
+                    (release-archive--run
+                     (list "chmod" "644"
+                           (namestring
+                            (merge-pathnames (format nil "lib/~A" fff-library-name)
+                                             release-root))
+                           (namestring
+                            (merge-pathnames
+                             (format nil "lib/~A" colorlisp-library-name)
+                             release-root)))))
                 (release-archive--write-record
                  (merge-pathnames "RELEASE" release-root)
                  :version version :tag tag :commit commit :platform platform)

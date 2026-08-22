@@ -159,8 +159,8 @@ jobs:
             sh -c '
               set -eu
               apk add --no-cache bash binutils build-base bubblewrap ca-certificates cmake \
-                coreutils curl file git grep icu-dev linux-headers openssl-dev pkgconfig \
-                sbcl tar zlib-dev zstd-dev
+                coreutils curl file git grep icu-dev linux-headers openssl-dev \
+                openssl-libs-static pkgconfig sbcl tar zlib-dev zlib-static zstd-dev zstd-static
               curl --fail --location --show-error --retry 3 --proto "=https" --tlsv1.2 \
                 https://sh.rustup.rs |
                 sh -s -- -y --default-toolchain 1.97.1 --profile minimal
@@ -169,7 +169,7 @@ jobs:
               AUTOLITH_HOST_BOOTSTRAP=1 ./script/ci-package-release dist/
               ./script/validate-linux-release-artifact \
                 dist/autolith-"$GITHUB_REF_NAME"-x86_64-linux-musl.tar.gz \
-                x86_64-linux-musl x86_64 /lib/ld-musl-x86_64.so.1
+                x86_64-linux-musl x86_64 static
             '
 
       - name: Upload Linux musl release artifacts
@@ -196,8 +196,8 @@ jobs:
             sh -c '
               set -eu
               apk add --no-cache bash binutils build-base bubblewrap ca-certificates cmake \
-                coreutils curl file git grep icu-dev linux-headers openssl-dev pkgconfig \
-                sbcl tar zlib-dev zstd-dev
+                coreutils curl file git grep icu-dev linux-headers openssl-dev \
+                openssl-libs-static pkgconfig sbcl tar zlib-dev zlib-static zstd-dev zstd-static
               curl --fail --location --show-error --retry 3 --proto "=https" --tlsv1.2 \
                 https://sh.rustup.rs |
                 sh -s -- -y --default-toolchain 1.97.1 --profile minimal
@@ -206,7 +206,7 @@ jobs:
               AUTOLITH_HOST_BOOTSTRAP=1 ./script/ci-package-release dist/
               ./script/validate-linux-release-artifact \
                 dist/autolith-"$GITHUB_REF_NAME"-aarch64-linux-musl.tar.gz \
-                aarch64-linux-musl aarch64 /lib/ld-musl-aarch64.so.1
+                aarch64-linux-musl aarch64 static
             '
 
       - name: Upload Linux musl release artifacts

@@ -9,12 +9,14 @@ fail()
 }
 
 [[ $# -eq 4 ]] ||
-  fail "usage: validate-linux-release-artifact ARCHIVE PLATFORM ARCHITECTURE INTERPRETER"
+  fail "usage: validate-linux-release-artifact ARCHIVE PLATFORM ARCHITECTURE INTERPRETER_OR_STATIC"
 
 archive=$1
 expected_platform=$2
 expected_architecture=$3
 expected_interpreter=$4
+static_release=false
+[[ $expected_interpreter == static ]] && static_release=true
 
 [[ -f $archive ]] || fail "$archive does not exist."
 case $expected_architecture in
@@ -23,7 +25,7 @@ case $expected_architecture in
   *) fail "unsupported expected architecture $expected_architecture." ;;
 esac
 
-for command in file readelf tar grep sed; do
+for command in file find grep readelf readlink sed tar; do
   command -v "$command" >/dev/null 2>&1 || fail "$command is required."
 done
 
@@ -64,11 +66,19 @@ runtime=$release_root/runtime/bin/sbcl
 [[ -r $release_record ]] || fail "RELEASE is missing."
 [[ -x $runtime ]] || fail "the bundled SBCL runtime is missing."
 platform_count=$(grep -c '^platform=' "$release_record" || true)
+tag_count=$(grep -c '^tag=' "$release_record" || true)
 [[ $platform_count -eq 1 ]] ||
   fail "RELEASE must contain exactly one platform field."
+[[ $tag_count -eq 1 ]] || fail "RELEASE must contain exactly one tag field."
 platform_record=$(grep '^platform=' "$release_record")
+tag_record=$(grep '^tag=' "$release_record")
 [[ $platform_record == "platform=$expected_platform" ]] ||
   fail "RELEASE does not identify $expected_platform."
+tag=${tag_record#tag=}
+[[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "RELEASE tag $tag is malformed."
+expected_release_name=autolith-$tag-$expected_platform
+[[ $release_name == "$expected_release_name" ]] ||
+  fail "the archive root is $release_name, expected $expected_release_name."
 
 file_description=$(file --brief "$runtime")
 case $expected_architecture in
@@ -85,15 +95,56 @@ esac
 machine=$(readelf -h "$runtime" | sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
 [[ $machine == "$expected_machine" ]] ||
   fail "the bundled SBCL ELF machine is $machine, expected $expected_machine."
-interpreter=$(readelf -l "$runtime" |
-  sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')
-[[ $interpreter == "$expected_interpreter" ]] ||
-  fail "the bundled SBCL interpreter is $interpreter, expected $expected_interpreter."
+if [[ $static_release == true ]]; then
+  elf_count=0
+  while IFS= read -r -d '' candidate; do
+    if [[ -L $candidate ]]; then
+      target=$(readlink -f -- "$candidate") ||
+        fail "$candidate is a broken symbolic link."
+      case $target in
+        "$release_root"/*) ;;
+        *) fail "$candidate points outside the release root." ;;
+      esac
+    fi
+    candidate_description=$(file --brief -L "$candidate")
+    [[ $candidate_description == *ELF* ]] || continue
+    ((elf_count += 1))
+    candidate_machine=$(readelf -h "$candidate" |
+      sed -n 's/^[[:space:]]*Machine:[[:space:]]*//p')
+    [[ $candidate_machine == "$expected_machine" ]] ||
+      fail "$candidate has ELF machine $candidate_machine, expected $expected_machine."
+    if readelf -l "$candidate" | grep -q 'INTERP'; then
+      fail "$candidate contains an ELF interpreter."
+    fi
+    if readelf -d "$candidate" 2>/dev/null | grep -q '(NEEDED)'; then
+      fail "$candidate contains a dynamic dependency."
+    fi
+    grep -q 'statically linked' <<< "$candidate_description" ||
+      fail "$candidate is not identified as statically linked: $candidate_description"
+  done < <(find "$release_root" \( -type f -o -type l \) -print0)
+  [[ $elf_count -gt 0 ]] || fail "the archive contains no ELF files."
+  [[ ! -e $release_root/lib/libfff_c.so ]] ||
+    fail "the static archive contains libfff_c.so."
+  [[ ! -e $release_root/lib/libcolorlisp-tree-sitter.so ]] ||
+    fail "the static archive contains libcolorlisp-tree-sitter.so."
+else
+  interpreter=$(readelf -l "$runtime" |
+    sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')
+  [[ $interpreter == "$expected_interpreter" ]] ||
+    fail "the bundled SBCL interpreter is $interpreter, expected $expected_interpreter."
+fi
 
 runtime_version=$(env -u SBCL_HOME "$runtime" \
   --noinform --no-userinit --no-sysinit --non-interactive \
   --eval '(write-string (lisp-implementation-version))')
 [[ $runtime_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   fail "the bundled SBCL smoke test returned $runtime_version."
+if [[ $static_release == true ]]; then
+  AUTOLITH_FFF_LIBRARY=$runtime \
+  COLORLISP_NATIVE_LIBRARY=$runtime \
+  env -u SBCL_HOME "$runtime" --noinform --no-userinit --no-sysinit \
+    --script "$release_root/libexec/autolith/script/validate-static-release.lisp" \
+    "$release_root/libexec/autolith"
+fi
 printf 'Validated %s as %s (%s, %s).\n' \
   "$archive_name" "$expected_platform" "$expected_architecture" "$runtime_version"

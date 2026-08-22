@@ -90,15 +90,33 @@ export PATH="$HOME/bin:/usr/local/bin:/usr/pkg/bin:$PATH"
 ensure_sha256sum
 ensure_gnu_tar
 
+static_musl=false
+if [[ $(uname -s) == Linux ]] && command -v ldd >/dev/null 2>&1 &&
+   grep -iq musl <<< "$(ldd /bin/sh 2>&1 || true)"; then
+  static_musl=true
+  export AUTOLITH_STATIC_MUSL=1
+  export AUTOLITH_BUILD_STATIC_NATIVE=1
+fi
+
 runtime_version=$(tr -d '[:space:]' < sbcl.version)
 data_home=${XDG_DATA_HOME:-$HOME/.local/share}
 runtime_root=$data_home/autolith/runtimes/$runtime_version
 runtime_sbcl=$runtime_root/installation/bin/sbcl
+runtime_static_archive=$runtime_root/static-build/libsbcl.a
+runtime_builder=$runtime_root/static-build/installation/bin/sbcl
 
-if [[ ! -x $runtime_sbcl ]]; then
+if [[ ! -x $runtime_sbcl ||
+      ($static_musl == true &&
+       (! -f $runtime_static_archive || ! -x $runtime_builder)) ]]; then
   printf 'Building the pinned SBCL release runtime.\n'
+  rm -rf -- "$runtime_root/installation" "$runtime_root/static-build"
   mkdir -p "$runtime_root"
   ./script/build-release-runtime "$runtime_root/installation"
+fi
+
+bootstrap_sbcl=$runtime_sbcl
+if [[ $static_musl == true ]]; then
+  bootstrap_sbcl=$runtime_builder
 fi
 
 if [[ ! -f $HOME/quicklisp/setup.lisp ]]; then
@@ -113,7 +131,7 @@ if [[ ! -f $HOME/quicklisp/setup.lisp ]]; then
     --proto '=https' --tlsv1.2 \
     --output "$temporary_root/quicklisp.lisp" \
     https://beta.quicklisp.org/quicklisp.lisp
-  "$runtime_sbcl" --noinform --no-userinit --no-sysinit --non-interactive \
+  "$bootstrap_sbcl" --noinform --no-userinit --no-sysinit --non-interactive \
     --load "$temporary_root/quicklisp.lisp" \
     --eval '(quicklisp-quickstart:install :path (merge-pathnames "quicklisp/" (user-homedir-pathname)))'
   cleanup
@@ -121,6 +139,10 @@ if [[ ! -f $HOME/quicklisp/setup.lisp ]]; then
 fi
 
 printf 'Bootstrapping Autolith dependencies.\n'
-./script/bootstrap
+AUTOLITH_SBCL=$bootstrap_sbcl ./script/bootstrap
+if [[ $static_musl == true ]]; then
+  printf 'Linking the static musl runtime and native helper.\n'
+  ./script/build-static-release-runtime "$runtime_root/installation"
+fi
 printf 'Building the release archive.\n'
 ./script/build-release "$output_directory"

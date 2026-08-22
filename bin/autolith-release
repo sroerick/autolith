@@ -235,7 +235,10 @@ case $os in
 esac
 [[ -n $host_platform ]] ||
   fail "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
-if [[ $host_platform == arm64-darwin ]]; then
+if [[ $host_platform == *-linux-musl ]]; then
+  fff_library=$sbcl_command
+  colorlisp_library=$sbcl_command
+elif [[ $host_platform == arm64-darwin ]]; then
   fff_library=$release_root/lib/libfff_c.dylib
   colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.dylib
 else
@@ -269,8 +272,10 @@ fi
 if [[ $release_platform == *-linux* ]]; then
   [[ -x $sandbox_helper ]] || fail "the private sandbox helper is missing."
 fi
-[[ -f $fff_library ]] || fail "the private search library is missing."
-[[ -f $colorlisp_library ]] || fail "the private syntax library is missing."
+if [[ $release_platform != *-linux-musl ]]; then
+  [[ -f $fff_library ]] || fail "the private search library is missing."
+  [[ -f $colorlisp_library ]] || fail "the private syntax library is missing."
+fi
 command -v git >/dev/null 2>&1 || fail "Git is required."
 if [[ $release_platform == *-linux* ]]; then
   command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap is required."
