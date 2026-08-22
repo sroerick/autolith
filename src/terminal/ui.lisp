@@ -2549,7 +2549,9 @@ frames, so this function never paints directly from a child thread."
   "Apply EVENT to UI's suggestions or editor and return its action and payload."
   (with-terminal-ui-locked (ui)
     (let* ((editor (terminal-ui-editor ui))
-           (text-before (copy-seq (line-editor-text editor)))
+           ;; The editor installs a fresh string on every text change, so
+           ;; holding the reference preserves the pre-event content.
+           (text-before (line-editor-text editor))
            (images-before
              (terminal-ui--copy-image-attachments
               (terminal-ui-image-attachments ui)))
@@ -2584,9 +2586,11 @@ frames, so this function never paints directly from a child thread."
                 (terminal-ui--apply-editor-event ui effective-event)
               (when (eq action :changed)
                 (terminal-ui--restore-history-images ui))
+              (let ((text-after (line-editor-text editor)))
                 (when (and (eq action :changed)
-                           (not (string= text-before (line-editor-text editor))))
-                  (setf (terminal-ui-completion-dismissed-p ui) nil))
+                           (not (eq text-before text-after))
+                           (not (string= text-before text-after)))
+                  (setf (terminal-ui-completion-dismissed-p ui) nil)))
               (when (and (member action '(:submit :queue))
                          (stringp payload))
                 (terminal-ui--remember-image-submission
