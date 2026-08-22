@@ -512,7 +512,11 @@ reports an operating-system failure."
          content)))
     (:provider-item
      (let ((wire-json (getf (rest record) :wire-json)))
-       (when (stringp wire-json)
+       ;; Only assistant messages yield previews, and their locally
+       ;; encoded wire JSON always carries the literal role string, so
+       ;; other items skip the decode entirely.
+       (when (and (stringp wire-json)
+                  (search "\"assistant\"" wire-json))
          (handler-case
              (let ((item (json-decode wire-json)))
                (when (json-object-p item)
