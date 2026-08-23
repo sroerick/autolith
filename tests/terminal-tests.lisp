@@ -2009,6 +2009,24 @@
       (test-assert (live-region-cursor-visible-p
                     (terminal-ui-live-region active-ui))
                    "the input cursor can be restored after streaming")))
+  (let* ((terminal (make-instance 'recording-terminal
+                                  :columns 40
+                                  :rows 10))
+         (ui (terminal-ui-create :terminal terminal :placeholder "hint")))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-status active-ui "receiving response")
+      (terminal-ui-set-notice active-ui "Notice" :duration-seconds 100)
+      (terminal-ui-set-pending-inputs
+       active-ui
+       '("steer one" "steer two" "steer three")
+       '("follow one" "follow two" "follow three"))
+      (recording-terminal-reset terminal)
+      (terminal-ui-stream-update active-ui :tail "  visible response")
+      (let ((output (recording-terminal-output terminal)))
+        (test-assert (search "  visible response" output)
+                     "pending inputs cannot crop the complete streamed response")
+        (test-assert (search "hint" output)
+                     "the short viewport keeps the editable prompt visible"))))
   nil)
 
 (-> test-terminal-command-completion () null)

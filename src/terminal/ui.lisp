@@ -1577,12 +1577,6 @@ form keeps every speculative Markdown wrap live until the logical line commits."
       (setf rows
             (append rows
                     (terminal-ui--word-wrap-spans terminal row row-width))))
-    (let ((tail (terminal-ui-stream-tail ui)))
-      (when tail
-        (setf rows
-              (append rows
-                      (terminal-ui--stream-tail-rows
-                       terminal tail row-width)))))
     (when (terminal-ui-notice ui)
       (setf rows
             (append rows
@@ -1617,6 +1611,12 @@ form keeps every speculative Markdown wrap live until the logical line commits."
                   (terminal-span ':hint
                                  "  Empty Tab edits newest; Shift-Tab cycles."))
                  row-width))))))
+    (let ((tail (terminal-ui-stream-tail ui)))
+      (when tail
+        (setf rows
+              (append rows
+                      (terminal-ui--stream-tail-rows
+                       terminal tail row-width)))))
     (when rows
       (setf rows (append rows (list nil))))
     (let ((selector (terminal-ui-selector ui)))
