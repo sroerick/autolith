@@ -2181,7 +2181,7 @@ are forwarded to TERMINAL-UI-SELECT."
     (:name "/fast"
      :argument "[on|off|status]"
      :description "show or change Codex Fast mode"
-     :tip "uses service_tier=fast at 2x plan usage for future Codex requests."
+     :tip "uses service_tier=priority at 2x plan usage for future Codex requests."
      :busy-behavior :apply
      :terminal-behavior :shared
      :call-lambda-list (&optional mode)

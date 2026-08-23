@@ -271,7 +271,7 @@ Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
 browser device flow. Anthropic, Fireworks, OpenCode, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
-ChatGPT Codex Fast mode sends =service_tier=fast= when the active Codex model
+ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support and uses 2x plan usage. The built-in GPT-5.6 models
 support it. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
 =/fast off= to change the saved preference. Other providers and unknown Codex

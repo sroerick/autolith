@@ -210,7 +210,7 @@
                       fast-configuration)
                      (configuration-codex-fast-mode-active-p
                       fast-configuration)
-                     (string= (json-get fast-request "service_tier") "fast"))
+                     (string= (json-get fast-request "service_tier") "priority"))
                 (format nil "~A advertises and requests Codex Fast mode" model))))
            (let* ((unknown-configuration
                     (configuration-with-codex-fast-mode
@@ -467,7 +467,7 @@
                       (provider-native-compaction-request-object
                        fast-provider conversation schemas)))
                (test-assert
-                (string= (json-get fast-request "service_tier") "fast")
+                (string= (json-get fast-request "service_tier") "priority")
                 "Codex Fast mode applies to native compaction"))
              (let* ((unknown-configuration
                       (configuration-with-codex-fast-mode

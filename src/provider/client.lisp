@@ -501,9 +501,9 @@ between roots while allowing a root and its task children to share a prefix."
   (declare (ignore provider))
   (conversation-prompt-cache-key conversation))
 
-;; Codex Fast mode uses service_tier="fast" only when the current model
-;; advertises Fast support. This follows Codex reference commit
-;; 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56.
+;; Codex Fast mode uses service_tier="priority", the canonical request value
+;; for Fast mode, only when the current model advertises support. This follows
+;; Codex reference commit 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56.
 (defmethod provider-request-object
     ((provider codex-subscription-provider)
      (conversation conversation)
@@ -511,7 +511,7 @@ between roots while allowing a root and its task children to share a prefix."
      &key goal-context compaction-p)
   "Build the complete stateless Sol Responses Lite request for CONVERSATION.
 
-Fast mode adds service_tier=fast; the standard path omits service_tier.
+Fast mode adds service_tier=priority; the standard path omits service_tier.
 GOAL-CONTEXT and resolved context contributions ride as transient developer
 messages that are never persisted in the durable conversation. Skill catalogs
 and explicitly selected bodies participate through that same context delivery.
@@ -586,7 +586,7 @@ delivery that the transport consumes only after a completed response."
                                                             conversation)
         "text" (json-object "verbosity" "low"))
         (when (configuration-codex-fast-mode-active-p configuration)
-          (list "service_tier" "fast"))
+          (list "service_tier" "priority"))
        (when (and *provider-maximum-output-tokens*
                   (provider-output-ceiling-p provider))
          (list "max_output_tokens" *provider-maximum-output-tokens*))))
@@ -639,7 +639,7 @@ checkpoint."
        "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
        "text" (json-object "verbosity" "low"))
        (when (configuration-codex-fast-mode-active-p configuration)
-         (list "service_tier" "fast"))))))
+         (list "service_tier" "priority"))))))
 
 (-> provider-user-agent () string)
 (defun provider-user-agent ()
