@@ -175,6 +175,13 @@
     "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
 
+;; Fast capability metadata read from Codex reference commit
+;; 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56. Unknown and future models use
+;; the standard path until their catalog metadata is verified.
+(defparameter *codex-fast-mode-models*
+  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+  "Codex model identifiers verified to support the Fast service tier.")
+
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
 ;; confirmed in Codex reference commit 0fb559f0f6e231a88ac02ea002d3ecd248e2b515.
 ;; The Grok window comes from default_models.json in grok-build reference
@@ -361,6 +368,20 @@ configuration can be created before executable user initialization loads."
     :type non-empty-string
     :documentation "The streaming Responses endpoint."))
   (:documentation "Immutable paths and model choices for one Autolith process."))
+
+(-> configuration-codex-fast-mode-available-p (configuration) boolean)
+(defun configuration-codex-fast-mode-available-p (configuration)
+  "Return true when CONFIGURATION's current Codex model supports Fast mode."
+  (and (eq (model-family (configuration-model configuration)) ':codex)
+       (not (null (member (configuration-model configuration)
+                          *codex-fast-mode-models*
+                          :test #'string=)))))
+
+(-> configuration-codex-fast-mode-active-p (configuration) boolean)
+(defun configuration-codex-fast-mode-active-p (configuration)
+  "Return true when Fast mode is enabled and available for CONFIGURATION."
+  (and (configuration-codex-fast-mode-p configuration)
+       (configuration-codex-fast-mode-available-p configuration)))
 
 (-> configuration--provider-endpoint-for (string) string)
 (defun configuration--provider-endpoint-for (model)

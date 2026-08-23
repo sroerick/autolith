@@ -195,16 +195,38 @@
                   (make-instance 'model-provider)))
             "providers opt into inherited child reference history explicitly")
            (test-assert (null (json-get request "service_tier"))
-                        "requests never select a provider service tier")
-            (let* ((fast-configuration
-                     (configuration-with-codex-fast-mode configuration t))
-                   (fast-provider (provider-create fast-configuration))
-                   (fast-request
-                     (provider-request-object
-                      fast-provider conversation schemas)))
-              (test-assert
-               (string= (json-get fast-request "service_tier") "fast")
-               "Codex Fast mode requests the fast service tier"))
+                        "standard Codex requests omit the service tier")
+           (dolist (model *codex-fast-mode-models*)
+             (let* ((fast-configuration
+                      (configuration-with-codex-fast-mode
+                       (configuration--clone configuration :model model)
+                       t))
+                    (fast-provider (provider-create fast-configuration))
+                    (fast-request
+                      (provider-request-object
+                       fast-provider conversation schemas)))
+               (test-assert
+                (and (configuration-codex-fast-mode-available-p
+                      fast-configuration)
+                     (configuration-codex-fast-mode-active-p
+                      fast-configuration)
+                     (string= (json-get fast-request "service_tier") "fast"))
+                (format nil "~A advertises and requests Codex Fast mode" model))))
+           (let* ((unknown-configuration
+                    (configuration-with-codex-fast-mode
+                     (configuration--clone configuration
+                                           :model "gpt-future-unknown")
+                     t))
+                  (unknown-provider (provider-create unknown-configuration))
+                  (unknown-request
+                    (provider-request-object
+                     unknown-provider conversation schemas)))
+             (test-assert
+              (and (configuration-codex-fast-mode-p unknown-configuration)
+                   (not (configuration-codex-fast-mode-active-p
+                         unknown-configuration))
+                   (null (json-get unknown-request "service_tier")))
+              "unknown Codex models use the standard service tier"))
            (test-assert (null (json-get request "max_output_tokens"))
                         "requests omit the output ceiling when none is bound")
            (let ((bounded (let ((*provider-maximum-output-tokens* 4242))
@@ -436,17 +458,29 @@
               (string= (json-get request "prompt_cache_key")
                        (conversation-prompt-cache-key conversation))
               "native compaction shares the root conversation cache key")
-              (test-assert (null (json-get request "service_tier"))
-                           "standard native compaction omits a service tier")
-              (let* ((fast-configuration
-                       (configuration-with-codex-fast-mode configuration t))
-                     (fast-provider (provider-create fast-configuration))
-                     (fast-request
-                       (provider-native-compaction-request-object
-                        fast-provider conversation schemas)))
-                (test-assert
-                 (string= (json-get fast-request "service_tier") "fast")
-                 "Codex Fast mode applies to native compaction"))
+             (test-assert (null (json-get request "service_tier"))
+                          "standard native compaction omits a service tier")
+             (let* ((fast-configuration
+                      (configuration-with-codex-fast-mode configuration t))
+                    (fast-provider (provider-create fast-configuration))
+                    (fast-request
+                      (provider-native-compaction-request-object
+                       fast-provider conversation schemas)))
+               (test-assert
+                (string= (json-get fast-request "service_tier") "fast")
+                "Codex Fast mode applies to native compaction"))
+             (let* ((unknown-configuration
+                      (configuration-with-codex-fast-mode
+                       (configuration--clone configuration
+                                             :model "gpt-future-unknown")
+                       t))
+                    (unknown-provider (provider-create unknown-configuration))
+                    (unknown-request
+                      (provider-native-compaction-request-object
+                       unknown-provider conversation schemas)))
+               (test-assert
+                (null (json-get unknown-request "service_tier"))
+                "unknown Codex models omit Fast mode during compaction"))
              (dolist (name '("stream" "store" "include" "tool_choice"))
                (multiple-value-bind (value present-p) (gethash name request)
                  (declare (ignore value))

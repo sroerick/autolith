@@ -271,11 +271,13 @@ Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
 browser device flow. Anthropic, Fireworks, OpenCode, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
-ChatGPT Codex Fast mode sends =service_tier=fast= on provider requests and uses
-2x plan usage. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
-=/fast off= to change it. The choice persists across restarts. Set
+ChatGPT Codex Fast mode sends =service_tier=fast= when the active Codex model
+advertises Fast support and uses 2x plan usage. The built-in GPT-5.6 models
+support it. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
+=/fast off= to change the saved preference. Other providers and unknown Codex
+models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
-process.
+process; while it is set, =/fast on= and =/fast off= are unavailable.
 
 #+BEGIN_SRC sh
 autolith auth nous

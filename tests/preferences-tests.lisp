@@ -137,6 +137,21 @@
                 (test-assert
                  (getf (rest form) :session-title-generation-p)
                  "migration enables generated session titles")))
+            (snapshot-write
+             pathname
+             '(:preferences
+               :version 2
+               :model "gpt-5.6-sol"
+               :reasoning-effort "ultra"
+               :reasoning-traces-p nil
+               :compact-view-p t))
+            (let ((version-two (preferences-load configuration)))
+              (test-assert
+               (not (preference-state-codex-fast-mode-p version-two))
+               "version two preferences without Fast mode default it to disabled")
+              (test-assert
+               (preference-state-session-title-generation-p version-two)
+               "version two preferences enable generated session titles"))
            (with-open-file (stream pathname
                                    :direction ':output
                                    :if-exists ':supersede

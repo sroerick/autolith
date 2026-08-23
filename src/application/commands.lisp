@@ -278,9 +278,14 @@
      (application--field-spans "effort"
                                (configuration-reasoning-effort configuration))
      (application--field-spans
-       "Codex fast"
-       (application--toggle-state
-        (configuration-codex-fast-mode-p configuration)))
+      "Codex fast"
+      (cond
+        ((configuration-codex-fast-mode-active-p configuration)
+         "on")
+        ((configuration-codex-fast-mode-p configuration)
+         "on (saved; inactive)")
+        (t
+         "off")))
      (application--field-spans "web search"
                                (configuration-web-search-mode configuration))
      (application--field-spans
@@ -342,11 +347,10 @@
                                       configuration)))
                                    ""))
      (application--field-spans
-       "path"
-       (if (and (eq (model-family (configuration-model configuration)) ':codex)
-                (configuration-codex-fast-mode-p configuration))
-           "fast (2x Codex plan usage)"
-           "standard"))
+      "path"
+      (if (configuration-codex-fast-mode-active-p configuration)
+          "fast (2x Codex plan usage)"
+          "standard"))
      (application--field-spans "web search"
                                (configuration-web-search-mode configuration))
      (application--field-spans "goal"
@@ -618,9 +622,21 @@
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
 
+(-> application--codex-fast-mode-environment-p () boolean)
+(defun application--codex-fast-mode-environment-p ()
+  "Return true when the process environment controls Codex Fast mode."
+  (not (null (non-empty-string-p
+              (uiop:getenv "AUTOLITH_CODEX_FAST_MODE")))))
+
 (-> application-set-codex-fast-mode (application boolean) null)
 (defun application-set-codex-fast-mode (application enabled-p)
   "Persist and apply Codex Fast mode for future provider requests."
+  (when (application--codex-fast-mode-environment-p)
+    (error 'configuration-error
+           :message
+           (format nil
+                   "AUTOLITH_CODEX_FAST_MODE controls Fast mode for this ~
+                    process; unset it before using /fast on or /fast off.")))
   (let ((configuration
           (configuration-with-codex-fast-mode
            (application-configuration application)
@@ -637,19 +653,38 @@
   "Set or report APPLICATION's persisted Codex Fast mode."
   (let* ((configuration (application-configuration application))
          (mode (and argument (string-downcase argument)))
-         (enabled-p (configuration-codex-fast-mode-p configuration)))
+         (enabled-p (configuration-codex-fast-mode-p configuration))
+         (available-p
+           (configuration-codex-fast-mode-available-p configuration)))
     (cond
       ((or (null mode) (string= mode "status"))
        (application-present
         application
-        (format nil
-                "Codex Fast mode is ~A. This setting persists across restarts."
-                (if enabled-p "on" "off"))))
+        (cond
+          ((application--codex-fast-mode-environment-p)
+           (format nil
+                   "Codex Fast mode is ~A for this process. ~
+                    AUTOLITH_CODEX_FAST_MODE controls it.~:[ The current ~
+                    model uses the standard path.~;~]"
+                   (if enabled-p "on" "off")
+                   available-p))
+          (available-p
+           (format nil
+                   "Codex Fast mode is ~A. This setting persists across restarts."
+                   (if enabled-p "on" "off")))
+          (t
+           (format nil
+                   "Codex Fast mode preference is ~A. The current model uses the standard path."
+                   (if enabled-p "on" "off"))))))
       ((string= mode "on")
        (application-set-codex-fast-mode application t)
        (application-present
         application
-        "Codex Fast mode is enabled and saved. It uses 2x plan usage."))
+        (if available-p
+            "Codex Fast mode is enabled and saved. It uses 2x plan usage."
+            (format nil
+                    "Codex Fast mode preference is enabled and saved. ~
+                     The current model uses the standard path."))))
       ((string= mode "off")
        (application-set-codex-fast-mode application nil)
        (application-present application "Codex Fast mode is disabled and saved."))
