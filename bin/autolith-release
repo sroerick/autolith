@@ -214,6 +214,7 @@ case $os in
     ;;
   Darwin)
     case $arch in
+      x86_64|amd64) host_platform=x86_64-darwin ;;
       arm64|aarch64) host_platform=arm64-darwin ;;
     esac
     ;;
@@ -234,11 +235,11 @@ case $os in
     ;;
 esac
 [[ -n $host_platform ]] ||
-  fail "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+  fail "binary releases currently support Linux x86-64, Linux aarch64, macOS x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
 if [[ $host_platform == *-linux-musl ]]; then
   fff_library=$sbcl_command
   colorlisp_library=$sbcl_command
-elif [[ $host_platform == arm64-darwin ]]; then
+elif [[ $host_platform == *-darwin ]]; then
   fff_library=$release_root/lib/libfff_c.dylib
   colorlisp_library=$release_root/lib/libcolorlisp-tree-sitter.dylib
 else

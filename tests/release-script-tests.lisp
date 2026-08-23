@@ -753,6 +753,34 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
         (test-assert (not (eql status 0))
                      "the Darwin release launcher requires its private syntax library"))
       (release-script-tests--write-file library ""))
+    (release-script-tests--install-darwin-host-tools host-bin "x86_64")
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" release-root)
+     (format nil "v~A" *release-script-tests-version*)
+     :platform "x86_64-darwin")
+    (let ((output
+            (release-script-tests--run
+             (list (namestring launcher) "--autolith-release-probe")
+             :environment environment)))
+      (test-assert
+       (find "platform=x86_64-darwin"
+             (uiop:split-string output :separator '(#\Newline #\Return))
+             :test #'string=)
+       "the Darwin x86-64 release launcher reports its platform"))
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" release-root)
+     (format nil "v~A" *release-script-tests-version*))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring launcher) "--autolith-release-probe")
+         :environment environment
+         :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert
+       (and (not (eql status 0))
+            (search "RELEASE lacks platform identity for this release variant."
+                    error-output))
+       "the new Darwin x86-64 variant requires platform metadata"))
     (release-script-tests--record
      (merge-pathnames "RELEASE" release-root)
      "v0.12.0")
@@ -826,7 +854,7 @@ esac
           (test-assert
            (and (not (eql status 0))
                 (search
-                 "binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
+                 "binary releases currently support Linux x86-64, Linux aarch64, macOS x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."
                  output))
            "the binary installer rejects unsupported platforms")))
     (release-script-tests--install-linux-host-tools fixture-bin)
@@ -937,22 +965,20 @@ esac
        :output nil)))
   nil)
 
-(-> release-script-tests--install-darwin-host-tools (pathname) pathname)
-(defun release-script-tests--install-darwin-host-tools (directory)
-  "Install fixture commands reporting and satisfying the Darwin release target."
+(-> release-script-tests--install-darwin-host-tools
+    (pathname &optional string)
+    pathname)
+(defun release-script-tests--install-darwin-host-tools
+    (directory &optional (architecture "arm64"))
+  "Install fixture commands reporting and satisfying a Darwin release target."
   (let* ((directory (uiop:ensure-directory-pathname directory))
          (uname (merge-pathnames "uname" directory))
          (chmod (merge-pathnames "chmod" directory))
          (move (merge-pathnames "mv" directory)))
     (release-script-tests--write-file
      uname
-     "#!/bin/sh
-case ${1:-} in
-  -s) printf 'Darwin\\n' ;;
-  -m) printf 'arm64\\n' ;;
-  *) exit 64 ;;
-esac
-")
+     (format nil "#!/bin/sh~%case ${1:-} in~%  -s) printf 'Darwin\\n' ;;~%  -m) printf '~A\\n' ;;~%  *) exit 64 ;;~%esac~%"
+             architecture))
     (release-script-tests--write-file chmod "#!/bin/sh
 recursive=
 if [ \"${1:-}\" = -R ]; then
@@ -991,10 +1017,12 @@ fi
 
 (-> release-script-tests--installer-darwin (pathname pathname) null)
 (defun release-script-tests--installer-darwin (source-root root)
-  "Exercise Darwin arm64 binary installer download, verification, and link updates."
+  "Exercise Darwin binary installer download, verification, and link updates."
   (let* ((tag (format nil "v~A" *release-script-tests-version*))
          (release-name
            (format nil "autolith-~A-arm64-darwin" tag))
+         (x86-release-name
+           (format nil "autolith-~A-x86_64-darwin" tag))
          (release-root
            (merge-pathnames
             (format nil "autolith-darwin-v~A/" *release-script-tests-version*)
@@ -1004,28 +1032,52 @@ fi
          (fixture-bin (merge-pathnames "fixture-darwin-bin/" root))
          (fixture-release
            (merge-pathnames (format nil "~A/" release-name) fixture-source))
+         (x86-fixture-release
+           (merge-pathnames (format nil "~A/" x86-release-name)
+                            fixture-source))
          (archive
            (merge-pathnames (format nil "~A.tar.gz" release-name) fixture-root))
+         (x86-archive
+           (merge-pathnames (format nil "~A.tar.gz" x86-release-name)
+                            fixture-root))
          (checksum
            (merge-pathnames (format nil "~A.tar.gz.sha256" release-name)
+                            fixture-root))
+         (x86-checksum
+           (merge-pathnames (format nil "~A.tar.gz.sha256" x86-release-name)
                             fixture-root))
          (install-root (merge-pathnames "darwin-installation/" root))
          (bin-directory (merge-pathnames "darwin-bin/" root))
          (curl (merge-pathnames "curl" fixture-bin))
          (installer (merge-pathnames "script/install" source-root)))
     (release-script-tests--make-release source-root release-root
-                                        :library-extension "dylib")
+                                        :library-extension "dylib"
+                                        :platform "arm64-darwin")
     (uiop:ensure-all-directories-exist
-     (list fixture-root fixture-source fixture-bin fixture-release))
+     (list fixture-root fixture-source fixture-bin fixture-release
+           x86-fixture-release))
     (release-script-tests--install-darwin-host-tools fixture-bin)
     (release-script-tests--run
      (list "cp" "-a" (format nil "~A." (namestring release-root))
            (namestring fixture-release))
      :output nil)
+    (release-script-tests--run
+     (list "cp" "-a" (format nil "~A." (namestring release-root))
+           (namestring x86-fixture-release))
+     :output nil)
+    (release-script-tests--record
+     (merge-pathnames "RELEASE" x86-fixture-release)
+     tag
+     :platform "x86_64-darwin")
     (release-script-tests--chmod "a-w" fixture-release)
+    (release-script-tests--chmod "a-w" x86-fixture-release)
     (release-script-tests--run
      (list "tar" "-czf" (namestring archive)
            "-C" (namestring fixture-source) release-name)
+     :output nil)
+    (release-script-tests--run
+     (list "tar" "-czf" (namestring x86-archive)
+           "-C" (namestring fixture-source) x86-release-name)
      :output nil)
     (if (release-archive--command-pathname "sha256sum")
         (release-script-tests--run
@@ -1038,6 +1090,17 @@ fi
                  :directory fixture-root
                  :output ':string)))
           (release-script-tests--write-file checksum output)))
+    (if (release-archive--command-pathname "sha256sum")
+        (release-script-tests--run
+         (list "sha256sum" (file-namestring x86-archive))
+         :directory fixture-root
+         :output x86-checksum)
+        (let ((output
+                (release-script-tests--run
+                 (list "shasum" "-a" "256" (file-namestring x86-archive))
+                 :directory fixture-root
+                 :output ':string)))
+          (release-script-tests--write-file x86-checksum output)))
     (release-script-tests--write-file
      curl (release-script-tests--fixture-curl))
     (release-script-tests--chmod "755" curl)
@@ -1087,6 +1150,26 @@ fi
                 (namestring (merge-pathnames "current/bin/autolith"
                                              install-root)))
        "the Darwin installer publishes the user command link")
+      (release-script-tests--run
+       (list (namestring installer) "--version" tag)
+       :environment base-environment
+       :output nil)
+      (release-script-tests--install-darwin-host-tools fixture-bin "x86_64")
+      (release-script-tests--run
+       (list (namestring installer) "--version" tag)
+       :environment base-environment
+       :output nil)
+      (test-assert
+       (probe-file
+        (merge-pathnames
+         (format nil "releases/~A-x86_64-darwin/bin/autolith" tag)
+         install-root))
+       "the Darwin x86-64 installer publishes the requested release")
+      (test-assert
+       (string= (release-script-tests--readlink
+                 (merge-pathnames "current" install-root))
+                (format nil "releases/~A-x86_64-darwin" tag))
+       "the Darwin x86-64 installer selects the requested version")
       (release-script-tests--run
        (list (namestring installer) "--version" tag)
        :environment base-environment
@@ -1858,6 +1941,9 @@ esac
                   ("Linux" "amd64" "x86_64-linux")
                   ("Linux" "aarch64" "aarch64-linux")
                   ("Linux" "arm64" "aarch64-linux")
+                  ("Darwin" "x86-64" "x86_64-darwin")
+                  ("Darwin" "x86_64" "x86_64-darwin")
+                  ("Darwin" "amd64" "x86_64-darwin")
                   ("Darwin" "arm64" "arm64-darwin")
                   ("Darwin" "aarch64" "arm64-darwin")
                   ("FreeBSD" "amd64" "x86_64-freebsd")
@@ -1898,7 +1984,6 @@ esac
                (release-archive-error-cause condition))))
    "unrecognized ldd output is rejected")
   (dolist (case '(("Linux" "i686")
-                  ("Darwin" "x86_64")
                   ("SunOS" "amd64")
                   ("FreeBSD" "aarch64")
                   ("Windows_NT" "x86_64")))
@@ -2241,6 +2326,17 @@ esac
                       output)
               (not (probe-file curl-log)))
          "Linux musl runtime bootstrap uses a validated host compiler"))
+      (release-script-tests--write-uname bin "Darwin" "x86_64")
+      (multiple-value-bind (output error-output status)
+          (run-bootstrap)
+        (declare (ignore error-output))
+        (test-assert
+         (and (zerop status)
+              (search "Using host SBCL 2.6.6 as the Darwin bootstrap compiler."
+                      output)
+              (not (probe-file curl-log))
+              (probe-file log))
+         "Darwin x86-64 runtime bootstrap uses a validated host compiler"))
       (release-script-tests--write-uname bin "SunOS" "amd64")
       (multiple-value-bind (output error-output status)
           (run-bootstrap)
@@ -2248,7 +2344,7 @@ esac
                                        (or error-output ""))))
           (test-assert
            (and (not (zerop status))
-                (search "currently supports Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64"
+                (search "currently supports Linux x86-64, Linux aarch64, macOS x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64"
                         diagnostic))
            "runtime bootstrap rejects unsupported platforms")))
       (release-script-tests--write-uname bin "OpenBSD" "amd64")
@@ -2613,6 +2709,7 @@ esac
                    "package-linux-x86_64-musl"
                    "package-linux-aarch64-musl"
                    "package-macos-arm64"
+                   "package-macos-x86_64"
                    "package-freebsd-x86_64"
                    "package-netbsd-x86_64"
                    "package-openbsd-x86_64"))
@@ -2633,6 +2730,10 @@ esac
                            "package-linux-aarch64-musl"))
             (linux-aarch64-musl
               (job-section "package-linux-aarch64-musl" "package-macos-arm64"))
+            (macos-arm64
+              (job-section "package-macos-arm64" "package-macos-x86_64"))
+            (macos-x86_64
+              (job-section "package-macos-x86_64" "package-freebsd-x86_64"))
             (openbsd
               (job-section "package-openbsd-x86_64" nil))
             (script
@@ -2709,6 +2810,15 @@ esac
                      "the static FFF smoke test verifies its search result")
         (test-assert (search "timeout-minutes: 75" linux-x86_64)
                      "Linux x86-64 packaging has a 75-minute deadline")
+        (test-assert (search "runs-on: macos-15-intel" macos-x86_64)
+                     "macOS x86-64 packaging uses GitHub's Intel runner")
+        (test-assert (search "brew install rust gnu-tar sbcl" macos-x86_64)
+                     "macOS x86-64 packaging installs a host SBCL")
+        (test-assert
+         (search "x86_64-darwin.tar.gz" macos-x86_64)
+         "macOS x86-64 packaging uploads the canonical archive")
+        (test-assert (search "arm64-darwin.tar.gz" macos-arm64)
+                     "macOS arm64 packaging uploads the canonical archive")
         (test-assert (search "gtar--" openbsd)
                      "OpenBSD packaging installs the default gtar flavor")
         (test-assert (not (search " gtar " openbsd))

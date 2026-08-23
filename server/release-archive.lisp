@@ -378,6 +378,9 @@ rather than failing, so existence needs the following stat first."
             (member architecture '("arm64" "aarch64") :test #'string=))
        (if musl-p "aarch64-linux-musl" "aarch64-linux"))
       ((and (string-equal os "Darwin")
+            (release-archive--x86-64-architecture-p architecture))
+       "x86_64-darwin")
+      ((and (string-equal os "Darwin")
             (member architecture '("arm64" "aarch64") :test #'string=))
        "arm64-darwin")
       ((and (string-equal os "FreeBSD")
@@ -392,7 +395,7 @@ rather than failing, so existence needs the following stat first."
       (t
        (error 'release-archive-error
               :stage ':prerequisites
-              :cause "Binary releases currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only.")))))
+               :cause "Binary releases currently support Linux x86-64, Linux aarch64, macOS x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only.")))))
 
 (-> release-archive--platform () string)
 (defun release-archive--platform ()

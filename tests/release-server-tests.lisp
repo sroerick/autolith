@@ -320,6 +320,7 @@
               (dolist (platform '("aarch64-linux"
                                   "x86_64-linux-musl"
                                   "aarch64-linux-musl"
+                                  "x86_64-darwin"
                                   "arm64-darwin"))
                 (let ((archive (release-server--archive-name tag platform)))
                   (release-server-tests--write-file

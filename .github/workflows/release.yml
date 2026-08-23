@@ -241,6 +241,30 @@ jobs:
             dist/autolith-"$GITHUB_REF_NAME"-arm64-darwin.tar.gz.sha256 \
             --clobber
 
+  package-macos-x86_64:
+    name: Package macOS x86-64
+    needs: publish-metadata
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          brew install rust gnu-tar sbcl
+
+      - name: Package macOS release
+        run: ./script/ci-package-release dist/
+
+      - name: Upload macOS release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/autolith-"$GITHUB_REF_NAME"-x86_64-darwin.tar.gz \
+            dist/autolith-"$GITHUB_REF_NAME"-x86_64-darwin.tar.gz.sha256 \
+            --clobber
+
   package-freebsd-x86_64:
     name: Package FreeBSD x86-64
     needs: publish-metadata

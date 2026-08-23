@@ -174,16 +174,17 @@
                                      "aarch64" "arm64")
                                    :test #'string=))
                       (and (string-equal (software-type) "Darwin")
-                           (member (string-downcase (machine-type))
-                                   '("arm64" "aarch64")
-                                   :test #'string=))
+                             (member (string-downcase (machine-type))
+                                     '("x86-64" "x86_64" "amd64"
+                                       "arm64" "aarch64")
+                                     :test #'string=))
                       (and (member (software-type)
                                    '("FreeBSD" "NetBSD" "OpenBSD")
                                    :test #'string-equal)
                            (member (string-downcase (machine-type))
                                    '("x86-64" "x86_64" "amd64")
                                    :test #'string=)))
-            (fail "release runtimes currently support Linux x86-64, Linux aarch64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."))
+             (fail "release runtimes currently support Linux x86-64, Linux aarch64, macOS x86-64, macOS arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 only."))
           (let* ((runtime-version
                    (trimmed-file (merge-pathnames "sbcl.version" source-root)))
                  (runtime-sha256

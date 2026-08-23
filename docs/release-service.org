@@ -19,9 +19,10 @@ The release service has three independent long-running processes:
   if activation fails.
 
 GitHub Actions is the factory for release archives. The tag workflow validates
-the tag, creates the GitHub release, and uploads Linux x86-64, macOS arm64,
-FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64 archives through
-=script/ci-package-release=. It does not run the complete repository check.
+the tag, creates the GitHub release, and uploads Linux x86-64 and aarch64
+archives for glibc and musl, macOS x86-64 and arm64 archives, and FreeBSD,
+NetBSD, and OpenBSD x86-64 archives through =script/ci-package-release=. It
+does not run the complete repository check.
 The host updater still bootstraps and checks a selected deployment before
 activating it.
 

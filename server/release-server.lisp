@@ -188,7 +188,8 @@
 (defparameter *release-server-platform-ids*
   '("x86_64-linux" "aarch64-linux"
     "x86_64-linux-musl" "aarch64-linux-musl"
-    "arm64-darwin" "x86_64-freebsd" "x86_64-netbsd" "x86_64-openbsd")
+    "x86_64-darwin" "arm64-darwin" "x86_64-freebsd" "x86_64-netbsd"
+    "x86_64-openbsd")
   "Canonical platform identifiers published as binary release archives.")
 
 (-> release-server--archive-name (string &optional string) string)
