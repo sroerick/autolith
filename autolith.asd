@@ -9,6 +9,7 @@
                #:cl-colorist
                #:cl-exec-sandbox
                #:cl-jobpond
+               #:cl-llm-provider-api
                #:cl-termdown
                #:clifff
                #:clinedi

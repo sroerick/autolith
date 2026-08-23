@@ -28,6 +28,22 @@ let
     };
   };
 
+  clLlmProviderApi = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-llm-provider-api";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "cl-llm-provider-api";
+      rev = "ee1eb5bfdc92e62ec63f834dfff419b760cabf9d";
+      hash = "sha256-8GDbbu/WMrv5Ugl2HnVnqBrxVAjEsbIN4AbOMC/Iwwk=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      babel
+      bordeaux-threads
+      ironclad
+    ];
+  };
+
   clinedi = pkgs.sbcl.buildASDFSystem {
     pname = "clinedi";
     version = "0.1.0";
@@ -343,6 +359,7 @@ let
       clExecSandbox
       clifff
       clJobpond
+      clLlmProviderApi
       idsmall
       mcparen
       sbclGenerations
