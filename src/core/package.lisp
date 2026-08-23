@@ -81,6 +81,30 @@
                 #:job-state
                 #:job-terminal-p
                 #:make-job-pool)
+  (:import-from #:cl-skills
+                #:*skill-catalog-character-budget*
+                #:*skill-file-character-limit*
+                #:*skill-instruction-character-limit*
+                #:skill-catalog
+                #:skill-catalog-diagnostics
+                #:skill-catalog-discover
+                #:skill-catalog-find
+                #:skill-catalog-render-error
+                #:skill-catalog-render-error-minimum-required
+                #:skill-catalog-skills
+                #:skill-diagnostic
+                #:skill-diagnostic-kind
+                #:skill-diagnostic-message
+                #:skill-diagnostic-pathname
+                #:skill-diagnostic-root-index
+                #:skill-metadata
+                #:skill-metadata-cache-root
+                #:skill-metadata-description
+                #:skill-metadata-name
+                #:skill-metadata-pathname
+                #:skill-metadata-read
+                #:skill-metadata-source-format
+                #:skill-read-error)
   (:import-from #:cl-llm-provider-api
                 #:*rlm-default-call-budget*
                 #:*rlm-default-depth-budget*
@@ -286,7 +310,6 @@
                 #:source-grammar
                 #:validate-tree)
   (:import-from #:ironclad
-                #:digest-sequence
                 #:make-mac
                 #:produce-mac
                 #:random-data
