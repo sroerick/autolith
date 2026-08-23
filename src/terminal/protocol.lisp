@@ -278,12 +278,30 @@
     :type list
     :documentation
     "Sanitized queued and running child-agent summaries in stable display order.")
+    (command-activities
+     :initform nil
+     :accessor terminal-ui-command-activities
+     :type list
+     :documentation
+     "Sanitized queued and running primary command summaries in stable order.")
+    (command-activities-unpainted-p
+     :initform nil
+     :accessor terminal-ui-command-activities-unpainted-p
+     :type boolean
+     :documentation
+     "Whether the newest non-empty primary command snapshot has not been painted.")
+    (command-activities-clear-after-paint-p
+     :initform nil
+     :accessor terminal-ui-command-activities-clear-after-paint-p
+     :type boolean
+     :documentation
+     "Whether command rows must clear after their first reader-owned paint.")
    (status-rendered-signature
     :initform nil
     :accessor terminal-ui-status-rendered-signature
     :type list
     :documentation
-    "The status, compaction, and child-agent values used by the newest live paint.")
+    "The command and child-agent values used by the newest live paint.")
    (clock-function
     :initarg :clock-function
     :initform (lambda ()

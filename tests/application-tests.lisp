@@ -2758,6 +2758,7 @@
                     "arguments" (json-encode
                                  (json-object
                                   "command" "printf hello && printf world"
+                                  "description" "Print the greeting"
                                   "directory" "/tmp/work"
                                   "timeout-seconds" 30)))))
            (text (test-terminal-row-text entry)))
@@ -2961,7 +2962,8 @@
                (call-entry
                 application "shell" "run"
                 :arguments
-                (json-object "command" "printf '%s\\n' highlighted")))
+                (json-object "command" "printf '%s\\n' highlighted"
+                             "description" "Print highlighted text")))
              (text (test-terminal-row-text entry)))
         (test-assert
          (and (find (terminal-span :success "│ ") entry :test #'equal)

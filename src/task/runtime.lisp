@@ -750,6 +750,7 @@ values from either side of a terminal transition."
           :state (getf snapshot :state)
           :detached (session-job-detached-p job)
           :tool (tool-execution-job-tool-name job)
+           :description (tool-execution-job-description job)
           :summary (tool-execution-job-summary job)
           :progress
           (list :duration-ms (getf progress :duration-milliseconds))
@@ -799,7 +800,8 @@ values from either side of a terminal transition."
         (with-lock-held ((task-progress-lock progress))
           (let ((now (get-internal-real-time)))
             (list :id (session-job-identifier job)
-                  :index (job-index job)
+                  :type ':task
+                  :index (session-job-order job)
                   :agent (task-job-agent-name job)
                   :state state
                   :pending-prompt-count
@@ -825,9 +827,23 @@ values from either side of a terminal transition."
                   :detached (task-job-detached-p job))))))))
 
 (defmethod session-job-live-activity ((job tool-execution-job))
-  "Leave tool executions to job tools rather than the child activity strip."
-  (declare (ignore job))
-  nil)
+  "Return a primary-owned tool JOB's queued or running command presentation."
+  (let ((state (job-state job)))
+    (when (and (null (job-owner-identifiers job))
+               (member state '(:queued :running) :test #'eq))
+      (let ((now (get-internal-real-time)))
+        (list :id (session-job-identifier job)
+              :type ':tool
+              :index (session-job-order job)
+              :tool (tool-execution-job-tool-name job)
+              :description
+              (or (tool-execution-job-description job)
+                  (tool-execution-job-summary job))
+              :state state
+              :duration-ms
+              (and (job-started-at job)
+                   (task--milliseconds-between (job-started-at job) now))
+              :detached (session-job-detached-p job))))))
 
 (-> task-job-live-activity (task-job) (option list))
 (defun task-job-live-activity (job)

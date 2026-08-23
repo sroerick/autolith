@@ -10,7 +10,10 @@
    "call_id" (make-identifier)
    "name" "run"
    "namespace" "shell"
-   "arguments" (json-encode (json-object "command" command))))
+   "arguments"
+   (json-encode
+    (json-object "command" command
+                 "description" "Exercise shell interpreter discipline"))))
 
 (-> interpreter-discipline-tests--contribution
     (configuration conversation)

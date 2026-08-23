@@ -213,6 +213,10 @@
 (defvar *terminal-resize-pending-p* nil
   "True after SIGWINCH until the active UI recomputes its dimensions.")
 
+(defgeneric application-input-controller-wake (controller)
+  (:documentation
+   "Wake CONTROLLER so reader-owned terminal presentation runs immediately."))
+
 
 ;;;; -- Construction and Reconnection --
 
@@ -416,25 +420,36 @@ model's effort choice to CONFIGURATION--CLONE."
     (application task-orchestrator)
     null)
 (defun application--refresh-task-presentation-locked (application orchestrator)
-  "Project ORCHESTRATOR's live children while APPLICATION's task lock is held."
+  "Project ORCHESTRATOR's live session jobs while APPLICATION's task lock is held."
   (when (eq orchestrator
             (application-task-presentation-orchestrator application))
     (let ((ui
             (and (slot-boundp application 'ui)
                  (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (terminal-ui-set-agent-activities
-         ui
-         (task-orchestrator-live-activities orchestrator)))))
+        (let ((activities (task-orchestrator-live-activities orchestrator)))
+          (terminal-ui-set-agent-activities
+           ui
+           (remove-if-not (lambda (activity)
+                            (eq (getf activity :type) ':task))
+                          activities))
+          (terminal-ui-set-command-activities
+           ui
+           (remove-if-not (lambda (activity)
+                            (eq (getf activity :type) ':tool))
+                          activities))))))
   nil)
 
 (-> application--refresh-task-presentation
     (application task-orchestrator)
     null)
 (defun application--refresh-task-presentation (application orchestrator)
-  "Project ORCHESTRATOR's newest live children into APPLICATION's UI."
+  "Project ORCHESTRATOR's newest live session jobs into APPLICATION's UI."
   (with-lock-held ((application-task-presentation-lock application))
     (application--refresh-task-presentation-locked application orchestrator))
+  (let ((controller (application-input-controller application)))
+    (when controller
+      (application-input-controller-wake controller)))
   nil)
 
 (-> application--present-task-response
@@ -468,12 +483,13 @@ model's effort choice to CONFIGURATION--CLONE."
             (and (slot-boundp application 'ui)
                  (application-ui application))))
       (when (typep ui 'terminal-ui)
-        (terminal-ui-set-agent-activities ui nil))))
+        (terminal-ui-set-agent-activities ui nil)
+        (terminal-ui-set-command-activities ui nil))))
   nil)
 
 (-> application-disconnect-task-presentation (application) null)
 (defun application-disconnect-task-presentation (application)
-  "Disconnect APPLICATION's task observer and clear its child-agent rows."
+  "Disconnect APPLICATION's task observer and clear its live session-job rows."
   (with-lock-held ((application-task-presentation-lock application))
     (application--disconnect-task-presentation-locked application))
   nil)
@@ -495,7 +511,8 @@ model's effort choice to CONFIGURATION--CLONE."
           (setf listener
                 (lambda (channel payload)
                   (case channel
-                    ((:task-subagent-lifecycle :task-subagent-progress)
+                    ((:task-subagent-lifecycle :task-subagent-progress
+                      :tool-execution-lifecycle)
                      (application--refresh-task-presentation
                       application orchestrator))
                     (:task-subagent-verbal-response

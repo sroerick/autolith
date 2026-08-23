@@ -1967,6 +1967,108 @@
        "blocking traces remain inside the live-region viewport budget")))
   nil)
 
+(-> test-terminal-command-activities () null)
+(defun test-terminal-command-activities ()
+  "Test primary command rows, timing, fast completion, and shared row bounds."
+  (let* ((clock 65)
+         (terminal (make-instance 'recording-terminal
+                                  :columns 90
+                                  :rows 12
+                                  :styled-p t))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () clock)))
+         (commands
+           (list
+            (list :id "exec:2" :type ':tool :index 2
+                  :tool "shell.run" :description "Build the release"
+                  :state ':queued :duration-ms nil :detached t)
+            (list :id "exec:1" :type ':tool :index 1
+                  :tool "shell.run" :description "Run repository checks"
+                  :state ':running :duration-ms 60000 :detached nil)))
+         (agent
+           (list :id "review-3" :index 3 :agent "reviewer"
+                 :state ':running :current-tool "resource.read"
+                 :current-tool-duration-ms 1000 :recent-tools nil
+                 :request-count 1 :duration-ms 1000
+                 :assignment "Review the patch." :detached t)))
+    (test-assert
+     (not (terminal-command-activity-p
+           (list :id "exec:1" :type ':tool :index 1
+                 :tool "shell.run" :description ""
+                 :state ':running :duration-ms 0 :detached nil)))
+     "command rows require a non-empty model-authored purpose")
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-set-status active-ui "receiving response")
+      (recording-terminal-reset terminal)
+      (terminal-ui-set-agent-activities active-ui (list agent))
+      (terminal-ui-set-command-activities active-ui commands)
+      (test-assert (string= (recording-terminal-output terminal) "")
+                   "command notifications do not paint from worker threads")
+      (test-assert
+       (equal (mapcar (lambda (activity) (getf activity :id))
+                      (terminal-ui-command-activities active-ui))
+              '("exec:1" "exec:2"))
+       "command rows retain scheduler creation order")
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "the reader paints changed command state immediately")
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui clock)
+        (declare (ignore cursor))
+        (test-assert
+         (and (search "commands 2" text)
+              (search "exec:1 · shell.run · Run repository checks" text)
+              (search "01:00" text)
+              (search "exec:2 · shell.run · Build the release" text)
+              (search "· queued" text)
+              (search "review-3" text)
+              (search "receiving response" text)
+              (search (terminal-style-sequence ':command-spinner) display)
+              (search (terminal-style-sequence ':command-id) display)
+              (search (terminal-style-sequence ':command-tool) display))
+         "commands render beside child and provider activity within one region"))
+      (test-assert
+       (<= (terminal-ui-live-row-count active-ui)
+           (live-region-maximum-rows (terminal-ui-live-region active-ui)))
+       "command and child strips share the live-region viewport budget")
+      (setf clock 66)
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "running command timers advance once per second")
+      (multiple-value-bind (text display cursor)
+          (terminal-ui--live-content active-ui clock)
+        (declare (ignore display cursor))
+        (test-assert
+         (and (search "Run repository checks" text)
+              (search "01:01" text))
+         "command elapsed time advances from its observed duration"))
+      (terminal-ui-set-command-activities active-ui nil)
+      (test-assert (null (terminal-ui-command-activities active-ui))
+                   "painted command rows clear at terminal state")))
+  (let* ((clock 0)
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :clock-function (lambda () clock)))
+         (command
+           (list :id "exec:1" :type ':tool :index 1
+                 :tool "shell.run" :description "Run true"
+                 :state ':running :duration-ms 0 :detached nil)))
+    (with-terminal-ui (active-ui ui)
+      (recording-terminal-reset terminal)
+      (terminal-ui-set-command-activities active-ui (list command))
+      (terminal-ui-set-command-activities active-ui nil)
+      (test-assert (terminal-ui-command-activities active-ui)
+                   "a fast completion retains its command until one reader paint")
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "the reader paints a fast command before clearing it")
+      (test-assert (search "Run true" (recording-terminal-output terminal))
+                   "a fast primary command is visible for one frame")
+      (test-assert (null (terminal-ui-command-activities active-ui))
+                   "the first command paint applies its deferred terminal clear")
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "the next reader frame removes a completed fast command")))
+  nil)
+
 (-> test-terminal-stream-update () null)
 (defun test-terminal-stream-update ()
   "Test continuous streamed blocks, fluid tail repaint, and block completion."
@@ -3069,6 +3171,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-timed-status)
   (test-terminal-compaction-indicator)
   (test-terminal-agent-activities)
+  (test-terminal-command-activities)
   (test-terminal-stream-update)
   (test-terminal-command-completion)
   (test-terminal-lisp-operation-completion)

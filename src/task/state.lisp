@@ -368,6 +368,12 @@ parent, and borrowed capabilities are released at terminal state."))
     :reader tool-execution-job-tool-name
     :type non-empty-string
     :documentation "The canonical shell or Lisp tool name being executed.")
+    (description
+     :initarg :description
+     :initform nil
+     :reader tool-execution-job-description
+     :type (option string)
+     :documentation "The optional model-authored purpose shown during execution.")
    (summary
     :initarg :summary
     :accessor tool-execution-job-summary

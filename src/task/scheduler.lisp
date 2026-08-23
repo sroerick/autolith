@@ -366,6 +366,7 @@ start under a cancelled ancestor, and hands over to the child."
 (-> task-orchestrator-start-execution-job
     (task-orchestrator agent
      &key (:tool-name non-empty-string)
+       (:description (option string))
        (:summary string)
        (:operation-function function)
        (:detached-p boolean)
@@ -373,9 +374,11 @@ start under a cancelled ancestor, and hands over to the child."
     tool-execution-job)
 (defun task-orchestrator-start-execution-job
     (orchestrator parent-agent
-     &key tool-name summary operation-function detached-p parent-call-id)
+     &key tool-name description summary operation-function detached-p
+       parent-call-id)
   "Admit one shell or Lisp operation for exactly-once supervised execution."
   (check-type tool-name non-empty-string)
+  (check-type description (option string))
   (check-type summary string)
   (check-type operation-function function)
   (when (typep parent-agent 'task-child-agent)
@@ -403,6 +406,11 @@ start under a cancelled ancestor, and hands over to the child."
                        :parent-call-id parent-call-id
                        :detached-p detached-p
                        :tool-name tool-name
+                        :description
+                        (and description
+                             (bounded-string
+                              description
+                              :limit *tool-execution-summary-limit*))
                        :summary
                        (bounded-string summary
                                        :limit *tool-execution-summary-limit*)

@@ -12,6 +12,7 @@
            :user :tool :success :failure :notice :dim :hint :selected
            :strong :emphasis :code :lisp-prompt :plan-active :timestamp-time
            :agent-spinner :agent-name :child-name :agent-role :agent-tool
+           :command-spinner :command-id :command-tool
            :status-plain :status-dim :status-accent
            :status-model :status-effort :status-branch
            :compaction-label :compaction-track :compaction-head
@@ -45,6 +46,9 @@
            (:agent-name (:foreground :bright-cyan :bold t))
            (:agent-role (:foreground :bright-magenta))
            (:agent-tool (:foreground :bright-yellow))
+            (:command-spinner (:foreground :bright-green :bold t))
+            (:command-id (:foreground :bright-cyan :bold t))
+            (:command-tool (:foreground :bright-yellow))
            (:syntax-comment (:faint t))
            (:syntax-keyword (:foreground :magenta))
            (:syntax-string (:foreground :green))

@@ -876,6 +876,7 @@
 (-> tool-execution-invoke
     (t t
      &key (:tool-name non-empty-string)
+       (:description (option string))
        (:summary string)
        (:operation-function function)
        (:async-p boolean)
@@ -883,15 +884,15 @@
     tool-result)
 (defgeneric tool-execution-invoke
     (runtime parent
-     &key tool-name summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id)
   (:documentation
    "Run one shell or Lisp operation synchronously or through inspectable RUNTIME."))
 
 (defmethod tool-execution-invoke
     ((runtime null) parent
-     &key tool-name summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id)
   "Run directly when no session execution runtime is available."
-  (declare (ignore runtime parent summary parent-call-id))
+  (declare (ignore runtime parent description summary parent-call-id))
   (when async-p
     (error 'tool-error
            :message

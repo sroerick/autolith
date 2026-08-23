@@ -1455,7 +1455,9 @@ exactly that race."
                "Execute shell.run with decoded test ARGUMENTS."
                (tool-execute
                 shell-tool execution-context
-                (apply #'json-object arguments)))
+                (apply #'json-object
+                       "description" "Exercise shell execution jobs"
+                       arguments)))
 
              (execution-count ()
                "Return the retained asynchronous execution count."
@@ -1474,14 +1476,16 @@ exactly that race."
                        orchestrator identifier primary "shell.run")))))
       (unwind-protect
            (progn
-             (let* ((properties
-                      (json-get (tool-parameters shell-tool) "properties"))
+             (let* ((parameters (tool-parameters shell-tool))
+                    (properties (json-get parameters "properties"))
+                    (required (json-get parameters "required"))
                     (async-schema (and properties
                                        (gethash "async" properties))))
                (test-assert
                 (and (json-object-p async-schema)
-                     (string= (json-get async-schema "type") "boolean"))
-                "shell.run advertises its optional async Boolean"))
+                     (string= (json-get async-schema "type") "boolean")
+                     (find "description" required :test #'string=))
+                "shell.run advertises async and requires a purpose description"))
              (let ((before (execution-count))
                    (result
                      (run-shell denied-context
@@ -1541,10 +1545,12 @@ exactly that race."
                   (and (tool-result-success-p wait-result)
                        (getf wait-details :terminal-p)
                        (string= (getf record :id) identifier)
+                       (string= (getf record :description)
+                                "Exercise shell execution jobs")
                        (eq (getf record :state) :completed)
                        (string= (uiop:read-file-string slow-path) "once")
                        (= (execution-count) (1+ before)))
-                  "job.wait observes the same shell job after exactly one execution")))
+                  "job.wait retains the shell purpose after exactly one execution")))
              (let* ((result
                       (run-shell
                        context

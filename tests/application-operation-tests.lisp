@@ -565,7 +565,7 @@
                        ("(update)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
                        ("(lisp.paren-check :path \".\")" :execute)
-                       ("(shell.run :command \"true\")" :hold)
+                       ("(shell.run :command \"true\" :description \"Run true\")" :hold)
                        ("(test-operation.echo :text \"hello\")" :hold)
                        ("(self.status)" :execute)
                        ("(self.eval :form \"(+ 1 2)\")" :hold)

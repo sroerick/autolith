@@ -384,6 +384,11 @@ independent batch. Nonblocking work detaches by default. =blocking: true=
 waits. A role with =:blocking-p t= always waits. Each child must finish
 with one =yield.submit= of =success=, =failed=, or =aborted=.
 
+Primary shell and Lisp executions and child agents appear as live rows with
+spinners and elapsed time. The command and agent strips share a viewport bound,
+and provider activity remains visible below them. =shell.run= requires a short
+=:description= of the command's purpose; that text labels its live row.
+
 The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no
 deadline unless =AUTOLITH_TASK_MAX_RUNTIME_MS= is set positive.

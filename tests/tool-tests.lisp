@@ -437,8 +437,21 @@
                (test-assert
                 (search "1x1, image/png" (tool-result-content result))
                 "fs.view-image reports the prepared image metadata"))
+             (let ((result (run "shell" "run" "command" "true")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "description" (tool-result-content result)))
+                "shell.run rejects calls without a purpose description"))
              (let ((result (run "shell" "run"
-                                "command" "echo autolith-shell-works && exit 3")))
+                                "command" "true"
+                                "description" "")))
+               (test-assert
+                (and (not (tool-result-success-p result))
+                     (search "non-empty" (tool-result-content result)))
+                "shell.run rejects an empty purpose description"))
+             (let ((result (run "shell" "run"
+                                "command" "echo autolith-shell-works && exit 3"
+                                "description" "Exercise shell command output")))
                (test-assert (tool-result-success-p result)
                             "shell.run reports command completion")
                (test-assert (search "exit 3" (tool-result-content result))
@@ -453,7 +466,8 @@
               "shell.run accepts requested timeouts above ten minutes")
              (let* ((result
                       (run "shell" "run"
-                           "command" "printf '\\374\\022\\023\\265\\n'"))
+                           "command" "printf '\\374\\022\\023\\265\\n'"
+                           "description" "Exercise invalid shell output"))
                     (content (tool-result-content result)))
                (test-assert (tool-result-success-p result)
                             "shell.run completes after invalid UTF-8 output")
@@ -462,7 +476,8 @@
                 "shell.run replaces invalid output bytes without losing status"))
              (let* ((*shell-maximum-output-characters* 5)
                     (result (run "shell" "run"
-                                 "command" "printf 123456789"))
+                                 "command" "printf 123456789"
+                                 "description" "Exercise shell output truncation"))
                     (content (tool-result-content result)))
                (test-assert (tool-result-success-p result)
                             "shell.run completes when output is truncated")
@@ -483,6 +498,7 @@
                         "arguments"
                         (json-encode
                          (json-object
+                          "description" "Attempt an unauthorized shell write"
                           "command"
                           (format nil "printf denied > ~A"
                                   (uiop:escape-shell-token
@@ -513,6 +529,7 @@
                               "arguments"
                               (json-encode
                                (json-object
+                                "description" "Exercise sandboxed shell writes"
                                 "command"
                                 (format nil
                                         "printf ok > ~A; printf blocked > ~A"
@@ -540,8 +557,9 @@
                  (when (probe-file outside)
                    (delete-file outside))))
              (let ((result (run "shell" "run"
-                                "command" "sleep 5"
-                                "timeout-seconds" 1)))
+                                 "command" "sleep 5"
+                                 "description" "Exercise shell timeout"
+                                 "timeout-seconds" 1)))
                (test-assert (not (tool-result-success-p result))
                             "shell.run stops runaway commands")
                (test-assert (search "stopped after 1"

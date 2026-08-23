@@ -264,6 +264,14 @@
   (:documentation
    "Ephemeral terminal input and FIFO submission state for one application run."))
 
+(defmethod application-input-controller-wake
+    ((controller application-input-controller))
+  "Wake CONTROLLER's terminal reader for pending presentation work."
+  (with-lock-held ((application-input-controller-lock controller))
+    (sb-thread:condition-broadcast
+     (application-input-controller-condition-variable controller)))
+  nil)
+
 (-> application--resume-command (application) string)
 (defun application--resume-command (application)
   "Return the shell command that resumes APPLICATION's exact conversation."

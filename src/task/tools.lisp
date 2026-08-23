@@ -475,6 +475,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            :execution-id (getf snapshot :execution-id)
            :type :tool
            :tool (tool-execution-job-tool-name job)
+            :description (getf snapshot :description)
            :summary (getf snapshot :summary)
            :state (getf snapshot :state)
            :detached (and (getf snapshot :detached) t)
@@ -569,7 +570,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
 
 (defmethod tool-execution-invoke
     ((runtime task-orchestrator) parent
-     &key tool-name summary operation-function async-p parent-call-id)
+     &key tool-name description summary operation-function async-p parent-call-id)
   "Run one operation exactly once, returning quickly or handing off its same job."
   (unless (typep parent 'agent)
     (error 'tool-error
@@ -579,6 +580,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
           (task-orchestrator-start-execution-job
            runtime parent
            :tool-name tool-name
+           :description description
            :summary summary
            :operation-function operation-function
            :detached-p async-p
