@@ -153,13 +153,13 @@
 
 (-> provider-tests--request-tools (json-object) vector)
 (defun provider-tests--request-tools (request)
-  "Return the tools from REQUEST's leading additional-tools item."
-  (json-get (aref (json-get request "input") 0) "tools"))
+  "Return REQUEST's top-level standard Responses tools."
+  (json-get request "tools"))
 
 (-> provider-tests--request-tool-of-type
     (json-object string) (option json-object))
 (defun provider-tests--request-tool-of-type (request type)
-  "Return REQUEST's first additional tool whose type equals TYPE."
+  "Return REQUEST's first standard Responses tool whose type equals TYPE."
   (find type
         (provider-tests--request-tools request)
         :key (lambda (tool)
@@ -169,7 +169,7 @@
 
 (-> test-provider-request () null)
 (defun test-provider-request ()
-  "Test the Sol Responses Lite request shape without network access."
+  "Test the standard Codex Responses request shape without network access."
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
@@ -184,7 +184,12 @@
                            "type" "namespace"
                            "name" "test"
                            "description" "Test tools."
-                           "tools" (json-array))))
+                           "tools"
+                           (json-array
+                            (json-object
+                             "name" "inspect"
+                             "description" "Inspect a value."
+                             "parameters" (json-object "type" "object"))))))
                 (request nil))
            (conversation-append-user-message conversation "hello")
            (setf request (provider-request-object provider conversation schemas))
@@ -194,6 +199,8 @@
             (not (provider-child-reference-history-p
                   (make-instance 'model-provider)))
             "providers opt into inherited child reference history explicitly")
+           (test-assert (eq (provider-wire-protocol provider) ':responses-api)
+                        "Codex reports the standard Responses API protocol")
            (test-assert (null (json-get request "service_tier"))
                         "standard Codex requests omit the service tier")
            (dolist (model *codex-fast-mode-models*)
@@ -235,37 +242,29 @@
              (test-assert (null (json-get bounded "max_output_tokens"))
                           "the Codex serving stack never receives an output ceiling"))
            (let ((input (json-get request "input")))
-             (test-assert (= (length input) 3)
-                          "the provider request prefixes two developer items")
              (test-assert
-              (string= (json-get (aref input 0) "type") "additional_tools")
-              "additional tools are the first input item")
-             (test-assert
-              (null (provider-tests--request-tool-of-type request "web_search"))
-              "requests omit the nonfunctional native web search tool")
-             (test-assert
-              (string= (json-get (aref input 1) "role") "developer")
-              "the Autolith system prompt is the second input item")
-             (test-assert (string= (json-get (aref input 2) "role") "user")
-                          "conversation history follows the developer prefix"))
+              (and (= (length input) 1)
+                   (string= (json-get (aref input 0) "role") "user"))
+              "standard Responses input begins with conversation history"))
+           (test-assert
+            (non-empty-string-p (json-get request "instructions"))
+            "standard Responses uses top-level instructions")
            (let* ((goal-request
                     (provider-request-object
                      provider conversation schemas
                      :goal-context "<goal_context>persist</goal_context>"))
-                  (goal-input (json-get goal-request "input"))
-                  (goal-message (aref goal-input 2)))
-             (test-assert (= (length goal-input) 4)
-                          "an active goal adds one transient developer message")
-             (test-assert (string= (json-get goal-message "role") "developer")
-                          "the goal context is a developer message")
+                  (goal-input (json-get goal-request "input")))
+             (test-assert (= (length goal-input) 1)
+                          "goal context stays outside durable conversation input")
              (test-assert
-              (search "<goal_context>"
-                      (json-get (aref (json-get goal-message "content") 0)
-                                "text"))
-              "the goal context rides as developer text"))
+              (search "<goal_context>" (json-get goal-request "instructions"))
+              "goal context joins the top-level instructions"))
            (test-assert
             (null (provider-web-search-tool configuration))
             "the nonfunctional native web search tool stays disabled")
+           (test-assert
+            (null (provider-tests--request-tool-of-type request "web_search"))
+            "requests omit the nonfunctional native web search tool")
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "max")
             "the provider request maps Ultra reasoning to Max")
@@ -322,14 +321,10 @@
                (test-assert
                 (provider-reasoning-summaries-p reconfigured)
                 "provider reconfiguration preserves the trace preference")))
-           (test-assert
-            (string= (json-get (json-get request "reasoning") "context")
-                     "all_turns")
-            "the provider request retains reasoning across the current context")
            (test-assert (string= (json-get request "tool_choice") "auto")
                         "the provider request permits automatic tool selection")
-           (test-assert (eq (json-get request "parallel_tool_calls") false)
-                        "the provider request disables parallel tool calls")
+           (test-assert (eq (json-get request "parallel_tool_calls") t)
+                        "normal standard requests enable parallel tool calls")
            (test-assert (eq (json-get request "store") false)
                         "the provider request disables server-side storage")
            (test-assert (eq (json-get request "stream") t)
@@ -374,16 +369,36 @@
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
-           (multiple-value-bind (value present-p)
-               (gethash "instructions" request)
-             (declare (ignore value))
-             (test-assert (not present-p)
-                          "Responses Lite omits top-level instructions"))
-           (multiple-value-bind (value present-p)
-               (gethash "tools" request)
-             (declare (ignore value))
-             (test-assert (not present-p)
-                          "Responses Lite omits top-level tools")))
+           (let ((tools (provider-tests--request-tools request)))
+             (test-assert
+              (and (= (length tools) 1)
+                   (string= (json-get (aref tools 0) "name")
+                            (responses-standard-tool-name "test" "inspect"))
+                   (every (lambda (character)
+                            (or (alphanumericp character)
+                                (find character "_-")))
+                          (json-get (aref tools 0) "name")))
+              "standard Responses uses a grammar-safe flattened tool name"))
+           (let ((compaction-request
+                   (provider-request-object
+                    provider conversation schemas :compaction-p t)))
+             (test-assert
+              (and (eq (json-get compaction-request "parallel_tool_calls") false)
+                   (zerop (length (json-get compaction-request "tools")))
+                   (search "context checkpoint compaction"
+                           (json-get compaction-request "instructions")))
+              "portable compaction fallback is tool-free and serial"))
+           (let ((normalized
+                   (provider-normalize-output-item
+                    provider
+                    (json-object
+                     "type" "function_call"
+                     "name" (responses-standard-tool-name "test" "inspect")
+                     "call_id" "call-standard"))))
+             (test-assert
+              (and (string= (json-get normalized "namespace") "test")
+                   (string= (json-get normalized "name") "inspect"))
+              "standard Codex output restores the local tool namespace")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -416,87 +431,55 @@
                          "call_id" "ephemeral-call"
                          "name" "test")
             :persistence ':next-response)
-           (let* ((request
-                    (provider-native-compaction-request-object
-                     provider conversation schemas))
-                  (input (json-get request "input")))
-             (test-assert (= (length input) 4)
-                          "native compaction carries prefix and durable history")
-             (test-assert
-              (string= (json-get (aref input 0) "type") "additional_tools")
-              "native compaction retains the Responses Lite tool prefix")
-             (test-assert
-              (null (provider-tests--request-tool-of-type request "web_search"))
-              "native compaction omits the nonfunctional web search tool")
-             (test-assert
-              (find "test"
-                    (provider-tests--request-tools request)
-                    :key (lambda (tool) (json-get tool "name"))
-                    :test #'equal)
-              "ordinary native compaction retains namespace schemas")
-
-             (test-assert
-              (string= (json-get (aref input 1) "role") "developer")
-              "native compaction retains the system developer message")
-             (test-assert
-              (and (reasoning-item-p (aref input 3))
-                   (string= (json-get (aref input 3) "encrypted_content")
-                            "retained-reasoning"))
-              "native compaction carries retained encrypted reasoning")
-             (test-assert
-              (not (find-if
-                    (lambda (item)
-                      (string= (or (json-get item "type") "")
-                               "compaction_trigger"))
-                    (coerce input 'list)))
-              "native compaction leaves the endpoint to select its own trigger")
-             (test-assert
-              (string= (json-get (json-get request "reasoning") "context")
-                       "all_turns")
-              "native compaction retains reasoning across its input")
-             (test-assert
-              (string= (json-get request "prompt_cache_key")
-                       (conversation-prompt-cache-key conversation))
-              "native compaction shares the root conversation cache key")
-             (test-assert (null (json-get request "service_tier"))
-                          "standard native compaction omits a service tier")
-             (let* ((fast-configuration
-                      (configuration-with-codex-fast-mode configuration t))
-                    (fast-provider (provider-create fast-configuration))
-                    (fast-request
-                      (provider-native-compaction-request-object
-                       fast-provider conversation schemas)))
-               (test-assert
-                (string= (json-get fast-request "service_tier") "priority")
-                "Codex Fast mode applies to native compaction"))
-             (let* ((unknown-configuration
-                      (configuration-with-codex-fast-mode
-                       (configuration--clone configuration
-                                             :model "gpt-future-unknown")
-                       t))
-                    (unknown-provider (provider-create unknown-configuration))
-                    (unknown-request
-                      (provider-native-compaction-request-object
-                       unknown-provider conversation schemas)))
-               (test-assert
-                (null (json-get unknown-request "service_tier"))
-                "unknown Codex models omit Fast mode during compaction"))
-             (dolist (name '("stream" "store" "include" "tool_choice"))
-               (multiple-value-bind (value present-p) (gethash name request)
-                 (declare (ignore value))
-                 (test-assert (not present-p)
-                              (format nil "native compaction omits ~A" name)))))
-           (setf (provider-reasoning-summaries-p provider) t)
-           (test-assert
-            (string= (json-get
-                      (json-get
+            (let* ((request
+                     (provider-native-compaction-request-object
+                      provider conversation schemas))
+                   (input (json-get request "input")))
+              (test-assert
+               (and (= (length input) 2)
+                    (string= (json-get (aref input 0) "role") "user"))
+               "native compaction carries durable standard Responses input")
+              (test-assert
+               (and (reasoning-item-p (aref input 1))
+                    (string= (json-get (aref input 1) "encrypted_content")
+                             "retained-reasoning"))
+               "native compaction carries retained encrypted reasoning")
+              (test-assert
+               (non-empty-string-p (json-get request "instructions"))
+               "native compaction uses top-level instructions")
+              (test-assert
+               (string= (json-get request "prompt_cache_key")
+                        (conversation-prompt-cache-key conversation))
+               "native compaction shares the root conversation cache key")
+              (test-assert (null (json-get request "service_tier"))
+                           "standard native compaction omits a service tier")
+              (let* ((fast-configuration
+                       (configuration-with-codex-fast-mode configuration t))
+                     (fast-provider (provider-create fast-configuration))
+                     (fast-request
                        (provider-native-compaction-request-object
-                        provider conversation schemas)
-                       "reasoning")
-                      "summary")
-                     "auto")
-            "native compaction preserves enabled reasoning summaries")
-           (setf (provider-reasoning-summaries-p provider) nil)
+                        fast-provider conversation schemas)))
+                (test-assert
+                 (string= (json-get fast-request "service_tier") "priority")
+                 "Codex Fast mode applies to native compaction"))
+              (let* ((unknown-configuration
+                       (configuration-with-codex-fast-mode
+                        (configuration--clone configuration
+                                              :model "gpt-future-unknown")
+                        t))
+                     (unknown-provider (provider-create unknown-configuration))
+                     (unknown-request
+                       (provider-native-compaction-request-object
+                        unknown-provider conversation schemas)))
+                (test-assert
+                 (null (json-get unknown-request "service_tier"))
+                 "unknown Codex models omit Fast mode during compaction"))
+              (dolist (name '("stream" "store" "include" "tool_choice"
+                              "parallel_tool_calls" "reasoning" "text" "tools"))
+                (multiple-value-bind (value present-p) (gethash name request)
+                  (declare (ignore value))
+                  (test-assert (not present-p)
+                               (format nil "native compaction omits ~A" name)))))
            (let ((captured-url nil)
                  (captured-headers nil)
                  (captured-content nil))

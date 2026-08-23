@@ -3,9 +3,9 @@
 ;;;; -- Provider Wire Protocols --
 
 (defmethod provider-wire-protocol ((provider codex-subscription-provider))
-  "Identify the Codex provider's Responses Lite dialect."
+  "Identify Codex as a standard Responses API provider."
   (declare (ignore provider))
-  ':responses-lite)
+  ':responses-api)
 
 (defmethod provider-wire-tool
     ((provider responses-api-provider) (namespace string) (tool hash-table))
@@ -66,6 +66,18 @@
               (gethash "name" item) (subseq name (1+ dot))))))
   item)
 
+(defmethod provider-normalize-output-item
+    ((provider codex-subscription-provider) (item hash-table))
+  "Restore standard Codex Responses calls to their local namespace shape."
+  (call-next-method)
+  (when (function-call-item-p item)
+    (multiple-value-bind (namespace name)
+        (responses-standard-tool-name->components (json-get item "name"))
+      (when (and namespace name)
+        (setf (gethash "namespace" item) namespace
+              (gethash "name" item) name))))
+  item)
+
 (defmethod provider-request-object
     ((provider responses-api-provider)
      (conversation conversation)
@@ -89,12 +101,12 @@ delivery consumed only after a completed response."
                             (coerce hosted-tools 'vector))))
          (prefix
            (append
-            (list (responses-lite-developer-message
+            (list (responses-developer-message
                    (let ((*system-prompt-hosted-web-search-p*
                            (not (null hosted-tools))))
                      (system-prompt configuration))))
             (when (and goal-context (not compaction-p))
-              (list (responses-lite-developer-message goal-context)))))
+              (list (responses-developer-message goal-context)))))
          (delivery
            (unless compaction-p
              (context-resolve-request
@@ -105,7 +117,7 @@ delivery consumed only after a completed response."
          (context-message
            (and delivery
                 (context-delivery-rendered delivery)
-                (responses-lite-developer-message
+                (responses-developer-message
                  (context-delivery-rendered delivery))))
          (input
            (coerce
@@ -121,7 +133,7 @@ delivery consumed only after a completed response."
              (when context-message
                (list context-message))
              (when compaction-p
-               (list (responses-lite-developer-message
+               (list (responses-developer-message
                       *compaction-instructions*))))
             'vector))
          (tools (provider-wire-tools provider effective-namespaces)))

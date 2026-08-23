@@ -280,6 +280,12 @@ models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
 process; while it is set, =/fast on= and =/fast off= are unavailable.
 
+ChatGPT Codex uses standard Responses requests and native Responses compaction.
+Normal requests enable provider parallel tool calls. Autolith executes independent
+calls concurrently, then records their results in provider wire order. Calls
+requiring a provider round trip, exclusive tools, and calls sharing one mutable
+runtime execute in separate ordered waves.
+
 #+BEGIN_SRC sh
 autolith auth nous
 #+END_SRC

@@ -387,11 +387,11 @@ so authentication can bootstrap credentials before model discovery."
    "POST REQUEST to PROVIDER's native compaction endpoint and return its body."))
 
 
-;;;; -- Responses Lite Encoding --
+;;;; -- Responses Encoding --
 
-(-> responses-lite-developer-message (string) json-object)
-(defun responses-lite-developer-message (instructions)
-  "Return the Responses Lite developer message containing INSTRUCTIONS."
+(-> responses-developer-message (string) json-object)
+(defun responses-developer-message (instructions)
+  "Return a standard Responses developer message containing INSTRUCTIONS."
   (json-object
    "type" "message"
    "role" "developer"
@@ -400,13 +400,101 @@ so authentication can bootstrap credentials before model discovery."
                "type" "input_text"
                "text" instructions))))
 
-(-> responses-lite-additional-tools (vector) json-object)
-(defun responses-lite-additional-tools (tool-namespaces)
-  "Return the Responses Lite developer item exposing TOOL-NAMESPACES."
+(defparameter *responses-standard-tool-name-maximum-length* 64
+  "Maximum standard Responses function name length accepted by Autolith.")
+
+(-> responses-standard-tool-name (string string) string)
+(defun responses-standard-tool-name (namespace name)
+  "Return a reversible grammar-safe name for NAMESPACE and NAME."
+  (let* ((payload
+           (concatenate 'string namespace (string (code-char 0)) name))
+         (encoded
+           (string-right-trim
+            "."
+            (usb8-array-to-base64-string
+             (sb-ext:string-to-octets payload :external-format ':utf-8)
+             :uri t)))
+         (wire-name (format nil "a~A" encoded)))
+    (when (> (length wire-name)
+             *responses-standard-tool-name-maximum-length*)
+      (error 'configuration-error
+             :message
+             (format nil
+                     "Tool name ~A.~A is too long for standard Responses."
+                     namespace name)))
+    wire-name))
+
+(-> responses-standard-tool-name->components
+    (string)
+    (values (option string) (option string)))
+(defun responses-standard-tool-name->components (wire-name)
+  "Decode a standard Responses function WIRE-NAME created by Autolith."
+  (if (and (plusp (length wire-name))
+           (char= (char wire-name 0) #\a))
+      (handler-case
+          (let* ((decoded
+                   (base64-string-to-string
+                    (padded-base64url (subseq wire-name 1))
+                    :uri t))
+                 (separator (position (code-char 0) decoded)))
+            (if (and separator
+                     (plusp separator)
+                     (< (1+ separator) (length decoded)))
+                (values (subseq decoded 0 separator)
+                        (subseq decoded (1+ separator)))
+                (values nil nil)))
+        (error ()
+          (values nil nil)))
+      (values nil nil)))
+
+(-> responses-standard-tool (string json-object) json-object)
+(defun responses-standard-tool (namespace tool)
+  "Encode one namespaced TOOL as a standard Responses function tool."
   (json-object
-   "type" "additional_tools"
-   "role" "developer"
-   "tools" tool-namespaces))
+   "type" "function"
+   "name" (responses-standard-tool-name namespace (json-get tool "name"))
+   "description" (json-get tool "description")
+   "strict" false
+   "parameters" (json-get tool "parameters")))
+
+(-> responses-standard-tools (vector) vector)
+(defun responses-standard-tools (tool-namespaces)
+  "Flatten TOOL-NAMESPACES for a standard Responses request."
+  (coerce
+   (loop for entry across tool-namespaces
+         if (and (json-object-p entry)
+                 (json-string= (json-get entry "type") "namespace")
+                 (vectorp (json-get entry "tools"))
+                 (non-empty-string-p (json-get entry "name")))
+           append (loop for tool across (json-get entry "tools")
+                        when (and (json-object-p tool)
+                                  (non-empty-string-p (json-get tool "name")))
+                          collect (responses-standard-tool
+                                   (json-get entry "name") tool))
+         else
+           collect entry)
+   'vector))
+
+(-> responses-standard-input-item (t) t)
+(defun responses-standard-input-item (item)
+  "Flatten a namespaced function-call ITEM for a standard Responses request."
+  (if (and (json-object-p item)
+           (function-call-item-p item)
+           (non-empty-string-p (json-get item "namespace"))
+           (non-empty-string-p (json-get item "name")))
+      (let ((copy (json-object-copy item)))
+        (setf (gethash "name" copy)
+              (responses-standard-tool-name
+               (json-get item "namespace")
+               (json-get item "name")))
+        (remhash "namespace" copy)
+        copy)
+      item))
+
+(-> responses-standard-instructions (list) string)
+(defun responses-standard-instructions (parts)
+  "Join non-empty instruction PARTS for a standard Responses request."
+  (format nil "~{~A~^~2%~}" (remove-if-not #'non-empty-string-p parts)))
 
 ;; Modeled on the Codex context checkpoint compaction instructions at
 ;; reference commit 6219b7c40f, restated for Autolith.
@@ -509,15 +597,10 @@ between roots while allowing a root and its task children to share a prefix."
      (conversation conversation)
      (tool-namespaces vector)
      &key goal-context compaction-p)
-  "Build the complete stateless Sol Responses Lite request for CONVERSATION.
+  "Build a standard Codex Responses request for CONVERSATION.
 
-Fast mode adds service_tier=priority; the standard path omits service_tier.
-GOAL-CONTEXT and resolved context contributions ride as transient developer
-messages that are never persisted in the durable conversation. Skill catalogs
-and explicitly selected bodies participate through that same context delivery.
-COMPACTION-P builds a tool-free summarization request whose trailing developer
-message asks for a context checkpoint handoff. The second value is the context
-delivery that the transport consumes only after a completed response."
+Fast mode adds service_tier=priority; the standard path omits service_tier. The
+second value is the context delivery consumed only after a completed response."
   (let* ((configuration (provider-configuration provider))
          (web-search-tool (and (not compaction-p)
                                (provider-web-search-tool configuration)))
@@ -531,19 +614,6 @@ delivery that the transport consumes only after a completed response."
                            (vector web-search-tool)))
              (t
               tool-namespaces)))
-         (reasoning
-           (json-object
-            "effort" (configuration-wire-effort configuration)
-            "context" "all_turns"))
-         (prefix (append
-                  (list (responses-lite-additional-tools effective-tools)
-                        (responses-lite-developer-message
-                         (let ((*system-prompt-hosted-web-search-p*
-                                 (not (null web-search-tool))))
-                           (system-prompt configuration))))
-                  (when (and goal-context
-                             (not compaction-p))
-                    (list (responses-lite-developer-message goal-context)))))
          (delivery
            (unless compaction-p
              (context-resolve-request
@@ -551,21 +621,28 @@ delivery that the transport consumes only after a completed response."
               conversation
               effective-tools
               :goal-context goal-context)))
-         (context-message
-           (and delivery
-                (context-delivery-rendered delivery)
-                (responses-lite-developer-message
-                 (context-delivery-rendered delivery))))
-         (input (coerce (append prefix
-                                (conversation-input-items-for-family
-                                 conversation
-                                 (provider-family provider)
-                                 :include-ephemeral-p (not compaction-p))
-                                (when context-message (list context-message))
-                                (when compaction-p
-                                  (list (responses-lite-developer-message
-                                        *compaction-instructions*))))
-                        'vector)))
+         (rendered-context
+           (and delivery (context-delivery-rendered delivery)))
+         (reasoning
+           (json-object
+            "effort" (configuration-wire-effort configuration)))
+         (instructions
+           (responses-standard-instructions
+            (list
+             (let ((*system-prompt-hosted-web-search-p*
+                     (not (null web-search-tool))))
+               (system-prompt configuration))
+             (and (not compaction-p) goal-context)
+             rendered-context
+             (and compaction-p *compaction-instructions*))))
+         (input
+           (map 'vector
+                #'responses-standard-input-item
+                (conversation-input-items-for-family
+                 conversation
+                 (provider-family provider)
+                 :include-ephemeral-p (not compaction-p))))
+         (tools (responses-standard-tools effective-tools)))
     (when (and (provider-reasoning-summaries-p provider)
                (not compaction-p))
       (setf (gethash "summary" reasoning) "auto"))
@@ -575,18 +652,22 @@ delivery that the transport consumes only after a completed response."
       (append
        (list
         "model" (configuration-model configuration)
+        "instructions" instructions
         "input" input
-        "tool_choice" "auto"
-        "parallel_tool_calls" false
+        "tools" tools)
+       (when (plusp (length tools))
+         (list "tool_choice" "auto"))
+       (list
+        "parallel_tool_calls" (if compaction-p false t)
         "reasoning" reasoning
         "store" false
         "stream" t
         "include" (json-array "reasoning.encrypted_content")
-        "prompt_cache_key" (provider--codex-prompt-cache-key provider
-                                                            conversation)
+        "prompt_cache_key" (provider--codex-prompt-cache-key
+                            provider conversation)
         "text" (json-object "verbosity" "low"))
-        (when (configuration-codex-fast-mode-active-p configuration)
-          (list "service_tier" "priority"))
+       (when (configuration-codex-fast-mode-active-p configuration)
+         (list "service_tier" "priority"))
        (when (and *provider-maximum-output-tokens*
                   (provider-output-ceiling-p provider))
          (list "max_output_tokens" *provider-maximum-output-tokens*))))
@@ -597,49 +678,35 @@ delivery that the transport consumes only after a completed response."
     json-object)
 (defun provider-native-compaction-request-object
     (provider conversation tool-namespaces)
-  "Build Codex's non-streaming Responses compaction request for CONVERSATION.
+  "Build a standard Responses compaction request for CONVERSATION.
 
-This mirrors the Responses Lite compaction payload at Codex reference commit
-ba42e6866cef4baed7ad92c73e6be8cd42e49d8b: durable family-compatible history
-receives the ordinary developer prefix without an extra compaction trigger.
-Request-local contributions and pending one-response items stay outside the
-checkpoint."
+Durable family-compatible history and top-level instructions participate in the
+native checkpoint. Request-local contributions and pending one-response items
+stay outside it."
+  (declare (ignore tool-namespaces))
   (let* ((configuration (provider-configuration provider))
-         (web-search-tool (provider-web-search-tool configuration))
-         (effective-tools
-           (if web-search-tool
-               (concatenate 'vector tool-namespaces (vector web-search-tool))
-               tool-namespaces))
-         (reasoning
-           (json-object
-            "effort" (configuration-wire-effort configuration)
-            "context" "all_turns"))
+         (instructions
+           (responses-standard-instructions
+            (list
+             (let ((*system-prompt-hosted-web-search-p* nil))
+               (system-prompt configuration)))))
          (input
-           (coerce
-            (append
-             (list (responses-lite-additional-tools effective-tools)
-                   (responses-lite-developer-message
-                    (let ((*system-prompt-hosted-web-search-p* nil))
-                      (system-prompt configuration))))
-             (conversation-input-items-for-family
-              conversation
-              (provider-family provider)
-              :include-ephemeral-p nil))
-            'vector)))
-    (when (provider-reasoning-summaries-p provider)
-      (setf (gethash "summary" reasoning) "auto"))
+           (map 'vector
+                #'responses-standard-input-item
+                (conversation-input-items-for-family
+                 conversation
+                 (provider-family provider)
+                 :include-ephemeral-p nil))))
     (apply
      #'json-object
      (append
       (list
        "model" (configuration-model configuration)
+       "instructions" instructions
        "input" input
-       "parallel_tool_calls" false
-       "reasoning" reasoning
-       "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
-       "text" (json-object "verbosity" "low"))
-       (when (configuration-codex-fast-mode-active-p configuration)
-         (list "service_tier" "priority"))))))
+       "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation))
+      (when (configuration-codex-fast-mode-active-p configuration)
+        (list "service_tier" "priority"))))))
 
 (-> provider-user-agent () string)
 (defun provider-user-agent ()
@@ -664,7 +731,6 @@ checkpoint."
     (cons "ChatGPT-Account-ID" (oauth-credentials-account-id credentials))
     (cons "Content-Type" "application/json")
     (cons "Accept" accept)
-    (cons "x-openai-internal-codex-responses-lite" "true")
     (cons "originator" "autolith")
     (cons "User-Agent" (provider-user-agent))
     (cons "session-id" (provider-session-id provider))
@@ -1819,7 +1885,7 @@ summary fallback."
     ((provider codex-subscription-provider)
      (conversation conversation)
      &key tool-namespaces event-callback)
-  "Compact CONVERSATION remotely, returning NIL only when the endpoint is absent."
+  "Compact CONVERSATION through the standard Responses compact endpoint."
   (declare (type vector tool-namespaces)
            (type function event-callback))
   (handler-case

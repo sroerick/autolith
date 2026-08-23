@@ -119,7 +119,7 @@
  "chatgpt"
  :description "ChatGPT Codex subscription"
  :family ':codex
- :protocol ':responses-lite
+ :protocol ':responses
  :models '("gpt-5.6-sol"
            "gpt-5.6-luna"
            "gpt-5.6-terra")

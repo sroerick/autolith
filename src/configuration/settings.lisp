@@ -332,12 +332,12 @@ configuration can be created before executable user initialization loads."
     :reader configuration-reasoning-effort
     :type non-empty-string
     :documentation "The user-visible reasoning effort.")
-    (codex-fast-mode-p
-     :initarg :codex-fast-mode-p
-     :initform nil
-     :reader configuration-codex-fast-mode-p
-     :type boolean
-     :documentation "Whether Codex requests opt in to Fast mode.")
+   (codex-fast-mode-p
+    :initarg :codex-fast-mode-p
+    :initform nil
+    :reader configuration-codex-fast-mode-p
+    :type boolean
+    :documentation "Whether Codex requests opt in to Fast mode.")
    (immutable-p
     :initarg :immutable-p
     :initform nil

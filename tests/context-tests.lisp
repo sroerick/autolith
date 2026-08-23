@@ -423,14 +423,13 @@
                   (before (copy-list
                            (conversation-input-items conversation)))
                   (request (provider-request-object provider conversation #()))
-                  (input (json-get request "input"))
-                  (message (aref input (1- (length input)))))
-             (test-assert (= (length input) 4)
-                          "resolved context adds one provider-only message")
+                  (input (json-get request "input")))
              (test-assert
-              (search "Temporary context"
-                      (json-get (aref (json-get message "content") 0) "text"))
-              "request-local context is rendered after durable input")
+              (= (length input) (length before))
+              "request-local context stays outside durable provider input")
+             (test-assert
+              (search "Temporary context" (json-get request "instructions"))
+              "request-local context joins the top-level instructions")
              (test-assert
               (equal before (conversation-input-items conversation))
               "context request assembly never mutates durable conversation input"))
