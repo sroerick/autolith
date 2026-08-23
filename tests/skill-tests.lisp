@@ -45,6 +45,15 @@
             description
             instructions)))
 
+(-> skill-tests--agent-definition (string string string) string)
+(defun skill-tests--agent-definition (name description instructions)
+  "Return one standard Agent Skill definition string."
+  (format nil
+          "---~%name: ~S~%description: ~S~%---~%~A"
+          name
+          description
+          instructions))
+
 (-> skill-tests--names (skill-catalog) list)
 (defun skill-tests--names (catalog)
   "Return selected skill names from CATALOG."
@@ -144,10 +153,13 @@ related operations."
              "hidden"
              "This Skill is nested beneath a hidden directory."
              "Hidden."))
-           (skill-tests--write
-            primary
-            "legacy/SKILL.md"
-            "This compatibility filename must be ignored.")
+            (skill-tests--write
+             primary
+             "standard/SKILL.md"
+             (skill-tests--agent-definition
+              "standard"
+              "A standard Agent Skill."
+              "Standard instructions."))
            (skill-tests--write
             secondary
             "alpha/SKILL.sexp"
@@ -172,10 +184,10 @@ related operations."
            (let* ((catalog
                     (skill-catalog-discover (list primary secondary)))
                   (kinds (skill-tests--diagnostic-kinds catalog)))
-               (test-assert
-                  (equal (skill-tests--names catalog)
-                         '("hidden" "alpha" "different" "beta" "blocked"))
-                "native skills are path-sorted and ordered by root precedence")
+              (test-assert
+               (equal (skill-tests--names catalog)
+                      '("hidden" "alpha" "standard" "different" "beta" "blocked"))
+               "native and Agent Skills are path-sorted and honor root precedence")
                (test-assert
                 (string=
                  (skill-metadata-description
@@ -197,9 +209,9 @@ related operations."
              (test-assert
               (skill-catalog-find catalog "hidden")
               "recursive discovery includes Skills beneath hidden directories")
-             (test-assert
-              (null (skill-catalog-find catalog "legacy"))
-              "SKILL.md compatibility files are ignored")))
+              (test-assert
+               (skill-catalog-find catalog "standard")
+               "recursive discovery includes standard SKILL.md definitions")))
       (skill-tests--delete-root root)))
   nil)
 
@@ -1228,14 +1240,361 @@ related operations."
   nil)
 
 
+;;;; -- Standard Agent Skill Tests --
+
+(-> skill-tests--agent-conversion-cache () null)
+(defun skill-tests--agent-conversion-cache ()
+  "Test standard YAML parsing and durable content-addressed conversion."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (skills (merge-pathnames "skills/" root))
+         (cache (merge-pathnames "cache/" root))
+         (pathname (merge-pathnames "standard-cache/SKILL.md" skills))
+         (initial-body
+           (format nil "# Exact body~2%Keep `code`, quotes, and spacing.~%"))
+         (initial-source
+           (format nil
+                   "---~%# YAML comments are accepted.~%name: \"standard-cache\"~%description: |~%  Handles quoted YAML,~%  comments, and block scalars.~%license: \"ISC\"~%compatibility: >~%  SBCL 2.6.6~%  terminal UI~%metadata:~%  author: \"Lambda Symbolics\"~%  version: \"1\"~%allowed-tools: \"Read Grep\"~%---~%~A"
+                   initial-body)))
+    (unwind-protect
+         (progn
+           (skill-tests--write
+            skills
+            "standard-cache/SKILL.md"
+            initial-source)
+           (let* ((catalog
+                    (skill-catalog-discover
+                     (list skills)
+                     :cache-root cache))
+                  (metadata
+                    (skill-catalog-find catalog "standard-cache"))
+                  (cache-pathname
+                    (skill--agent-cache-pathname
+                     cache
+                     (skill--agent-source-digest initial-source))))
+             (test-assert metadata
+                          "valid standard YAML discovers one Agent Skill")
+             (test-assert
+              (string=
+               (skill-metadata-description metadata)
+               "Handles quoted YAML, comments, and block scalars.")
+              "quoted values, comments, block scalars, and metadata mappings parse")
+             (test-assert
+              (and (eq (skill-metadata-source-format metadata) ':agent-skill)
+                   (equal (skill-metadata-pathname metadata) pathname)
+                   (equal (skill-metadata-cache-root metadata) cache))
+              "Agent Skill metadata retains its source and conversion cache")
+             (test-assert
+              (string= (skill-metadata-read metadata) initial-body)
+              "the Markdown body is preserved exactly")
+             (test-assert
+              (and (probe-file cache-pathname)
+                   (probe-file
+                    (skill--agent-cache-manifest-pathname cache-pathname)))
+              "the first discovery publishes native cache content and integrity metadata")
+             (let ((cache-inode
+                     (sb-posix:stat-ino
+                      (sb-posix:stat (namestring cache-pathname)))))
+               (let* ((fresh-catalog
+                        (skill-catalog-discover
+                         (list skills)
+                         :cache-root cache))
+                      (fresh
+                        (skill-catalog-find fresh-catalog "standard-cache")))
+                 (test-assert
+                  (and fresh
+                       (= cache-inode
+                          (sb-posix:stat-ino
+                           (sb-posix:stat (namestring cache-pathname))))
+                       (string= (skill-metadata-read fresh) initial-body))
+                  "fresh discovery reuses an unchanged durable cache without rewriting it")))
+             (let* ((changed-body (format nil "Changed instructions.~%"))
+                    (changed-source
+                      (skill-tests--agent-definition
+                       "standard-cache"
+                       "Changed standard skill."
+                       changed-body)))
+               (skill-tests--write
+                skills
+                "standard-cache/SKILL.md"
+                changed-source)
+               (let ((changed-cache
+                       (skill--agent-cache-pathname
+                        cache
+                        (skill--agent-source-digest changed-source))))
+                 (test-assert
+                  (string= (skill-metadata-read metadata) changed-body)
+                  "a selected metadata snapshot rehashes changed SKILL.md content")
+                 (test-assert
+                  (and (probe-file changed-cache)
+                       (not (equal changed-cache cache-pathname)))
+                  "changed source content creates and uses a new conversion")
+                 (with-open-file (stream changed-cache
+                                         :direction ':output
+                                         :if-exists ':supersede
+                                         :external-format ':utf-8)
+                   (write-string
+                    (skill-tests--definition
+                     "standard-cache"
+                     "Valid but altered cache content."
+                     "Poisoned instructions.")
+                    stream))
+                 (let* ((corrupt-inode
+                          (sb-posix:stat-ino
+                           (sb-posix:stat (namestring changed-cache))))
+                        (regenerated-catalog
+                          (skill-catalog-discover
+                           (list skills)
+                           :cache-root cache))
+                        (regenerated
+                          (skill-catalog-find
+                           regenerated-catalog
+                           "standard-cache")))
+                   (test-assert
+                    (and regenerated
+                         (string= (skill-metadata-read regenerated) changed-body)
+                         (/= corrupt-inode
+                             (sb-posix:stat-ino
+                              (sb-posix:stat
+                               (namestring changed-cache)))))
+                    "a valid but altered generated cache is atomically regenerated"))))
+             (skill-tests--write
+              skills
+              "empty-body/SKILL.md"
+              (skill-tests--agent-definition
+               "empty-body"
+               "An empty standard body."
+               ""))
+             (let* ((empty-catalog
+                      (skill-catalog-discover
+                       (list skills)
+                       :cache-root cache))
+                    (empty
+                      (skill-catalog-find empty-catalog "empty-body")))
+               (test-assert
+                (and empty (string= (skill-metadata-read empty) ""))
+                "standard Agent Skills may have an empty Markdown body"))))
+      (skill-tests--delete-root root)))
+  nil)
+
+(-> skill-tests--agent-precedence () null)
+(defun skill-tests--agent-precedence ()
+  "Test precedence between native and standard skill representations."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (primary (merge-pathnames "primary/" root))
+         (secondary (merge-pathnames "secondary/" root))
+         (cache (merge-pathnames "cache/" root)))
+    (unwind-protect
+         (progn
+           (skill-tests--write
+            primary
+            "native-first/SKILL.sexp"
+            (skill-tests--definition
+             "native-first"
+             "Native precedence."
+             "Native instructions."))
+           (skill-tests--write
+            primary
+            "native-first/SKILL.md"
+            (skill-tests--agent-definition
+             "native-first"
+             "Standard alternative."
+             "Standard instructions."))
+           (skill-tests--write
+            primary
+            "cross-format/SKILL.md"
+            (skill-tests--agent-definition
+             "cross-format"
+             "Earlier standard source."
+             "Earlier Agent instructions."))
+           (skill-tests--write
+            secondary
+            "cross-format/SKILL.sexp"
+            (skill-tests--definition
+             "cross-format"
+             "Later native source."
+             "Later native instructions."))
+           (let* ((catalog
+                    (skill-catalog-discover
+                     (list primary secondary)
+                     :cache-root cache))
+                  (native-first
+                    (skill-catalog-find catalog "native-first"))
+                  (cross-format
+                    (skill-catalog-find catalog "cross-format")))
+             (test-assert
+              (string= (skill-metadata-read native-first)
+                       "Native instructions.")
+              "a native definition precedes SKILL.md in the same directory")
+             (test-assert
+              (string= (skill-metadata-read cross-format)
+                       "Earlier Agent instructions.")
+              "an earlier root precedes a later root across source formats")
+             (test-assert
+              (= (count ':shadowed
+                        (skill-tests--diagnostic-kinds catalog))
+                 2)
+              "both lower-precedence cross-format definitions are diagnosed")))
+      (skill-tests--delete-root root)))
+  nil)
+
+(-> skill-tests--agent-validation-and-limits () null)
+(defun skill-tests--agent-validation-and-limits ()
+  "Test standard frontmatter validation, encodings, and source budgets."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (skills (merge-pathnames "skills/" root))
+         (cache (merge-pathnames "cache/" root)))
+    (labels
+        ((definition-kind (relative source &key file-character-limit)
+           (let ((pathname (skill-tests--write skills relative source)))
+             (skill-tests--definition-error-kind
+              (lambda ()
+                (skill--parse-agent-definition
+                 pathname
+                 :root skills
+                 :cache-root cache
+                 :file-character-limit
+                 (or file-character-limit
+                     *skill-file-character-limit*)))))))
+      (unwind-protect
+           (progn
+             (test-assert
+              (eq
+               (definition-kind
+                "duplicate/SKILL.md"
+                (format nil
+                        "---~%name: duplicate~%name: duplicate~%description: Duplicate.~%---~%Body."))
+               ':duplicate-field)
+              "duplicate YAML mapping keys are rejected")
+             (dolist (case
+                      `(("Upper/SKILL.md"
+                         ,(skill-tests--agent-definition
+                           "Upper" "Invalid uppercase name." "Body."))
+                        ("bad--name/SKILL.md"
+                         ,(skill-tests--agent-definition
+                           "bad--name" "Invalid repeated hyphen." "Body."))
+                        ("parent-name/SKILL.md"
+                         ,(skill-tests--agent-definition
+                           "different-name" "Mismatched parent." "Body."))))
+               (test-assert
+                (eq (definition-kind (first case) (second case)) ':invalid-name)
+                "invalid standard names and parent mismatches are rejected"))
+             (test-assert
+              (eq
+               (definition-kind
+                "opening/SKILL.md"
+                (format nil
+                        "--- ~%name: opening~%description: Bad opening.~%---~%Body."))
+               ':invalid-syntax)
+              "the opening frontmatter delimiter must be exact")
+             (test-assert
+              (eq
+               (definition-kind
+                "closing/SKILL.md"
+                (format nil
+                        "---~%name: closing~%description: Missing close.~%Body."))
+               ':invalid-syntax)
+              "a missing closing frontmatter delimiter is rejected")
+             (dolist (case
+                      `(("non-map/SKILL.md"
+                         ,(format nil "---~%- value~%---~%Body.")
+                         :invalid-structure)
+                        ("unknown/SKILL.md"
+                         ,(format nil
+                                  "---~%name: unknown~%description: Unknown.~%extra: value~%---~%Body.")
+                         :unknown-field)
+                        ("allowed-type/SKILL.md"
+                         ,(format nil
+                                  "---~%name: allowed-type~%description: Wrong type.~%allowed-tools: [Read]~%---~%Body.")
+                         :invalid-structure)
+                        ("metadata-type/SKILL.md"
+                         ,(format nil
+                                  "---~%name: metadata-type~%description: Wrong metadata.~%metadata:~%  nested:~%    value: x~%---~%Body.")
+                         :invalid-structure)
+                        ("missing-description/SKILL.md"
+                         ,(format nil
+                                  "---~%name: missing-description~%---~%Body.")
+                         :missing-field)))
+               (test-assert
+                (eq (definition-kind (first case) (second case)) (third case))
+                "invalid frontmatter structure produces a typed diagnostic"))
+             (let* ((crlf (coerce (list #\Return #\Newline) 'string))
+                    (body (format nil "# Body~A~AExact.~A" crlf crlf crlf))
+                    (source
+                      (format nil
+                              "---~Aname: crlf~Adescription: \"CRLF and BOM.\"~A---~A~A"
+                              crlf crlf crlf crlf body))
+                    (pathname
+                      (skill-tests--write-octets
+                       skills
+                       "crlf/SKILL.md"
+                       (append
+                        '(#xef #xbb #xbf)
+                        (coerce
+                         (sb-ext:string-to-octets
+                          source
+                          :external-format ':utf-8)
+                         'list)))))
+               (multiple-value-bind
+                     (name description instructions canonical-pathname
+                      source-character-count)
+                   (skill--parse-agent-definition
+                    pathname
+                    :root skills
+                    :cache-root cache)
+                 (declare (ignore name description canonical-pathname
+                                  source-character-count))
+                 (test-assert
+                  (string= instructions body)
+                  "UTF-8 BOM and CRLF delimiters preserve the exact Markdown body")))
+             (test-assert
+              (eq
+               (definition-kind
+                "oversized/SKILL.md"
+                (skill-tests--agent-definition
+                 "oversized"
+                 "Oversized source."
+                 (make-string 128 :initial-element #\x))
+                :file-character-limit 64)
+               ':file-too-large)
+              "the per-source character limit applies to SKILL.md")
+             (let* ((aggregate (merge-pathnames "aggregate/" root))
+                    (first-source
+                      (skill-tests--agent-definition
+                       "one" "First aggregate skill." "One."))
+                    (second-source
+                      (skill-tests--agent-definition
+                       "two" "Second aggregate skill." "Two.")))
+               (skill-tests--write aggregate "one/SKILL.md" first-source)
+               (skill-tests--write aggregate "two/SKILL.md" second-source)
+               (let ((catalog
+                       (skill-catalog-discover
+                        (list aggregate)
+                        :cache-root cache
+                        :max-characters (length first-source))))
+                 (test-assert
+                  (and (skill-catalog-find catalog "one")
+                       (null (skill-catalog-find catalog "two"))
+                       (member ':scan-character-limit
+                               (skill-tests--diagnostic-kinds catalog)))
+                  "the aggregate discovery character limit includes SKILL.md"))))
+        (skill-tests--delete-root root))))
+  nil)
+
+
 ;;;; -- Skill Test Entry Point --
 
 (-> test-skills () null)
 (defun test-skills ()
-  "Run native skill discovery, parsing, selection, and context tests."
+  "Run native and standard skill discovery, parsing, selection, and context tests."
   (skill-tests--discovery-and-precedence)
   (skill-tests--filesystem-boundaries)
   (skill-tests--native-parser-rejections)
+  (skill-tests--agent-conversion-cache)
+  (skill-tests--agent-precedence)
+  (skill-tests--agent-validation-and-limits)
   (skill-tests--roots-and-rendering)
   (skill-tests--scan-limits)
   (skill-tests--ephemeral-selection)

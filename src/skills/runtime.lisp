@@ -12,10 +12,14 @@
   "The maximum filesystem entries inspected across all skill roots.")
 
 (defparameter *skill-file-character-limit* (* 64 1024)
-  "The maximum characters read from one SKILL.sexp.")
+  "The maximum characters read from one skill source file.")
+
+(defparameter *skill-agent-cache-character-limit*
+  (+ (* 2 *skill-file-character-limit*) 4096)
+  "The maximum characters read from one generated Agent Skill cache file.")
 
 (defparameter *skill-discovery-character-limit* (* 8 1024 1024)
-  "The maximum SKILL.sexp characters read during one catalog discovery.")
+  "The maximum skill source characters read during one catalog discovery.")
 
 (defparameter *skill-form-depth-limit* 32
   "The maximum structural depth accepted in one SKILL.sexp form.")
@@ -63,6 +67,10 @@
 
 ;;;; -- Skill Values and Diagnostics --
 
+(deftype skill-source-format ()
+  "The source representation backing one discovered skill."
+  '(member :native :agent-skill))
+
 (deftype skill-diagnostic-kind ()
   "A structured reason why skill discovery did not select one path."
   '(member :missing-root
@@ -94,7 +102,7 @@
     :initarg :name
     :reader skill-metadata-name
     :type non-empty-string
-    :documentation "The exact :name string from SKILL.sexp.")
+    :documentation "The validated skill name from the source definition.")
    (description
     :initarg :description
     :reader skill-metadata-description
@@ -104,7 +112,7 @@
     :initarg :pathname
     :reader skill-metadata-pathname
     :type pathname
-    :documentation "The exact absolute discovered SKILL.sexp pathname.")
+    :documentation "The exact absolute discovered skill source pathname.")
    (canonical-pathname
     :initarg :canonical-pathname
     :reader skill-metadata-canonical-pathname
@@ -119,7 +127,18 @@
     :initarg :root-index
     :reader skill-metadata-root-index
     :type (integer 0)
-    :documentation "The zero-based precedence position of the discovery root."))
+    :documentation "The zero-based precedence position of the discovery root.")
+   (source-format
+    :initarg :source-format
+    :reader skill-metadata-source-format
+    :type skill-source-format
+    :documentation "The native or Agent Skills source representation.")
+   (cache-root
+    :initarg :cache-root
+    :initform nil
+    :reader skill-metadata-cache-root
+    :type (or null pathname)
+    :documentation "The replaceable conversion-cache root for Agent Skills."))
   (:documentation
    "Validated skill catalog metadata without retained instruction text."))
 
@@ -166,7 +185,7 @@
     :initarg :pathname
     :reader skill-read-error-pathname
     :type pathname
-    :documentation "The selected SKILL.sexp that could not be read.")
+     :documentation "The selected skill source that could not be read.")
    (cause
     :initarg :cause
     :initform nil
@@ -226,7 +245,7 @@
     :reader skill--definition-error-source-character-count
     :type (integer 0)
     :documentation "Characters read before this definition failed."))
-  (:documentation "An internal non-fatal SKILL.sexp validation failure.")
+  (:documentation "An internal non-fatal skill definition validation failure.")
   (:report (lambda (condition stream)
              (write-string (skill--definition-error-message condition)
                            stream))))
@@ -254,10 +273,31 @@
   "Return true when LEFT sorts before RIGHT by its namestring."
   (not (null (string< (namestring left) (namestring right)))))
 
+(-> skill--source-format-for-pathname (pathname) (option skill-source-format))
+(defun skill--source-format-for-pathname (pathname)
+  "Return PATHNAME's exact supported skill source format, if any."
+  (cond
+    ((string= (file-namestring pathname) "SKILL.sexp")
+     ':native)
+    ((string= (file-namestring pathname) "SKILL.md")
+     ':agent-skill)))
+
 (-> skill--skill-pathname-p (pathname) boolean)
 (defun skill--skill-pathname-p (pathname)
-  "Return true when PATHNAME names a case-sensitive SKILL.sexp file."
-  (string= (file-namestring pathname) "SKILL.sexp"))
+  "Return true when PATHNAME names a supported case-sensitive skill file."
+  (not (null (skill--source-format-for-pathname pathname))))
+
+(-> skill--definition-pathname< (pathname pathname) boolean)
+(defun skill--definition-pathname< (left right)
+  "Sort definitions by path while preferring native files in one directory."
+  (let ((left-directory
+          (namestring (uiop:pathname-directory-pathname left)))
+        (right-directory
+          (namestring (uiop:pathname-directory-pathname right))))
+    (if (string= left-directory right-directory)
+        (and (eq (skill--source-format-for-pathname left) ':native)
+             (eq (skill--source-format-for-pathname right) ':agent-skill))
+        (not (null (string< (namestring left) (namestring right)))))))
 
 (-> skill--canonical-subpath-p (pathname pathname) boolean)
 (defun skill--canonical-subpath-p (pathname root)
@@ -338,7 +378,7 @@ directory listing."
        (max-depth *skill-scan-depth-limit*)
        (max-directories *skill-scan-directory-limit*)
        (max-entries *skill-scan-entry-limit*))
-  "Return sorted SKILL.sexp paths and diagnostics found beneath ROOT."
+  "Return sorted skill definition paths and diagnostics found beneath ROOT."
   (let ((root (uiop:ensure-directory-pathname root))
         (canonical-root nil)
         (paths nil)
@@ -467,7 +507,7 @@ directory listing."
                              root
                              "Skill root does not exist.")))
     (values (sort (remove-duplicates paths :test #'equal)
-                  #'skill--pathname<)
+                  #'skill--definition-pathname<)
             (nreverse diagnostics)
             directory-count
             entry-count)))
@@ -502,7 +542,7 @@ stall discovery."
                     (skill--canonical-subpath-p canonical canonical-root)))
           (skill--definition-fail
            :outside-root
-           "SKILL.sexp resolves outside its canonical skill root."))
+           "The skill source resolves outside its canonical root."))
         (let* ((expected-status (sb-posix:stat (namestring pathname)))
                (expected-mode (sb-posix:stat-mode expected-status))
                (expected-device (sb-posix:stat-dev expected-status))
@@ -511,7 +551,7 @@ stall discovery."
           (unless (sb-posix:s-isreg expected-mode)
             (skill--definition-fail
              :not-regular-file
-             "SKILL.sexp must resolve to a regular file."))
+             "The skill source must resolve to a regular file."))
           (unwind-protect
                (progn
                  (setf descriptor
@@ -528,7 +568,7 @@ stall discovery."
                    (unless (sb-posix:s-isreg opened-mode)
                      (skill--definition-fail
                       :not-regular-file
-                      "SKILL.sexp must resolve to a regular file."))
+                      "The skill source must resolve to a regular file."))
                    (unless (and (= opened-device expected-device)
                                 (= opened-inode expected-inode)
                                 (= opened-device
@@ -537,7 +577,7 @@ stall discovery."
                                    (sb-posix:stat-ino current-status)))
                      (skill--definition-fail
                       :identity-changed
-                      "SKILL.sexp changed identity while it was being opened."))
+                      "The skill source changed identity while it was being opened."))
                    (when (and canonical-root
                               (not
                                (skill--canonical-subpath-p
@@ -545,7 +585,7 @@ stall discovery."
                                 canonical-root)))
                      (skill--definition-fail
                       :outside-root
-                      "SKILL.sexp resolves outside its canonical skill root."))
+                      "The skill source resolves outside its canonical root."))
                    (let ((stream
                            (sb-sys:make-fd-stream
                             descriptor
@@ -567,7 +607,7 @@ stall discovery."
                          (when (> count character-limit)
                            (skill--definition-fail
                             :file-too-large
-                            "SKILL.sexp exceeds the ~D-character file limit."
+                            "The skill source exceeds the ~D-character file limit."
                             character-limit))
                          (values (subseq buffer 0 count)
                                  current-canonical
@@ -580,7 +620,7 @@ stall discovery."
     (error (condition)
       (skill--definition-fail
        :read-error
-       "Could not read SKILL.sexp: ~A"
+       "Could not read the skill source: ~A"
        condition))))
 
 (-> skill--source-grammar () source-grammar)
@@ -681,18 +721,22 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
        *skill-description-character-limit*))
     description))
 
-(-> skill--validate-instructions (t (integer 1)) string)
-(defun skill--validate-instructions (instructions character-limit)
+(-> skill--validate-instructions
+    (t (integer 1) &key (:allow-empty-p boolean))
+    string)
+(defun skill--validate-instructions
+    (instructions character-limit &key allow-empty-p)
   "Return validated skill INSTRUCTIONS without modifying their contents."
   (unless (stringp instructions)
     (skill--definition-fail
      :invalid-instructions
      "The :instructions value must be a string."))
-  (when (zerop
-         (length
-          (string-trim
-           '(#\Space #\Tab #\Newline #\Return #\Page)
-           instructions)))
+  (when (and (not allow-empty-p)
+             (zerop
+              (length
+               (string-trim
+                '(#\Space #\Tab #\Newline #\Return #\Page)
+                instructions))))
     (skill--definition-fail
      :invalid-instructions
      "The :instructions value must not be empty."))
@@ -703,17 +747,91 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
      character-limit))
   instructions)
 
+(-> skill--parse-native-source
+    (string
+     &key (:instruction-character-limit (integer 1))
+          (:allow-empty-instructions-p boolean))
+    (values string string string))
+(defun skill--parse-native-source
+    (source
+     &key
+       (instruction-character-limit *skill-instruction-character-limit*)
+       allow-empty-instructions-p)
+  "Validate one native Autolith skill form from bounded SOURCE."
+  (let ((form (skill--read-one-form source)))
+    (unless (and (consp form)
+                 (eq (first form) ':autolith-skill))
+      (skill--definition-fail
+       :invalid-structure
+       "SKILL.sexp must begin with :autolith-skill."))
+    (let ((fields (rest form))
+          (values (make-hash-table :test #'eq)))
+      (loop while fields
+            do
+               (unless (rest fields)
+                 (skill--definition-fail
+                  :invalid-structure
+                  "SKILL.sexp contains a field without a value."))
+               (let ((key (first fields))
+                     (value (second fields)))
+                 (unless (member key
+                                 '(:version
+                                   :name
+                                   :description
+                                   :instructions)
+                                 :test #'eq)
+                   (skill--definition-fail
+                    :unknown-field
+                    "SKILL.sexp contains unknown field ~S."
+                    key))
+                 (multiple-value-bind (present-value present-p)
+                     (gethash key values)
+                   (declare (ignore present-value))
+                   (when present-p
+                     (skill--definition-fail
+                      :duplicate-field
+                      "SKILL.sexp contains duplicate field ~S."
+                      key)))
+                 (setf (gethash key values) value))
+               (setf fields (rest (rest fields))))
+      (dolist (key '(:version :name :description :instructions))
+        (multiple-value-bind (value present-p)
+            (gethash key values)
+          (declare (ignore value))
+          (unless present-p
+            (skill--definition-fail
+             :missing-field
+             "SKILL.sexp requires field ~S."
+             key))))
+      (let ((version (gethash ':version values))
+            (name (skill--validate-name (gethash ':name values)))
+            (description
+              (skill--validate-description
+               (gethash ':description values)))
+            (instructions
+              (skill--validate-instructions
+               (gethash ':instructions values)
+               instruction-character-limit
+               :allow-empty-p allow-empty-instructions-p)))
+        (unless (eql version 1)
+          (skill--definition-fail
+           :invalid-version
+           "SKILL.sexp :version must be the integer 1."))
+        (values name description instructions)))))
+
 (-> skill--parse-definition
     (pathname &key (:instruction-character-limit (integer 1))
                    (:file-character-limit (integer 1))
-                   (:root (option pathname)))
+                   (:root (option pathname))
+                   (:allow-empty-instructions-p boolean))
     (values string string string pathname (integer 0)))
 (defun skill--parse-definition
     (pathname
      &key
        (instruction-character-limit *skill-instruction-character-limit*)
        (file-character-limit *skill-file-character-limit*)
-       root)
+       root
+       allow-empty-instructions-p)
   "Read and validate PATHNAME as one native Autolith skill definition."
   (let ((*skill-definition-source-character-count* 0))
     (multiple-value-bind (source canonical-pathname device inode)
@@ -722,74 +840,443 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
          file-character-limit
          :root root)
       (declare (ignore device inode))
-      (let ((form (skill--read-one-form source)))
-        (unless (and (consp form)
-                     (eq (first form) ':autolith-skill))
+      (multiple-value-bind (name description instructions)
+          (skill--parse-native-source
+           source
+           :instruction-character-limit instruction-character-limit
+           :allow-empty-instructions-p allow-empty-instructions-p)
+        (values name
+                description
+                instructions
+                canonical-pathname
+                *skill-definition-source-character-count*)))))
+
+
+;;;; -- Agent Skills Conversion --
+
+(defparameter *skill-agent-frontmatter-fields*
+  '("name" "description" "license" "compatibility" "metadata" "allowed-tools")
+  "The complete top-level YAML field vocabulary accepted from SKILL.md.")
+
+(-> skill--agent-source-digest (string) string)
+(defun skill--agent-source-digest (source)
+  "Return the lowercase SHA-256 digest of SOURCE's exact UTF-8 bytes."
+  (string-downcase
+   (with-output-to-string (stream)
+     (loop for octet across
+           (digest-sequence
+            ':sha256
+            (sb-ext:string-to-octets source :external-format ':utf-8))
+           do (format stream "~2,'0X" octet)))))
+
+(-> skill--agent-frontmatter (string) (values string string))
+(defun skill--agent-frontmatter (source)
+  "Split SOURCE into YAML frontmatter and the exact following Markdown body."
+  (let* ((length (length source))
+         (opening-start
+           (if (and (plusp length)
+                    (char= (char source 0) (code-char #xfeff)))
+               1
+               0)))
+    (labels
+        ((line-boundaries (start)
+           (let* ((newline (position #\Newline source :start start))
+                  (raw-end (or newline length))
+                  (content-end
+                    (if (and (> raw-end start)
+                             (char= (char source (1- raw-end)) #\Return))
+                        (1- raw-end)
+                        raw-end))
+                  (next (if newline (1+ newline) length)))
+             (values content-end next))))
+      (multiple-value-bind (opening-end yaml-start)
+          (line-boundaries opening-start)
+        (unless (string= source "---"
+                         :start1 opening-start
+                         :end1 opening-end)
           (skill--definition-fail
-           :invalid-structure
-           "SKILL.sexp must begin with :autolith-skill."))
-        (let ((fields (rest form))
-              (values (make-hash-table :test #'eq)))
-          (loop while fields
-                do
-                   (unless (rest fields)
-                     (skill--definition-fail
-                      :invalid-structure
-                      "SKILL.sexp contains a field without a value."))
-                   (let ((key (first fields))
-                         (value (second fields)))
-                     (unless (member key
-                                     '(:version
-                                       :name
-                                       :description
-                                       :instructions)
-                                     :test #'eq)
-                       (skill--definition-fail
-                        :unknown-field
-                        "SKILL.sexp contains unknown field ~S."
-                        key))
-                     (multiple-value-bind (present-value present-p)
-                         (gethash key values)
-                       (declare (ignore present-value))
-                       (when present-p
-                         (skill--definition-fail
-                          :duplicate-field
-                          "SKILL.sexp contains duplicate field ~S."
-                          key)))
-                     (setf (gethash key values) value))
-                   (setf fields (rest (rest fields))))
-          (dolist (key '(:version :name :description :instructions))
-            (multiple-value-bind (value present-p)
-                (gethash key values)
-              (declare (ignore value))
-              (unless present-p
-                (skill--definition-fail
-                 :missing-field
-                 "SKILL.sexp requires field ~S."
-                 key))))
-          (let ((version (gethash ':version values))
-                (name (skill--validate-name (gethash ':name values)))
-                (description
-                  (skill--validate-description
-                   (gethash ':description values)))
-                (instructions
-                  (skill--validate-instructions
-                   (gethash ':instructions values)
-                   instruction-character-limit)))
-            (unless (eql version 1)
-              (skill--definition-fail
-               :invalid-version
-               "SKILL.sexp :version must be the integer 1."))
-            (values name
-                    description
-                    instructions
-                    canonical-pathname
-                    *skill-definition-source-character-count*)))))))
+           :invalid-syntax
+           "SKILL.md must begin with an exact --- delimiter line."))
+        (loop with line-start = yaml-start
+              while (< line-start length)
+              do
+                 (multiple-value-bind (line-end line-next)
+                     (line-boundaries line-start)
+                   (when (string= source "---"
+                                  :start1 line-start
+                                  :end1 line-end)
+                     (return-from skill--agent-frontmatter
+                       (values (subseq source yaml-start line-start)
+                               (subseq source line-next))))
+                   (setf line-start line-next)))
+        (skill--definition-fail
+         :invalid-syntax
+         "SKILL.md requires an exact closing --- delimiter line.")))))
+
+(-> skill--agent-map-insert (hash-table t t) hash-table)
+(defun skill--agent-map-insert (map key value)
+  "Insert KEY and VALUE into MAP while rejecting duplicate YAML keys."
+  (multiple-value-bind (present-value present-p)
+      (gethash key map)
+    (declare (ignore present-value))
+    (when present-p
+      (skill--definition-fail
+       :duplicate-field
+       "SKILL.md contains duplicate YAML key ~S."
+       key)))
+  (setf (gethash key map) value)
+  map)
+
+(-> skill--agent-parse-yaml (string) t)
+(defun skill--agent-parse-yaml (source)
+  "Parse one YAML 1.2 frontmatter document from SOURCE."
+  (handler-case
+      (let ((nyaml:*make-map*
+              (lambda () (make-hash-table :test #'equal)))
+            (nyaml:*map-insert* #'skill--agent-map-insert))
+        (nyaml:parse source :schema nyaml:+yaml-12-schema+))
+    (skill--definition-error (condition)
+      (error condition))
+    (error (condition)
+      (skill--definition-fail
+       :invalid-syntax
+       "Could not parse SKILL.md YAML frontmatter: ~A"
+       condition))))
+
+(-> skill--agent-required-string
+    (hash-table string skill-diagnostic-kind)
+    string)
+(defun skill--agent-required-string (frontmatter field invalid-kind)
+  "Return required string FIELD from FRONTMATTER or signal INVALID-KIND."
+  (multiple-value-bind (value present-p)
+      (gethash field frontmatter)
+    (unless present-p
+      (skill--definition-fail
+       :missing-field
+       "SKILL.md requires frontmatter field ~S."
+       field))
+    (unless (stringp value)
+      (skill--definition-fail
+       invalid-kind
+       "SKILL.md frontmatter field ~S must be a string."
+       field))
+    value))
+
+(-> skill--agent-name-character-p (character) boolean)
+(defun skill--agent-name-character-p (character)
+  "Return true when CHARACTER is permitted in a standard Agent Skill name."
+  (or (and (char>= character #\a) (char<= character #\z))
+      (and (char>= character #\0) (char<= character #\9))
+      (char= character #\-)))
+
+(-> skill--validate-agent-name (string pathname) string)
+(defun skill--validate-agent-name (name pathname)
+  "Return validated standard Agent Skill NAME for source PATHNAME."
+  (unless (and (<= 1 (length name) 64)
+               (every #'skill--agent-name-character-p name)
+               (not (char= (char name 0) #\-))
+               (not (char= (char name (1- (length name))) #\-))
+               (null (search "--" name)))
+    (skill--definition-fail
+     :invalid-name
+     "SKILL.md name must use 1-64 lowercase ASCII letters, digits, or single hyphens."))
+  (let* ((directory
+           (pathname-directory
+            (uiop:pathname-directory-pathname pathname)))
+         (parent (first (last directory))))
+    (unless (and (stringp parent) (string= name parent))
+      (skill--definition-fail
+       :invalid-name
+       "SKILL.md name ~S must match its parent directory ~S."
+       name
+       parent)))
+  name)
+
+(-> skill--validate-agent-frontmatter (t pathname) (values string string))
+(defun skill--validate-agent-frontmatter (frontmatter pathname)
+  "Return validated name and description from parsed FRONTMATTER."
+  (unless (hash-table-p frontmatter)
+    (skill--definition-fail
+     :invalid-structure
+     "SKILL.md YAML frontmatter must be a mapping."))
+  (maphash
+   (lambda (field value)
+     (declare (ignore value))
+     (unless (and (stringp field)
+                  (member field
+                          *skill-agent-frontmatter-fields*
+                          :test #'string=))
+       (skill--definition-fail
+        :unknown-field
+        "SKILL.md contains unknown frontmatter field ~S."
+        field)))
+   frontmatter)
+  (dolist (field '("license" "compatibility" "allowed-tools"))
+    (multiple-value-bind (value present-p)
+        (gethash field frontmatter)
+      (when (and present-p (not (stringp value)))
+        (skill--definition-fail
+         :invalid-structure
+         "SKILL.md optional field ~S must be a string."
+         field))))
+  (multiple-value-bind (metadata present-p)
+      (gethash "metadata" frontmatter)
+    (when present-p
+      (unless (hash-table-p metadata)
+        (skill--definition-fail
+         :invalid-structure
+         "SKILL.md metadata must be a string-to-string mapping."))
+      (maphash
+       (lambda (key value)
+         (unless (and (stringp key) (stringp value))
+           (skill--definition-fail
+            :invalid-structure
+            "SKILL.md metadata must be a string-to-string mapping.")))
+       metadata)))
+  (let* ((name
+           (skill--agent-required-string frontmatter "name" ':invalid-name))
+         (description
+           (skill--agent-required-string
+            frontmatter
+            "description"
+            ':invalid-description)))
+    (when (> (length description) *skill-description-character-limit*)
+      (skill--definition-fail
+       :invalid-description
+       "Skill description exceeds ~D characters."
+       *skill-description-character-limit*))
+    (values (skill--validate-agent-name name pathname)
+            (skill--validate-description description))))
+
+(-> skill--parse-agent-source
+    (string pathname &key (:instruction-character-limit (integer 1)))
+    (values string string string))
+(defun skill--parse-agent-source
+    (source pathname
+     &key
+       (instruction-character-limit *skill-instruction-character-limit*))
+  "Parse and validate one complete standard Agent Skill SOURCE."
+  (multiple-value-bind (yaml instructions)
+      (skill--agent-frontmatter source)
+    (multiple-value-bind (name description)
+        (skill--validate-agent-frontmatter
+         (skill--agent-parse-yaml yaml)
+         pathname)
+      (values name
+              description
+              (skill--validate-instructions
+               instructions
+               instruction-character-limit
+               :allow-empty-p t)))))
+
+(-> skill--agent-native-source (string string string) string)
+(defun skill--agent-native-source (name description instructions)
+  "Return one generated native skill form preserving INSTRUCTIONS exactly."
+  (let ((*print-pretty* nil)
+        (*print-circle* nil)
+        (*print-readably* t))
+    (format nil
+            "(:autolith-skill~% :version 1~% :name ~S~% :description ~S~% :instructions ~S)~%"
+            name
+            description
+            instructions)))
+
+(-> skill--agent-cache-pathname (pathname string) pathname)
+(defun skill--agent-cache-pathname (cache-root digest)
+  "Return DIGEST's generated native skill pathname below CACHE-ROOT."
+  (merge-pathnames
+   "SKILL.sexp"
+   (merge-pathnames
+    (format nil "skills/agent-skill-v1/~A/" digest)
+    (uiop:ensure-directory-pathname cache-root))))
+
+(-> skill--agent-cache-manifest-pathname (pathname) pathname)
+(defun skill--agent-cache-manifest-pathname (cache-pathname)
+  "Return CACHE-PATHNAME's sibling integrity manifest pathname."
+  (merge-pathnames
+   "manifest.sha256"
+   (uiop:pathname-directory-pathname cache-pathname)))
+
+(-> skill--agent-cache-manifest-source (string string) string)
+(defun skill--agent-cache-manifest-source (source-digest cache-source)
+  "Return the exact integrity manifest for SOURCE-DIGEST and CACHE-SOURCE."
+  (format nil
+          "source ~A~%cache ~A~%"
+          source-digest
+          (skill--agent-source-digest cache-source)))
+
+(-> skill--agent-cache-file-write (pathname string) pathname)
+(defun skill--agent-cache-file-write (pathname content)
+  "Atomically publish CONTENT at cache PATHNAME."
+  (ensure-directories-exist pathname)
+  (let* ((directory (uiop:pathname-directory-pathname pathname))
+         (temporary
+           (merge-pathnames
+            (format nil ".cache.~A.tmp" (make-identifier))
+            directory)))
+    (unwind-protect
+         (progn
+           (with-open-file (stream temporary
+                                   :direction ':output
+                                   :if-exists ':error
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
+             (write-string content stream)
+             (finish-output stream))
+           (sb-posix:chmod (namestring temporary) #o600)
+           (uiop:rename-file-overwriting-target temporary pathname)
+           (sb-posix:chmod (namestring pathname) #o600)
+           pathname)
+      (when (probe-file temporary)
+        (ignore-errors (delete-file temporary))))))
+
+(-> skill--agent-cache-write (pathname string string) pathname)
+(defun skill--agent-cache-write (pathname content source-digest)
+  "Publish native CONTENT and its SOURCE-DIGEST integrity manifest."
+  (skill--agent-cache-file-write pathname content)
+  (skill--agent-cache-file-write
+   (skill--agent-cache-manifest-pathname pathname)
+   (skill--agent-cache-manifest-source source-digest content))
+  pathname)
+
+(-> skill--agent-cache-read
+    (pathname pathname string (integer 1))
+    (values (option string) (option string) (option string) boolean))
+(defun skill--agent-cache-read
+    (pathname cache-root source-digest instruction-character-limit)
+  "Return integrity-checked cached native values and true, or four NIL values."
+  (handler-case
+      (multiple-value-bind
+            (cache-source canonical-pathname device inode)
+          (skill--read-file-bounded
+           pathname
+           *skill-agent-cache-character-limit*
+           :root cache-root)
+        (declare (ignore canonical-pathname device inode))
+        (multiple-value-bind
+              (manifest-source manifest-canonical manifest-device manifest-inode)
+            (skill--read-file-bounded
+             (skill--agent-cache-manifest-pathname pathname)
+             256
+             :root cache-root)
+          (declare (ignore manifest-canonical manifest-device manifest-inode))
+          (unless (string=
+                   manifest-source
+                   (skill--agent-cache-manifest-source
+                    source-digest
+                    cache-source))
+            (skill--definition-fail
+             :invalid-structure
+             "The SKILL.md conversion cache failed its integrity check."))
+          (multiple-value-bind (name description instructions)
+              (skill--parse-native-source
+               cache-source
+               :instruction-character-limit instruction-character-limit
+               :allow-empty-instructions-p t)
+            (values name description instructions t))))
+    (skill--definition-error ()
+      (values nil nil nil nil))))
+
+(-> skill--parse-agent-definition
+    (pathname
+     &key (:instruction-character-limit (integer 1))
+          (:file-character-limit (integer 1))
+          (:root (option pathname))
+          (:cache-root (option pathname)))
+    (values string string string pathname (integer 0)))
+(defun skill--parse-agent-definition
+    (pathname
+     &key
+       (instruction-character-limit *skill-instruction-character-limit*)
+       (file-character-limit *skill-file-character-limit*)
+       root
+       cache-root)
+  "Read SKILL.md and use its content-addressed native conversion cache."
+  (let ((*skill-definition-source-character-count* 0))
+    (multiple-value-bind (source canonical-pathname device inode)
+        (skill--read-file-bounded pathname file-character-limit :root root)
+      (declare (ignore device inode))
+      (let* ((source-character-count
+               *skill-definition-source-character-count*)
+             (digest (skill--agent-source-digest source))
+             (cache-pathname
+               (and cache-root
+                    (skill--agent-cache-pathname cache-root digest))))
+        (multiple-value-bind
+              (name description instructions cached-p)
+            (if (and cache-pathname (probe-file cache-pathname))
+                (skill--agent-cache-read
+                 cache-pathname
+                 cache-root
+                 digest
+                 instruction-character-limit)
+                (values nil nil nil nil))
+          (if cached-p
+              (values (skill--validate-agent-name name pathname)
+                      description
+                      instructions
+                      canonical-pathname
+                      source-character-count)
+              (multiple-value-bind (name description instructions)
+                  (skill--parse-agent-source
+                   source
+                   pathname
+                   :instruction-character-limit instruction-character-limit)
+                (when cache-pathname
+                  (handler-case
+                      (skill--agent-cache-write
+                       cache-pathname
+                       (skill--agent-native-source
+                        name
+                        description
+                        instructions)
+                       digest)
+                    (error (condition)
+                      (skill--definition-fail
+                       :read-error
+                       "Could not publish SKILL.md conversion cache: ~A"
+                       condition))))
+                (values name
+                        description
+                        instructions
+                        canonical-pathname
+                        source-character-count))))))))
+
+(-> skill--parse-source-definition
+    (pathname
+     &key (:instruction-character-limit (integer 1))
+          (:file-character-limit (integer 1))
+          (:root (option pathname))
+          (:cache-root (option pathname)))
+    (values string string string pathname (integer 0)))
+(defun skill--parse-source-definition
+    (pathname
+     &key
+       (instruction-character-limit *skill-instruction-character-limit*)
+       (file-character-limit *skill-file-character-limit*)
+       root
+       cache-root)
+  "Read PATHNAME according to its exact supported skill source format."
+  (ecase (skill--source-format-for-pathname pathname)
+    (:native
+     (skill--parse-definition
+      pathname
+      :instruction-character-limit instruction-character-limit
+      :file-character-limit file-character-limit
+      :root root))
+    (:agent-skill
+     (skill--parse-agent-definition
+      pathname
+      :instruction-character-limit instruction-character-limit
+      :file-character-limit file-character-limit
+      :root root
+      :cache-root cache-root))))
 
 (-> skill--load-metadata
     (pathname pathname (integer 0)
      &key (:file-character-limit (integer 1))
-          (:aggregate-limit-p boolean))
+          (:aggregate-limit-p boolean)
+          (:cache-root (option pathname)))
     (values (option skill-metadata)
             (option skill-diagnostic)
             (integer 0)))
@@ -797,28 +1284,35 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
     (pathname root root-index
      &key
        (file-character-limit *skill-file-character-limit*)
-       aggregate-limit-p)
+       aggregate-limit-p
+       cache-root)
   "Return metadata or one typed diagnostic for PATHNAME."
   (handler-case
-      (multiple-value-bind
-            (name description instructions canonical-pathname
-             source-character-count)
-          (skill--parse-definition
-           pathname
-           :instruction-character-limit *skill-file-character-limit*
-           :file-character-limit file-character-limit
-           :root root)
-        (declare (ignore instructions))
-        (values
-         (make-instance 'skill-metadata
-                        :name name
-                        :description description
-                        :pathname pathname
-                        :canonical-pathname canonical-pathname
-                        :root root
-                        :root-index root-index)
-         nil
-         source-character-count))
+      (let ((source-format (skill--source-format-for-pathname pathname)))
+        (multiple-value-bind
+              (name description instructions canonical-pathname
+               source-character-count)
+            (skill--parse-source-definition
+             pathname
+             :instruction-character-limit *skill-file-character-limit*
+             :file-character-limit file-character-limit
+             :root root
+             :cache-root cache-root)
+          (declare (ignore instructions))
+          (values
+           (make-instance 'skill-metadata
+                          :name name
+                          :description description
+                          :pathname pathname
+                          :canonical-pathname canonical-pathname
+                          :root root
+                          :root-index root-index
+                          :source-format source-format
+                          :cache-root
+                          (and (eq source-format ':agent-skill)
+                               cache-root))
+           nil
+           source-character-count)))
     (skill--definition-error (condition)
       (values
        nil
@@ -847,7 +1341,8 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
      &key (:max-depth (integer 0))
           (:max-directories (integer 1))
           (:max-entries (integer 1))
-          (:max-characters (integer 1)))
+          (:max-characters (integer 1))
+          (:cache-root (option pathname)))
     skill-catalog)
 (defun skill-catalog-discover
     (roots
@@ -855,7 +1350,8 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
        (max-depth *skill-scan-depth-limit*)
        (max-directories *skill-scan-directory-limit*)
        (max-entries *skill-scan-entry-limit*)
-       (max-characters *skill-discovery-character-limit*))
+       (max-characters *skill-discovery-character-limit*)
+       cache-root)
   "Discover skills beneath ordered ROOTS, with earlier roots taking precedence."
   (let ((skills nil)
         (diagnostics nil)
@@ -921,10 +1417,11 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
                         pathname
                         root
                         root-index
-                        :file-character-limit file-character-limit
-                        :aggregate-limit-p
-                        (<= remaining-characters
-                            *skill-file-character-limit*))
+                         :file-character-limit file-character-limit
+                         :aggregate-limit-p
+                         (<= remaining-characters
+                             *skill-file-character-limit*)
+                         :cache-root cache-root)
                      (decf remaining-characters
                            (min remaining-characters
                                 source-character-count))
@@ -977,9 +1474,10 @@ COMMON-LISP from the reader package keeps a bare symbol from naming anything."
         (multiple-value-bind
               (name description instructions canonical-pathname
                source-character-count)
-            (skill--parse-definition
+            (skill--parse-source-definition
              pathname
-             :root (skill-metadata-root metadata))
+             :root (skill-metadata-root metadata)
+             :cache-root (skill-metadata-cache-root metadata))
           (declare (ignore name description canonical-pathname
                            source-character-count))
           instructions)
@@ -1088,13 +1586,13 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
 (defun skill--catalog-prefix ()
   "Return the fixed model-visible skill catalog introduction."
   (format nil
-          "## Skills~2%An Autolith skill is a reusable instruction set stored in one native SKILL.sexp form. The entries below contain metadata and exact file locations only. Descriptions may be shortened to keep this catalog bounded.~2%### Available skills~%"))
+          "## Skills~2%An Autolith skill is a reusable instruction set stored in SKILL.sexp or standard SKILL.md. The entries below contain metadata and exact source locations only. Descriptions may be shortened to keep this catalog bounded.~2%### Available skills~%"))
 
 (-> skill--catalog-guidance () string)
 (defun skill--catalog-guidance ()
   "Return concise skill selection and progressive-disclosure guidance."
   (format nil
-           "~%### Skill rules~%When the user names a listed skill or the task clearly matches a description, call `skill.load` with its exact name before other task actions. Call it once for every applicable skill. Do not read SKILL.sexp through `resource.read`; `skill.load` makes Autolith inject only its :instructions string ephemerally into subsequent provider requests in this logical turn. Do not carry a skill into later turns unless it is selected again.~2%Before acting, read every selected instruction string completely from request-local context. Resolve linked relative paths from the SKILL.sexp directory and load only resources needed for the task. Prefer provided scripts and assets. If a skill cannot be read or applied, state that briefly and continue with the best fallback."))
+          "~%### Skill rules~%When the user names a listed skill or the task clearly matches a description, call `skill.load` with its exact name before other task actions. Call it once for every applicable skill. Do not read the skill source through `resource.read`; `skill.load` makes Autolith inject only its instruction body ephemerally into subsequent provider requests in this logical turn. Do not carry a skill into later turns unless it is selected again.~2%Before acting, read every selected instruction body completely from request-local context. Resolve linked relative paths from the source file's directory and load only resources needed for the task. Prefer provided scripts and assets. If a skill cannot be read or applied, state that briefly and continue with the best fallback."))
 
 (-> skill--catalog-line (skill-metadata &key (:description (option string)))
     string)
@@ -1232,7 +1730,9 @@ The function never retains a skill instruction string."
 (-> skill-catalog-for-configuration (configuration) skill-catalog)
 (defun skill-catalog-for-configuration (configuration)
   "Discover the current request's skill catalog for CONFIGURATION."
-  (skill-catalog-discover (skill-roots configuration)))
+  (skill-catalog-discover
+   (skill-roots configuration)
+   :cache-root (configuration-cache-root configuration)))
 
 
 ;;;; -- Request-Local Skill Instructions --
@@ -1241,7 +1741,7 @@ The function never retains a skill instruction string."
 (defun skill--explicit-instruction (metadata instructions)
   "Return a request-local contribution containing selected INSTRUCTIONS."
   (format nil
-          "Skill ~A is selected for this request. Its complete current :instructions string from ~A follows. Apply it for this request only; do not carry it into later turns unless selected again.~2%~A"
+          "Skill ~A is selected for this request. Its complete current instruction body from ~A follows. Apply it for this request only; do not carry it into later turns unless selected again.~2%~A"
           (skill-metadata-name metadata)
           (namestring (skill-metadata-pathname metadata))
           instructions))
@@ -1330,10 +1830,10 @@ The function never retains a skill instruction string."
     (make-context-contribution
      :identifier identifier
      :instruction
-     (skill--bounded-warning
-      (format nil
-              "Skill ~A was selected for this request but its valid SKILL.sexp is no longer discoverable. Continue with the best fallback and do not claim that its instructions were applied."
-              name))
+      (skill--bounded-warning
+       (format nil
+               "Skill ~A was selected for this request but its valid source definition is no longer discoverable. Continue with the best fallback and do not claim that its instructions were applied."
+               name))
      :priority 910
      :class ':mandatory
      :deduplication-key identifier)))
@@ -1620,7 +2120,7 @@ never written to conversation history, memories, summaries, or saved images."
                            (namestring (skill-metadata-pathname metadata))
                            (skill-metadata-description metadata)))
           (format stream
-                  "none discovered~%~%Create a directory named for the skill with one SKILL.sexp beneath one of:~%~{  ~A~^~%~}"
+                  "none discovered~%~%Create a directory named for the skill with SKILL.md or SKILL.sexp beneath one of:~%~{  ~A~^~%~}"
                   (mapcar #'namestring (skill-roots configuration))))
       (when (plusp omitted-skills)
         (format stream

@@ -3,16 +3,50 @@
 
 * Skills
 
-A Skill is a named bundle of instructions for the model,
-if you have used clankers for any significant measure of time.
+A Skill is a named bundle of request-local instructions for the model.
+Autolith shows the model a bounded catalog, then the model calls =skill.load=
+to load each applicable Skill before work that depends on it.
 
-Autolith shows the model a small catalog first.
+* Standard =SKILL.md=
 
-The model can call =skill.load= to load the entire skill contents.
+Autolith supports the Agent Skills =SKILL.md= format. Put this in
+=.autolith/skills/release-check/SKILL.md=:
 
-They are request-local.
+#+BEGIN_SRC markdown
+---
+name: release-check
+description: Verify a release from source through its packaged artifact.
+license: ISC
+metadata:
+  author: Lambda Symbolics
+allowed-tools: Read Grep
+---
+Follow the repository release procedure completely.
+Run every relevant check before reporting success.
+#+END_SRC
 
-Put this in =.autolith/skills/release-check/SKILL.sexp=:
+The YAML frontmatter requires =name= and =description=. It may also contain
+=license=, =compatibility=, =metadata=, and =allowed-tools=. Unknown and
+duplicate fields are rejected. =metadata= must map strings to strings. The
+other optional fields must be strings.
+
+Standard names contain 1 to 64 lowercase ASCII letters, digits, or single
+hyphens. A name cannot begin or end with a hyphen, contain consecutive
+hyphens, or differ from its parent directory.
+
+The Markdown after the closing =---= line is the exact instruction body.
+An empty body is valid. =allowed-tools= is descriptive metadata and does not
+grant command or tool permissions.
+
+Autolith hashes the exact decoded source re-encoded as UTF-8 and converts it
+to a native cache below the configured cache root at
+=skills/agent-skill-v1/<sha256>/SKILL.sexp=. An unchanged source reuses that
+cache across restarts. Changed content gets a new conversion. A malformed or
+corrupt cache is regenerated from =SKILL.md=.
+
+* Native =SKILL.sexp=
+
+The native format remains available:
 
 #+BEGIN_SRC lisp
 (:autolith-skill
@@ -24,66 +58,42 @@ Put this in =.autolith/skills/release-check/SKILL.sexp=:
 Run every relevant check before reporting success.")
 #+END_SRC
 
-Then ask for release verification. If the catalog describes a matching
-Skill, the model selects it with =skill.load= before work that depends
-on those instructions.
+A native file is one bounded top-level form with required =:version=,
+=:name=, =:description=, and =:instructions= fields after
+=:autolith-skill=. Autolith rejects unsupported versions, unknown or
+duplicate fields, malformed data, extra forms, reader labels, circular or
+shared structure, and values of the wrong type.
 
-Ask your clankers to convert existing skills into the Autolith format.
+* Locations and precedence
 
-There is a good reason why we do this, and in the future, Autolith will
-be able to convert your skills automatically.
-
-* Writing skill
-
-A Skill directory contains one file named exactly =SKILL.sexp=. It is
-one bounded top-level form with these required fields:
-
-- =:autolith-skill=
-- =:version=
-- =:name=
-- =:description=
-- =:instructions=
-
-=:instructions= is the instruction body. You can of course refer
-to neigboring files there.
-
-Autolith rejects unsupported versions, unknown or duplicate fields,
-malformed data, extra forms, reader labels, circular or shared
-structure, and values of the wrong type, and so on and so forth.
-You will get an error, you will know what's wrong.
-
-* Locations
-
-Scans these roots, first match wins:
+Autolith scans these roots recursively, with earlier roots taking precedence:
 
 1. =.autolith/skills/= at the project root
 2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=
 3. bundled Skill roots
 
-Outside Git, the workspace directory is the project root. Scans are
-recursive. Only the case-sensitive filename =SKILL.sexp= counts.
-
-Each consecutive location overrides the previous ones, so
-you can have a project local version of a skill if you like.
+Outside Git, the workspace directory is the project root. Only the exact,
+case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one
+directory, a valid native definition is considered before =SKILL.md=. An
+invalid definition does not reserve its name, so another valid definition may
+still be selected.
 
 * Loading
 
-- Every inference provider request gets a bounded catalog when Skills exist
-- The catalog has names, descriptions, and paths
-- =skill.load= records the selected name and filesystem identity for the
-  current logical turn
-- It returns a short confirmation that the model did not fuck up skill selection
-- At the next provider boundary, Autolith will reread the file and
-  injects the current version of =:instructions= as request-local context
-- Selected Skills stack in catalog order
+- Every inference provider request gets a bounded catalog when Skills exist.
+- The catalog contains names, descriptions, and original source paths.
+- =skill.load= records the selected name for the current logical turn.
+- At the next provider boundary, Autolith rereads the original source. A
+  changed =SKILL.md= is rehashed and reconverted before its current Markdown
+  body is injected.
+- Selected Skills stack in catalog order.
 - Child agents may load Skills only when their role permits =skill.load=.
 
 * Diagnostics
 
-The =(skills)= commands inspects the catalog. It shows
-selected definitions, descriptions, paths, and diagnostics for rejected
-or shadowed files. With no Skills, it shows the roots where you can
-create one.
+The =(skills)= command inspects the catalog. It shows selected definitions,
+descriptions, paths, and diagnostics for rejected or shadowed files. With no
+Skills, it shows the roots where you can create one.
 
-You can also use =(context)= to show the catalog, selected contributions,
-omissions, and contributor failures.
+Use =(context)= to show the catalog, selected contributions, omissions, and
+contributor failures.
