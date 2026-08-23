@@ -59,6 +59,19 @@
     :documentation "The optional function authorizing one external tool call."))
   (:documentation "An agent observer implemented by ordinary terminal-facing callbacks."))
 
+(defclass serialized-agent-observer (agent-observer)
+  ((delegate
+    :initarg :delegate
+    :reader serialized-agent-observer-delegate
+    :type agent-observer
+    :documentation "The observer receiving callbacks under the serialization lock.")
+   (lock
+    :initform (make-recursive-lock "Autolith agent observer callbacks")
+    :reader serialized-agent-observer-lock
+    :documentation "The recursive lock serializing callbacks from tool workers."))
+  (:documentation
+   "An observer wrapper serializing callbacks made by concurrent tool workers."))
+
 (defclass agent-steering-input ()
   ((identifier
     :initarg :identifier
@@ -112,6 +125,9 @@
 
 (defparameter *agent-restricted-maximum-tool-rounds* 4
   "Maximum executed tool rounds within one restricted agent turn.")
+
+(defparameter *agent-maximum-concurrent-tool-workers* 8
+  "Maximum worker threads executing independent calls from one provider batch.")
 
 
 ;;;; -- Agent Conditions --
@@ -289,6 +305,67 @@
     (if callback
         (funcall callback tool arguments)
         ':deny)))
+
+(defmethod agent-observer-text
+    ((observer serialized-agent-observer) (text string))
+  "Forward assistant TEXT to OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-text (serialized-agent-observer-delegate observer) text)))
+
+(defmethod agent-observer-reasoning
+    ((observer serialized-agent-observer) (text string))
+  "Forward reasoning TEXT to OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-reasoning
+     (serialized-agent-observer-delegate observer) text)))
+
+(defmethod agent-observer-status
+    ((observer serialized-agent-observer) status details)
+  "Forward STATUS and DETAILS to OBSERVER's delegate under its callback lock."
+  (declare (type keyword status)
+           (type list details))
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-status
+     (serialized-agent-observer-delegate observer) status details)))
+
+(defmethod agent-observer-take-steering
+    ((observer serialized-agent-observer))
+  "Drain steering from OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-take-steering
+     (serialized-agent-observer-delegate observer))))
+
+(defmethod agent-observer-steering-persisted
+    ((observer serialized-agent-observer) (identifier string))
+  "Forward durable steering IDENTIFIER under OBSERVER's callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-steering-persisted
+     (serialized-agent-observer-delegate observer) identifier)))
+
+(defmethod agent-observer-apply-pending-operations
+    ((observer serialized-agent-observer) agent)
+  "Apply queued operations through OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-apply-pending-operations
+     (serialized-agent-observer-delegate observer) agent)))
+
+(defmethod agent-observer-authorize-command
+    ((observer serialized-agent-observer)
+     (command string)
+     (directory pathname))
+  "Authorize COMMAND through OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-authorize-command
+     (serialized-agent-observer-delegate observer) command directory)))
+
+(defmethod agent-observer-authorize-tool
+    ((observer serialized-agent-observer)
+     (tool tool)
+     (arguments hash-table))
+  "Authorize TOOL through OBSERVER's delegate under its callback lock."
+  (with-recursive-lock-held ((serialized-agent-observer-lock observer))
+    (agent-observer-authorize-tool
+     (serialized-agent-observer-delegate observer) tool arguments)))
 
 
 ;;;; -- Construction and Turn Entry --
@@ -699,6 +776,174 @@
              :output message))))
   nil)
 
+(-> agent--execute-tool-plan
+    (agent list agent-observer boolean boolean)
+    list)
+(defun agent--execute-tool-plan
+    (agent plan observer tool-restriction-p record-timings-p)
+  "Execute one PLAN body and return its result, timings, or fatal condition."
+  (let* ((call      (getf plan :call))
+         (call-id   (json-get call "call_id"))
+         (context
+           (make-instance
+            'tool-context
+            :configuration (agent-configuration agent)
+            :worker (agent-worker agent)
+            :conversation (agent-conversation agent)
+            :registry (agent-tool-registry agent)
+            :agent agent
+            :observer observer
+            :call-id call-id
+            :command-authorization-function
+            (lambda (command directory)
+              (agent-observer-authorize-command observer command directory))
+            :tool-authorization-function
+            (lambda (tool arguments)
+              (agent-observer-authorize-tool observer tool arguments))))
+         (*workspace-tool-readable-roots*
+           (and tool-restriction-p
+                (list
+                 (configuration-working-directory
+                  (agent-configuration agent))
+                 (configuration-source-root
+                  (agent-configuration agent)))))
+         (*resource-readable-schemes*
+           (and tool-restriction-p '("workspace")))
+         (real-start (get-internal-real-time))
+         (cpu-start  (get-internal-run-time))
+         (result nil)
+         (condition nil))
+    (handler-case
+        (setf result
+              (tool-registry-execute-call
+               (agent-tool-registry agent)
+               call
+               context))
+      (serious-condition (failure)
+        (setf condition failure)))
+    (list
+     :plan plan
+     :result result
+     :condition condition
+     :cpu-microseconds
+     (and record-timings-p
+          (round (* (- (get-internal-run-time) cpu-start) 1000000)
+                 internal-time-units-per-second))
+     :real-microseconds
+     (and record-timings-p
+          (round (* (- (get-internal-real-time) real-start) 1000000)
+                 internal-time-units-per-second)))))
+
+(-> agent--complete-tool-executions
+    (agent list agent-observer integer)
+    null)
+(defun agent--complete-tool-executions
+    (agent executions observer tool-round)
+  "Persist EXECUTIONS and report completions in provider wire order."
+  (dolist (execution executions)
+    (let* ((plan      (getf execution :plan))
+           (call      (getf plan :call))
+           (call-id   (json-get call "call_id"))
+           (tool-name (function-call-canonical-name call))
+           (result    (getf execution :result)))
+      (when result
+        (conversation-append-tool-result
+         (agent-conversation agent)
+         call-id
+         :tool-name tool-name
+         :output (tool-result-content result)
+         :content-blocks (tool-result-content-blocks result)
+         :success-p (tool-result-success-p result)
+         :cpu-microseconds (getf execution :cpu-microseconds)
+         :real-microseconds (getf execution :real-microseconds)
+         :persistence (getf plan :persistence))
+        (agent-observer-status
+         observer
+         :tool-call-completed
+         (list :tool-round tool-round
+               :call-id call-id
+               :tool tool-name
+               :success-p (tool-result-success-p result)
+               :cpu-microseconds (getf execution :cpu-microseconds)
+               :real-microseconds (getf execution :real-microseconds)
+               :output (tool-result-content result)
+               :details (tool-result-details result))))))
+  (let ((failure
+          (find-if (lambda (execution)
+                     (getf execution :condition))
+                   executions)))
+    (when failure
+      (error (getf failure :condition))))
+  nil)
+
+(-> agent--run-tool-wave
+    (agent list agent-observer integer boolean)
+    null)
+(defun agent--run-tool-wave
+    (agent plans observer tool-round tool-restriction-p)
+  "Execute independent PLANS concurrently and complete them in wire order."
+  (dolist (plan plans)
+    (let ((call (getf plan :call)))
+      (agent-observer-status
+       observer
+       :tool-call-started
+       (list :tool-round tool-round
+             :call-id (json-get call "call_id")
+             :tool (function-call-canonical-name call)))))
+  (let* ((count (length plans))
+         (executions (make-array count))
+         (record-timings-p (= count 1)))
+    (if (= count 1)
+        (setf (aref executions 0)
+              (agent--execute-tool-plan
+               agent (first plans) observer tool-restriction-p t))
+        (let ((next-index 0)
+              (claim-lock (make-lock "Autolith tool wave claims"))
+              (threads nil)
+              (thread-creation-condition nil))
+          (flet ((work ()
+                   (loop
+                     (let ((index
+                             (with-lock-held (claim-lock)
+                               (when (< next-index count)
+                                 (prog1 next-index
+                                   (incf next-index))))))
+                       (unless index
+                         (return))
+                       (setf (aref executions index)
+                             (agent--execute-tool-plan
+                              agent
+                              (nth index plans)
+                              observer
+                              tool-restriction-p
+                              record-timings-p))))))
+            (unwind-protect
+                 (progn
+                   (loop repeat
+                           (min count *agent-maximum-concurrent-tool-workers*)
+                         while (null thread-creation-condition)
+                         do
+                           (handler-case
+                               (push
+                                (make-thread #'work :name "autolith-tool-call")
+                                threads)
+                             (serious-condition (condition)
+                               (setf thread-creation-condition condition))))
+                   (when thread-creation-condition
+                     (work))
+                   (mapc #'join-thread threads))
+              (mapc (lambda (thread)
+                      (when (thread-alive-p thread)
+                        (ignore-errors (join-thread thread))))
+                    threads))
+            (when thread-creation-condition
+              (agent--complete-tool-executions
+               agent (coerce executions 'list) observer tool-round)
+              (error thread-creation-condition)))))
+    (agent--complete-tool-executions
+     agent (coerce executions 'list) observer tool-round))
+  nil)
+
 (-> agent--execute-tool-calls
     (agent list provider-result
      &key (:observer agent-observer) (:tool-round integer)
@@ -707,109 +952,73 @@
 (defun agent--execute-tool-calls
     (agent call-plans provider-result
      &key observer tool-round tool-allowlist (tool-restriction-p nil))
-  "Execute planned calls sequentially, respecting terminal and barrier states."
-  (loop for remaining on call-plans
-        for plan = (first remaining)
-        for call = (getf plan :call)
-        do
-          (when (getf plan :blocked-p)
-            (agent--reject-tool-call-plans
-             agent
-             remaining
-             observer
-             :tool-round tool-round
-             :message
-             "This call was not executed because a preceding tool requires a provider round trip. Retry it after inspecting that tool's result and the refreshed instructions.")
-            (return))
-          (when (and tool-restriction-p
-                     (not (agent--tool-call-allowed-p call tool-allowlist)))
-            (error 'agent-loop-error
+  "Execute planned calls in independent waves while respecting barriers."
+  (let ((serialized-observer
+          (make-instance 'serialized-agent-observer :delegate observer))
+        (wave nil)
+        (wave-keys (make-hash-table :test #'eql)))
+    (labels ((flush-wave ()
+               (when wave
+                 (agent--run-tool-wave
+                  agent
+                  (nreverse wave)
+                  serialized-observer
+                  tool-round
+                  tool-restriction-p)
+                 (setf wave nil)
+                 (clrhash wave-keys))))
+      (loop for remaining on call-plans
+            for plan = (first remaining)
+            for call = (getf plan :call)
+            for tool = (getf plan :tool)
+            for barrier-p = (and tool
+                                 (tool-provider-round-trip-barrier-p tool))
+            for exclusive-p = (or barrier-p
+                                  (and tool
+                                       (eq (tool-execution-policy tool)
+                                           ':exclusive)))
+            for key = (and tool (tool-concurrency-key tool))
+            do
+              (when (getf plan :blocked-p)
+                (flush-wave)
+                (agent--reject-tool-call-plans
+                 agent
+                 remaining
+                 serialized-observer
+                 :tool-round tool-round
+                 :message
+                 "This call was not executed because a preceding tool requires a provider round trip. Retry it after inspecting that tool's result and the refreshed instructions.")
+                (return))
+              (when (and tool-restriction-p
+                         (not (agent--tool-call-allowed-p call tool-allowlist)))
+                (error 'agent-loop-error
+                       :message
+                       (format nil
+                               "Tool ~A is unavailable during this restricted turn."
+                               (function-call-canonical-name call))
+                       :conversation-id
+                       (conversation-identifier (agent-conversation agent))
+                       :request-number nil))
+              (when (or exclusive-p
+                        (and key (gethash key wave-keys)))
+                (flush-wave))
+              (push plan wave)
+              (when key
+                (setf (gethash key wave-keys) t))
+              (when exclusive-p
+                (flush-wave))
+              (when (agent-turn-complete-p agent provider-result)
+                (flush-wave)
+                (when (rest remaining)
+                  (agent--reject-tool-call-plans
+                   agent
+                   (rest remaining)
+                   serialized-observer
+                   :tool-round tool-round
                    :message
-                   (format nil
-                           "Tool ~A is unavailable during this restricted turn."
-                           (function-call-canonical-name call))
-                   :conversation-id
-                   (conversation-identifier (agent-conversation agent))
-                   :request-number nil))
-          (let* ((call-id   (json-get call "call_id"))
-                 (tool-name (function-call-canonical-name call))
-                 (context
-                   (make-instance
-                    'tool-context
-                    :configuration (agent-configuration agent)
-                    :worker (agent-worker agent)
-                    :conversation (agent-conversation agent)
-                    :registry (agent-tool-registry agent)
-                    :agent agent
-                    :observer observer
-                    :call-id call-id
-                    :command-authorization-function
-                    (lambda (command directory)
-                      (agent-observer-authorize-command
-                       observer command directory))
-                    :tool-authorization-function
-                    (lambda (tool arguments)
-                      (agent-observer-authorize-tool
-                       observer tool arguments)))))
-            (agent-observer-status
-             observer
-             :tool-call-started
-             (list :tool-round tool-round
-                   :call-id call-id
-                   :tool tool-name))
-            (let* ((*workspace-tool-readable-roots*
-                     (and tool-restriction-p
-                          (list
-                           (configuration-working-directory
-                            (agent-configuration agent))
-                           (configuration-source-root
-                            (agent-configuration agent)))))
-                   (*resource-readable-schemes*
-                     (and tool-restriction-p '("workspace")))
-                   (real-start (get-internal-real-time))
-                   (cpu-start  (get-internal-run-time))
-                   (result
-                     (tool-registry-execute-call
-                      (agent-tool-registry agent)
-                      call
-                      context))
-                   (cpu-microseconds
-                     (round (* (- (get-internal-run-time) cpu-start) 1000000)
-                            internal-time-units-per-second))
-                   (real-microseconds
-                     (round (* (- (get-internal-real-time) real-start) 1000000)
-                            internal-time-units-per-second)))
-              (conversation-append-tool-result
-               (agent-conversation agent)
-               call-id
-               :tool-name tool-name
-               :output (tool-result-content result)
-               :content-blocks (tool-result-content-blocks result)
-               :success-p (tool-result-success-p result)
-               :cpu-microseconds cpu-microseconds
-               :real-microseconds real-microseconds
-               :persistence (getf plan :persistence))
-              (agent-observer-status
-               observer
-               :tool-call-completed
-               (list :tool-round tool-round
-                     :call-id call-id
-                     :tool tool-name
-                     :success-p (tool-result-success-p result)
-                     :cpu-microseconds cpu-microseconds
-                     :real-microseconds real-microseconds
-                     :output (tool-result-content result)
-                     :details (tool-result-details result)))))
-        (when (agent-turn-complete-p agent provider-result)
-          (when (rest remaining)
-            (agent--reject-tool-call-plans
-             agent
-             (rest remaining)
-             observer
-             :tool-round tool-round
-             :message
-             "This call was not executed because the agent turn already completed."))
-          (return)))
+                   "This call was not executed because the agent turn already completed."))
+                (return))
+            finally (flush-wave))))
   nil)
 
 (-> agent--apply-steering-input (agent agent-observer integer) null)

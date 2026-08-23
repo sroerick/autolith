@@ -494,6 +494,36 @@
   "Allow ordinary tool calls to execute in provider wire order."
   nil)
 
+(-> tool-execution-policy (tool) (member :parallel :exclusive))
+(defgeneric tool-execution-policy (tool)
+  (:documentation
+   "Return whether TOOL may execute beside independent calls or needs exclusivity."))
+
+(defmethod tool-execution-policy ((tool tool))
+  "Run ordinary tools concurrently when the provider emits one call batch."
+  ':parallel)
+
+(defmethod tool-execution-policy ((tool resource-edit-tool))
+  "Serialize resource mutations so revision and persistence state remain ordered."
+  ':exclusive)
+
+(defmethod tool-execution-policy ((tool lisp-tool))
+  "Serialize Lisp worker operations until per-REPL execution keys are available."
+  ':exclusive)
+
+(defmethod tool-execution-policy ((tool mutable-self-tool))
+  "Serialize active-image mutations and lifecycle operations."
+  ':exclusive)
+
+(-> tool-concurrency-key (tool) t)
+(defgeneric tool-concurrency-key (tool)
+  (:documentation
+   "Return TOOL's shared runtime serialization key, or NIL when calls are independent."))
+
+(defmethod tool-concurrency-key ((tool tool))
+  "Serialize tools sharing one declared runtime identity."
+  (tool-runtime-identity tool))
+
 (-> tool-compact-result-visible-p (tool) boolean)
 (defgeneric tool-compact-result-visible-p (tool)
   (:documentation

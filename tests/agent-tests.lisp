@@ -145,6 +145,128 @@
    (format nil "echo: ~A"
            (tool-argument arguments "value" :required t))))
 
+(defclass agent-test-concurrency-state ()
+  ((lock
+    :initform (make-lock "Autolith agent test tool state")
+    :reader agent-test-concurrency-state-lock
+    :documentation "The lock protecting mutable execution state.")
+   (condition-variable
+    :initform (make-condition-variable)
+    :reader agent-test-concurrency-state-condition-variable
+    :documentation "The condition used to align concurrent tool starts.")
+   (active-count
+    :initform 0
+    :accessor agent-test-concurrency-state-active-count
+    :type (integer 0)
+    :documentation "The number of currently executing test tools.")
+   (maximum-active-count
+    :initform 0
+    :accessor agent-test-concurrency-state-maximum-active-count
+    :type (integer 0)
+    :documentation "The largest observed concurrent execution count.")
+   (overlap-observed-p
+    :initform nil
+    :accessor agent-test-concurrency-state-overlap-observed-p
+    :type boolean
+    :documentation "Whether two tool bodies executed at the same time.")
+   (events
+    :initform nil
+    :accessor agent-test-concurrency-state-events
+    :type list
+    :documentation "Execution start and finish events in reverse time order."))
+  (:documentation "Shared state for deterministic concurrent tool tests."))
+
+(defclass agent-test-concurrent-tool (tool)
+  ((state
+    :initarg :state
+    :reader agent-test-concurrent-tool-state
+    :type agent-test-concurrency-state
+    :documentation "The shared execution state recorded by this tool.")
+   (execution-policy
+    :initarg :execution-policy
+    :initform ':parallel
+    :reader agent-test-concurrent-tool-execution-policy
+    :type (member :parallel :exclusive)
+    :documentation "Whether this test tool requires exclusive execution.")
+   (concurrency-key
+    :initarg :concurrency-key
+    :initform nil
+    :reader agent-test-concurrent-tool-concurrency-key
+    :type t
+    :documentation "The optional runtime key shared with conflicting tools."))
+  (:documentation "A deterministic tool that records and aligns execution."))
+
+(defmethod tool-execution-policy ((tool agent-test-concurrent-tool))
+  "Return TOOL's configured execution policy."
+  (agent-test-concurrent-tool-execution-policy tool))
+
+(defmethod tool-concurrency-key ((tool agent-test-concurrent-tool))
+  "Return TOOL's configured shared-runtime key."
+  (agent-test-concurrent-tool-concurrency-key tool))
+
+(defmethod tool-execute ((tool agent-test-concurrent-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Record one test execution, optionally aligning it with a sibling call."
+  (let* ((state
+           (agent-test-concurrent-tool-state tool))
+         (label
+           (tool-argument arguments "label" :required t))
+         (delay
+           (or (tool-argument arguments "delay") 0.0d0))
+         (await-peer-p
+           (eq (tool-argument arguments "await_peer") t))
+         (fail-p
+           (eq (tool-argument arguments "fail") t))
+         (fatal
+           (tool-argument arguments "fatal")))
+    (with-lock-held ((agent-test-concurrency-state-lock state))
+      (incf (agent-test-concurrency-state-active-count state))
+      (setf (agent-test-concurrency-state-maximum-active-count state)
+            (max (agent-test-concurrency-state-maximum-active-count state)
+                 (agent-test-concurrency-state-active-count state)))
+      (push (list ':start label)
+            (agent-test-concurrency-state-events state))
+      (when (> (agent-test-concurrency-state-active-count state) 1)
+        (setf (agent-test-concurrency-state-overlap-observed-p state) t)
+        (condition-notify
+         (agent-test-concurrency-state-condition-variable state)))
+      (when (and await-peer-p
+                 (= (agent-test-concurrency-state-active-count state) 1))
+        (condition-wait
+         (agent-test-concurrency-state-condition-variable state)
+         (agent-test-concurrency-state-lock state)
+         :timeout 0.5)))
+    (unwind-protect
+         (progn
+           (agent-observer-status
+            (tool-context-observer context)
+            ':agent-test-tool-callback
+            (list :label label))
+           (sleep delay)
+           (when fail-p
+             (error "requested test failure"))
+           (cond
+             ((equal fatal "rollback")
+              (error 'rollback-requested
+                     :message "requested rollback test"
+                     :generation-id "test-generation"))
+             ((equal fatal "corruption")
+              (error
+               'active-image-corruption
+               :message "requested corruption test"
+               :original-condition
+               (make-condition 'simple-error
+                               :format-control "original failure")
+               :restoration-condition
+               (make-condition 'simple-error
+                               :format-control "restoration failure"))))
+           (tool-success (format nil "completed: ~A" label)))
+      (with-lock-held ((agent-test-concurrency-state-lock state))
+        (push (list ':finish label)
+              (agent-test-concurrency-state-events state))
+        (decf (agent-test-concurrency-state-active-count state))))))
+
 (-> agent-test-registry () tool-registry)
 (defun agent-test-registry ()
   "Return a registry containing the deterministic echo tool."
@@ -225,6 +347,49 @@
                  :usage (json-object "input_tokens" 1 "output_tokens" 1)
                  :turn-state turn-state
                  :turn-completion turn-completion))
+
+(-> agent-test-concurrency-tool
+    (agent-test-concurrency-state string
+     &key (:execution-policy (member :parallel :exclusive))
+          (:concurrency-key t))
+    agent-test-concurrent-tool)
+(defun agent-test-concurrency-tool
+    (state name &key (execution-policy ':parallel) concurrency-key)
+  "Create one concurrency test tool named NAME sharing STATE."
+  (make-instance
+   'agent-test-concurrent-tool
+   :namespace "concurrency"
+   :name name
+   :description "Record deterministic concurrent execution."
+   :parameters
+   (tool-object-schema
+    (json-object
+     "label" (tool-string-property "The execution label.")
+     "delay" (json-object "type" "number")
+     "await_peer" (tool-boolean-property "Wait for one concurrent peer.")
+     "fail" (tool-boolean-property "Signal a test failure.")
+     "fatal" (tool-string-property
+              "The optional fatal condition kind to signal."))
+    '("label"))
+   :state state
+   :execution-policy execution-policy
+   :concurrency-key concurrency-key))
+
+(-> agent-test-concurrency-registry (list) tool-registry)
+(defun agent-test-concurrency-registry (tools)
+  "Return a registry containing concurrency test TOOLS."
+  (let ((registry (make-instance 'tool-registry)))
+    (dolist (tool tools)
+      (tool-registry-register registry tool))
+    registry))
+
+(-> agent-test-tool-outputs (conversation) list)
+(defun agent-test-tool-outputs (conversation)
+  "Return provider-visible tool outputs from CONVERSATION in durable order."
+  (loop for item in (conversation-input-items conversation)
+        when (string= (or (json-get item "type") "")
+                      "function_call_output")
+          collect (json-get item "output")))
 
 (-> test-agent-tool-loop () null)
 (defun test-agent-tool-loop ()
@@ -1663,6 +1828,337 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-parallel-tool-wave () null)
+(defun test-agent-parallel-tool-wave ()
+  "Test independent calls overlap while callbacks and persistence stay ordered."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-parallel-wave"))
+         (state (make-instance 'agent-test-concurrency-state))
+         (tool (agent-test-concurrency-tool state "run"))
+         (registry (agent-test-concurrency-registry (list tool)))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "parallel-calls"
+              (list
+               (agent-test-call
+                :call-id "parallel-a"
+                :namespace "concurrency"
+                :name "run"
+                :arguments
+                "{\"label\":\"a\",\"delay\":0.05,\"await_peer\":true}")
+               (agent-test-call
+                :call-id "parallel-b"
+                :namespace "concurrency"
+                :name "run"
+                :arguments
+                "{\"label\":\"b\",\"await_peer\":true}")))
+             (agent-test-result
+              "parallel-done"
+              (list (agent-test-message "done"))))))
+         (callback-lock (make-lock "Autolith observer callback test"))
+         (callback-active-count 0)
+         (callback-maximum-active-count 0)
+         (observer
+           (callback-agent-observer-create
+            :status-callback
+            (lambda (status details)
+              (declare (ignore details))
+              (when (eq status ':agent-test-tool-callback)
+                (with-lock-held (callback-lock)
+                  (incf callback-active-count)
+                  (setf callback-maximum-active-count
+                        (max callback-maximum-active-count
+                             callback-active-count)))
+                (sleep 0.02)
+                (with-lock-held (callback-lock)
+                  (decf callback-active-count)))))))
+    (unwind-protect
+         (let ((agent
+                 (agent-create
+                  :configuration configuration
+                  :provider provider
+                  :conversation conversation
+                  :tool-registry registry
+                  :worker ':unused)))
+           (agent-run-user-turn agent "run both" :observer observer)
+           (test-assert
+            (agent-test-concurrency-state-overlap-observed-p state)
+            "independent tool bodies overlap")
+           (test-assert
+            (= (agent-test-concurrency-state-maximum-active-count state) 2)
+            "one provider batch uses two concurrent tool workers")
+           (test-assert
+            (= callback-maximum-active-count 1)
+            "observer callbacks remain serialized across tool workers")
+           (test-assert
+            (equal (agent-test-tool-outputs conversation)
+                   '("completed: a" "completed: b"))
+            "tool outputs persist in provider wire order")
+           (let ((events
+                   (reverse (agent-test-concurrency-state-events state))))
+             (test-assert
+              (and (every (lambda (event)
+                            (eq (first event) ':start))
+                          (subseq events 0 2))
+                   (equal (subseq events 2)
+                          '((:finish "b") (:finish "a"))))
+              "both bodies start before reverse completion finishes")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-tool-concurrency-key () null)
+(defun test-agent-tool-concurrency-key ()
+  "Test calls sharing one runtime identity execute in separate waves."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-runtime-key"))
+         (state (make-instance 'agent-test-concurrency-state))
+         (runtime (list ':shared-runtime))
+         (tool (agent-test-concurrency-tool
+                state "keyed" :concurrency-key runtime))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "keyed-calls"
+              (list
+               (agent-test-call
+                :call-id "keyed-a"
+                :namespace "concurrency"
+                :name "keyed"
+                :arguments "{\"label\":\"a\",\"delay\":0.03}")
+               (agent-test-call
+                :call-id "keyed-b"
+                :namespace "concurrency"
+                :name "keyed"
+                :arguments "{\"label\":\"b\",\"delay\":0.03}")))
+             (agent-test-result
+              "keyed-done"
+              (list (agent-test-message "done")))))))
+    (unwind-protect
+         (let ((agent
+                 (agent-create
+                  :configuration configuration
+                  :provider provider
+                  :conversation conversation
+                  :tool-registry
+                  (agent-test-concurrency-registry (list tool))
+                  :worker ':unused)))
+           (agent-run-user-turn agent "run keyed calls")
+           (test-assert
+            (= (agent-test-concurrency-state-maximum-active-count state) 1)
+            "calls sharing one runtime key do not overlap")
+           (test-assert
+            (equal (reverse (agent-test-concurrency-state-events state))
+                   '((:start "a") (:finish "a")
+                     (:start "b") (:finish "b")))
+            "shared-runtime calls preserve provider order"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-exclusive-tool-waves () null)
+(defun test-agent-exclusive-tool-waves ()
+  "Test an exclusive call divides parallel calls into ordered waves."
+  (test-assert
+   (eq (tool-execution-policy
+        (make-instance 'shell-run-tool
+                       :namespace "shell"
+                       :name "run"
+                       :description "Run one command."
+                       :parameters (json-object)))
+       ':exclusive)
+   "shell commands opt into exclusive ordered waves")
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-exclusive-wave"))
+         (state (make-instance 'agent-test-concurrency-state))
+         (before (agent-test-concurrency-tool state "before"))
+         (exclusive
+           (agent-test-concurrency-tool
+            state "exclusive" :execution-policy ':exclusive))
+         (after (agent-test-concurrency-tool state "after"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "exclusive-calls"
+              (list
+               (agent-test-call
+                :call-id "before"
+                :namespace "concurrency"
+                :name "before"
+                :arguments "{\"label\":\"before\",\"delay\":0.02}")
+               (agent-test-call
+                :call-id "exclusive"
+                :namespace "concurrency"
+                :name "exclusive"
+                :arguments "{\"label\":\"exclusive\",\"delay\":0.02}")
+               (agent-test-call
+                :call-id "after"
+                :namespace "concurrency"
+                :name "after"
+                :arguments "{\"label\":\"after\",\"delay\":0.02}")))
+             (agent-test-result
+              "exclusive-done"
+              (list (agent-test-message "done")))))))
+    (unwind-protect
+         (let ((agent
+                 (agent-create
+                  :configuration configuration
+                  :provider provider
+                  :conversation conversation
+                  :tool-registry
+                  (agent-test-concurrency-registry
+                   (list before exclusive after))
+                  :worker ':unused)))
+           (agent-run-user-turn agent "run exclusive call")
+           (test-assert
+            (= (agent-test-concurrency-state-maximum-active-count state) 1)
+            "exclusive execution prevents overlap across adjacent waves")
+           (test-assert
+            (equal (reverse (agent-test-concurrency-state-events state))
+                   '((:start "before") (:finish "before")
+                     (:start "exclusive") (:finish "exclusive")
+                     (:start "after") (:finish "after")))
+            "the exclusive call divides calls into ordered waves"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-parallel-tool-failure () null)
+(defun test-agent-parallel-tool-failure ()
+  "Test one failed parallel call does not discard its sibling result."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-parallel-failure"))
+         (state (make-instance 'agent-test-concurrency-state))
+         (tool (agent-test-concurrency-tool state "fail"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "failure-calls"
+              (list
+               (agent-test-call
+                :call-id "failed"
+                :namespace "concurrency"
+                :name "fail"
+                :arguments
+                "{\"label\":\"failed\",\"await_peer\":true,\"fail\":true}")
+               (agent-test-call
+                :call-id "sibling"
+                :namespace "concurrency"
+                :name "fail"
+                :arguments
+                "{\"label\":\"sibling\",\"await_peer\":true}")))
+             (agent-test-result
+              "failure-done"
+              (list (agent-test-message "done")))))))
+    (unwind-protect
+         (let ((agent
+                 (agent-create
+                  :configuration configuration
+                  :provider provider
+                  :conversation conversation
+                  :tool-registry
+                  (agent-test-concurrency-registry (list tool))
+                  :worker ':unused)))
+           (agent-run-user-turn agent "run failing calls")
+           (let ((outputs (agent-test-tool-outputs conversation)))
+             (test-assert
+              (= (length outputs) 2)
+              "both parallel calls persist outputs after one fails")
+             (test-assert
+              (search "requested test failure" (first outputs))
+              "the failed call persists its failure output")
+             (test-assert
+              (string= (second outputs) "completed: sibling")
+              "the successful sibling result remains available")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-agent-parallel-fatal-propagation () null)
+(defun test-agent-parallel-fatal-propagation ()
+  "Test fatal tool conditions propagate after concurrent siblings complete."
+  (dolist (case '(("rollback" rollback-requested)
+                  ("corruption" active-image-corruption)))
+    (destructuring-bind (fatal expected-type) case
+      (let* ((configuration (test-configuration))
+             (root (test-configuration-root configuration))
+             (conversation
+               (conversation-create
+                configuration
+                :identifier (format nil "agent-fatal-~A" fatal)))
+             (state (make-instance 'agent-test-concurrency-state))
+             (tool (agent-test-concurrency-tool state "fatal"))
+             (provider
+               (make-instance
+                'scripted-provider
+                :results
+                (list
+                 (agent-test-result
+                  "fatal-calls"
+                  (list
+                   (agent-test-call
+                    :call-id "fatal"
+                    :namespace "concurrency"
+                    :name "fatal"
+                    :arguments
+                    (format nil
+                            "{\"label\":\"fatal\",\"await_peer\":true,\"fatal\":\"~A\"}"
+                            fatal))
+                   (agent-test-call
+                    :call-id "sibling"
+                    :namespace "concurrency"
+                    :name "fatal"
+                    :arguments
+                    "{\"label\":\"sibling\",\"await_peer\":true}")))))))
+        (unwind-protect
+             (let* ((agent
+                      (agent-create
+                       :configuration configuration
+                       :provider provider
+                       :conversation conversation
+                       :tool-registry
+                       (agent-test-concurrency-registry (list tool))
+                       :worker ':unused))
+                    (condition
+                      (handler-case
+                          (progn
+                            (agent-run-user-turn agent "run fatal calls")
+                            nil)
+                        (rollback-requested (failure)
+                          failure)
+                        (active-image-corruption (failure)
+                          failure))))
+               (test-assert
+                (typep condition expected-type)
+                "the original fatal tool condition reaches the agent caller")
+               (test-assert
+                (agent-test-concurrency-state-overlap-observed-p state)
+                "the fatal call executes concurrently with its sibling")
+               (test-assert
+                (equal (agent-test-tool-outputs conversation)
+                       '("completed: sibling"))
+                "the sibling result persists before fatal propagation"))
+          (uiop:delete-directory-tree
+           root :validate t :if-does-not-exist ':ignore)))))
+  nil)
+
 (-> run-agent-tests () boolean)
 (defun run-agent-tests ()
   "Run focused agent-loop tests and return true on success."
@@ -1685,4 +2181,10 @@
   (test-agent-skill-provider-barrier)
   (test-agent-compaction)
   (test-agent-native-compaction)
+  (test-agent-parallel-tool-wave)
+  (test-agent-tool-concurrency-key)
+  (test-agent-exclusive-tool-waves)
+  (test-agent-parallel-tool-failure)
+  (test-agent-parallel-fatal-propagation)
   t)
+      

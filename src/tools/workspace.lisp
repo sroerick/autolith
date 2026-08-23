@@ -25,6 +25,11 @@
   "Permit authorized workspace commands inside child agents."
   t)
 
+(defmethod tool-execution-policy ((tool shell-run-tool))
+  "Serialize shell commands because they may mutate shared workspace state."
+  (declare (ignore tool))
+  ':exclusive)
+
 
 ;;;; -- Workspace Defaults --
 

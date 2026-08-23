@@ -552,6 +552,11 @@ parent, and borrowed capabilities are released at terminal state."))
   (:documentation
    "Submit the required terminal result from a child agent."))
 
+(defmethod tool-execution-policy ((tool task-yield-tool))
+  "Execute the terminal child yield without concurrent sibling calls."
+  (declare (ignore tool))
+  ':exclusive)
+
 (defmethod tool-decode-arguments ((tool task-run-tool) source)
   "Decode task.run booleans without conflating JSON false and null."
   (declare (ignore tool))

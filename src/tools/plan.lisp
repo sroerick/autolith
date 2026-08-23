@@ -14,6 +14,11 @@
   ()
   (:documentation "A tool replacing the current workspace plan."))
 
+(defmethod tool-execution-policy ((tool plan-update-tool))
+  "Serialize plan replacement against the rest of one provider batch."
+  (declare (ignore tool))
+  ':exclusive)
+
 
 ;;;; -- Tool Executions --
 

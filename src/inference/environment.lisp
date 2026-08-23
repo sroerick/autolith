@@ -131,6 +131,16 @@ provider request on a closing remark."
     :documentation "The dedicated environment worker evaluating root forms."))
   (:documentation "Evaluate root model Lisp inside the run's environment."))
 
+(defmethod tool-execution-policy ((tool rlm-environment-tool))
+  "Serialize root environment forms because they share one mutable Lisp worker."
+  (declare (ignore tool))
+  ':exclusive)
+
+(defmethod tool-provider-round-trip-barrier-p ((tool rlm-environment-tool))
+  "Require the root model to observe one environment form before issuing another."
+  (declare (ignore tool))
+  t)
+
 (-> rlm-environment-tool-create (t) rlm-environment-tool)
 (defun rlm-environment-tool-create (worker)
   "Create the env.eval tool bound to one environment WORKER."
