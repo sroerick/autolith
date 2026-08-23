@@ -252,7 +252,7 @@ available. =(models)= triggers discovery. You can also pass non-secret
 providers that have no model-list endpoint.
 
 Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
-browser device flow. Anthropic, Fireworks, OpenCode, and user-registered
+browser device flow. Anthropic, Fireworks, OpenCode, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
 #+BEGIN_SRC sh
@@ -275,6 +275,12 @@ The Nous integration accepts three deployment overrides:
 Autolith stores Nous OAuth state separately at =nous-auth.sexp= under its state
 root and serializes rotating refresh-token updates across processes sharing that
 root.
+
+Mistral models are discovered from the authenticated account and filtered to
+models advertising Chat Completions support. =MISTRAL_API_KEY= takes precedence
+over Autolith's private Mistral key. =AUTOLITH_MISTRAL_PROVIDER_ENDPOINT= and
+=AUTOLITH_MISTRAL_MODELS_ENDPOINT= override the chat and discovery endpoints
+independently.
 
 ** Commands
 

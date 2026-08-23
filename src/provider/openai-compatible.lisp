@@ -33,6 +33,18 @@
   (declare (ignore provider))
   t)
 
+(-> openai-compatible-provider-output-ceiling-field
+    (openai-compatible-provider)
+    non-empty-string)
+(defgeneric openai-compatible-provider-output-ceiling-field (provider)
+  (:documentation "Return the request field carrying PROVIDER's output limit."))
+
+(defmethod openai-compatible-provider-output-ceiling-field
+    ((provider openai-compatible-provider))
+  "Use the modern OpenAI-compatible output limit field."
+  (declare (ignore provider))
+  "max_completion_tokens")
+
 (defmethod provider-account-label ((provider openai-compatible-provider))
   "Return the configured OpenAI-compatible provider name."
   (openai-compatible-provider-display-name provider))
@@ -149,9 +161,11 @@
         (member (string-downcase (first header)) reserved :test #'string=))
       (copy-tree custom)))))
 
-(-> openai-compatible--decode-model-list (string) list)
-(defun openai-compatible--decode-model-list (body)
-  "Decode an OpenAI-compatible model-list response into model identifiers."
+(-> openai-compatible--decode-model-list
+    (string &key (:entry-predicate (option function)))
+    list)
+(defun openai-compatible--decode-model-list (body &key entry-predicate)
+  "Decode and optionally filter an OpenAI-compatible model-list response."
   (let* ((decoded
            (handler-case
                (json-decode body)
@@ -171,7 +185,9 @@
                  (error 'configuration-error
                         :message
                         "The model discovery response contained an invalid model entry."))
-               (push identifier models))
+               (when (or (null entry-predicate)
+                         (funcall entry-predicate entry))
+                 (push identifier models)))
       (nreverse models))))
 
 (-> openai-compatible--signal-model-discovery-status
@@ -197,11 +213,13 @@
                    (:provider-name non-empty-string)
                    (:endpoint non-empty-string)
                    (:headers list)
-                   (:credential-manager (option credential-manager)))
+                   (:credential-manager (option credential-manager))
+                   (:entry-predicate (option function)))
     list)
 (defun openai-compatible--fetch-models
-    (configuration &key provider-name endpoint headers credential-manager)
-  "Fetch model identifiers from one OpenAI-compatible endpoint.
+    (configuration &key provider-name endpoint headers credential-manager
+                        entry-predicate)
+  "Fetch and optionally filter models from one OpenAI-compatible endpoint.
 
 When CREDENTIAL-MANAGER is supplied, use it instead of creating a default API-key
 manager from PROVIDER-NAME."
@@ -244,7 +262,9 @@ manager from PROVIDER-NAME."
          (unless (and (integerp status) (<= 200 status 299))
            (openai-compatible--signal-model-discovery-status
             provider-name manager status))
-         (openai-compatible--decode-model-list body))))))
+          (openai-compatible--decode-model-list
+           body
+           :entry-predicate entry-predicate))))))
 
 
 ;;;; -- Provider Registration --
@@ -630,7 +650,8 @@ message, which thinking-mode providers require passed back."
             (configuration-reasoning-effort configuration)))
     (when (and *provider-maximum-output-tokens*
                (provider-output-ceiling-p provider))
-      (setf (gethash "max_completion_tokens" request)
+      (setf (gethash (openai-compatible-provider-output-ceiling-field provider)
+                     request)
             *provider-maximum-output-tokens*))
     (values request delivery)))
 

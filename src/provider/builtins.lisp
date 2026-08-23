@@ -65,6 +65,26 @@
   (declare (ignore open-browser-p))
   (opencode-api-key-login (provider-credential-manager provider)
                            :stream (or stream *standard-output*)))
+
+(-> provider--mistral-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--mistral-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in Mistral provider from registry metadata."
+  (declare (ignore reasoning-summaries-p))
+  (provider-family-create ':mistral configuration))
+
+(-> provider--mistral-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--mistral-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Prompt for and save the built-in Mistral provider's API key."
+  (declare (ignore open-browser-p))
+  (mistral-api-key-login (provider-credential-manager provider)
+                         :stream (or stream *standard-output*)))
+
 (-> provider--fireworks-registration-authenticator
     (model-provider &key (:stream stream) (:open-browser-p boolean))
     string)
@@ -172,4 +192,17 @@
  :model-discovery #'opencode--fetch-models
  :model-discovery-endpoint *opencode-models-endpoint*
  :model-discovery-endpoint-resolver #'opencode-models-endpoint
+ :source ':builtin)
+
+(register-provider
+ "mistral"
+ :description "Mistral AI"
+ :family ':mistral
+ :protocol ':chat-completions
+ :endpoint *mistral-chat-completions-endpoint*
+ :factory #'provider--mistral-registration-factory
+ :authenticator #'provider--mistral-registration-authenticator
+ :model-discovery #'mistral--fetch-models
+ :model-discovery-endpoint *mistral-models-endpoint*
+ :model-discovery-endpoint-resolver #'mistral-models-endpoint
  :source ':builtin)

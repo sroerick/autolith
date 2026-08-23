@@ -146,6 +146,22 @@
     "workspaces:read" "workspaces:write")
   "The OAuth scopes requested for Grok subscription access.")
 
+(defparameter *mistral-chat-completions-endpoint*
+  "https://api.mistral.ai/v1/chat/completions"
+  "The Mistral Chat Completions API endpoint.")
+
+(defparameter *mistral-models-endpoint*
+  "https://api.mistral.ai/v1/models"
+  "The Mistral models endpoint used for discovery and key validation.")
+
+(-> mistral-models-endpoint () string)
+(defun mistral-models-endpoint ()
+  "Return the configured Mistral model discovery endpoint."
+  (let ((override (uiop:getenv "AUTOLITH_MISTRAL_MODELS_ENDPOINT")))
+    (if (non-empty-string-p override)
+        override
+        *mistral-models-endpoint*)))
+
 (defparameter *supported-reasoning-efforts*
   '("none" "low" "medium" "high" "xhigh" "max" "ultra")
   "Reasoning effort names accepted by Autolith configuration.")
@@ -327,8 +343,9 @@ configuration can be created before executable user initialization loads."
 AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
 AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint,
 AUTOLITH_NOUS_PROVIDER_ENDPOINT overrides the Nous family endpoint,
-AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint, and
-AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
+AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint,
+AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint, and
+AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
   (let* ((family (model-family model))
          (override
            (case family
@@ -347,7 +364,9 @@ AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
              (:fireworks
               (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
              (:opencode
-              (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))))
+              (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))
+             (:mistral
+              (uiop:getenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"))))
          (registered
            (and (fboundp 'provider-model-endpoint)
                 (provider-model-endpoint model))))
@@ -364,6 +383,8 @@ AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
            *fireworks-responses-endpoint*)
           (:opencode
            *opencode-chat-completions-endpoint*)
+          (:mistral
+           *mistral-chat-completions-endpoint*)
           (otherwise
            (error 'configuration-error
                   :message

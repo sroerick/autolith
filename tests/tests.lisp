@@ -210,6 +210,7 @@
     (test-nous-provider)
     (test-fireworks-provider)
     (test-opencode-provider)
+    (test-mistral-provider)
     (test-resource-protocol)
     (test-resource-edit-operation-schema)
     (test-workspace-file-resources)
