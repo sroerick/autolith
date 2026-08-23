@@ -64,6 +64,7 @@
     (and (listp value)
          (non-empty-string-p (getf value :name))
          (typep (getf value :argument) '(option string))
+         (typep (getf value :value) '(option string))
          (stringp description)
          (or (null description-spans)
              (and (terminal-styled-text-p description-spans)
@@ -1852,6 +1853,7 @@ removes it."
                  (:hint (option string))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
+                 (:initial-value (option string))
                  (:search-p boolean)
                  (:search-key function)
                  (:resize-callback (option function))
@@ -1860,21 +1862,23 @@ removes it."
 (defun terminal-ui-select
     (ui &key (title "select") items hint
              (visible-count *terminal-ui-visible-completions*)
-             initial-name search-p
+             initial-name initial-value search-p
              (search-key #'terminal-ui--picker-default-search-text)
              resize-callback on-event)
-  "Run a modal picker over ITEMS and return the selected name, or NIL on cancel.
+  "Run a modal picker over ITEMS and return the selected value, or NIL on cancel.
 
-Items follow the completion entry shape. Up and Down move the selection. Tab
-and Shift-Tab cycle it forward and backward, and Enter accepts it. When SEARCH-P
-is true, inserted or pasted text filters candidates, Backspace edits the query,
-and Ctrl-U clears it. Otherwise ordinary input dismisses the picker with the
-selected item. Escape, Ctrl-C, or end of input cancels. Returns NIL immediately
-when ITEMS is empty or the terminal is not interactive.
+Items follow the completion entry shape and may carry a :VALUE distinct from
+:NAME; entries without one return their display name. Up and Down move the
+selection. Tab and Shift-Tab cycle it forward and backward, and Enter accepts
+it. When SEARCH-P is true, inserted or pasted text filters candidates,
+Backspace edits the query, and Ctrl-U clears it. Otherwise ordinary input
+dismisses the picker with the selected item. Escape, Ctrl-C, or end of input
+cancels. Returns NIL immediately when ITEMS is empty or the terminal is not
+interactive.
 
-VISIBLE-COUNT bounds candidate rows, and INITIAL-NAME selects a matching item
-before the first paint. HINT overrides the default picker suffix. SEARCH-KEY
-returns the text searched for each item.
+VISIBLE-COUNT bounds candidate rows. INITIAL-NAME selects a matching display name,
+and INITIAL-VALUE selects an explicit value before the first paint. HINT overrides
+the default picker suffix. SEARCH-KEY returns the text searched for each item.
 
 ON-EVENT, when provided, receives (EVENT SELECTOR) before search and default
 handling and may return:
@@ -1884,6 +1888,7 @@ handling and may return:
   (:CANCEL) - cancel and close the picker
   (:REPLACE TITLE ITEMS) - install a new title and item list, then continue
   (:REPLACE TITLE ITEMS HINT) - same, and replace the hint, including with NIL
+  (:REPLACE TITLE ITEMS HINT VALUE) - same, selecting VALUE when it exists
 
 RESIZE-CALLBACK is queried before each blocking read and immediately after the
 read returns. It returns positive pending rows and columns as a cons, or NIL
@@ -1892,18 +1897,33 @@ when no resize needs to be applied."
     (let ((source-items items)
           (base-title title)
           (search-query ""))
-      (labels ((selected-name ()
-                 "Return the currently selected item name, or NIL."
+      (labels ((selected-value (item)
+                 "Return ITEM's explicit value or its display name."
+                 (or (getf item :value) (getf item :name)))
+
+               (selected-designator ()
+                 "Return the currently selected item's stable designator, or NIL."
                  (let* ((selector (terminal-ui-selector ui))
                         (selection (and selector
                                         (selector-selection selector)))
                         (selected (and selector
                                        (nth selection
                                             (selector-items selector)))))
-                   (and selected (getf selected :name))))
+                   (and selected (selected-value selected))))
+
+               (select-designator (selector designator)
+                 "Move SELECTOR to DESIGNATOR when that candidate exists."
+                 (let ((position
+                         (and designator
+                              (position designator
+                                        (selector-items selector)
+                                        :key #'selected-value
+                                        :test #'string=))))
+                   (when position
+                     (selector-move selector position))))
 
                (select-name (selector name)
-                 "Move SELECTOR to NAME when that candidate exists."
+                 "Move SELECTOR to the first displayed NAME when it exists."
                  (let ((position
                          (and name
                               (position name
@@ -1914,36 +1934,38 @@ when no resize needs to be applied."
                    (when position
                      (selector-move selector position))))
 
-               (install-selector (next-items selected-name)
-                 "Install NEXT-ITEMS, retaining SELECTED-NAME when possible."
+               (install-selector (next-items selected-designator)
+                 "Install NEXT-ITEMS, retaining SELECTED-DESIGNATOR when possible."
                  (let ((selector
                          (make-selector
                           :items next-items
                           :visible-count visible-count
                           :arrangement ':vertical)))
-                   (select-name selector selected-name)
+                   (select-designator selector selected-designator)
                    (setf (terminal-ui-selector ui) selector
                          (terminal-ui-selector-title ui)
-                         (terminal-ui--picker-search-title
-                          base-title search-query (length next-items)))))
+                          (terminal-ui--picker-search-title
+                           base-title search-query (length next-items)))))
 
                (install
                    (next-title next-items
-                    &optional (next-hint nil next-hint-supplied-p))
-                 "Install NEXT-TITLE, NEXT-ITEMS, and optional NEXT-HINT on UI."
+                    &optional (next-hint nil next-hint-supplied-p)
+                              (next-value nil next-value-supplied-p))
+                 "Install NEXT-TITLE, NEXT-ITEMS, optional hint, and selection on UI."
                  (unless (every #'terminal-completion-p next-items)
                    (return nil))
                  (setf source-items next-items
                        base-title next-title
                        search-query "")
-                 (install-selector source-items nil)
+                 (install-selector source-items
+                                   (and next-value-supplied-p next-value))
                  (when next-hint-supplied-p
                    (setf (terminal-ui-selector-hint ui) next-hint))
                  t)
 
                (refresh-search ()
                  "Filter SOURCE-ITEMS through SEARCH-QUERY and preserve selection."
-                 (let* ((selected-name (selected-name))
+                 (let* ((selected-designator (selected-designator))
                         (matches
                           (if (plusp (length search-query))
                               (remove-if-not
@@ -1952,7 +1974,7 @@ when no resize needs to be applied."
                                   entry search-query search-key))
                                source-items)
                               source-items)))
-                   (install-selector matches selected-name)))
+                   (install-selector matches selected-designator)))
 
                (append-search (text)
                  "Append display-safe TEXT to SEARCH-QUERY within its bound."
@@ -2005,8 +2027,10 @@ when no resize needs to be applied."
                 (or hint
                     (and search-p
                          "type searches, backspace edits, enter selects, esc cancels")))
-          (install title items)
-          (select-name (terminal-ui-selector ui) initial-name))
+           (install title items)
+           (if initial-value
+               (select-designator (terminal-ui-selector ui) initial-value)
+               (select-name (terminal-ui-selector ui) initial-name)))
         (unwind-protect
              (loop
                (with-terminal-ui-locked (ui)
@@ -2029,11 +2053,11 @@ when no resize needs to be applied."
                                (terminal-ui-selector ui) event)
                             (case action
                               (:accept
-                               (return (getf item :name)))
+                               (return (selected-value item)))
                               (:cancel
                                (return nil))
                               (:dismiss
-                               (return (getf item :name)))
+                               (return (selected-value item)))
                               (t
                                nil)))))
                        ((eq custom ':continue)
@@ -2054,7 +2078,7 @@ when no resize needs to be applied."
             (setf (terminal-ui-selector ui) nil
                   (terminal-ui-selector-title ui) nil
                   (terminal-ui-selector-hint ui) nil)
-            (terminal-ui--repaint-live ui)))))))
+             (terminal-ui--repaint-live ui)))))))
 
 
 ;;; Semantic prompt blocks

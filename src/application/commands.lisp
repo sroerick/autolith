@@ -499,6 +499,8 @@
          (other-items nil))
     (dolist (pathname (conversation-list configuration))
       (let* ((identifier (pathname-name pathname))
+             (identifier-display
+               (conversation-identifier-display identifier))
              (header (conversation-peek-header pathname))
              (directory (getf (rest header) :directory))
              (current-directory-p
@@ -506,6 +508,8 @@
                 directory
                 current-directory))
              (metadata (conversation-picker-metadata-find pathname))
+             (title (and metadata
+                         (conversation-picker-metadata-title metadata)))
              (preview
                (and metadata
                     (application--conversation-preview-from-metadata metadata))))
@@ -516,17 +520,31 @@
                              (application--abbreviated-directory directory))
              :current-p (string= identifier current-identifier)
              :preview preview)
-          (let ((item
-                  (list :name (conversation-identifier-display identifier)
-                        :argument nil
-                        :group (if current-directory-p
-                                   current-group
-                                   "other sessions")
-                        :tally (if metadata
-                                (application--conversation-metadata-tally metadata)
-                                "0 turns")
-                        :description description
-                        :description-spans description-spans)))
+          (let* ((titled-p (and title
+                                (not (string= title identifier-display))))
+                 (item-description
+                   (if titled-p
+                       (format nil "~A · ~A" identifier-display description)
+                       description))
+                 (item-description-spans
+                   (if titled-p
+                       (append
+                        (list (terminal-span ':code
+                                             (format nil "~A · " identifier-display)))
+                        description-spans)
+                       description-spans))
+                 (item
+                   (list :name (or title identifier-display)
+                         :value identifier
+                         :argument nil
+                         :group (if current-directory-p
+                                    current-group
+                                    "other sessions")
+                         :tally (if metadata
+                                    (application--conversation-metadata-tally metadata)
+                                    "0 turns")
+                         :description item-description
+                         :description-spans item-description-spans)))
             (if current-directory-p
                 (push item current-items)
                 (push item other-items))))))
@@ -1021,6 +1039,7 @@ Return true only when the objective was rewritten."
                  (:empty-notice string) (:hint (option string))
                  (:visible-count (integer 1))
                  (:initial-name (option string))
+                 (:initial-value (option string))
                  (:search-p boolean) (:search-key function)
                  (:on-event (option function)))
     (option string))
@@ -1028,15 +1047,15 @@ Return true only when the objective was rewritten."
     (application &key (title "select") items (usage "") (empty-notice "")
                       hint
                       (visible-count *terminal-ui-visible-completions*)
-                      initial-name search-p
+                      initial-name initial-value search-p
                       (search-key #'terminal-ui--picker-default-search-text)
                       on-event)
   "Pick one identifier from ITEMS interactively, or explain why none was picked.
 
 Signals a usage error on non-interactive terminals, presents EMPTY-NOTICE
 when ITEMS is empty, and returns NIL when the picker is cancelled. HINT,
-VISIBLE-COUNT, INITIAL-NAME, SEARCH-P, SEARCH-KEY, and ON-EVENT are forwarded
-to TERMINAL-UI-SELECT."
+VISIBLE-COUNT, INITIAL-NAME, INITIAL-VALUE, SEARCH-P, SEARCH-KEY, and ON-EVENT
+are forwarded to TERMINAL-UI-SELECT."
   (block nil
     (let ((ui (application-ui application)))
       (unless (terminal-interactive-p (terminal-ui-terminal ui))
@@ -1053,6 +1072,7 @@ to TERMINAL-UI-SELECT."
                   :hint hint
                   :visible-count visible-count
                   :initial-name initial-name
+                  :initial-value initial-value
                   :search-p search-p
                   :search-key search-key
                   :on-event on-event
@@ -1085,10 +1105,9 @@ to TERMINAL-UI-SELECT."
          (mode ':browse)
          (pending nil)
          (browse-items (application--conversation-items application))
-         (current-display
-           (conversation-identifier-display
-            (conversation-identifier
-             (application-conversation application)))))
+         (current-identifier
+           (conversation-identifier
+            (application-conversation application))))
     (labels ((refresh-items ()
                "Reload browse items from disk."
                (setf browse-items
@@ -1111,10 +1130,11 @@ to TERMINAL-UI-SELECT."
                     (= (length (second event)) 1)
                     (char-equal (char (second event) 0) character)))
 
-             (browse-action ()
+             (browse-action (&optional selected-value)
                "Return the picker action that restores the browse list."
                (if browse-items
-                   (list ':replace browse-title browse-items browse-hint)
+                   (list ':replace browse-title browse-items browse-hint
+                         selected-value)
                    (list ':cancel)))
 
              (on-event (event selector)
@@ -1127,7 +1147,7 @@ to TERMINAL-UI-SELECT."
                        (cond
                          ((null item)
                           ':continue)
-                         ((string= (getf item :name) current-display)
+                         ((string= (getf item :value) current-identifier)
                           (application-present
                            application
                            "Cannot delete the active conversation.")
@@ -1145,14 +1165,16 @@ to TERMINAL-UI-SELECT."
                  (:confirm
                   (cond
                     ((eq event ':escape)
-                     (setf mode ':browse
-                           pending nil)
-                     (browse-action))
+                     (let ((selected-value (and pending (getf pending :value))))
+                       (setf mode ':browse
+                             pending nil)
+                       (browse-action selected-value)))
                     ((member event '(:interrupt :end-of-input :stream-end)
                              :test #'eq)
                      (list ':cancel))
                     ((eq event ':submit)
-                     (let ((choice (selected-item selector)))
+                     (let ((choice (selected-item selector))
+                           (selected-value (and pending (getf pending :value))))
                        (cond
                          ((and choice
                                (string= (getf choice :name) "delete")
@@ -1161,7 +1183,7 @@ to TERMINAL-UI-SELECT."
                               (progn
                                 (conversation-delete
                                  (application-configuration application)
-                                 (getf pending :name))
+                                 (getf pending :value))
                                 (application-present
                                  application
                                  (format nil "Deleted conversation ~A."
@@ -1174,15 +1196,16 @@ to TERMINAL-UI-SELECT."
                               (refresh-items)))
                           (setf mode ':browse
                                 pending nil)
-                          (browse-action))
+                          (browse-action selected-value))
                          (t
                           (setf mode ':browse
                                 pending nil)
-                          (browse-action)))))
+                          (browse-action selected-value)))))
                     ((and (listp event) (eq (first event) ':insert))
-                     (setf mode ':browse
-                           pending nil)
-                     (browse-action))
+                     (let ((selected-value (and pending (getf pending :value))))
+                       (setf mode ':browse
+                             pending nil)
+                       (browse-action selected-value)))
                     (t
                      nil))))))
       (application--pick-identifier
@@ -1190,6 +1213,7 @@ to TERMINAL-UI-SELECT."
        :title browse-title
        :items browse-items
        :hint browse-hint
+       :initial-value current-identifier
        :on-event #'on-event
        :usage "Usage: /resume ID"
        :empty-notice "No saved conversations exist."))))

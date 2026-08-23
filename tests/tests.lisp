@@ -169,6 +169,7 @@
     (test-conversation-private-storage)
     (test-conversation-origin-directory)
     (test-conversation-model-selection)
+    (test-conversation-titles)
     (test-conversation-cross-family-reasoning)
     (test-conversation-compaction)
     (test-conversation-native-compaction)

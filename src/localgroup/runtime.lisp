@@ -322,6 +322,7 @@
             :conversation-id (conversation-identifier conversation)
             :conversation-display-id
             (conversation-identifier-display (conversation-identifier conversation))
+            :conversation-title (conversation-title conversation)
             :conversation-persisted-p
             (not (null (conversation-persisted-p conversation)))
             :model (configuration-model configuration)

@@ -172,7 +172,8 @@
              "unknown")))
       (:state (localgroup--status-state-text status))
       (:started (localgroup--status-started-text status))
-      (:conversation (getf values :conversation-display-id))
+      (:conversation (or (getf values :conversation-title)
+                         (getf values :conversation-display-id)))
       (:activity (localgroup--status-activity-text status))
       (:workspace (getf values :cwd)))))
 
@@ -184,7 +185,8 @@
     (:pid ':code)
     (:state (localgroup--status-state-style status))
     (:started ':timestamp-time)
-    (:conversation ':code)
+    (:conversation
+     (if (getf (rest status) :conversation-title) ':plain ':code))
     (:activity ':dim)
     (:workspace ':plain)))
 
@@ -194,11 +196,11 @@
   (cond ((>= columns 100)
          '(:session :pid :state :started :conversation :activity :workspace))
         ((>= columns 76)
-         '(:session :pid :state :started :activity :workspace))
+         '(:session :state :started :conversation :workspace))
         ((>= columns 52)
-         '(:session :state :activity :workspace))
+         '(:session :state :conversation :workspace))
         ((>= columns 36)
-         '(:session :state :workspace))
+         '(:session :conversation :workspace))
         (t nil)))
 
 (-> localgroup--status-field-minimum-width (keyword) integer)
@@ -325,7 +327,8 @@ HEADER-P renders field labels rather than status values."
          (detail
            (format nil "~A  ~A"
                    (localgroup--status-field-text status ':started)
-                   (localgroup--status-field-text status ':activity))))
+                   (localgroup--status-field-text status ':activity)))
+         (conversation (localgroup--status-field-text status ':conversation)))
     (append
      (list (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
            (terminal-span ':code (layout-fit-text identifier session-width))
@@ -336,6 +339,11 @@ HEADER-P renders field labels rather than status values."
            (terminal-span ':plain (string #\Newline))
            (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
            (terminal-span ':timestamp-time (layout-fit-text detail inner-width))
+           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
+           (terminal-span ':plain (string #\Newline))
+           (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
+           (terminal-span (localgroup--status-field-style status ':conversation)
+                          (layout-fit-text conversation inner-width))
            (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))
            (terminal-span ':plain (string #\Newline))
            (terminal-span ':dim (string #\Box_Drawings_Light_Vertical))

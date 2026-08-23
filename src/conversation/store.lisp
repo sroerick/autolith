@@ -6,6 +6,136 @@
 (defgeneric resource-observation-state-weight (alias state)
   (:documentation "Return STATE's retained byte weight under opaque ALIAS."))
 
+(defparameter *conversation-title-maximum-characters* 64
+  "The maximum number of characters retained in one session title.")
+
+(defparameter *conversation-title-refresh-turn-count* 3
+  "The durable user-turn count after which the initial session title is refreshed.")
+
+(defparameter *conversation-title-context-maximum-characters* 12000
+  "The maximum transcript characters supplied to automatic title generation.")
+
+(defparameter *conversation-title-generation-output-tokens* 64
+  "The provider output-token ceiling for one automatic title request.")
+
+(defparameter *conversation-title-generation-minimum-words* 3
+  "The minimum accepted word count for one generated session title.")
+
+(defparameter *conversation-title-generation-maximum-words* 8
+  "The maximum accepted word count for one generated session title.")
+
+(defparameter *conversation-title-generation-rejected-prefixes*
+  '("here is " "here's " "i cannot " "i can't " "sorry " "the title " "title:")
+  "Lowercase explanatory prefixes rejected from generated session titles.")
+
+(-> conversation-title--collapse-whitespace (string) string)
+(defun conversation-title--collapse-whitespace (text)
+  "Return TEXT with control characters removed and whitespace collapsed."
+  (with-output-to-string (stream)
+    (loop with pending-space-p = nil
+          with wrote-p = nil
+          for character across text
+          do (cond
+               ((member character '(#\Space #\Tab #\Newline #\Return))
+                (when wrote-p
+                  (setf pending-space-p t)))
+               ((graphic-char-p character)
+                (when pending-space-p
+                  (write-char #\Space stream))
+                (write-char character stream)
+                (setf pending-space-p nil
+                      wrote-p t))))))
+
+(-> conversation-title--truncate (non-empty-string) non-empty-string)
+(defun conversation-title--truncate (title)
+  "Return TITLE bounded to the configured title length at a word boundary."
+  (if (<= (length title) *conversation-title-maximum-characters*)
+      title
+      (let* ((limit (1- *conversation-title-maximum-characters*))
+             (boundary (position #\Space title :end limit :from-end t))
+             (end (if (and boundary (>= boundary 16)) boundary limit)))
+        (concatenate 'string
+                     (string-right-trim '(#\Space) (subseq title 0 end))
+                     "…"))))
+
+(-> conversation-title-normalize (string) (option non-empty-string))
+(defun conversation-title-normalize (text)
+  "Return display-safe bounded session title TEXT, or NIL when it is empty."
+  (let* ((collapsed (conversation-title--collapse-whitespace text))
+         (trimmed
+           (string-trim '(#\Space #\" #\' #\`)
+                        collapsed))
+         (without-leading-markup
+           (string-left-trim '(#\Space #\# #\* #\_ #\> #\-)
+                             trimmed))
+         (without-label
+           (if (and (>= (length without-leading-markup) 6)
+                    (string-equal "title:" without-leading-markup :end2 6))
+               (subseq without-leading-markup 6)
+               without-leading-markup))
+         (clean
+           (string-right-trim
+            '(#\Space #\. #\, #\: #\; #\! #\? #\- #\* #\_)
+            (string-left-trim '(#\Space #\# #\* #\_ #\> #\-)
+                              without-label))))
+    (when (plusp (length clean))
+      (let ((title (copy-seq (conversation-title--truncate clean))))
+        (when (lower-case-p (char title 0))
+          (setf (char title 0) (char-upcase (char title 0))))
+        title))))
+
+(-> conversation-title-generated-normalize (string) (option non-empty-string))
+(defun conversation-title-generated-normalize (text)
+  "Return TEXT as a valid generated title, or NIL when its shape is unsuitable."
+  (let* ((collapsed (conversation-title--collapse-whitespace text))
+         (lowercase (string-downcase collapsed))
+         (normalized (conversation-title-normalize text))
+         (words
+           (remove ""
+                   (uiop:split-string collapsed
+                                      :separator '(#\Space #\Tab #\Newline #\Return))
+                   :test #'string=)))
+    (when (and normalized
+               (<= (length collapsed) *conversation-title-maximum-characters*)
+               (<= *conversation-title-generation-minimum-words*
+                   (length words)
+                   *conversation-title-generation-maximum-words*)
+               (not (find-if
+                     (lambda (character)
+                       (member character
+                               '(#\Newline #\Return #\" #\` #\{ #\} #\[ #\])))
+                     text))
+               (not (and (plusp (length collapsed))
+                         (member (char collapsed 0) '(#\# #\* #\>))))
+               (not (some (lambda (prefix)
+                            (uiop:string-prefix-p prefix lowercase))
+                          *conversation-title-generation-rejected-prefixes*)))
+      normalized)))
+
+(-> conversation-title-derive (string) (option non-empty-string))
+(defun conversation-title-derive (prompt)
+  "Derive an immediate session title from the leading sentence of PROMPT."
+  (let* ((collapsed (conversation-title--collapse-whitespace prompt))
+         (boundary
+           (position-if
+            (lambda (character)
+              (member character '(#\. #\! #\?)))
+            collapsed))
+         (candidate
+           (if (and boundary (>= boundary 8))
+               (subseq collapsed 0 boundary)
+               collapsed)))
+    (conversation-title-normalize candidate)))
+
+(-> conversation-title-valid-p (t) boolean)
+(defun conversation-title-valid-p (value)
+  "Return true when VALUE is already a normalized bounded session title."
+  (and (non-empty-string-p value)
+       (<= (length value) *conversation-title-maximum-characters*)
+       (let ((normalized (conversation-title-normalize value)))
+         (and normalized (string= value normalized)))
+       t))
+
 (defclass conversation ()
   ((identifier
     :initarg :identifier
@@ -60,6 +190,23 @@
     :reader conversation-origin-directory
     :type (option string)
     :documentation "The workspace directory in which this conversation began.")
+   (title
+    :initarg :title
+    :initform nil
+    :accessor conversation-title
+    :type (option non-empty-string)
+    :documentation "The current human-readable session title.")
+   (title-source
+    :initarg :title-source
+    :initform nil
+    :accessor conversation-title-source
+    :type (member nil :initial :generated)
+    :documentation "Whether the title came from the initial prompt or a later model pass.")
+   (title-refresh-in-progress-p
+    :initform nil
+    :accessor conversation-title-refresh-in-progress-p
+    :type boolean
+    :documentation "Whether this object has reserved the automatic generated-title request.")
    (model
     :initarg :model
     :initform nil
@@ -240,6 +387,12 @@ discarded items are pruned here rather than retained for the session."
     :reader conversation-picker-metadata-user-turn-count
     :type (integer 0)
     :documentation "The count of durable user-message records.")
+   (title
+    :initarg :title
+    :initform nil
+    :reader conversation-picker-metadata-title
+    :type (option non-empty-string)
+    :documentation "The current human-readable session title.")
    (search-message-count
     :initarg :search-message-count
     :reader conversation-picker-metadata-search-message-count
@@ -450,10 +603,11 @@ reports an operating-system failure."
     (record &key (working-seconds 0) (user-turn-count 0) last-activity-at)
   "Return activity values after applying durable RECORD to a picker summary."
   (let ((time (and (consp record) (getf (rest record) :time)))
-        (user-message-p
-          (and (consp record)
-               (eq (first record) ':message)
-               (eq (getf (rest record) :role) ':user))))
+         (user-message-p
+           (and (consp record)
+                (eq (first record) ':message)
+                (eq (getf (rest record) :role) ':user)
+                (not (getf (rest record) :automatic-p)))))
     (when (typep time 'timestamp)
       (when (and last-activity-at
                  (not user-message-p)
@@ -486,11 +640,12 @@ reports an operating-system failure."
 (defun conversation--record-preview (record)
   "Return the user or assistant text represented by durable RECORD."
   (case (first record)
-    (:message
-     (let ((content (getf (rest record) :content)))
-       (when (and (eq (getf (rest record) :role) ':user)
-                  (stringp content))
-         content)))
+      (:message
+       (let ((content (getf (rest record) :content)))
+         (when (and (eq (getf (rest record) :role) ':user)
+                    (not (getf (rest record) :automatic-p))
+                    (stringp content))
+           content)))
     (:provider-item
      (let ((wire-json (getf (rest record) :wire-json)))
        ;; Only assistant messages yield previews, and their locally
@@ -556,6 +711,8 @@ reports an operating-system failure."
         :created-at (conversation-created-at conversation)
         :directory (conversation-origin-directory conversation)
         :prompt-cache-key (conversation-prompt-cache-key conversation)
+        :title (conversation-title conversation)
+        :title-source (conversation-title-source conversation)
         :model (conversation-model conversation)
         :reasoning-effort (conversation-reasoning-effort conversation)
         :chunk-start-sequence chunk-start-sequence
@@ -722,7 +879,7 @@ reports an operating-system failure."
 (defun conversation-picker-metadata-record (metadata)
   "Return METADATA as one portable atomically published picker-cache form."
   (list :conversation-picker-metadata
-        :version 2
+        :version 3
         :source-segment
         (conversation-picker-metadata-source-segment metadata)
         :source-size (conversation-picker-metadata-source-size metadata)
@@ -731,6 +888,7 @@ reports an operating-system failure."
         :source-revision (conversation-picker-metadata-source-revision metadata)
         :working-seconds (conversation-picker-metadata-working-seconds metadata)
         :user-turn-count (conversation-picker-metadata-user-turn-count metadata)
+        :title (conversation-picker-metadata-title metadata)
         :search-message-count
         (conversation-picker-metadata-search-message-count metadata)
         :preview (conversation-picker-metadata-preview metadata)
@@ -744,13 +902,14 @@ reports an operating-system failure."
   (handler-case
       (when (and (conversation--record-form-p record)
                  (eq (first record) :conversation-picker-metadata)
-                 (= (or (getf (rest record) :version) 0) 2))
+                 (= (or (getf (rest record) :version) 0) 3))
         (let ((source-segment (getf (rest record) :source-segment))
               (source-size (getf (rest record) :source-size))
               (source-write-date (getf (rest record) :source-write-date))
               (source-revision (getf (rest record) :source-revision))
               (working-seconds (getf (rest record) :working-seconds))
               (user-turn-count (getf (rest record) :user-turn-count))
+              (title (getf (rest record) :title))
               (search-message-count (getf (rest record) :search-message-count))
               (preview (getf (rest record) :preview))
               (incomplete-tail-p (getf (rest record) :incomplete-tail-p)))
@@ -760,6 +919,7 @@ reports an operating-system failure."
                      (typep source-revision '(integer 0))
                      (typep working-seconds '(integer 0))
                      (typep user-turn-count '(integer 0))
+                     (or (null title) (conversation-title-valid-p title))
                      (typep search-message-count '(integer 0))
                      (or (null preview) (stringp preview))
                      (typep incomplete-tail-p 'boolean))
@@ -770,6 +930,7 @@ reports an operating-system failure."
                            :source-revision source-revision
                            :working-seconds working-seconds
                            :user-turn-count user-turn-count
+                           :title title
                            :search-message-count search-message-count
                            :preview preview
                            :incomplete-tail-p incomplete-tail-p))))
@@ -828,19 +989,22 @@ reports an operating-system failure."
       (conversation-picker-metadata-write
        (conversation-pathname conversation)
        (make-instance 'conversation-picker-metadata
-                      :source-segment segment
-                      :source-size size
-                      :source-write-date write-date
-                      :source-revision
-                      (conversation-picker-revision-read
-                       (conversation-pathname conversation))
-                      :working-seconds (conversation-working-seconds conversation)
-                      :user-turn-count (conversation-user-turn-count conversation)
-                      :search-message-count
-                      (conversation-picker-search-message-count conversation)
-                      :preview (conversation-picker-preview conversation)
-                      :incomplete-tail-p
-                      (conversation-incomplete-tail-p conversation)))))
+                       :source-segment       segment
+                       :source-size          size
+                       :source-write-date    write-date
+                       :source-revision
+                       (conversation-picker-revision-read
+                        (conversation-pathname conversation))
+                       :working-seconds
+                       (conversation-working-seconds conversation)
+                       :user-turn-count
+                       (conversation-user-turn-count conversation)
+                       :title                (conversation-title conversation)
+                       :search-message-count
+                       (conversation-picker-search-message-count conversation)
+                       :preview              (conversation-picker-preview conversation)
+                       :incomplete-tail-p
+                       (conversation-incomplete-tail-p conversation)))))
   nil)
 
 
@@ -1098,6 +1262,114 @@ reports an operating-system failure."
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-picker-metadata-publish conversation)
       sequenced)))
+
+(-> conversation-title-refresh-due-p (conversation) boolean)
+(defun conversation-title-refresh-due-p (conversation)
+  "Return true when CONVERSATION needs its one automatic generated title."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (and (conversation-persisted-p conversation)
+         (>= (conversation-user-turn-count conversation)
+             *conversation-title-refresh-turn-count*)
+         (not (eq (conversation-title-source conversation) ':generated))
+         t)))
+
+(-> conversation-title-refresh-reserve-p (conversation) boolean)
+(defun conversation-title-refresh-reserve-p (conversation)
+  "Atomically reserve CONVERSATION's one automatic generated-title request."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (and (conversation-title-refresh-due-p conversation)
+         (not (conversation-title-refresh-in-progress-p conversation))
+         (progn
+           (setf (conversation-title-refresh-in-progress-p conversation) t)
+           t))))
+
+(-> conversation-title-refresh-release (conversation) null)
+(defun conversation-title-refresh-release (conversation)
+  "Release CONVERSATION's automatic generated-title request reservation."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (setf (conversation-title-refresh-in-progress-p conversation) nil))
+  nil)
+
+(-> conversation--published-title-record-p
+    (conversation (integer 1) non-empty-string keyword)
+    boolean)
+(defun conversation--published-title-record-p
+    (conversation sequence title source)
+  "Return true when CONVERSATION's active log ends with the expected title record."
+  (handler-case
+      (multiple-value-bind (forms incomplete-tail-p)
+          (log-read (conversation-log-pathname conversation))
+        (let ((record (and forms (first (last forms)))))
+          (and (not incomplete-tail-p)
+               (listp record)
+               (eq (first record) ':title)
+               (= (or (getf (rest record) :seq) 0) sequence)
+               (string= (or (getf (rest record) :value) "") title)
+               (eq (getf (rest record) :source) source)
+               t)))
+    (error ()
+      nil)))
+
+(-> conversation--title-transition-valid-p (t keyword) boolean)
+(defun conversation--title-transition-valid-p (current-source next-source)
+  "Return true when NEXT-SOURCE may durably follow CURRENT-SOURCE."
+  (or (and (null current-source)
+           (member next-source '(:initial :generated))
+           t)
+      (and (eq current-source ':initial)
+           (eq next-source ':generated)
+           t)))
+
+(-> conversation-set-title
+    (conversation string &key (:source keyword))
+    non-empty-string)
+(defun conversation-set-title (conversation title &key (source ':generated))
+  "Normalize and durably replace CONVERSATION's title from SOURCE."
+  (let ((normalized (conversation-title-normalize title)))
+    (unless normalized
+      (error 'conversation-invariant-error
+             :message "A conversation title must contain displayable text."
+             :pathname (conversation-pathname conversation)
+             :sequence (conversation-next-sequence conversation)))
+    (unless (member source '(:initial :generated))
+      (error 'conversation-invariant-error
+             :message "A conversation title has an unsupported source."
+             :pathname (conversation-pathname conversation)
+             :sequence (conversation-next-sequence conversation)))
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (let ((current-title (conversation-title conversation))
+            (current-source (conversation-title-source conversation)))
+        (when (and (eq source ':generated)
+                   (eq current-source ':generated))
+          (return-from conversation-set-title current-title))
+        (when (and (string= normalized (or current-title ""))
+                   (eq source current-source))
+          (return-from conversation-set-title normalized))
+        (unless (conversation--title-transition-valid-p current-source source)
+          (error 'conversation-invariant-error
+                 :message "A conversation title has an invalid source transition."
+                 :pathname (conversation-pathname conversation)
+                 :sequence (conversation-next-sequence conversation)))
+        (let ((sequence (conversation-next-sequence conversation)))
+          (setf (conversation-title conversation) normalized
+                (conversation-title-source conversation) source)
+          (handler-case
+              (conversation-append-record
+               conversation
+               (list :title :value normalized :source source))
+            (error (condition)
+              (if (conversation--published-title-record-p
+                   conversation sequence normalized source)
+                  (progn
+                    (setf (conversation-next-sequence conversation) (1+ sequence)
+                          (conversation-incomplete-tail-p conversation) nil)
+                    (ignore-errors
+                      (conversation-picker-metadata-publish conversation)))
+                  (progn
+                    (setf (conversation-title conversation) current-title
+                          (conversation-title-source conversation) current-source)
+                    (error condition))))))))
+    normalized))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
 (defun conversation--append-input-item (conversation item)
@@ -1463,10 +1735,11 @@ copied."
 
 (-> conversation-append-user-message
     (conversation (or string user-message-input)
-     &key (:pending-input-identifier (option non-empty-string)))
+     &key (:pending-input-identifier (option non-empty-string))
+          (:automatic-p boolean))
     (values json-object list))
 (defun conversation-append-user-message
-    (conversation input &key pending-input-identifier)
+    (conversation input &key pending-input-identifier automatic-p)
   "Persist user INPUT and return its provider item and sequenced record."
   (when (and (stringp input)
              (not (non-empty-string-p input)))
@@ -1477,32 +1750,47 @@ copied."
            (conversation--prepare-images
             conversation
             (user-message-input-image-pathnames input)))
-         (item (user-message-item content attachments))
-         (record nil)
-         (durable-p nil))
-    (unwind-protect
-         (progn
-           (setf record
-                  (conversation-append-record
-                   conversation
-                   (append
-                    (list :message
-                          :role :user
-                          :content content)
-                    (when pending-input-identifier
-                      (list :pending-input-identifier
-                            (copy-seq pending-input-identifier)))
-                    (when attachments
-                      (list :images
-                            (mapcar #'image-attachment-record attachments)))
-                    (unless attachments
-                      (list :wire-json (json-encode item))))))
-           (setf durable-p t
-                 (conversation-turn-state conversation) nil)
-           (values (conversation--append-input-item conversation item)
-                   record))
-      (unless durable-p
-        (conversation--delete-image-attachments attachments)))))
+         (item (user-message-item content attachments)))
+    (with-recursive-lock-held ((conversation-append-lock conversation))
+      (let* ((initial-title
+               (and (not automatic-p)
+                    (zerop (conversation-user-turn-count conversation))
+                    (null (conversation-title conversation))
+                    (conversation-title-derive content)))
+             (previous-title (conversation-title conversation))
+             (previous-title-source (conversation-title-source conversation))
+             (record nil)
+             (durable-p nil))
+        (when initial-title
+          (setf (conversation-title conversation) initial-title
+                (conversation-title-source conversation) ':initial))
+        (unwind-protect
+             (progn
+               (setf record
+                     (conversation-append-record
+                      conversation
+                      (append
+                       (list :message
+                             :role :user
+                             :content content)
+                       (when automatic-p
+                         (list :automatic-p t))
+                       (when pending-input-identifier
+                         (list :pending-input-identifier
+                               (copy-seq pending-input-identifier)))
+                       (when attachments
+                         (list :images
+                               (mapcar #'image-attachment-record attachments)))
+                       (unless attachments
+                         (list :wire-json (json-encode item))))))
+               (setf durable-p t
+                     (conversation-turn-state conversation) nil)
+               (values (conversation--append-input-item conversation item)
+                       record))
+          (unless durable-p
+            (setf (conversation-title conversation) previous-title
+                  (conversation-title-source conversation) previous-title-source)
+            (conversation--delete-image-attachments attachments)))))))
 
 (-> conversation-append-provider-item
     (conversation json-object
@@ -2092,6 +2380,10 @@ record count."
   "Scan PATHNAME's segments once to create exact resume-picker metadata."
   (let ((working-seconds 0)
         (user-turn-count 0)
+         (title
+           (let* ((header (ignore-errors (conversation-peek-header pathname)))
+                  (candidate (and header (getf (rest header) :title))))
+             (and (conversation-title-valid-p candidate) candidate)))
         (search-message-count 0)
         (last-activity-at nil)
         (preview nil))
@@ -2111,6 +2403,24 @@ record count."
                       :working-seconds working-seconds
                       :user-turn-count user-turn-count
                       :last-activity-at last-activity-at))
+                   (case (first record)
+                     (:conversation
+                      (let ((candidate (getf (rest record) :title)))
+                        (when (conversation-title-valid-p candidate)
+                          (setf title candidate))))
+                     (:message
+                      (when (and (null title)
+                                 (= user-turn-count 1)
+                                 (eq (getf (rest record) :role) ':user)
+                                 (not (getf (rest record) :automatic-p))
+                                 (stringp (getf (rest record) :content)))
+                        (setf title
+                              (conversation-title-derive
+                               (getf (rest record) :content)))))
+                     (:title
+                      (let ((candidate (getf (rest record) :value)))
+                        (when (conversation-title-valid-p candidate)
+                          (setf title candidate)))))
                    (let ((record-preview
                            (conversation--record-preview record)))
                      (when record-preview
@@ -2132,6 +2442,7 @@ record count."
                                    :source-revision initial-revision
                                    :working-seconds working-seconds
                                    :user-turn-count user-turn-count
+                                   :title title
                                    :search-message-count search-message-count
                                    :preview preview
                                    :incomplete-tail-p incomplete-tail-p)))))))
@@ -2310,16 +2621,38 @@ later picker searches read it without scanning the log."
 
 (defmethod conversation--project-record
     ((kind (eql :message)) conversation properties)
-  (let ((images (getf properties :images)))
+  (let ((content (getf properties :content))
+        (images (getf properties :images)))
+    (when (and (null (conversation-title conversation))
+               (= (conversation-user-turn-count conversation) 1)
+               (eq (getf properties :role) ':user)
+               (not (getf properties :automatic-p))
+               (stringp content))
+      (let ((title (conversation-title-derive content)))
+        (when title
+          (setf (conversation-title conversation) title
+                (conversation-title-source conversation) ':initial))))
     (when images
-      (let* ((content (getf properties :content))
-             (attachments (conversation--record-images conversation images)))
+      (let ((attachments (conversation--record-images conversation images)))
         (unless (stringp content)
           (conversation--record-error
            conversation properties
            "A persisted image message has invalid text content."))
         (conversation--append-input-item
          conversation (user-message-item content attachments))))))
+
+(defmethod conversation--project-record
+    ((kind (eql :title)) conversation properties)
+  (let ((title (getf properties :value))
+        (source (getf properties :source)))
+    (unless (and (conversation-title-valid-p title)
+                 (member source '(:initial :generated))
+                 (conversation--title-transition-valid-p
+                  (conversation-title-source conversation) source))
+      (conversation--record-error
+       conversation properties "A persisted conversation title is invalid."))
+    (setf (conversation-title conversation) (copy-seq title)
+          (conversation-title-source conversation) source)))
 
 (defmethod conversation--project-record
     ((kind (eql :tool-result)) conversation properties)
@@ -2578,6 +2911,8 @@ later picker searches read it without scanning the log."
            (identifier (getf properties :id))
            (identity-identifier (pathname-name identity))
            (directory (getf properties :directory))
+           (title (and (= version 2) (getf properties :title)))
+           (title-source (and (= version 2) (getf properties :title-source)))
            (model (getf properties :model))
            (reasoning-effort (getf properties :reasoning-effort))
            (prompt-cache-key (getf properties :prompt-cache-key))
@@ -2614,6 +2949,10 @@ later picker searches read it without scanning the log."
            (latest-goal-record
              (and (= version 2)
                   (getf properties :latest-goal-record))))
+      (unless (or (and (null title) (null title-source))
+                  (and (conversation-title-valid-p title)
+                       (member title-source '(:initial :generated))))
+        (invalid "The conversation header has an invalid title."))
       (unless (and (stringp identity-identifier)
                    (string= identifier identity-identifier))
         (invalid
@@ -2659,6 +2998,8 @@ later picker searches read it without scanning the log."
                              :created-at (getf properties :created-at)
                              :origin-directory
                              (and (stringp directory) directory)
+                             :title (and title (copy-seq title))
+                             :title-source title-source
                              :model (and (non-empty-string-p model) model)
                              :reasoning-effort
                              (and (non-empty-string-p reasoning-effort)

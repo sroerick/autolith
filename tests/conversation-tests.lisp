@@ -2419,6 +2419,224 @@ assistant needle"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-conversation-titles () null)
+(defun test-conversation-titles ()
+  "Test initial prompt titles, generated replacements, picker caches, and replay."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let ((conversation
+                 (conversation-create configuration :identifier "titles")))
+           (test-assert
+            (string= (conversation-title-derive
+                      "add titles to autolith sessions. Make them automatic.")
+                     "Add titles to autolith sessions")
+            "initial titles use the leading prompt sentence")
+           (test-assert
+            (and (string= (conversation-title-normalize "# Title: automatic session titles")
+                          "Automatic session titles")
+                 (string= (conversation-title-normalize "**Title:** automatic session titles")
+                          "Automatic session titles")
+                 (null (conversation-title-normalize "**Title:**")))
+            "title normalization removes combined labels and lightweight markup")
+           (dolist (case
+                    '(("automatic session titles." "Automatic session titles")
+                      ("Title" nil)
+                      ("one two three four five six seven eight nine" nil)
+                      ("{\"title\":\"Automatic session titles\"}" nil)
+                      ("# Automatic session titles" nil)
+                      ("Title: Automatic session titles" nil)
+                      ("Here is your automatic session title" nil)
+                      ("Automatic\nsession titles" nil)))
+             (destructuring-bind (input expected) case
+               (test-assert
+                (equal (conversation-title-generated-normalize input) expected)
+                (format nil "generated title validation maps ~S to ~S"
+                        input expected))))
+           (conversation-append-user-message
+            conversation
+            "add titles to autolith sessions. Make them automatic.")
+           (test-assert
+            (and (string= (conversation-title conversation)
+                          "Add titles to autolith sessions")
+                 (eq (conversation-title-source conversation) ':initial))
+            "the first user prompt immediately names a conversation")
+           (let* ((pathname (conversation-pathname conversation))
+                  (header (conversation-peek-header pathname))
+                  (metadata (conversation-picker-metadata-read pathname)))
+             (test-assert
+              (string= (getf (rest header) :title)
+                       "Add titles to autolith sessions")
+              "the initial title is published in the first chunk header")
+             (test-assert
+              (and metadata
+                   (string= (conversation-picker-metadata-title metadata)
+                            "Add titles to autolith sessions"))
+              "picker metadata publishes the initial title"))
+           (test-assert
+            (not (conversation-title-refresh-due-p conversation))
+            "one user turn does not request a generated title")
+           (conversation-append-user-message conversation "show it in resume lists")
+           (test-assert
+            (not (conversation-title-refresh-due-p conversation))
+            "two user turns retain the initial title")
+           (conversation-append-user-message conversation "persist the better title")
+           (test-assert
+            (conversation-title-refresh-due-p conversation)
+            "three user turns request the generated title")
+           (conversation-set-title conversation
+                                   "automatic session titles!"
+                                   :source ':generated)
+           (test-assert
+            (and (string= (conversation-title conversation)
+                          "Automatic session titles")
+                 (eq (conversation-title-source conversation) ':generated)
+                 (not (conversation-title-refresh-due-p conversation)))
+            "a generated title replaces the initial title once")
+           (let ((next-sequence (conversation-next-sequence conversation)))
+             (conversation-set-title conversation
+                                     "a second generated title"
+                                     :source ':generated)
+             (test-assert
+              (and (= (conversation-next-sequence conversation) next-sequence)
+                   (string= (conversation-title conversation)
+                            "Automatic session titles"))
+              "a generated title cannot be replaced automatically a second time"))
+           (test-assert
+            (handler-case
+                (progn
+                  (conversation-set-title conversation
+                                          "restored initial title"
+                                          :source ':initial)
+                  nil)
+              (conversation-invariant-error ()
+                t))
+            "a generated title cannot transition back to an initial title")
+           (let ((metadata
+                   (conversation-picker-metadata-read
+                    (conversation-pathname conversation))))
+             (test-assert
+              (and metadata
+                   (string= (conversation-picker-metadata-title metadata)
+                            "Automatic session titles"))
+              "picker metadata follows generated title records"))
+           (let ((reloaded (conversation-load-by-id configuration "titles")))
+             (test-assert
+              (and (string= (conversation-title reloaded)
+                            "Automatic session titles")
+                   (eq (conversation-title-source reloaded) ':generated))
+              "conversation replay restores the latest generated title"))
+           (let ((duplicate
+                   (conversation-create configuration
+                                        :identifier "duplicate-generated-title")))
+             (conversation-append-user-message duplicate "duplicate generated title")
+             (conversation-set-title duplicate
+                                     "first generated title"
+                                     :source ':generated)
+             (conversation-append-record
+              duplicate
+              (list :title
+                    :value "Second generated title"
+                    :source ':generated))
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-load-by-id configuration
+                                             "duplicate-generated-title")
+                    nil)
+                (conversation-invariant-error ()
+                  t))
+              "replay rejects a second generated title record"))
+           (let ((automatic
+                   (conversation-create configuration
+                                        :identifier "automatic-title-turn")))
+             (conversation-append-user-message automatic
+                                               "continue automatically"
+                                               :automatic-p t)
+             (test-assert
+              (and (zerop (conversation-user-turn-count automatic))
+                   (null (conversation-title automatic)))
+              "automatic continuation prompts neither count nor name a session")
+             (conversation-append-user-message automatic "real user task")
+             (test-assert
+              (and (= (conversation-user-turn-count automatic) 1)
+                   (string= (conversation-title automatic) "Real user task"))
+              "the first actual user turn sets the immediate session title"))
+           (let* ((image-pathname (merge-pathnames "automatic-title.png" root))
+                  (image-automatic
+                    (conversation-create
+                     configuration
+                     :identifier "image-automatic-title-turn")))
+             (test-conversation--write-tiny-png image-pathname)
+             (conversation-append-user-message
+              image-automatic
+              (user-message-input-create
+               :text ""
+               :image-pathnames (list (truename image-pathname))))
+             (conversation-append-user-message
+              image-automatic
+              "continue automatically"
+              :automatic-p t)
+             (test-assert
+              (and (= (conversation-user-turn-count image-automatic) 1)
+                   (null (conversation-title image-automatic)))
+              "an automatic continuation cannot name an image-only actual turn")
+             (let ((reloaded
+                     (conversation-load-by-id
+                      configuration "image-automatic-title-turn")))
+               (test-assert
+                (and (= (conversation-user-turn-count reloaded) 1)
+                     (null (conversation-title reloaded)))
+                "replay excludes automatic continuation text from title derivation")))
+           (let* ((published
+                    (conversation-create configuration
+                                         :identifier "published-title"))
+                  (log-append-function (symbol-function 'log-append)))
+             (conversation-append-user-message published "publish title safely")
+             (let ((title-sequence (conversation-next-sequence published)))
+               (test-call-with-function-replacements
+                (list
+                 (list 'log-append
+                       (lambda (&rest arguments)
+                         (apply log-append-function arguments)
+                         (error "simulated failure after title publication"))))
+                (lambda ()
+                  (conversation-set-title published
+                                          "durable generated title"
+                                          :source ':generated)))
+               (test-assert
+                (= (conversation-next-sequence published) (1+ title-sequence))
+                "a published title survives an ambiguous append failure"))
+             (conversation-append-user-message published "continue after title")
+             (let ((reloaded
+                     (conversation-load-by-id configuration "published-title")))
+               (test-assert
+                (and (string= (conversation-title reloaded)
+                              "Durable generated title")
+                     (= (conversation-user-turn-count reloaded) 2))
+                "later records remain contiguous after an ambiguous title append")))
+           (let* ((header-only
+                    (conversation-create configuration
+                                         :identifier "header-title")))
+             (conversation-append-user-message header-only "initial header title")
+             (conversation-set-title header-only
+                                     "generated header title"
+                                     :source ':generated)
+             (let ((old-segment (conversation-log-pathname header-only)))
+               (conversation-append-summary header-only "compacted title context")
+               (delete-file old-segment))
+             (let ((metadata
+                     (conversation-picker-metadata-scan
+                      (conversation-pathname header-only))))
+               (test-assert
+                (and metadata
+                     (string= (conversation-picker-metadata-title metadata)
+                              "Generated header title"))
+                "picker rebuilds recover titles from self-contained chunk headers"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-conversation-cross-family-reasoning () null)
 (defun test-conversation-cross-family-reasoning ()
   "Test that reasoning replay is confined to the family that produced it."

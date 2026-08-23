@@ -365,12 +365,13 @@
           (:tools-p boolean)
           (:tool-allowlist (option list))
           (:tool-restriction-p boolean)
-          (:pending-input-identifier (option non-empty-string)))
+          (:pending-input-identifier (option non-empty-string))
+          (:automatic-p boolean))
     provider-result)
 (defgeneric agent-run-user-turn
     (agent content
      &key observer goal-context tools-p tool-allowlist tool-restriction-p
-          pending-input-identifier)
+          pending-input-identifier automatic-p)
   (:documentation
    "Persist user CONTENT, run model and optional tool rounds, and return the final provider result."))
 
@@ -397,7 +398,8 @@
 (defmethod agent-run-user-turn
     ((agent agent) (content string)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          tool-allowlist (tool-restriction-p nil) pending-input-identifier)
+          tool-allowlist (tool-restriction-p nil) pending-input-identifier
+          automatic-p)
   "Normalize a textual user turn before running it through AGENT."
   (agent-run-user-turn agent
                        (user-message-input-create :text content)
@@ -406,12 +408,14 @@
                        :tools-p tools-p
                        :tool-allowlist tool-allowlist
                        :tool-restriction-p tool-restriction-p
-                       :pending-input-identifier pending-input-identifier))
+                       :pending-input-identifier pending-input-identifier
+                       :automatic-p automatic-p))
 
 (defmethod agent-run-user-turn
     ((agent agent) (content user-message-input)
      &key (observer (make-instance 'agent-observer)) goal-context (tools-p t)
-          tool-allowlist (tool-restriction-p nil) pending-input-identifier)
+          tool-allowlist (tool-restriction-p nil) pending-input-identifier
+          automatic-p)
   "Run one serialized user turn through AGENT while presenting events to OBSERVER."
   (unless (or (non-empty-string-p (user-message-input-text content))
               (user-message-input-image-pathnames content))
@@ -435,7 +439,8 @@
              (conversation-append-user-message
               conversation
               content
-              :pending-input-identifier pending-input-identifier)
+              :pending-input-identifier pending-input-identifier
+              :automatic-p automatic-p)
            (declare (ignore item))
            (agent-observer-status
             observer

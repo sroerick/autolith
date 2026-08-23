@@ -163,6 +163,22 @@ Papercuts use current-workspace resource URIs:
 The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
 =/papercut-close= commands remain convenient direct interfaces.
 
+** Session titles and resume
+
+A session gets an immediate local title from its first prompt. After the third
+actual user turn, Autolith asks the active model for one concise replacement and
+persists it with the conversation.
+
+Titles are conversation-scoped; the agenda remains workspace-scoped. Active
+=:doing= and =:blocked= agenda items are supplied as supporting context for the
+model replacement only when they align with the conversation. Title generation
+does not edit the agenda.
+
+=/resume= displays titles in its picker while explicit =/resume ID= and
+=(resume "ID")= continue to address the stable conversation identifier. The
+terminal status bar and local session status display the title when one is
+available and otherwise show the conversation ID.
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.

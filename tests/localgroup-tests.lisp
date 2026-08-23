@@ -242,18 +242,28 @@
                    :steering-input-count 0
                    :task-live-count 0
                    :cwd "/tmp/example"))
+           (titled-status
+             (append status (list :conversation-title "Named local session")))
            (plain-output
              (with-output-to-string (stream)
                (localgroup-print-statuses
-                (list status) :stream stream :styled-p nil :columns 80)))
+                (list status) :stream stream :styled-p nil :columns 100)))
            (styled-output
              (with-output-to-string (stream)
                (localgroup-print-statuses
-                (list status) :stream stream :styled-p t :columns 80)))
+                (list status) :stream stream :styled-p t :columns 100)))
+           (title-output
+             (with-output-to-string (stream)
+               (localgroup-print-statuses
+                (list titled-status) :stream stream :styled-p nil :columns 80)))
+           (fallback-output
+             (with-output-to-string (stream)
+               (localgroup-print-statuses
+                (list status) :stream stream :styled-p nil :columns 52)))
            (narrow-output
              (with-output-to-string (stream)
                (localgroup-print-statuses
-                (list status) :stream stream :styled-p nil :columns 24)))
+                (list titled-status) :stream stream :styled-p nil :columns 24)))
            (plain-lines
              (remove ""
                      (uiop:split-string plain-output :separator '(#\Newline))
@@ -265,6 +275,14 @@
             (search "/tmp/example" plain-output)
             (not (search (string #\Escape) plain-output)))
        "localgroup status renders a plain box-drawing table without ANSI controls")
+      (test-assert
+       (and (search "Named local session" title-output)
+            (search "Named local session" narrow-output)
+            (search "n-ew1234" fallback-output)
+            (eq (localgroup--status-field-style titled-status ':conversation)
+                ':plain)
+            (eq (localgroup--status-field-style status ':conversation) ':code))
+       "localgroup status shows titles at every width and falls back to coded IDs")
       (let ((table-top (third plain-lines))
             (table-middle (fifth plain-lines))
             (table-bottom (first (last plain-lines))))
@@ -324,6 +342,9 @@
            (configuration-ensure-directories configuration)
            (multiple-value-setq (application controller)
              (test-localgroup--application configuration))
+           (conversation-append-user-message
+            (application-conversation application)
+            "named localgroup session")
            (setf session (localgroup-start application))
            (let* ((record-pathname
                     (localgroup-session-registry-pathname session))
@@ -342,11 +363,13 @@
                      (= (localgroup-session-identifier-timestamp
                          (localgroup-session-identifier session))
                         (localgroup-session-created-at session))
-                     (string= (getf (rest status) :session-id)
-                              (localgroup-session-identifier session))
-                     (getf (rest status) :idle-p)
-                     (getf (rest status) :waiting-for-input-p)
-                     (zerop (getf (rest status) :task-live-count)))
+                      (string= (getf (rest status) :session-id)
+                               (localgroup-session-identifier session))
+                      (string= (getf (rest status) :conversation-title)
+                               "Named localgroup session")
+                      (getf (rest status) :idle-p)
+                      (getf (rest status) :waiting-for-input-p)
+                      (zerop (getf (rest status) :task-live-count)))
                 "new localgroup endpoints publish their canonical timestamp-bearing identity")
                (test-assert
                 (eq

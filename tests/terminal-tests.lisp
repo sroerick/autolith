@@ -2379,6 +2379,36 @@
                      "the picker never erases the display"))
       (test-assert (null (terminal-ui-selector active-ui))
                    "the selector state clears after selection")
+      (recording-terminal-reset terminal)
+      (setf (scripted-terminal-events terminal) (list :submit))
+      (test-assert
+       (string=
+        (terminal-ui-select
+         active-ui
+         :title "pick one"
+         :items '((:name "Display title"
+                   :value "stable-id"
+                   :argument nil
+                   :description "titled entry")))
+        "stable-id")
+       "picker values can differ from their displayed names")
+      (test-assert
+       (and (search "Display title" (recording-terminal-output terminal))
+            (not (search "stable-id" (recording-terminal-output terminal))))
+       "picker values remain hidden behind their display titles")
+      (setf (scripted-terminal-events terminal) (list :submit))
+      (test-assert
+       (string=
+        (terminal-ui-select
+         active-ui
+         :title "pick one"
+         :items '((:name "Duplicate title" :value "first-id"
+                   :argument nil :description "first")
+                  (:name "Duplicate title" :value "second-id"
+                   :argument nil :description "second"))
+         :initial-value "second-id")
+        "second-id")
+       "an initial stable value disambiguates duplicate display titles")
       (setf (scripted-terminal-events terminal) (list :escape))
       (test-assert (null (terminal-ui-select active-ui
                                              :title "pick one"
