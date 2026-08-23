@@ -324,6 +324,7 @@ let
       clTermdown
       dexador
       ironclad
+      nyaml
       opticl
       parenchek
       orgTemplater

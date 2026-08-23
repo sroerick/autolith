@@ -23,6 +23,7 @@
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen
+               #:nyaml
                #:opticl
                #:org-templater
                #:parenchek
