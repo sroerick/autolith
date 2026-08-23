@@ -10,6 +10,13 @@ let
   expectedSbclSourceHash = lib.removeSuffix "\n" (builtins.readFile "${src}/sbcl-source.sha256");
   fffSourceCommit = lib.removeSuffix "\n" (builtins.readFile "${src}/native/fff/commit");
 
+  # Quicklisp's NYAML archive includes dangling symlinks in its unused test data.
+  nyaml = pkgs.sbclPackages.nyaml.overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      rm -rf "$out/test/yaml-test-suite-data"
+    '';
+  });
+
   clColorist = pkgs.sbcl.buildASDFSystem {
     pname = "cl-colorist";
     version = "0.1.0";
@@ -310,7 +317,7 @@ let
 
   autolithSystem = pkgs.sbcl.buildASDFSystem {
     pname = "autolith";
-    version = "0.36.3";
+    version = "0.37.0";
     inherit src;
     systems = [ "autolith" "autolith/tests" ];
     lispLibs = with pkgs.sbclPackages; [
