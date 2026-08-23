@@ -152,6 +152,36 @@
               (test-assert
                (preference-state-session-title-generation-p version-two)
                "version two preferences enable generated session titles"))
+            (snapshot-write
+             pathname
+             '(:preferences
+               :version 4
+               :model nil
+               :reasoning-effort nil
+               :codex-fast-mode-p t
+               :reasoning-traces-p t
+               :compact-view-p t
+               :turn-timestamps-p nil
+               :simple-technical-english-p nil
+               :session-title-generation-p nil
+               :permission-mode nil))
+            (let ((preferences (preferences-load configuration)))
+              (test-assert
+               (preference-state-codex-fast-mode-p preferences)
+               "version four preferences preserve Codex Fast mode")
+              (test-assert
+               (preference-state-reasoning-traces-p preferences)
+               "version four preferences preserve reasoning summaries")
+              (test-assert
+               (not (preference-state-session-title-generation-p preferences))
+               "version four preferences preserve disabled title generation")
+              (multiple-value-bind (form sole-form-p)
+                  (snapshot-read pathname)
+                (test-assert sole-form-p
+                             "version four preferences remain one form")
+                (test-assert
+                 (= (getf (rest form) :version) 5)
+                 "version four preferences migrate to version five")))
            (with-open-file (stream pathname
                                    :direction ':output
                                    :if-exists ':supersede
