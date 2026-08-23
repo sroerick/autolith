@@ -410,6 +410,7 @@
                 #:uri-path
                 #:uri-port
                 #:uri-scheme
+                #:uri-userinfo
                 #:url-decode
                 #:url-encode-params)
   (:import-from #:serapeum

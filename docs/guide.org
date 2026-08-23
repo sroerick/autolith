@@ -251,6 +251,31 @@ available. =(models)= triggers discovery. You can also pass non-secret
 =:headers= and static =:models= for descriptions, windows, efforts, or
 providers that have no model-list endpoint.
 
+Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
+browser device flow. Anthropic, Fireworks, OpenCode, and user-registered
+OpenAI-compatible providers use API keys.
+
+#+BEGIN_SRC sh
+autolith auth nous
+#+END_SRC
+
+Nous models are discovered from the authenticated account. Run =(models)= after
+login to refresh the catalog. Model identifiers beginning with =anthropic/=
+use the native Anthropic Messages route; the rest use OpenAI-compatible Chat
+Completions. Hermes model identifiers are omitted from the catalog because they
+are not reliable for agentic tool calling.
+
+The Nous integration accepts three deployment overrides:
+
+- =AUTOLITH_NOUS_PORTAL_URL= selects the OAuth portal.
+- =AUTOLITH_NOUS_INFERENCE_BASE_URL= selects the =/v1= inference base used for
+  model discovery, Chat Completions, and Messages.
+- =AUTOLITH_NOUS_PROVIDER_ENDPOINT= overrides only the Chat Completions endpoint.
+
+Autolith stores Nous OAuth state separately at =nous-auth.sexp= under its state
+root and serializes rotating refresh-token updates across processes sharing that
+root.
+
 ** Commands
 
 #+BEGIN_SRC lisp

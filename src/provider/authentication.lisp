@@ -372,8 +372,9 @@ Returns SOURCE itself, not a copy, when SECRET is empty or absent."
     :documentation "Autolith's writable credential source.")
    (bootstrap-source
     :initarg :bootstrap-source
+    :initform nil
     :reader credential-manager-bootstrap-source
-    :type credential-source
+    :type (option credential-source)
     :documentation "The optional read-only bootstrap source.")
    (refresh-lock
     :initform (make-lock "Autolith OAuth refresh")
@@ -408,6 +409,15 @@ Returns SOURCE itself, not a copy, when SECRET is empty or absent."
   "Point ChatGPT credential failures at the default login command."
   (declare (ignore manager))
   "run autolith auth")
+
+(-> credential-manager-credential-description (credential-manager) string)
+(defgeneric credential-manager-credential-description (manager)
+  (:documentation "Return the user-visible kind of credential managed by MANAGER."))
+
+(defmethod credential-manager-credential-description ((manager credential-manager))
+  "Describe OAuth and other non-key credentials generically."
+  (declare (ignore manager))
+  "credentials")
 
 (-> credential-manager-refreshable-p (credential-manager) boolean)
 (defgeneric credential-manager-refreshable-p (manager)
@@ -494,16 +504,17 @@ false when a sibling process already published an equivalent rotation."))
    "Load request credentials from MANAGER's provider-specific sources."))
 
 (defmethod credential-manager-load ((manager credential-manager))
-  "Load only Autolith-owned credentials, importing Codex once when no store exists."
-  (let ((primary (credential-source-load
-                  (credential-manager-primary-source manager))))
+  "Load Autolith-owned credentials, importing a bootstrap source when configured."
+  (let* ((primary-source (credential-manager-primary-source manager))
+         (bootstrap-source (credential-manager-bootstrap-source manager))
+         (primary (credential-source-load primary-source)))
     (cond
       (primary
        (credential-manager-accept-account manager primary))
       (t
        (let ((bootstrap
-               (credential-source-load
-                (credential-manager-bootstrap-source manager))))
+               (and bootstrap-source
+                    (credential-source-load bootstrap-source))))
          (if bootstrap
              (credential-manager-import-bootstrap manager bootstrap)
              (error 'credentials-unavailable
@@ -512,10 +523,12 @@ false when a sibling process already published an equivalent rotation."))
                             (credential-manager-provider-label manager)
                             (credential-manager-login-hint manager))
                     :searched-paths
-                    (list (credential-source-pathname
-                           (credential-manager-primary-source manager))
-                          (credential-source-pathname
-                           (credential-manager-bootstrap-source manager))))))))))
+                    (remove nil
+                            (list
+                             (credential-source-pathname primary-source)
+                             (and bootstrap-source
+                                  (credential-source-pathname
+                                   bootstrap-source)))))))))))
 
 (-> oauth-error-code (t) (option string))
 (defun oauth-error-code (body)
@@ -594,9 +607,10 @@ false when a sibling process already published an equivalent rotation."))
   "Refresh STALE-CREDENTIALS, publishing rotated tokens only to Autolith's store."
   (with-lock-held ((credential-manager-refresh-lock manager))
     (let* ((primary-source (credential-manager-primary-source manager))
+           (bootstrap-source (credential-manager-bootstrap-source manager))
            (bootstrap-pathname
-             (credential-source-pathname
-              (credential-manager-bootstrap-source manager)))
+             (and bootstrap-source
+                  (credential-source-pathname bootstrap-source)))
            (latest (credential-source-load primary-source))
            (credentials
              (if (and latest
@@ -605,15 +619,15 @@ false when a sibling process already published an equivalent rotation."))
                  (credential-manager-accept-account manager latest)
                  stale-credentials))
            (refresh-token (oauth-credentials-refresh-token credentials)))
-      (when (equal (oauth-credentials-source-path credentials)
-                   bootstrap-pathname)
-        (error 'token-refresh-failed
-               :message
-               (format nil "~A bootstrap credentials are never refreshed by Autolith."
-                       (credential-source-label
-                        (credential-manager-bootstrap-source manager)))
-               :status nil
-               :response nil))
+      (when (and bootstrap-pathname
+                  (equal (oauth-credentials-source-path credentials)
+                         bootstrap-pathname))
+         (error 'token-refresh-failed
+                :message
+                (format nil "~A bootstrap credentials are never refreshed by Autolith."
+                        (credential-source-label bootstrap-source))
+                :status nil
+                :response nil))
       (when (and latest
                  (not (string= (oauth-credentials-access-token latest)
                                (oauth-credentials-access-token stale-credentials)))

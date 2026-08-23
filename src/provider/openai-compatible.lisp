@@ -183,8 +183,9 @@
   (if (= status 401)
       (error 'authentication-error
              :message
-             (format nil "~A rejected Autolith's API key; ~A."
+             (format nil "~A rejected Autolith's ~A; ~A."
                      provider-name
+                     (credential-manager-credential-description manager)
                      (credential-manager-login-hint manager)))
       (error 'configuration-error
              :message

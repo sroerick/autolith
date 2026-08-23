@@ -297,6 +297,12 @@
   "Name the API-key provider in credential failures."
   (credential-source-label (credential-manager-primary-source manager)))
 
+(defmethod credential-manager-credential-description
+    ((manager api-key-credential-manager))
+  "Describe static API-key credentials precisely."
+  (declare (ignore manager))
+  "API key")
+
 (defmethod credential-manager-login-hint ((manager api-key-credential-manager))
   "Describe the command that stores this provider's API key."
   (format nil "run autolith auth ~A to enter it"

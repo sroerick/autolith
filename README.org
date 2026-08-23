@@ -80,6 +80,8 @@ Authenticate providers either with web flows or API keys:
 
 #+BEGIN_SRC sh
 autolith auth chatgpt
+autolith auth grok
+autolith auth nous
 autolith auth anthropic
 autolith auth fireworks
 autolith auth opencode

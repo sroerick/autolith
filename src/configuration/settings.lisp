@@ -41,6 +41,55 @@
 (defparameter *grok-client-protocol-version* "1.0.4"
   "The grok-build release whose Grok proxy wire protocol Autolith implements.")
 
+
+;; Nous Portal authentication and inference behavior verified against Hermes
+;; Agent reference commit f293e7206b4ddd66042329442c6afebc19a8808d.
+(defparameter *nous-portal-url* "https://portal.nousresearch.com"
+  "The Nous Research portal serving OAuth device authentication.")
+
+(defparameter *nous-inference-base-url*
+  "https://inference-api.nousresearch.com/v1"
+  "The Nous Research inference API base URL.")
+
+(defparameter *nous-oauth-client-id* "hermes-cli"
+  "The public OAuth client identifier accepted by Nous Portal.")
+
+(defparameter *nous-oauth-scope* "inference:invoke"
+  "The OAuth scope required to invoke Nous Research inference models.")
+
+(-> nous-portal-url () string)
+(defun nous-portal-url ()
+  "Return the configured Nous Research portal URL."
+  (let ((override (uiop:getenv "AUTOLITH_NOUS_PORTAL_URL")))
+    (string-right-trim
+     '(#\/)
+     (if (non-empty-string-p override) override *nous-portal-url*))))
+
+(-> nous-inference-base-url () string)
+(defun nous-inference-base-url ()
+  "Return the configured Nous Research inference API base URL."
+  (let ((override (uiop:getenv "AUTOLITH_NOUS_INFERENCE_BASE_URL")))
+    (string-right-trim
+     '(#\/)
+     (if (non-empty-string-p override)
+         override
+         *nous-inference-base-url*))))
+
+(-> nous-chat-completions-endpoint () string)
+(defun nous-chat-completions-endpoint ()
+  "Return the configured Nous Chat Completions endpoint."
+  (concatenate 'string (nous-inference-base-url) "/chat/completions"))
+
+(-> nous-messages-endpoint () string)
+(defun nous-messages-endpoint ()
+  "Return the configured Nous Anthropic Messages endpoint."
+  (concatenate 'string (nous-inference-base-url) "/messages"))
+
+(-> nous-models-endpoint () string)
+(defun nous-models-endpoint ()
+  "Return the configured Nous model discovery endpoint."
+  (concatenate 'string (nous-inference-base-url) "/models"))
+
 ;; The public Fireworks Responses API, verified against
 ;; accounts/fireworks/models/kimi-k3 on 2026-08-06: the endpoint accepts the
 ;; standard streaming Responses dialect with function tools, reasoning
@@ -277,6 +326,7 @@ configuration can be created before executable user initialization loads."
 
 AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
 AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint,
+AUTOLITH_NOUS_PROVIDER_ENDPOINT overrides the Nous family endpoint,
 AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint, and
 AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
   (let* ((family (model-family model))
@@ -286,6 +336,14 @@ AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
               (uiop:getenv "AUTOLITH_PROVIDER_ENDPOINT"))
              (:grok
               (uiop:getenv "AUTOLITH_GROK_PROVIDER_ENDPOINT"))
+             (:nous
+              (or (uiop:getenv "AUTOLITH_NOUS_PROVIDER_ENDPOINT")
+                  (let ((base (uiop:getenv "AUTOLITH_NOUS_INFERENCE_BASE_URL")))
+                    (and (non-empty-string-p base)
+                         (concatenate
+                          'string
+                          (string-right-trim '(#\/) base)
+                          "/chat/completions")))))
              (:fireworks
               (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
              (:opencode
@@ -300,6 +358,8 @@ AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint."
            *codex-responses-endpoint*)
           (:grok
            *grok-responses-endpoint*)
+          (:nous
+           (nous-chat-completions-endpoint))
           (:fireworks
            *fireworks-responses-endpoint*)
           (:opencode
@@ -717,6 +777,11 @@ reasoning effort only when that effort is supported by the selected model."
 (defun configuration-grok-auth-path (configuration)
   "Return Autolith's private Grok OAuth credential pathname."
   (merge-pathnames "grok-auth.sexp" (configuration-state-root configuration)))
+
+(-> configuration-nous-auth-path (configuration) pathname)
+(defun configuration-nous-auth-path (configuration)
+  "Return Autolith's private Nous OAuth credential pathname."
+  (merge-pathnames "nous-auth.sexp" (configuration-state-root configuration)))
 
 (-> configuration-api-keys-path (configuration) pathname)
 (defun configuration-api-keys-path (configuration)

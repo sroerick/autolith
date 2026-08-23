@@ -19,6 +19,25 @@
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':grok configuration))
 
+(-> provider--nous-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--nous-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in Nous Research provider from registry metadata."
+  (declare (ignore reasoning-summaries-p))
+  (provider-family-create ':nous configuration))
+
+(-> provider--nous-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--nous-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Run browser device login for the built-in Nous Research provider."
+  (nous-provider-authenticate provider
+                              :stream stream
+                              :open-browser-p open-browser-p))
+
 (-> provider--fireworks-registration-factory
     (configuration &key (:reasoning-summaries-p boolean))
     model-provider)
@@ -95,6 +114,19 @@
  :models '((:name "grok-4.6" :context-window 500000)
            (:name "grok-4.5" :context-window 500000))
  :factory #'provider--grok-registration-factory
+ :source ':builtin)
+
+(register-provider
+ "nous"
+ :description "Nous Research subscription"
+ :family ':nous
+ :protocol ':chat-completions+messages
+ :endpoint (nous-chat-completions-endpoint)
+ :factory #'provider--nous-registration-factory
+ :authenticator #'provider--nous-registration-authenticator
+ :model-discovery #'nous--fetch-models
+ :model-discovery-endpoint (nous-models-endpoint)
+ :model-discovery-endpoint-resolver #'nous-models-endpoint
  :source ':builtin)
 
 (register-provider
