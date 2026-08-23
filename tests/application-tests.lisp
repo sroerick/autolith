@@ -782,7 +782,7 @@
 
 (-> test-application-status-details () null)
 (defun test-application-status-details ()
-  "Test title, model, effort, and enclosing Git branch activity metadata."
+  "Test title, model, effort, Fast mode, and enclosing Git branch metadata."
   (let* ((base (test-configuration))
          (root (test-configuration-root base))
          (repository (merge-pathnames "status-repository/" root))
@@ -796,7 +796,9 @@
             (list "git" "-C" (namestring repository)
                   "symbolic-ref" "HEAD" "refs/heads/chromatic"))
             (let* ((configuration
-                     (configuration-with-working-directory base nested))
+                     (configuration-with-codex-fast-mode
+                      (configuration-with-working-directory base nested)
+                      t))
                    (conversation
                      (conversation-create configuration :identifier "status-title"))
                    (ui (terminal-ui-create
@@ -811,18 +813,26 @@
               (application-set-activity application "working")
               (let* ((details (terminal-ui-status-details ui))
                      (text (format nil "~{~A~}"
-                                   (mapcar #'terminal-span-text details))))
+                                   (mapcar #'terminal-span-text details)))
+                     (fast-span
+                       (find "FAST" details
+                             :key #'terminal-span-text
+                             :test #'string=)))
                 (test-assert
                  (string= (application--git-branch nested) "chromatic")
                  "Git branch discovery walks up from a nested workspace")
                 (test-assert
                  (search
-                  "Session title status · gpt-5.6-sol · ultra · git chromatic"
+                  "Session title status · gpt-5.6-sol · ultra · FAST · git chromatic"
                   text)
-                 "activity metadata contains the title, model, effort, and branch")
+                 "activity metadata contains title, model, effort, Fast mode, and branch")
                 (test-assert
                  (eq (terminal-span-style (second details)) ':status-accent)
                  "the session title uses the status accent style")
+                (test-assert
+                 (and fast-span
+                      (eq (terminal-span-style fast-span) ':status-accent))
+                 "active Fast mode uses the status accent")
                 (test-assert
                  (eq (terminal-span-style (first (last details)))
                      ':status-branch)

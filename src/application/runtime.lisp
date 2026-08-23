@@ -2672,7 +2672,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
 
 (-> application--status-details (application) terminal-styled-text)
 (defun application--status-details (application)
-  "Return cached-phase session, model, effort, and repository status spans."
+  "Return cached-phase session, model, effort, Fast mode, and repository status spans."
   (when (slot-boundp application 'configuration)
     (let* ((configuration (application-configuration application))
            (conversation
@@ -2698,6 +2698,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
              (terminal-span ':status-dim " · ")
              (terminal-span ':status-effort
                             (configuration-reasoning-effort configuration)))
+       (when (configuration-codex-fast-mode-active-p configuration)
+         (list (terminal-span ':status-dim " · ")
+               (terminal-span ':status-accent "FAST")))
        (when branch
          (list (terminal-span ':status-dim " · git ")
                (terminal-span ':status-branch branch)))))))
