@@ -1051,6 +1051,8 @@ newly acquired lease."
                    :model (configuration-model previous)
                    :reasoning-effort
                    (configuration-reasoning-effort previous)
+                    :codex-fast-mode-p
+                    (configuration-codex-fast-mode-p previous)
                    :immutable-p effective-immutable-p
                    :defer-provider-validation-p t))
                 (prepared-configuration

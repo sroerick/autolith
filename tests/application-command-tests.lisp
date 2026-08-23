@@ -424,6 +424,8 @@
          ("/model gpt-5.6-sol" :apply)
          ("/effort" :hold)
          ("/effort high" :apply)
+          ("/fast" :execute)
+          ("/fast on" :apply)
          ("/trace" :execute)
          ("/trace on" :apply)
          ("/timestamps" :execute)
@@ -494,6 +496,7 @@
          ("/auth" (&optional (provider-name nil provider-name-supplied-p)) :remainder)
          ("/model" (&optional (model nil model-supplied-p)) :first)
          ("/trace" (mode) :first)
+         ("/fast" (&optional mode) :first)
          ("/permissions" (&optional (choice nil choice-supplied-p)) :first)
          ("/later" (input) :remainder)
          ("/goal" (&optional (remainder "")) :remainder)
@@ -572,6 +575,106 @@
     (test-assert
      (application-project-adaptation-offer-p application)
      "nonmodal resume calls do not consume the interactive startup offer"))
+  nil)
+
+(-> test-application-codex-fast-mode-command () null)
+(defun test-application-codex-fast-mode-command ()
+  "Test /fast status, persistence, runtime installation, and validation."
+  (let* ((configuration
+           (configuration-with-codex-fast-mode (test-configuration) nil))
+         (root (test-configuration-root configuration))
+         (application (make-instance 'application
+                                     :configuration configuration))
+         (presented nil)
+         (persisted nil)
+         (installed nil)
+         (published-count 0))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'application-present
+            (lambda (candidate entry)
+              (declare (ignore candidate))
+              (push entry presented)
+              t))
+           (list
+            'preferences-set-codex-fast-mode
+            (lambda (candidate enabled-p)
+              (push (list enabled-p
+                          (configuration-codex-fast-mode-p candidate))
+                    persisted)
+              nil))
+           (list
+            'application--install-configuration
+            (lambda (candidate replacement &key conversation)
+              (declare (ignore conversation))
+              (setf (application-configuration candidate) replacement)
+              (push (configuration-codex-fast-mode-p replacement) installed)
+              nil))
+           (list
+            'application-publish-recovery-session
+            (lambda (candidate)
+              (declare (ignore candidate))
+              (incf published-count)
+              nil)))
+          (lambda ()
+            (test-assert
+             (eq (application--builtin-fast-command application) ':continue)
+             "/fast status completes through the canonical command")
+            (test-assert
+             (search "Codex Fast mode is off." (first presented))
+             "/fast reports the disabled state")
+            (test-assert
+             (eq (application--builtin-fast-command application "status")
+                 ':continue)
+             "/fast status accepts its explicit spelling")
+            (test-assert
+             (and (null persisted)
+                  (null installed)
+                  (zerop published-count))
+             "/fast status has no persistence or runtime side effects")
+            (test-assert
+             (eq (application--builtin-fast-command application "ON")
+                 ':continue)
+             "/fast on completes through the canonical command")
+            (test-assert
+             (and (configuration-codex-fast-mode-p
+                   (application-configuration application))
+                  (equal (first persisted) '(t t))
+                  (eq (first installed) t)
+                  (= published-count 1)
+                  (search "enabled and saved" (first presented)))
+             "/fast on persists and installs the enabled state")
+            (test-assert
+             (eq (application--builtin-fast-command application "off")
+                 ':continue)
+             "/fast off completes through the canonical command")
+            (test-assert
+             (and (not
+                   (configuration-codex-fast-mode-p
+                    (application-configuration application)))
+                  (equal (first persisted) '(nil nil))
+                  (null (first installed))
+                  (= published-count 2)
+                  (search "disabled and saved" (first presented)))
+             "/fast off persists and installs the disabled state")
+            (test-assert
+             (handler-case
+                 (progn
+                   (application--builtin-fast-command application "turbo")
+                   nil)
+               (configuration-error ()
+                 t))
+             "/fast rejects unsupported modes")
+            (test-assert
+             (and (= (length persisted) 2)
+                  (= (length installed) 2)
+                  (= published-count 2))
+             "invalid /fast input has no persistence or runtime side effects")))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
   nil)
 
 (defclass application-authentication-test-provider (model-provider)
@@ -896,5 +999,6 @@
   (test-application-command-policies)
   (test-built-in-application-command-policies)
   (test-built-in-application-command-calls)
+  (test-application-codex-fast-mode-command)
   (test-application-authentication-command)
   t)

@@ -4,20 +4,25 @@
 
 (-> preferences-tests--without-model-environment (function) t)
 (defun preferences-tests--without-model-environment (function)
-  "Call FUNCTION while model and effort environment overrides are absent."
+  "Call FUNCTION while model, effort, and Fast mode overrides are absent."
   (let ((previous-model (uiop:getenv "AUTOLITH_MODEL"))
-        (previous-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
+        (previous-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT"))
+        (previous-fast-mode (uiop:getenv "AUTOLITH_CODEX_FAST_MODE")))
     (unwind-protect
          (progn
            (sb-posix:unsetenv "AUTOLITH_MODEL")
            (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT")
+           (sb-posix:unsetenv "AUTOLITH_CODEX_FAST_MODE")
            (funcall function))
       (if previous-model
           (sb-posix:setenv "AUTOLITH_MODEL" previous-model 1)
           (sb-posix:unsetenv "AUTOLITH_MODEL"))
       (if previous-effort
           (sb-posix:setenv "AUTOLITH_REASONING_EFFORT" previous-effort 1)
-          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT")))))
+          (sb-posix:unsetenv "AUTOLITH_REASONING_EFFORT"))
+      (if previous-fast-mode
+          (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" previous-fast-mode 1)
+          (sb-posix:unsetenv "AUTOLITH_CODEX_FAST_MODE")))))
 
 (-> test-preferences () null)
 (defun test-preferences ()
@@ -32,30 +37,62 @@
                    (merge-pathnames "preferences.sexp"
                                     (configuration-state-root configuration)))
             "global preferences live under the state root")
-           (let ((preferences (preferences-load configuration)))
-             (test-assert
-              (not (preference-state-reasoning-traces-p preferences))
-              "missing preferences default reasoning summaries to hidden")
-             (test-assert (null (preference-state-model preferences))
-                          "missing preferences have no saved model")
-             (test-assert
-              (null (preference-state-reasoning-effort preferences))
-              "missing preferences have no saved reasoning effort")
-             (test-assert
-             (preference-state-compact-view-p preferences)
-              "missing preferences default to compact tool presentation")
-             (test-assert
-              (not (preference-state-turn-timestamps-p preferences))
-              "missing preferences default turn timestamps to hidden")
+            (let ((preferences (preferences-load configuration)))
+              (test-assert
+               (not (preference-state-reasoning-traces-p preferences))
+               "missing preferences default reasoning summaries to hidden")
+              (test-assert (null (preference-state-model preferences))
+                           "missing preferences have no saved model")
+              (test-assert
+               (null (preference-state-reasoning-effort preferences))
+               "missing preferences have no saved reasoning effort")
+              (test-assert
+               (not (preference-state-codex-fast-mode-p preferences))
+               "missing preferences default Codex Fast mode to disabled")
+              (test-assert
+               (preference-state-compact-view-p preferences)
+               "missing preferences default to compact tool presentation")
+              (test-assert
+               (not (preference-state-turn-timestamps-p preferences))
+               "missing preferences default turn timestamps to hidden")
+              (test-assert
+               (not (preference-state-simple-technical-english-p preferences))
+               "missing preferences default Simple Technical English to disabled")
+              (test-assert
+               (preference-state-session-title-generation-p preferences)
+               "missing preferences enable generated session titles")
+              (test-assert
+               (null (preference-state-permission-mode preferences))
+               "missing preferences have no saved command-permission mode"))
+            (preferences-tests--without-model-environment
+             (lambda ()
+               (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "on" 1)
+               (let ((environment-configuration
+                       (configuration-create
+                        :source-root (asdf:system-source-directory :autolith)
+                        :working-directory (asdf:system-source-directory :autolith))))
+                 (test-assert
+                  (configuration-codex-fast-mode-p environment-configuration)
+                  "the environment can enable Codex Fast mode")
+                 (test-assert
+                  (not
+                   (configuration-codex-fast-mode-p
+                    (configuration-create
+                     :source-root (asdf:system-source-directory :autolith)
+                     :working-directory (asdf:system-source-directory :autolith)
+                     :codex-fast-mode-p nil)))
+                  "an explicit Fast mode choice overrides the environment"))
+               (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "invalid" 1)
                (test-assert
-                (not (preference-state-simple-technical-english-p preferences))
-                "missing preferences default Simple Technical English to disabled")
-               (test-assert
-                (preference-state-session-title-generation-p preferences)
-                "missing preferences enable generated session titles")
-               (test-assert
-                (null (preference-state-permission-mode preferences))
-                "missing preferences have no saved command-permission mode"))
+                (handler-case
+                    (progn
+                      (configuration-create
+                       :source-root (asdf:system-source-directory :autolith)
+                       :working-directory (asdf:system-source-directory :autolith))
+                      nil)
+                  (configuration-error ()
+                    t))
+                "invalid Codex Fast mode environment values are rejected")))
            (ensure-directories-exist pathname)
            (snapshot-write
             pathname
@@ -66,34 +103,40 @@
               :reasoning-traces-p t
               :compact-view-p nil
               :turn-timestamps-p t))
-           (let ((preferences (preferences-load configuration)))
-             (test-assert
-              (not (preference-state-compact-view-p preferences))
-              "version three compact preferences remain readable")
-             (test-assert
-              (preference-state-turn-timestamps-p preferences)
-              "version three turn-timestamp preferences remain readable")
-             (test-assert
-              (not (preference-state-simple-technical-english-p preferences))
-              "version three preferences default Simple Technical English to disabled")
-             (multiple-value-bind (form sole-form-p)
-                 (snapshot-read pathname)
-               (test-assert sole-form-p
-                            "normalizing preferences preserves one form")
-               (test-assert (= (getf (rest form) :version) 4)
-                            "version three preferences migrate to version four")
-               (test-assert
-               (not (getf (rest form) :compact-view-p))
-                "normalizing preferences preserves compact presentation")
-               (test-assert
-                (getf (rest form) :turn-timestamps-p)
-                "normalizing preferences preserves turn-timestamp presentation")
-               (test-assert
-                (not (getf (rest form) :simple-technical-english-p))
-                "normalizing preferences adds the disabled response style")
-               (test-assert
-                (getf (rest form) :session-title-generation-p)
-                "migration enables generated session titles")))
+            (let ((preferences (preferences-load configuration)))
+              (test-assert
+               (not (preference-state-compact-view-p preferences))
+               "version three compact preferences remain readable")
+              (test-assert
+               (preference-state-turn-timestamps-p preferences)
+               "version three turn-timestamp preferences remain readable")
+              (test-assert
+               (not (preference-state-simple-technical-english-p preferences))
+               "version three preferences default Simple Technical English to disabled")
+              (test-assert
+               (not (preference-state-codex-fast-mode-p preferences))
+               "version three preferences default Codex Fast mode to disabled")
+              (multiple-value-bind (form sole-form-p)
+                  (snapshot-read pathname)
+                (test-assert sole-form-p
+                             "normalizing preferences preserves one form")
+                (test-assert (= (getf (rest form) :version) 5)
+                             "version three preferences migrate to version five")
+                (test-assert
+                 (not (getf (rest form) :compact-view-p))
+                 "normalizing preferences preserves compact presentation")
+                (test-assert
+                 (getf (rest form) :turn-timestamps-p)
+                 "normalizing preferences preserves turn-timestamp presentation")
+                (test-assert
+                 (not (getf (rest form) :simple-technical-english-p))
+                 "normalizing preferences adds the disabled response style")
+                (test-assert
+                 (not (getf (rest form) :codex-fast-mode-p))
+                 "normalizing preferences adds disabled Codex Fast mode")
+                (test-assert
+                 (getf (rest form) :session-title-generation-p)
+                 "migration enables generated session titles")))
            (with-open-file (stream pathname
                                    :direction ':output
                                    :if-exists ':supersede
@@ -104,55 +147,82 @@
                       :reasoning-traces-p t)
                     stream)
              (terpri stream))
-           (let ((legacy (preferences-load configuration)))
-             (test-assert
-              (preference-state-reasoning-traces-p legacy)
-              "version one reasoning-summary preferences remain readable")
-             (test-assert (null (preference-state-model legacy))
-                          "version one preferences have no saved model")
-             (test-assert
-              (preference-state-compact-view-p legacy)
-              "version one preferences default to compact tool presentation")
-             (test-assert
-              (not (preference-state-turn-timestamps-p legacy))
-              "version one preferences default turn timestamps to hidden")
-             (test-assert
-              (not (preference-state-simple-technical-english-p legacy))
-              "version one preferences default Simple Technical English to disabled")
-             (test-assert
-              (preference-state-session-title-generation-p legacy)
-              "version one preferences enable generated session titles"))
-           (let* ((selected
-                    (configuration-with-reasoning-effort
-                     (configuration-with-model configuration "gpt-5.6-luna")
-                     "high")))
-             (preferences-set-model-selection selected)
-             (let ((preferences (preferences-load configuration)))
-               (test-assert
-                (string= (preference-state-model preferences) "gpt-5.6-luna")
-                "the selected model survives a preference reload")
-               (test-assert
-                (string= (preference-state-reasoning-effort preferences) "high")
-                "the selected reasoning effort survives a preference reload")
-               (test-assert
-                (preference-state-reasoning-traces-p preferences)
-                "saving model choices preserves the trace preference")
-               (test-assert
-               (preference-state-compact-view-p preferences)
-                "saving model choices preserves compact presentation")
-               (test-assert
-                (not (preference-state-turn-timestamps-p preferences))
-                "saving model choices preserves hidden turn timestamps"))
-             (preferences-tests--without-model-environment
-              (lambda ()
-                (let ((restored
-                        (preferences-apply-model-selection configuration)))
-                  (test-assert
-                   (string= (configuration-model restored) "gpt-5.6-luna")
-                   "saved models become startup defaults")
-                  (test-assert
-                   (string= (configuration-reasoning-effort restored) "high")
-                   "saved efforts become startup defaults")))))
+            (let ((legacy (preferences-load configuration)))
+              (test-assert
+               (preference-state-reasoning-traces-p legacy)
+               "version one reasoning-summary preferences remain readable")
+              (test-assert (null (preference-state-model legacy))
+                           "version one preferences have no saved model")
+              (test-assert
+               (preference-state-compact-view-p legacy)
+               "version one preferences default to compact tool presentation")
+              (test-assert
+               (not (preference-state-turn-timestamps-p legacy))
+               "version one preferences default turn timestamps to hidden")
+              (test-assert
+               (not (preference-state-simple-technical-english-p legacy))
+               "version one preferences default Simple Technical English to disabled")
+              (test-assert
+               (not (preference-state-codex-fast-mode-p legacy))
+               "version one preferences default Codex Fast mode to disabled")
+              (test-assert
+               (preference-state-session-title-generation-p legacy)
+               "version one preferences enable generated session titles"))
+            (let* ((selected
+                     (configuration-with-reasoning-effort
+                      (configuration-with-model configuration "gpt-5.6-luna")
+                      "high")))
+              (preferences-set-model-selection selected)
+              (preferences-set-codex-fast-mode selected t)
+              (let ((preferences (preferences-load configuration)))
+                (test-assert
+                 (string= (preference-state-model preferences) "gpt-5.6-luna")
+                 "the selected model survives a preference reload")
+                (test-assert
+                 (string= (preference-state-reasoning-effort preferences) "high")
+                 "the selected reasoning effort survives a preference reload")
+                (test-assert
+                 (preference-state-codex-fast-mode-p preferences)
+                 "Codex Fast mode survives a preference reload")
+                (test-assert
+                 (preference-state-reasoning-traces-p preferences)
+                 "saving model choices preserves the trace preference")
+                (test-assert
+                 (preference-state-compact-view-p preferences)
+                 "saving model choices preserves compact presentation")
+                (test-assert
+                 (not (preference-state-turn-timestamps-p preferences))
+                 "saving model choices preserves hidden turn timestamps"))
+              (preferences-tests--without-model-environment
+               (lambda ()
+                 (let ((restored
+                         (preferences-apply-model-selection configuration)))
+                   (test-assert
+                    (string= (configuration-model restored) "gpt-5.6-luna")
+                    "saved models become startup defaults")
+                   (test-assert
+                    (string= (configuration-reasoning-effort restored) "high")
+                    "saved efforts become startup defaults")
+                   (test-assert
+                    (configuration-codex-fast-mode-p restored)
+                    "saved Codex Fast mode becomes the startup default")))))
+           (preferences-tests--without-model-environment
+            (lambda ()
+              (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "off" 1)
+              (test-assert
+               (not
+                (configuration-codex-fast-mode-p
+                 (preferences-apply-model-selection
+                  (configuration-with-codex-fast-mode configuration nil))))
+               "the environment can disable saved Codex Fast mode")
+              (preferences-set-codex-fast-mode configuration nil)
+              (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "on" 1)
+              (test-assert
+               (configuration-codex-fast-mode-p
+                (preferences-apply-model-selection
+                 (configuration-with-codex-fast-mode configuration t)))
+               "the environment can enable Codex Fast mode over a saved default")
+              (preferences-set-codex-fast-mode configuration t)))
            (let ((mode (sb-posix:stat-mode
                         (sb-posix:stat (namestring pathname)))))
              (test-assert (= (logand mode #o777) #o600)

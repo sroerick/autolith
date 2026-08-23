@@ -231,6 +231,26 @@ configuration can be created before executable user initialization loads."
          (pathname value)
          fallback))))
 
+(-> environment-boolean (string boolean) boolean)
+(defun environment-boolean (variable fallback)
+  "Return boolean VARIABLE, or FALLBACK when it is unset."
+  (let ((value (uiop:getenv variable)))
+    (if (non-empty-string-p value)
+        (let ((normalized (string-downcase value)))
+          (cond
+            ((member normalized '("1" "true" "yes" "on") :test #'string=)
+             t)
+            ((member normalized '("0" "false" "no" "off") :test #'string=)
+             nil)
+            (t
+             (error 'configuration-error
+                    :message
+                    (format nil
+                            "~A must be on or off, not ~S."
+                            variable
+                            value)))))
+        fallback)))
+
 (-> configuration--default-config-root () pathname)
 (defun configuration--default-config-root ()
   "Return Autolith's default XDG configuration directory."
@@ -305,6 +325,12 @@ configuration can be created before executable user initialization loads."
     :reader configuration-reasoning-effort
     :type non-empty-string
     :documentation "The user-visible reasoning effort.")
+    (codex-fast-mode-p
+     :initarg :codex-fast-mode-p
+     :initform nil
+     :reader configuration-codex-fast-mode-p
+     :type boolean
+     :documentation "Whether Codex requests opt in to Fast mode.")
    (immutable-p
     :initarg :immutable-p
     :initform nil
@@ -433,41 +459,47 @@ AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
                            (:working-directory (option pathname))
                            (:model (option string))
                            (:reasoning-effort (option string))
+                           (:codex-fast-mode-p boolean)
                            (:immutable-p boolean)
                            (:defer-provider-validation-p boolean))
     configuration)
 (defun configuration-create
-    (&key source-root working-directory model reasoning-effort immutable-p
-          defer-provider-validation-p)
+    (&key source-root working-directory model reasoning-effort
+      (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
+      immutable-p defer-provider-validation-p)
   "Create runtime configuration from explicit values and the environment.
 
 Provider-specific validation can be deferred until executable user
 initialization registers the selected model."
   (let* ((home (user-homedir-pathname))
-           (config-home (environment-directory
-                         "XDG_CONFIG_HOME"
-                         (merge-pathnames ".config/" home)))
-           (data-home (environment-directory
+         (config-home (environment-directory
+                       "XDG_CONFIG_HOME"
+                       (merge-pathnames ".config/" home)))
+         (data-home (environment-directory
                      "XDG_DATA_HOME"
                      (merge-pathnames ".local/share/" home)))
-           (state-home (environment-directory
-                        "XDG_STATE_HOME"
-                        (merge-pathnames ".local/state/" home)))
-           (cache-home (environment-directory
-                        "XDG_CACHE_HOME"
-                        (merge-pathnames ".cache/" home)))
-           (codex-home (environment-directory
-                        "CODEX_HOME"
-                        (merge-pathnames ".codex/" home)))
-           (environment-source-root (uiop:getenv "AUTOLITH_SOURCE_ROOT"))
-           (selected-model (or model (uiop:getenv "AUTOLITH_MODEL") *default-model*))
-           (selected-effort (or reasoning-effort
-                                (uiop:getenv "AUTOLITH_REASONING_EFFORT")
-                                *default-reasoning-effort*))
-           (selected-web-search (let ((mode (uiop:getenv "AUTOLITH_WEB_SEARCH")))
-                                  (if (non-empty-string-p mode)
-                                      (string-downcase mode)
-                                      "cached"))))
+         (state-home (environment-directory
+                      "XDG_STATE_HOME"
+                      (merge-pathnames ".local/state/" home)))
+         (cache-home (environment-directory
+                      "XDG_CACHE_HOME"
+                      (merge-pathnames ".cache/" home)))
+         (codex-home (environment-directory
+                      "CODEX_HOME"
+                      (merge-pathnames ".codex/" home)))
+         (environment-source-root (uiop:getenv "AUTOLITH_SOURCE_ROOT"))
+         (selected-model (or model (uiop:getenv "AUTOLITH_MODEL") *default-model*))
+         (selected-effort (or reasoning-effort
+                              (uiop:getenv "AUTOLITH_REASONING_EFFORT")
+                              *default-reasoning-effort*))
+         (selected-codex-fast-mode-p
+           (if codex-fast-mode-p-supplied-p
+               codex-fast-mode-p
+               (environment-boolean "AUTOLITH_CODEX_FAST_MODE" nil)))
+         (selected-web-search (let ((mode (uiop:getenv "AUTOLITH_WEB_SEARCH")))
+                                (if (non-empty-string-p mode)
+                                    (string-downcase mode)
+                                    "cached"))))
     (unless defer-provider-validation-p
       (unless (member selected-effort
                       (configuration--reasoning-efforts-for selected-model)
@@ -496,6 +528,7 @@ initialization registers the selected model."
                    (configuration--default-grok-bootstrap-path)
                    :model selected-model
                    :reasoning-effort selected-effort
+                   :codex-fast-mode-p selected-codex-fast-mode-p
                    :immutable-p immutable-p
                    :web-search-mode selected-web-search
                    :context-window (configuration--context-window-for
@@ -509,6 +542,7 @@ initialization registers the selected model."
     (configuration &key (:working-directory (option pathname))
                    (:model (option string))
                    (:reasoning-effort (option string))
+                   (:codex-fast-mode-p boolean)
                    (:immutable-p boolean)
                    (:web-search-mode (option string)))
     configuration)
@@ -516,6 +550,7 @@ initialization registers the selected model."
     (configuration
      &key working-directory model
        (reasoning-effort nil reasoning-effort-supplied-p)
+       (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
        (immutable-p nil immutable-p-supplied-p)
        (web-search-mode nil web-search-mode-supplied-p))
   "Copy CONFIGURATION, replacing only supplied workspace or model choices.
@@ -549,6 +584,10 @@ reasoning effort only when that effort is supported by the selected model."
                    (configuration-grok-bootstrap-auth-path configuration)
                    :model selected-model
                    :reasoning-effort selected-effort
+                   :codex-fast-mode-p
+                   (if codex-fast-mode-p-supplied-p
+                       codex-fast-mode-p
+                       (configuration-codex-fast-mode-p configuration))
                    :immutable-p (if immutable-p-supplied-p
                                     immutable-p
                                     (configuration-immutable-p configuration))
@@ -640,6 +679,11 @@ reasoning effort only when that effort is supported by the selected model."
                    reasoning-effort
                    (configuration-model configuration))))
   (configuration--clone configuration :reasoning-effort reasoning-effort))
+
+(-> configuration-with-codex-fast-mode (configuration boolean) configuration)
+(defun configuration-with-codex-fast-mode (configuration enabled-p)
+  "Copy CONFIGURATION with Codex Fast mode set to ENABLED-P."
+  (configuration--clone configuration :codex-fast-mode-p enabled-p))
 
 (-> configuration-with-model (configuration string) configuration)
 (defun configuration-with-model (configuration model)

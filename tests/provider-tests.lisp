@@ -196,6 +196,15 @@
             "providers opt into inherited child reference history explicitly")
            (test-assert (null (json-get request "service_tier"))
                         "requests never select a provider service tier")
+            (let* ((fast-configuration
+                     (configuration-with-codex-fast-mode configuration t))
+                   (fast-provider (provider-create fast-configuration))
+                   (fast-request
+                     (provider-request-object
+                      fast-provider conversation schemas)))
+              (test-assert
+               (string= (json-get fast-request "service_tier") "fast")
+               "Codex Fast mode requests the fast service tier"))
            (test-assert (null (json-get request "max_output_tokens"))
                         "requests omit the output ceiling when none is bound")
            (let ((bounded (let ((*provider-maximum-output-tokens* 4242))
@@ -427,6 +436,17 @@
               (string= (json-get request "prompt_cache_key")
                        (conversation-prompt-cache-key conversation))
               "native compaction shares the root conversation cache key")
+              (test-assert (null (json-get request "service_tier"))
+                           "standard native compaction omits a service tier")
+              (let* ((fast-configuration
+                       (configuration-with-codex-fast-mode configuration t))
+                     (fast-provider (provider-create fast-configuration))
+                     (fast-request
+                       (provider-native-compaction-request-object
+                        fast-provider conversation schemas)))
+                (test-assert
+                 (string= (json-get fast-request "service_tier") "fast")
+                 "Codex Fast mode applies to native compaction"))
              (dolist (name '("stream" "store" "include" "tool_choice"))
                (multiple-value-bind (value present-p) (gethash name request)
                  (declare (ignore value))

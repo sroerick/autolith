@@ -277,6 +277,10 @@
                                (configuration-model configuration))
      (application--field-spans "effort"
                                (configuration-reasoning-effort configuration))
+     (application--field-spans
+       "Codex fast"
+       (application--toggle-state
+        (configuration-codex-fast-mode-p configuration)))
      (application--field-spans "web search"
                                (configuration-web-search-mode configuration))
      (application--field-spans
@@ -337,8 +341,12 @@
                                      (configuration-working-directory
                                       configuration)))
                                    ""))
-     (application--field-spans "path"
-                               "standard (the fast path is never requested)")
+     (application--field-spans
+       "path"
+       (if (and (eq (model-family (configuration-model configuration)) ':codex)
+                (configuration-codex-fast-mode-p configuration))
+           "fast (2x Codex plan usage)"
+           "standard"))
      (application--field-spans "web search"
                                (configuration-web-search-mode configuration))
      (application--field-spans "goal"
@@ -609,6 +617,46 @@
            effort)))
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
+
+(-> application-set-codex-fast-mode (application boolean) null)
+(defun application-set-codex-fast-mode (application enabled-p)
+  "Persist and apply Codex Fast mode for future provider requests."
+  (let ((configuration
+          (configuration-with-codex-fast-mode
+           (application-configuration application)
+           enabled-p)))
+    (preferences-set-codex-fast-mode configuration enabled-p)
+    (application--install-configuration application configuration)
+    (application-publish-recovery-session application))
+  nil)
+
+(-> application-codex-fast-mode-command
+    (application (option string))
+    null)
+(defun application-codex-fast-mode-command (application argument)
+  "Set or report APPLICATION's persisted Codex Fast mode."
+  (let* ((configuration (application-configuration application))
+         (mode (and argument (string-downcase argument)))
+         (enabled-p (configuration-codex-fast-mode-p configuration)))
+    (cond
+      ((or (null mode) (string= mode "status"))
+       (application-present
+        application
+        (format nil
+                "Codex Fast mode is ~A. This setting persists across restarts."
+                (if enabled-p "on" "off"))))
+      ((string= mode "on")
+       (application-set-codex-fast-mode application t)
+       (application-present
+        application
+        "Codex Fast mode is enabled and saved. It uses 2x plan usage."))
+      ((string= mode "off")
+       (application-set-codex-fast-mode application nil)
+       (application-present application "Codex Fast mode is disabled and saved."))
+      (t
+       (error 'configuration-error
+              :message "Usage: /fast [on|off|status]."))))
+  nil)
 
 (-> application-set-reasoning-traces (application boolean) null)
 (defun application-set-reasoning-traces (application enabled-p)
@@ -2092,6 +2140,19 @@ are forwarded to TERMINAL-UI-SELECT."
        (format nil "Reasoning effort is now ~A."
                (configuration-reasoning-effort
                 (application-configuration application))))))
+  ':continue)
+
+(define-application-command application--builtin-fast-command
+    (:name "/fast"
+     :argument "[on|off|status]"
+     :description "show or change Codex Fast mode"
+     :tip "uses service_tier=fast at 2x plan usage for future Codex requests."
+     :busy-behavior :apply
+     :terminal-behavior :shared
+     :call-lambda-list (&optional mode)
+     :slash-argument-mode :first)
+    (application &optional mode)
+  (application-codex-fast-mode-command application mode)
   ':continue)
 
 (define-application-command application--builtin-trace-command

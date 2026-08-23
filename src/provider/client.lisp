@@ -501,10 +501,9 @@ between roots while allowing a root and its task children to share a prefix."
   (declare (ignore provider))
   (conversation-prompt-cache-key conversation))
 
-;; No service_tier field is ever sent. Omitting it selects the provider's
-;; standard processing path; sending "priority" selects the fast path that
-;; drains subscription rate limits much faster (Codex reference commit
-;; 5c19155c filters its explicit "default" sentinel out of requests too).
+;; Codex Fast mode uses service_tier="fast". Omitting the field selects the
+;; standard path. This mirrors Codex reference commit
+;; 3c1adbabcd0921f848f8c6122e6229689173d063.
 (defmethod provider-request-object
     ((provider codex-subscription-provider)
      (conversation conversation)
@@ -512,7 +511,7 @@ between roots while allowing a root and its task children to share a prefix."
      &key goal-context compaction-p)
   "Build the complete stateless Sol Responses Lite request for CONVERSATION.
 
-The request never carries a service_tier, keeping Autolith on the standard path.
+Fast mode adds service_tier=fast; the standard path omits service_tier.
 GOAL-CONTEXT and resolved context contributions ride as transient developer
 messages that are never persisted in the durable conversation. Skill catalogs
 and explicitly selected bodies participate through that same context delivery.
@@ -586,6 +585,8 @@ delivery that the transport consumes only after a completed response."
         "prompt_cache_key" (provider--codex-prompt-cache-key provider
                                                             conversation)
         "text" (json-object "verbosity" "low"))
+        (when (configuration-codex-fast-mode-p configuration)
+          (list "service_tier" "fast"))
        (when (and *provider-maximum-output-tokens*
                   (provider-output-ceiling-p provider))
          (list "max_output_tokens" *provider-maximum-output-tokens*))))
@@ -627,13 +628,18 @@ checkpoint."
             'vector)))
     (when (provider-reasoning-summaries-p provider)
       (setf (gethash "summary" reasoning) "auto"))
-    (json-object
-     "model" (configuration-model configuration)
-     "input" input
-     "parallel_tool_calls" false
-     "reasoning" reasoning
-     "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
-     "text" (json-object "verbosity" "low"))))
+    (apply
+     #'json-object
+     (append
+      (list
+       "model" (configuration-model configuration)
+       "input" input
+       "parallel_tool_calls" false
+       "reasoning" reasoning
+       "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation)
+       "text" (json-object "verbosity" "low"))
+       (when (configuration-codex-fast-mode-p configuration)
+         (list "service_tier" "fast"))))))
 
 (-> provider-user-agent () string)
 (defun provider-user-agent ()
