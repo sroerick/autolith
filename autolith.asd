@@ -10,6 +10,7 @@
                #:cl-exec-sandbox
                #:cl-jobpond
                #:cl-llm-provider-api
+               #:cl-skills
                #:cl-termdown
                #:clifff
                #:clinedi
@@ -20,11 +21,9 @@
                #:dexador
                #:flexi-streams
                #:idsmall
-               #:ironclad/digest/sha256
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen
-               #:nyaml
                #:opticl
                #:org-templater
                #:parenchek

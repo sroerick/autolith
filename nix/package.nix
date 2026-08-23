@@ -44,6 +44,23 @@ let
     ];
   };
 
+  clSkills = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-skills";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "cl-skills";
+      rev = "a34b85a3aabca9530c5f9772ea988a6399a57963";
+      hash = "sha256-+DyXQwWJYDBa87gq4/QSkzkhZpe+DbsTGt/d1Ipk468=";
+    };
+    lispLibs = [
+      pkgs.sbclPackages.ironclad
+      nyaml
+      pkgs.sbclPackages.serapeum
+      sexpConfig
+    ];
+  };
+
   clinedi = pkgs.sbcl.buildASDFSystem {
     pname = "clinedi";
     version = "0.1.0";
@@ -347,7 +364,6 @@ let
       clTermdown
       dexador
       ironclad
-      nyaml
       opticl
       parenchek
       orgTemplater
@@ -360,6 +376,7 @@ let
       clifff
       clJobpond
       clLlmProviderApi
+      clSkills
       idsmall
       mcparen
       sbclGenerations
