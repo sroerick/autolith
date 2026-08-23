@@ -1,141 +1,6 @@
 (in-package #:autolith)
 
-;;;; -- Provider Events --
-
-(defclass provider-event ()
-  ()
-  (:documentation "A semantic event emitted while consuming a provider stream."))
-
-(defclass provider-progress-event (provider-event)
-  ()
-  (:documentation
-   "Provider activity with no assistant text or completed item to present."))
-
-(defclass assistant-delta-event (provider-event)
-  ((text
-    :initarg :text
-    :reader assistant-delta-event-text
-    :type string
-    :documentation "The newly received assistant text."))
-  (:documentation "An incremental assistant text update."))
-
-(defclass reasoning-delta-event (provider-event)
-  ((text
-    :initarg :text
-    :reader reasoning-delta-event-text
-    :type string
-    :documentation "The newly received visible reasoning summary text."))
-  (:documentation "An incremental visible reasoning summary update."))
-
-(defclass provider-item-event (provider-event)
-  ((item
-    :initarg :item
-    :reader provider-item-event-item
-    :type json-object
-    :documentation "The authoritative completed Responses item."))
-  (:documentation "A completed provider output item ready for persistence."))
-
-(defclass provider-completed-event (provider-event)
-  ((response-id
-    :initarg :response-id
-    :reader provider-completed-event-response-id
-    :type (option string)
-    :documentation "The provider response identifier, if supplied.")
-   (usage
-    :initarg :usage
-    :reader provider-completed-event-usage
-    :type t
-    :documentation "Portable provider usage metadata, if supplied.")
-   (turn-completion
-    :initarg :turn-completion
-    :initform ':unspecified
-    :reader provider-completed-event-turn-completion
-    :type turn-completion
-    :documentation "Whether the provider explicitly ended or continued the turn."))
-  (:documentation "The successful terminal event for one provider request."))
-
-(defclass provider-retry-event (provider-event)
-  ((attempt
-    :initarg :attempt
-    :reader provider-retry-event-attempt
-    :type (integer 1)
-    :documentation "The one-based reconnect attempt about to begin.")
-   (maximum-attempts
-    :initarg :maximum-attempts
-    :reader provider-retry-event-maximum-attempts
-    :type (integer 1)
-    :documentation "The maximum number of reconnect attempts allowed.")
-   (delay
-    :initarg :delay
-    :reader provider-retry-event-delay
-    :type real
-    :documentation "Seconds to wait before reconnecting."))
-  (:documentation "A transient provider stream is about to be retried."))
-
-(defclass provider-result ()
-  ((response-id
-    :initarg :response-id
-    :reader provider-result-response-id
-    :type (option string)
-    :documentation "The provider response identifier, if supplied.")
-   (output-items
-    :initarg :output-items
-    :reader provider-result-output-items
-    :type list
-    :documentation "Authoritative completed response items in wire order.")
-   (tool-calls
-    :initarg :tool-calls
-    :reader provider-result-tool-calls
-    :type list
-    :documentation "The function-call subset of OUTPUT-ITEMS.")
-   (usage
-    :initarg :usage
-    :reader provider-result-usage
-    :type t
-    :documentation "Provider usage metadata, if supplied.")
-   (turn-state
-    :initarg :turn-state
-    :reader provider-result-turn-state
-    :type (option string)
-    :documentation "The routing token to replay within the current user turn.")
-   (turn-completion
-    :initarg :turn-completion
-    :initform ':unspecified
-    :reader provider-result-turn-completion
-    :type turn-completion
-    :documentation "Whether the provider explicitly ended or continued the turn."))
-  (:documentation "The complete semantic result of one streamed provider request."))
-
-
 ;;;; -- Provider Protocol --
-
-(defclass model-provider ()
-  ((registration
-    :initarg :registration
-    :initform nil
-    :accessor model-provider-registration
-    :type (option provider-registration)
-    :documentation "The registry metadata that created this provider."))
-  (:documentation "The abstract interface between an agent and a model service."))
-
-(defclass subscription-provider (model-provider)
-  ((configuration
-    :initarg :configuration
-    :reader provider-configuration
-    :type configuration
-    :documentation "Immutable model and path configuration.")
-   (credential-manager
-    :initarg :credential-manager
-    :reader provider-credential-manager
-    :type credential-manager
-    :documentation "Credential paths and refresh policy without retained tokens.")
-   (session-id
-    :initarg :session-id
-    :reader provider-session-id
-    :type non-empty-string
-    :documentation "The stable provider session identifier."))
-  (:documentation
-   "A direct OAuth subscription client streaming Responses service turns."))
 
 (defclass codex-subscription-provider (subscription-provider)
   ((reasoning-summaries-p
@@ -303,10 +168,6 @@ credential are shared unmodified with VALUE."
   (declare (ignore provider))
   nil)
 
-(-> provider-family (model-provider) keyword)
-(defgeneric provider-family (provider)
-  (:documentation "Return the model family keyword PROVIDER serves."))
-
 (defmethod provider-family ((provider model-provider))
   "Return the registered family for a provider."
   (or (and (model-provider-registration provider)
@@ -460,11 +321,6 @@ so authentication can bootstrap credentials before model discovery."
              :reasoning-summaries-p reasoning-summaries-p
              :registration registration))))))
 
-(-> provider-with-configuration (model-provider configuration) model-provider)
-(defgeneric provider-with-configuration (provider configuration)
-  (:documentation
-   "Return PROVIDER reconfigured for CONFIGURATION while preserving session state."))
-
 (defmethod provider-with-configuration ((provider model-provider)
                                         (configuration configuration))
   "Create a fresh registered provider for a generic provider implementation."
@@ -499,53 +355,12 @@ so authentication can bootstrap credentials before model discovery."
     (setf (provider-rate-limits copy) (copy-tree (provider-rate-limits provider)))
     copy))
 
-(-> provider-set-reasoning-summaries (model-provider boolean) model-provider)
-(defgeneric provider-set-reasoning-summaries (provider enabled-p)
-  (:documentation
-   "Set whether PROVIDER requests visible reasoning summaries when supported."))
-
-(defmethod provider-set-reasoning-summaries
-    ((provider model-provider) (enabled-p t))
-  "Leave providers without reasoning-summary support unchanged."
-  (declare (ignore enabled-p))
-  provider)
-
 (defmethod provider-set-reasoning-summaries
     ((provider codex-subscription-provider) (enabled-p t))
   "Set whether the Codex subscription provider requests reasoning summaries."
   (check-type enabled-p boolean)
   (setf (provider-reasoning-summaries-p provider) enabled-p)
   provider)
-
-(-> provider-stream-turn
-    (model-provider conversation
-     &key (:tool-namespaces vector)
-          (:event-callback function)
-          (:goal-context (option string))
-          (:compaction-p boolean))
-    provider-result)
-(defgeneric provider-stream-turn
-    (provider conversation
-     &key tool-namespaces event-callback goal-context compaction-p)
-  (:documentation
-   "Stream one model response for CONVERSATION using TOOL-NAMESPACES and EVENT-CALLBACK."))
-
-(-> provider-native-compact-conversation
-    (model-provider conversation
-     &key (:tool-namespaces vector) (:event-callback function))
-    (option json-object))
-(defgeneric provider-native-compact-conversation
-    (provider conversation &key tool-namespaces event-callback)
-  (:documentation
-   "Return PROVIDER's opaque native compaction item, or NIL when unsupported."))
-
-(defmethod provider-native-compact-conversation
-    ((provider model-provider)
-     (conversation conversation)
-     &key tool-namespaces event-callback)
-  "Leave native compaction unavailable for providers without an endpoint."
-  (declare (ignore provider conversation tool-namespaces event-callback))
-  nil)
 
 (-> provider-open-response-stream
     (model-provider json-object
@@ -646,18 +461,6 @@ so authentication can bootstrap credentials before model discovery."
 Inference frames bind this to their reserved output tranche so one
 response cannot dramatically overrun the shared subtree budget.")
 
-(-> provider-output-ceiling-p (model-provider) boolean)
-(defgeneric provider-output-ceiling-p (provider)
-  (:documentation
-   "Return true when PROVIDER's wire protocol accepts an output ceiling field."))
-
-(defmethod provider-output-ceiling-p ((provider model-provider))
-  "Refuse the ceiling by default: serving stacks reject unknown fields.
-
-Where the field is refused, an inference tranche stays a budget
-reservation settled against actual usage instead of a wire limit."
-  nil)
-
 (-> provider--web-search-content-types (configuration) (option vector))
 (defun provider--web-search-content-types (configuration)
   "Return CONFIGURATION's provider-required web-search content types.
@@ -678,19 +481,6 @@ standalone search endpoint and returns the cited result through the ordinary
 local tool protocol."
   (declare (ignore configuration))
   nil)
-
-(-> provider-request-object
-    (subscription-provider conversation vector
-     &key (:goal-context (option string))
-          (:compaction-p boolean))
-    (values json-object (option context-delivery)))
-(defgeneric provider-request-object
-    (provider conversation tool-namespaces &key goal-context compaction-p)
-  (:documentation
-   "Build PROVIDER's complete stateless streaming request for CONVERSATION.
-
-The second value is the context delivery that the transport consumes only
-after a completed response, when one participates in the request."))
 
 (-> provider--codex-prompt-cache-key
     (codex-subscription-provider conversation)
@@ -1240,17 +1030,11 @@ are decoded as UTF-8."
                :request-id (provider--response-request-id headers)
                :response (and body (bounded-string body :limit 2000))))))
 
-
 (-> normalize-response-item (json-object) json-object)
 (defun normalize-response-item (item)
   "Remove transient server item identifiers from replayable provider ITEM."
   (remhash "id" item)
   item)
-
-(-> provider-normalize-output-item (model-provider json-object) json-object)
-(defgeneric provider-normalize-output-item (provider item)
-  (:documentation
-   "Return completed ITEM normalized for persistence, replay, and dispatch."))
 
 (defmethod provider-normalize-output-item
     ((provider model-provider) (item hash-table))
@@ -1618,11 +1402,6 @@ abandon the looping stream; the default reaction ignores the report."))
            (bounded-string
             (provider--sanitize-wire-string data)
             :limit 2000))))
-
-(-> provider-consume-stream (model-provider stream t function) provider-result)
-(defgeneric provider-consume-stream (provider stream headers event-callback)
-  (:documentation
-   "Consume PROVIDER's protocol stream while invoking EVENT-CALLBACK."))
 
 (defmethod provider-consume-stream ((provider model-provider) stream headers event-callback)
   "Consume a Responses protocol STREAM into a provider result."

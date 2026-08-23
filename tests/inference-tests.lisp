@@ -2,59 +2,9 @@
 
 ;;;; -- Recursive Inference Tests --
 
-(-> test-rlm-budget-accounting () null)
-(defun test-rlm-budget-accounting ()
-  "Test atomic request acquisition and settlement over a shared pool."
-  (let ((budget (rlm-budget-create :calls 2 :tokens 100 :depth 1)))
-    (test-assert (= (rlm-budget-remaining-calls budget) 2)
-                 "a fresh budget reports its full call allowance")
-    (let ((tranche (rlm-budget-acquire-request budget)))
-      (test-assert (= tranche 25)
-                   "a reservation takes its share of the remaining pool")
-      (test-assert (= (rlm-budget-remaining-calls budget) 1)
-                   "acquiring reserves the call from the shared pool")
-      (test-assert (= (rlm-budget-remaining-tokens budget) 75)
-                   "the reserved tranche leaves the shared pool")
-      (rlm-budget-settle-output budget tranche 40)
-      (test-assert (= (rlm-budget-remaining-tokens budget) 60)
-                   "settling refunds the tranche and charges actual usage"))
-    (let ((tranche (rlm-budget-acquire-request budget)))
-      (test-assert (= tranche 16)
-                   "small shares are lifted to the provider validation floor")
-      (rlm-budget-settle-output budget tranche nil)
-      (test-assert (= (rlm-budget-remaining-tokens budget) 60)
-                   "settling without usage refunds the whole tranche"))
-    (test-assert (handler-case
-                     (progn (rlm-budget-acquire-request budget :task "again")
-                            nil)
-                   (rlm-budget-exhausted (condition)
-                     (and (eq (rlm-budget-exhausted-dimension condition)
-                              ':calls)
-                          (equal (rlm-budget-exhausted-task condition)
-                                 "again")))
-                   (error () nil))
-                 "a drained call pool refuses the next request and names the task")
-    (test-assert (= (rlm-budget-remaining-tokens budget) 60)
-                 "a refused request spends nothing"))
-  (let ((budget (rlm-budget-create :calls 4 :tokens 50 :depth 1)))
-    (rlm-budget-settle-output budget (rlm-budget-acquire-request budget) 900)
-    (test-assert (= (rlm-budget-remaining-tokens budget) 0)
-                 "token overdraft clamps at zero instead of going negative")
-    (test-assert (handler-case
-                     (progn (rlm-budget-acquire-request budget) nil)
-                   (rlm-budget-exhausted (condition)
-                     (eq (rlm-budget-exhausted-dimension condition) ':tokens))
-                   (error () nil))
-                 "a drained token pool refuses the next request")
-    (test-assert (= (rlm-budget-remaining-calls budget) 3)
-                 "a refused request reserves no call"))
-  (let* ((budget (rlm-budget-create :calls 4 :tokens 100 :depth 1))
-         (first-tranche (rlm-budget-acquire-request budget))
-         (second-tranche (rlm-budget-acquire-request budget)))
-    (rlm-budget-settle-output budget first-tranche 100)
-    (rlm-budget-settle-output budget second-tranche nil)
-    (test-assert (zerop (rlm-budget-remaining-tokens budget))
-                 "a later refund does not erase an earlier token overdraft"))
+(-> test-rlm-frame-budget-activity () null)
+(defun test-rlm-frame-budget-activity ()
+  "Test framed inference forwards nested budget activity."
   (let ((budget (rlm-budget-create :calls 2 :tokens 100 :depth 1))
         (activities nil))
     (multiple-value-bind (status-callback flush-tranche)
@@ -72,58 +22,9 @@
        "framed inference forwards nested RLM tool progress")))
   nil)
 
-(-> test-rlm-budget-contention () null)
-(defun test-rlm-budget-contention ()
-  "Test concurrent acquisition never oversubscribes a tiny token pool."
-  (let* ((budget (rlm-budget-create :calls 16 :tokens 100 :depth 1))
-         (results-lock (make-lock "Autolith budget contention test"))
-         (tranches nil)
-         (refusals 0))
-    (mapc #'join-thread
-          (loop repeat 8
-                collect
-                (make-thread
-                 (lambda ()
-                   (handler-case
-                       (let ((tranche (rlm-budget-acquire-request budget)))
-                         (with-lock-held (results-lock)
-                           (push tranche tranches)))
-                     (rlm-budget-exhausted ()
-                       (with-lock-held (results-lock)
-                         (incf refusals)))))
-                 :name "autolith-budget-contention")))
-    (test-assert (= (+ (length tranches) refusals) 8)
-                 "every competing worker either reserves or is refused")
-    (test-assert (<= (reduce #'+ tranches :initial-value 0) 100)
-                 "combined reservations never exceed the token pool")
-    (test-assert (plusp (length tranches))
-                 "at least one competing worker wins the pool"))
-  nil)
-
-(-> test-rlm-context-views () null)
-(defun test-rlm-context-views ()
-  "Test view designators materialize with labels, digests, and rendering."
-  (let ((views (rlm-views-materialize
-                (list "first literal"
-                      (list ':label "notes" ':content "second literal")))))
-    (test-assert (equal (mapcar #'rlm-view-label views) '("literal" "notes"))
-                 "strings and labeled plists keep their labels")
-    (test-assert (string= (rlm-view-digest (first views))
-                          (rlm-view--digest "first literal"))
-                 "views carry the content digest")
-    (let ((rendered (rlm-views-render views)))
-      (test-assert (and (search "label=\"notes\"" rendered)
-                        (search "second literal" rendered))
-                   "rendering includes labels and exact content")
-      (test-assert (search (format nil "</view sha256=~S>"
-                                   (subseq (rlm-view-digest (second views))
-                                           0 12))
-                           rendered)
-                   "closing delimiters repeat the content digest")))
-  (test-assert (equal (mapcar #'rlm-view-label
-                              (rlm-views-materialize (list "one" "two")))
-                      '("literal#1" "literal#2"))
-               "duplicate labels are numbered deterministically")
+(-> test-rlm-context-designators () null)
+(defun test-rlm-context-designators ()
+  "Test Autolith normalizes root inference context designators."
   (test-assert (equal (rlm--context-designators "bare slice") '("bare slice"))
                "a bare string context wraps into one designator")
   (test-assert (equal (rlm--context-designators '(:label "solo" :content "x"))
@@ -133,28 +34,6 @@
                "designator lists pass through unchanged")
   (test-assert (null (rlm--context-designators nil))
                "an absent context stays empty")
-  (uiop:with-temporary-file (:pathname pathname :stream stream :keep nil
-                             :prefix "autolith-rlm-view")
-    (write-string "file view content" stream)
-    (finish-output stream)
-    :close-stream
-    (let ((view (rlm-view-materialize pathname)))
-      (test-assert (string= (rlm-view-content view) "file view content")
-                   "pathname designators read the file at call time")
-      (test-assert (string= (rlm-view-origin view) (namestring pathname))
-                   "pathname views record their origin")))
-  (test-assert (handler-case
-                   (progn
-                     (rlm-view-materialize #p"/nonexistent/rlm-view-test")
-                     nil)
-                 (rlm-view-error () t)
-                 (error () nil))
-               "unreadable files signal a view error")
-  (test-assert (handler-case
-                   (progn (rlm-view-materialize 42) nil)
-                 (rlm-view-error () t)
-                 (error () nil))
-               "unsupported designators signal a view error")
   nil)
 
 (defclass rlm-inference-test-provider (model-provider)
@@ -892,81 +771,29 @@
                    "provider failures fall back to asking")))
   nil)
 
-(-> test-rlm-context-objects () null)
-(defun test-rlm-context-objects ()
-  "Test content-addressed context objects intern once and read back."
+(-> test-rlm-context-object-adapter () null)
+(defun test-rlm-context-object-adapter ()
+  "Test Autolith maps configurations to provider API context stores."
   (let* ((configuration (test-configuration))
-         (first-object (rlm-context-intern configuration "shared corpus"
-                                           :label "corpus"))
-         (second-object (rlm-context-intern configuration "shared corpus")))
-    (test-assert (string= (rlm-context-object-digest first-object)
-                          (rlm-context-object-digest second-object))
-                 "identical content interns to one digest")
-    (test-assert (equal (rlm-context-object-pathname first-object)
-                        (rlm-context-object-pathname second-object))
-                 "identical content shares one stored file")
-    (test-assert (= (length (directory
-                             (merge-pathnames
-                              (make-pathname :name ':wild :type "txt")
-                              (rlm-object-root configuration))))
-                    1)
-                 "repeated interning never duplicates storage")
-    (test-assert (string= (uiop:read-file-string
-                           (rlm-context-object-pathname first-object))
-                          "shared corpus")
-                 "the stored object carries the exact content")
-    (test-assert (= (rlm-context-object-characters first-object) 13)
-                 "object handles report the exact character count")
-    (let ((found (rlm-context-object-find
-                  configuration
-                  (rlm-context-object-digest first-object))))
+         (object (rlm-context-intern configuration "shared corpus"
+                                     :label "corpus")))
+    (test-assert (uiop:subpathp (rlm-context-object-pathname object)
+                                (rlm-object-root configuration))
+                 "context objects are stored below the configuration data root")
+    (multiple-value-bind (found content)
+        (rlm-context-object-find configuration
+                                 (rlm-context-object-digest object))
       (test-assert (and found
-                        (= (rlm-context-object-characters found) 13))
-                   "stored objects are findable by digest"))
-    (test-assert (null (rlm-context-object-find configuration
-                                                (rlm-view--digest "absent")))
-                 "unknown digests find nothing")
-    (let ((pathname (rlm-context-object-pathname first-object)))
-      (test-assert (zerop (logand (sb-posix:stat-mode
-                                   (sb-posix:stat (namestring pathname)))
-                                  #o222))
-                   "stored objects are read-only on disk")
-      (sb-posix:chmod (namestring pathname) #o644)
-      (with-open-file (stream pathname :direction ':output
-                                       :if-exists ':supersede)
-        (write-string "tampered" stream))
-      (test-assert (handler-case
-                       (progn
-                         (rlm-context-object-find
-                          configuration
-                          (rlm-context-object-digest first-object))
-                         nil)
-                     (rlm-view-error () t)
-                     (error () nil))
-                   "a mutated stored object is detected, not trusted")
-      (rlm-context-intern configuration "shared corpus")
-      (test-assert (string= (uiop:read-file-string pathname) "shared corpus")
-                   "re-interning repairs a mutated stored object")
-      (test-assert (zerop (logand (sb-posix:stat-mode
-                                   (sb-posix:stat (namestring pathname)))
-                                  #o222))
-                   "a repaired object is read-only again"))
+                        (string= content "shared corpus")
+                        (string= (rlm-context-object-label object) "corpus"))
+                   "the adapter returns provider API objects and verified content"))
     (test-assert (handler-case
                      (progn
                        (rlm-context-designator-object configuration 42)
                        nil)
                    (rlm-view-error () t)
                    (error () nil))
-                 "unsupported root context designators are refused")
-    (test-assert (handler-case
-                     (progn
-                       (rlm-context-designator-object
-                        configuration
-                        (list ':content "x" ':path #p"/tmp/y"))
-                       nil)
-                   (rlm-view-error () t)
-                   (error () nil))
-                 "designators supplying both content and path are refused"))
+                 "the adapter preserves provider API designator validation"))
   nil)
 
 (-> rlm-endpoint-test-call (rlm-endpoint list) list)
@@ -1474,22 +1301,4 @@
         (test-assert (not (tool-result-success-p
                            (run (json-object "object" "context:00ff"))))
                      "unknown context object digests are refused"))))
-  nil)
-
-(-> test-rlm-budget-descent () null)
-(defun test-rlm-budget-descent ()
-  "Test descended budgets share counters and bound recursion depth."
-  (let* ((root (rlm-budget-create :calls 4 :tokens 100 :depth 1))
-         (child (rlm-budget-descend root)))
-    (test-assert (= (rlm-budget-remaining-depth child) 0)
-                 "descending decrements the remaining depth")
-    (rlm-budget-acquire-request child)
-    (test-assert (= (rlm-budget-remaining-calls root) 3)
-                 "child charges drain the root's shared pool")
-    (test-assert (handler-case
-                     (progn (rlm-budget-descend child) nil)
-                   (rlm-budget-exhausted (condition)
-                     (eq (rlm-budget-exhausted-dimension condition) ':depth))
-                   (error () nil))
-                 "depth zero refuses further descent"))
   nil)

@@ -81,6 +81,76 @@
                 #:job-state
                 #:job-terminal-p
                 #:make-job-pool)
+  (:import-from #:cl-llm-provider-api
+                #:*rlm-default-call-budget*
+                #:*rlm-default-depth-budget*
+                #:*rlm-default-token-budget*
+                #:assistant-delta-event
+                #:assistant-delta-event-text
+                #:chat-completions-provider
+                #:model-provider
+                #:model-provider-registration
+                #:provider-completed-event
+                #:provider-configuration
+                #:provider-consume-stream
+                #:provider-credential-manager
+                #:provider-event
+                #:provider-family
+                #:provider-item-event
+                #:provider-item-event-item
+                #:provider-native-compact-conversation
+                #:provider-normalize-output-item
+                #:provider-output-ceiling-p
+                #:provider-progress-event
+                #:provider-request-object
+                #:provider-responses-hosted-tools
+                #:provider-responses-reasoning-summary
+                #:provider-responses-request-fields
+                #:provider-responses-request-namespaces
+                #:provider-responses-wire-effort
+                #:provider-result
+                #:provider-result-output-items
+                #:provider-result-response-id
+                #:provider-result-tool-calls
+                #:provider-result-turn-completion
+                #:provider-result-turn-state
+                #:provider-result-usage
+                #:provider-retry-event
+                #:provider-retry-event-attempt
+                #:provider-retry-event-delay
+                #:provider-retry-event-maximum-attempts
+                #:provider-session-id
+                #:provider-set-reasoning-summaries
+                #:provider-stream-turn
+                #:provider-wire-input-item
+                #:provider-wire-protocol
+                #:provider-wire-tool
+                #:provider-wire-tool-name
+                #:provider-wire-tools
+                #:provider-with-configuration
+                #:reasoning-delta-event
+                #:reasoning-delta-event-text
+                #:responses-api-provider
+                #:rlm-budget
+                #:rlm-budget-acquire-request
+                #:rlm-budget-create
+                #:rlm-budget-descend
+                #:rlm-budget-exhausted
+                #:rlm-budget-exhausted-dimension
+                #:rlm-budget-remaining-calls
+                #:rlm-budget-remaining-tokens
+                #:rlm-budget-settle-output
+                #:rlm-context-object
+                #:rlm-context-object-characters
+                #:rlm-context-object-digest
+                #:rlm-context-object-label
+                #:rlm-context-object-pathname
+                #:rlm-view
+                #:rlm-view-error
+                #:rlm-views-materialize
+                #:rlm-views-render
+                #:subscription-provider
+                #:turn-completion)
   (:import-from #:flexi-streams
                 #:get-output-stream-sequence
                 #:make-flexi-stream

@@ -10,10 +10,6 @@
   "A Common Lisp universal-time timestamp."
   '(integer 0))
 
-(deftype turn-completion ()
-  "A provider's explicit continuation, completion, or unspecified turn state."
-  '(member :continue :end :unspecified))
-
 (deftype memory-scope ()
   "The global or workspace-local reach of one persistent memory."
   '(member :global :workspace))

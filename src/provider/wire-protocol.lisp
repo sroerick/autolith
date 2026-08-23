@@ -2,54 +2,10 @@
 
 ;;;; -- Provider Wire Protocols --
 
-(defclass responses-api-provider (subscription-provider)
-  ()
-  (:documentation
-   "A provider using the standard streaming Responses API wire protocol."))
-
-(defclass chat-completions-provider (subscription-provider)
-  ()
-  (:documentation
-   "A provider using the streaming Chat Completions wire protocol."))
-
-(-> provider-wire-protocol (model-provider) keyword)
-(defgeneric provider-wire-protocol (provider)
-  (:documentation "Return the wire protocol family implemented by PROVIDER."))
-
-(defmethod provider-wire-protocol ((provider model-provider))
-  "Identify a provider without a declared shared wire protocol."
-  (declare (ignore provider))
-  ':custom)
-
 (defmethod provider-wire-protocol ((provider codex-subscription-provider))
   "Identify the Codex provider's Responses Lite dialect."
   (declare (ignore provider))
   ':responses-lite)
-
-(defmethod provider-wire-protocol ((provider responses-api-provider))
-  "Identify a standard streaming Responses API provider."
-  (declare (ignore provider))
-  ':responses-api)
-
-(defmethod provider-wire-protocol ((provider chat-completions-provider))
-  "Identify a streaming Chat Completions provider."
-  (declare (ignore provider))
-  ':chat-completions)
-
-(-> provider-wire-tool-name (responses-api-provider string string) string)
-(defgeneric provider-wire-tool-name (provider namespace name)
-  (:documentation
-   "Return NAME inside NAMESPACE encoded for PROVIDER's flat function namespace."))
-
-(defmethod provider-wire-tool-name
-    ((provider responses-api-provider) (namespace string) (name string))
-  "Join a Responses API tool namespace and name with a dot."
-  (declare (ignore provider))
-  (format nil "~A.~A" namespace name))
-
-(-> provider-wire-tool (responses-api-provider string json-object) json-object)
-(defgeneric provider-wire-tool (provider namespace tool)
-  (:documentation "Return namespaced TOOL encoded for PROVIDER's wire protocol."))
 
 (defmethod provider-wire-tool
     ((provider responses-api-provider) (namespace string) (tool hash-table))
@@ -60,11 +16,6 @@
    "description" (json-get tool "description")
    "strict" false
    "parameters" (json-get tool "parameters")))
-
-(-> provider-wire-tools (responses-api-provider vector) vector)
-(defgeneric provider-wire-tools (provider tool-namespaces)
-  (:documentation
-   "Return TOOL-NAMESPACES encoded for PROVIDER's request protocol."))
 
 (defmethod provider-wire-tools
     ((provider responses-api-provider) (tool-namespaces vector))
@@ -87,10 +38,6 @@
            collect entry)
    'vector))
 
-(-> provider-wire-input-item (responses-api-provider t) t)
-(defgeneric provider-wire-input-item (provider item)
-  (:documentation "Return conversation ITEM encoded for PROVIDER's wire protocol."))
-
 (defmethod provider-wire-input-item ((provider responses-api-provider) item)
   "Flatten a namespaced function-call ITEM for a standard Responses request."
   (if (and (json-object-p item)
@@ -106,65 +53,6 @@
         (remhash "namespace" copy)
         copy)
       item))
-
-(-> provider-responses-wire-effort (responses-api-provider configuration) (option string))
-(defgeneric provider-responses-wire-effort (provider configuration)
-  (:documentation
-   "Return CONFIGURATION's reasoning effort encoded for PROVIDER.
-NIL means the serving stack rejects the reasoning parameter entirely;
-the request builder then omits the reasoning object."))
-
-(-> provider-responses-reasoning-summary
-    (responses-api-provider configuration)
-    (option string))
-(defgeneric provider-responses-reasoning-summary (provider configuration)
-  (:documentation
-   "Return CONFIGURATION's reasoning summary style for PROVIDER, or NIL."))
-
-(defmethod provider-responses-reasoning-summary
-    ((provider responses-api-provider) (configuration configuration))
-  "Request no reasoning summary style unless a concrete provider opts in."
-  (declare (ignore provider configuration))
-  nil)
-
-(-> provider-responses-hosted-tools
-    (responses-api-provider configuration)
-    list)
-(defgeneric provider-responses-hosted-tools (provider configuration)
-  (:documentation
-   "Return PROVIDER's server-executed hosted tool declarations for CONFIGURATION."))
-
-(defmethod provider-responses-hosted-tools
-    ((provider responses-api-provider) (configuration configuration))
-  "Expose no hosted tools unless a concrete provider opts in."
-  (declare (ignore provider configuration))
-  nil)
-
-(-> provider-responses-request-namespaces
-    (responses-api-provider vector)
-    vector)
-(defgeneric provider-responses-request-namespaces (provider tool-namespaces)
-  (:documentation
-   "Return TOOL-NAMESPACES filtered to the local tools PROVIDER can serve."))
-
-(defmethod provider-responses-request-namespaces
-    ((provider responses-api-provider) (tool-namespaces vector))
-  "Serve every local tool namespace unless a concrete provider excludes one."
-  (declare (ignore provider))
-  tool-namespaces)
-
-(-> provider-responses-request-fields
-    (responses-api-provider conversation)
-    list)
-(defgeneric provider-responses-request-fields (provider conversation)
-  (:documentation
-   "Return PROVIDER-specific alternating JSON fields for one Responses request."))
-
-(defmethod provider-responses-request-fields
-    ((provider responses-api-provider) (conversation conversation))
-  "Add no provider-specific request fields by default."
-  (declare (ignore provider conversation))
-  nil)
 
 (defmethod provider-normalize-output-item
     ((provider responses-api-provider) (item hash-table))
