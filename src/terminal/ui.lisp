@@ -1302,13 +1302,26 @@ columns: name, tally, and description."
              (1+ travel))
         0)))
 
+(-> terminal-ui--running-agent-p (terminal-ui) boolean)
+(defun terminal-ui--running-agent-p (ui)
+  "Return true when UI presents at least one running child agent."
+  (not
+   (null
+    (find ':running
+          (terminal-ui-agent-activities ui)
+          :key (lambda (activity)
+                 (getf activity ':state))
+          :test #'eq))))
+
 (-> terminal-ui--status-signature-at (terminal-ui real) list)
 (defun terminal-ui--status-signature-at (ui now)
   "Return the visible values identifying UI's status paint at NOW."
   (multiple-value-bind (elapsed idle)
       (terminal-ui--status-times-at ui now)
     (list elapsed
-          (and (>= idle *terminal-ui-stale-status-seconds*) idle)
+          (and (not (terminal-ui--running-agent-p ui))
+               (>= idle *terminal-ui-stale-status-seconds*)
+               idle)
           (terminal-ui--status-spinner-phase-at ui now))))
 
 (-> terminal-ui--animation-signature-at
@@ -1340,7 +1353,8 @@ columns: name, tally, and description."
   "Return UI's activity timing at monotonic NOW."
   (multiple-value-bind (elapsed idle)
       (terminal-ui--status-times-at ui now)
-    (if (>= idle *terminal-ui-stale-status-seconds*)
+    (if (and (not (terminal-ui--running-agent-p ui))
+             (>= idle *terminal-ui-stale-status-seconds*))
         (format nil "~A · no update ~A"
                 (terminal-ui--duration-text elapsed)
                 (terminal-ui--duration-text idle))

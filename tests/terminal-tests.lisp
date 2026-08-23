@@ -1503,6 +1503,32 @@
            (and (not (search "working" (second lines)))
                 (search "working" (third lines)))
            "stale timing keeps provider activity below the modeline")))
+       (terminal-ui-set-agent-activities
+        active-ui
+        (list
+         (list :id "active-child"
+               :index 1
+               :agent "reviewer"
+               :state ':running
+               :recent-tools nil
+               :request-count 1
+               :duration-ms 30000
+               :assignment "Review the change."
+               :detached t)))
+       (multiple-value-bind (text display cursor)
+           (terminal-ui--live-content active-ui)
+         (declare (ignore display cursor))
+         (test-assert (not (search "no update" text))
+                      "running child activity suppresses the stale warning")
+         (test-assert (and (search "00:59" text)
+                           (search "active-child" text))
+                      "running child activity keeps compact timing and identity visible"))
+       (terminal-ui-set-agent-activities active-ui nil)
+       (multiple-value-bind (text display cursor)
+           (terminal-ui--live-content active-ui)
+         (declare (ignore display cursor))
+         (test-assert (search "00:59 · no update 00:30" text)
+                      "the stale warning returns after child activity ends"))
       (terminal-ui-note-status-progress active-ui)
       (test-assert (terminal-ui-refresh-status active-ui)
                    "new progress immediately clears the stale status state")
