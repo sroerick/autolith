@@ -4979,6 +4979,13 @@
                    (null (terminal-ui-preview-rows ui))
                    (null (terminal-ui-stream-tail ui)))
               "a reconnect closes and labels the partial presentation attempt"))
+           (funcall send-status
+                    :provider-retrying
+                    (list :attempt 1 :maximum-attempts 5 :delay 0))
+           (test-assert
+            (string= (terminal-ui-status (application-ui application))
+                     "reconnecting 1/5")
+            "an in-flight reconnect drops the elapsed countdown")
            (recording-terminal-reset terminal)
            (funcall send-text "Replacement answer")
            (let ((output (recording-terminal-output terminal)))

@@ -193,6 +193,7 @@
     (test-provider-transport-boundary)
     (test-provider-credential-echo-containment)
     (test-provider-authentication-retries)
+    (test-provider-stream-inactivity-deadline)
     (test-provider-stream-retries)
     (test-grok-provider)
     (test-openai-compatible-provider-bootstrap)

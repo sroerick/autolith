@@ -2949,10 +2949,16 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                     stream-renderer nil)
               (application-set-activity
                application
-               (format nil "reconnecting ~D/~D in ~Ds"
-                       (getf details :attempt)
-                       (getf details :maximum-attempts)
-                       (getf details :delay)))))
+               (let ((delay (getf details :delay)))
+                 (if (and (integerp delay) (plusp delay))
+                     (format nil "reconnecting ~D/~D in ~Ds"
+                             (getf details :attempt)
+                             (getf details :maximum-attempts)
+                             delay)
+                     ;; The attempt is in flight, so no countdown remains.
+                     (format nil "reconnecting ~D/~D"
+                             (getf details :attempt)
+                             (getf details :maximum-attempts)))))))
            (:provider-request-completed
             (reasoning-flush)
             (let ((completed-stream-text

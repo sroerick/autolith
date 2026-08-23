@@ -114,6 +114,13 @@
 (defparameter *provider-stream-retry-sleep-function* #'sleep
   "Function used to wait between provider stream reconnect attempts.")
 
+(defparameter *provider-stream-inactivity-seconds* 300
+  "Seconds one provider stream line may stall before reconnecting.
+
+Dexador's :READ-TIMEOUT governs the response header exchange but not the
+blocking reads that follow on a TLS stream, so a connection lost mid-stream
+otherwise parks the turn forever. NIL disables the bound.")
+
 (defparameter *provider-credential-redaction-marker*
   "[PROVIDER CREDENTIAL REDACTED]"
   "The preferred replacement for a credential echoed by a provider response.")
@@ -739,8 +746,8 @@ checkpoint."
                      5)))
       (subseq line start))))
 
-(-> sse-read-line (stream) t)
-(defun sse-read-line (stream)
+(-> sse--read-line-characters (stream) t)
+(defun sse--read-line-characters (stream)
   "Read one bounded line using only the portable character-stream protocol."
   (let ((characters
           (make-array 256
@@ -760,6 +767,29 @@ checkpoint."
                  "The provider returned an SSE line above the configured limit."))
                (t
                 (vector-push-extend character characters))))))
+
+(-> sse-read-line (stream) t)
+(defun sse-read-line (stream)
+  "Read one bounded line, reconnecting when the stream stalls.
+
+The deadline covers one line, so every delivered line renews it. A stream
+that stops mid-turn signals a transport failure the bounded retry ladder can
+act on instead of blocking on a dead connection indefinitely."
+  (if (and *provider-stream-inactivity-seconds*
+           (plusp *provider-stream-inactivity-seconds*))
+      (handler-case
+          (sb-sys:with-deadline (:seconds *provider-stream-inactivity-seconds*)
+            (sse--read-line-characters stream))
+        (sb-sys:deadline-timeout ()
+          (error 'response-stream-error
+                 :message
+                 (format nil
+                         "The provider stream delivered nothing for ~D seconds."
+                         *provider-stream-inactivity-seconds*)
+                 :status nil
+                 :request-id nil
+                 :response nil)))
+      (sse--read-line-characters stream)))
 
 (-> read-sse-data (stream) t)
 (defun read-sse-data (stream)
@@ -1644,6 +1674,15 @@ streaming turns and native compaction requests."
                         (length *provider-stream-retry-delays*)
                         :delay delay))
               (funcall *provider-stream-retry-sleep-function* delay)
+              ;; The waiting label would otherwise stand for the whole next
+              ;; attempt, so a stalled reconnect reads as a frozen countdown.
+              (funcall event-callback
+                       (make-instance
+                        'provider-retry-event
+                        :attempt (1+ retry-number)
+                        :maximum-attempts
+                        (length *provider-stream-retry-delays*)
+                        :delay 0))
               (incf retry-number))))))))
 
 (defmethod provider-stream-turn

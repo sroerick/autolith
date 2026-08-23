@@ -1765,6 +1765,64 @@
   nil)
 
 (-> test-provider-stream-retries () null)
+(-> provider-tests--connected-stream-pair () (values stream t t t))
+(defun provider-tests--connected-stream-pair ()
+  "Return a loopback character stream plus the sockets holding it open."
+  (let ((listener (make-instance 'sb-bsd-sockets:inet-socket
+                                 :type ':stream
+                                 :protocol ':tcp)))
+    (setf (sb-bsd-sockets:sockopt-reuse-address listener) t)
+    (sb-bsd-sockets:socket-bind listener
+                                (sb-bsd-sockets:make-inet-address "127.0.0.1")
+                                0)
+    (sb-bsd-sockets:socket-listen listener 1)
+    (multiple-value-bind (address port) (sb-bsd-sockets:socket-name listener)
+      (let ((client (make-instance 'sb-bsd-sockets:inet-socket
+                                   :type ':stream
+                                   :protocol ':tcp)))
+        (sb-bsd-sockets:socket-connect client address port)
+        (let ((accepted (sb-bsd-sockets:socket-accept listener)))
+          (values (sb-bsd-sockets:socket-make-stream client
+                                                    :input t
+                                                    :output t
+                                                    :element-type 'character)
+                  client
+                  accepted
+                  listener))))))
+
+(-> test-provider-stream-inactivity-deadline () null)
+(defun test-provider-stream-inactivity-deadline ()
+  "Test a silent provider stream reconnects instead of blocking forever."
+  (multiple-value-bind (stream client accepted listener)
+      (provider-tests--connected-stream-pair)
+    (unwind-protect
+         (let ((*provider-stream-inactivity-seconds* 1)
+               (started (get-universal-time)))
+           (test-assert
+            (handler-case
+                (progn (sse-read-line stream) nil)
+              (response-stream-error (condition)
+                (search "delivered nothing"
+                        (autolith-error-message condition))))
+            "a stalled provider stream signals a retryable transport failure")
+           (test-assert (< (- (get-universal-time) started) 30)
+                        "the stalled stream gives up on its own deadline")
+           (let ((accepted-stream
+                   (sb-bsd-sockets:socket-make-stream accepted
+                                                      :input t
+                                                      :output t
+                                                      :element-type 'character)))
+             (write-line "data: delivered" accepted-stream)
+             (finish-output accepted-stream)
+             (test-assert
+              (string= (sse-read-line stream) "data: delivered")
+              "a delivered line renews the stall deadline instead of failing")))
+      (ignore-errors (close stream))
+      (ignore-errors (sb-bsd-sockets:socket-close accepted))
+      (ignore-errors (sb-bsd-sockets:socket-close client))
+      (ignore-errors (sb-bsd-sockets:socket-close listener))))
+  nil)
+
 (defun test-provider-stream-retries ()
   "Test bounded stream reconnection, observer events, and final failure."
   (let* ((configuration (test-configuration))
@@ -1797,17 +1855,25 @@
                      :event-callback (lambda (event) (push event events)))
                     result)
                 "transient stream and server failures retry the provider turn")
-               (let ((retry-event
-                       (find-if (lambda (event)
-                                  (typep event 'provider-retry-event))
-                                events)))
+               (let* ((retry-events
+                        (reverse
+                         (remove-if-not (lambda (event)
+                                          (typep event 'provider-retry-event))
+                                        events)))
+                      (announcement (first retry-events))
+                      (in-flight (second retry-events)))
                  (test-assert
-                  (and retry-event
-                       (= (provider-retry-event-attempt retry-event) 1)
-                       (= (provider-retry-event-maximum-attempts retry-event)
+                  (and announcement
+                       (= (provider-retry-event-attempt announcement) 1)
+                       (= (provider-retry-event-maximum-attempts announcement)
                           (length *provider-stream-retry-delays*))
-                       (= (provider-retry-event-delay retry-event) 1))
-                  "provider retries expose their attempt and delay to the observer"))
+                       (= (provider-retry-event-delay announcement) 1))
+                  "provider retries expose their attempt and delay to the observer")
+                 (test-assert
+                  (and in-flight
+                       (= (provider-retry-event-attempt in-flight) 1)
+                       (zerop (provider-retry-event-delay in-flight)))
+                  "the reconnect attempt itself reports no remaining countdown"))
                (test-assert
                 (equal (nreverse
                         (test-codex-provider-refresh-flags provider))
