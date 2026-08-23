@@ -1294,15 +1294,15 @@
                           "agent-one"
                           "running resource.read"
                           "◇ reasoning activity"
-                          "stream tail"
                           "notice row"
                           "steering 1"
                           "follow-up 1"
+                          "stream tail"
                           "> draft"))))
           (test-assert
            (and (every #'identity positions)
                 (every #'< positions (rest positions)))
-           "status, local, agent, stream, notice, pending, and prompt rows stay ordered"))))
+           "status, notice, pending, stream, and prompt rows stay ordered"))))
   nil))
 
 (-> test-terminal-live-word-wrapping () null)
