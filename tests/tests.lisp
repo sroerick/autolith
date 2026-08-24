@@ -212,6 +212,7 @@
     (test-nous-provider)
     (test-fireworks-provider)
     (test-opencode-provider)
+    (test-openrouter-provider)
     (test-mistral-provider)
     (test-resource-protocol)
     (test-resource-edit-operation-schema)

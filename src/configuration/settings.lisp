@@ -132,6 +132,25 @@
         override
         *opencode-models-endpoint*)))
 
+;; The public OpenRouter Chat Completions API, verified on 2026-08-24: the
+;; endpoint accepts streaming text, function tools, normalized reasoning
+;; controls, and dynamic model discovery across upstream model vendors.
+(defparameter *openrouter-chat-completions-endpoint*
+  "https://openrouter.ai/api/v1/chat/completions"
+  "The OpenRouter Chat Completions API endpoint.")
+
+(defparameter *openrouter-models-endpoint*
+  "https://openrouter.ai/api/v1/models"
+  "The OpenRouter models endpoint used for dynamic model discovery.")
+
+(-> openrouter-models-endpoint () string)
+(defun openrouter-models-endpoint ()
+  "Return the configured OpenRouter model discovery endpoint."
+  (let ((override (uiop:getenv "AUTOLITH_OPENROUTER_MODELS_ENDPOINT")))
+    (if (non-empty-string-p override)
+        override
+        *openrouter-models-endpoint*)))
+
 (defparameter *anthropic-models-endpoint*
   "https://api.anthropic.com/v1/models"
   "The Anthropic models endpoint used to validate API keys.")
@@ -391,8 +410,9 @@ AUTOLITH_PROVIDER_ENDPOINT overrides the Codex family endpoint,
 AUTOLITH_GROK_PROVIDER_ENDPOINT overrides the Grok family endpoint,
 AUTOLITH_NOUS_PROVIDER_ENDPOINT overrides the Nous family endpoint,
 AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT overrides the Fireworks family endpoint,
-AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint, and
-AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
+AUTOLITH_OPENCODE_PROVIDER_ENDPOINT overrides the OpenCode family endpoint,
+AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT overrides the OpenRouter family endpoint,
+and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
   (let* ((family (model-family model))
          (override
            (case family
@@ -412,6 +432,8 @@ AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
               (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT"))
              (:opencode
               (uiop:getenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT"))
+             (:openrouter
+              (uiop:getenv "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT"))
              (:mistral
               (uiop:getenv "AUTOLITH_MISTRAL_PROVIDER_ENDPOINT"))))
          (registered
@@ -430,6 +452,8 @@ AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
            *fireworks-responses-endpoint*)
           (:opencode
            *opencode-chat-completions-endpoint*)
+          (:openrouter
+           *openrouter-chat-completions-endpoint*)
           (:mistral
            *mistral-chat-completions-endpoint*)
           (otherwise

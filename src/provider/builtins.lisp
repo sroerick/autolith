@@ -66,6 +66,25 @@
   (opencode-api-key-login (provider-credential-manager provider)
                            :stream (or stream *standard-output*)))
 
+(-> provider--openrouter-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--openrouter-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in OpenRouter provider from registry metadata."
+  (declare (ignore reasoning-summaries-p))
+  (provider-family-create ':openrouter configuration))
+
+(-> provider--openrouter-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--openrouter-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Prompt for and save the built-in OpenRouter provider's API key."
+  (declare (ignore open-browser-p))
+  (openrouter-api-key-login (provider-credential-manager provider)
+                            :stream (or stream *standard-output*)))
+
 (-> provider--mistral-registration-factory
     (configuration &key (:reasoning-summaries-p boolean))
     model-provider)
@@ -192,6 +211,19 @@
  :model-discovery #'opencode--fetch-models
  :model-discovery-endpoint *opencode-models-endpoint*
  :model-discovery-endpoint-resolver #'opencode-models-endpoint
+ :source ':builtin)
+
+(register-provider
+ "openrouter"
+ :description "OpenRouter (pay-per-token)"
+ :family ':openrouter
+ :protocol ':chat-completions
+ :endpoint *openrouter-chat-completions-endpoint*
+ :factory #'provider--openrouter-registration-factory
+ :authenticator #'provider--openrouter-registration-authenticator
+ :model-discovery #'openrouter--fetch-models
+ :model-discovery-endpoint *openrouter-models-endpoint*
+ :model-discovery-endpoint-resolver #'openrouter-models-endpoint
  :source ':builtin)
 
 (register-provider
