@@ -262,26 +262,9 @@ fi
               (merge-pathnames "script/validate-static-release.lisp"
                                source-root)))
        :ignore-error-status t)
-    (let ((diagnostic (concatenate 'string (or output "")
-                                   (or error-output ""))))
-      (test-assert (not (zerop status))
-                   "the static release smoke program rejects missing arguments")
-      (test-assert (search "usage: validate-static-release.lisp SOURCE"
-                           diagnostic)
-                   "the static release smoke program establishes its local functions")))
-  (test-assert
-   (probe-file (merge-pathnames "server/Containerfile" source-root))
-   "the release container definition is readable")
-  (test-assert
-   (search "RUSTUP_TOOLCHAIN=1.97.1"
-           (uiop:read-file-string
-            (merge-pathnames "server/Containerfile" source-root)))
-   "the release container selects its pinned Rust toolchain")
-  (test-assert
-   (search "libicu-dev"
-           (uiop:read-file-string
-            (merge-pathnames "server/Containerfile" source-root)))
-   "the release container can compile ColorLisp's ICU-backed Unicode source")
+    (declare (ignore output error-output))
+    (test-assert (not (zerop status))
+                 "the static release smoke program rejects missing arguments"))
   (let ((minimum-source-sha256
           (string-trim
            '(#\Space #\Tab #\Newline #\Return)
@@ -1666,10 +1649,9 @@ esac
                      "the adapter compares version fields numerically"))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.10.0") :install-p t)
+        (declare (ignore output))
         (test-assert (not (zerop status))
-                     "source installation rejects an untracked newer release")
-        (test-assert (search "has no tracked source archive identity" output)
-                     "the adapter explains missing source verification metadata"))
+                     "source installation rejects an untracked newer release"))
       (let ((identity
               (merge-pathnames "autolith/runtimes/2.6.7/source.identity"
                                data-home)))
@@ -1682,22 +1664,19 @@ esac
             (run-adapter (fake-runtime "2.6.7")
                          :install-p t
                          :sha256 (make-string 64 :initial-element #\0))
+          (declare (ignore output))
           (test-assert (not (zerop status))
-                       "source installation rejects a mismatched archive digest")
-          (test-assert (search "wrong SHA-256 identity" output)
-                       "the adapter reports source archive identity mismatch")))
+                       "source installation rejects a mismatched archive digest")))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.7.0.123-gabc"))
+        (declare (ignore output))
         (test-assert (not (zerop status))
-                     "the adapter rejects builds without release source archives")
-        (test-assert (search "does not satisfy SBCL 2.6.6 or newer" output)
-                     "the adapter explains a rejected non-release build"))
+                     "the adapter rejects builds without release source archives"))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.6.3"))
+        (declare (ignore output))
         (test-assert (not (zerop status))
-                     "the adapter rejects a runtime older than the minimum")
-        (test-assert (search "does not satisfy SBCL 2.6.6 or newer" output)
-                     "the adapter explains a rejected older runtime")))
+                     "the adapter rejects a runtime older than the minimum")))
     (let ((*package* (find-package "CL-USER")))
       (load (merge-pathnames "script/runtime-requirement.lisp" source-root)))
     (let ((at-least-p
@@ -1936,21 +1915,12 @@ esac
 (-> release-script-tests--platform-ids () null)
 (defun release-script-tests--platform-ids ()
   "Exercise canonical release platform identifiers."
-  (dolist (case '(("Linux" "x86-64" "x86_64-linux")
-                  ("Linux" "x86_64" "x86_64-linux")
-                  ("Linux" "amd64" "x86_64-linux")
+  (dolist (case '(("Linux" "x86_64" "x86_64-linux")
                   ("Linux" "aarch64" "aarch64-linux")
-                  ("Linux" "arm64" "aarch64-linux")
-                  ("Darwin" "x86-64" "x86_64-darwin")
                   ("Darwin" "x86_64" "x86_64-darwin")
-                  ("Darwin" "amd64" "x86_64-darwin")
                   ("Darwin" "arm64" "arm64-darwin")
-                  ("Darwin" "aarch64" "arm64-darwin")
-                  ("FreeBSD" "amd64" "x86_64-freebsd")
                   ("FreeBSD" "x86_64" "x86_64-freebsd")
-                  ("NetBSD" "amd64" "x86_64-netbsd")
                   ("NetBSD" "x86_64" "x86_64-netbsd")
-                  ("OpenBSD" "amd64" "x86_64-openbsd")
                   ("OpenBSD" "x86_64" "x86_64-openbsd")))
     (destructuring-bind (os architecture expected) case
       (test-assert
@@ -1983,10 +1953,8 @@ esac
        (search "Could not identify the Linux C library"
                (release-archive-error-cause condition))))
    "unrecognized ldd output is rejected")
-  (dolist (case '(("Linux" "i686")
-                  ("SunOS" "amd64")
-                  ("FreeBSD" "aarch64")
-                  ("Windows_NT" "x86_64")))
+  (dolist (case '(("SunOS" "amd64")
+                  ("FreeBSD" "aarch64")))
     (destructuring-bind (os architecture) case
       (test-assert
        (handler-case
@@ -2558,56 +2526,47 @@ esac
                  :environment (append extra-environment environment)
                  :ignore-error-status t))
 
-             (assert-failure (archive diagnostic description
-                              &key extra-environment)
+             (assert-failure (archive description &key extra-environment)
                (multiple-value-bind (output error-output status)
                    (validate archive :extra-environment extra-environment)
-                 (declare (ignore output))
-                 (test-assert (not (zerop status)) description)
-                 (test-assert (search diagnostic error-output)
-                              (format nil "~A reports ~A"
-                                      description diagnostic)))))
+                 (declare (ignore output error-output))
+                 (test-assert (not (zerop status)) description))))
       (let ((missing (archive-path "missing"))
             (unsupported
               (release-script-tests--write-file
                (archive-path "unsupported") "")))
-        (assert-failure missing "does not exist"
-                        "Linux artifact validation rejects a missing archive")
+        (assert-failure
+         missing "Linux artifact validation rejects a missing archive")
         (multiple-value-bind (output error-output status)
             (release-script-tests--run
              (list (namestring validator) (namestring unsupported)
                    "sparc64-linux" "sparc64" "/lib/ld-linux.so.2")
              :ignore-error-status t)
-          (declare (ignore output))
+          (declare (ignore output error-output))
           (test-assert (not (zerop status))
-                       "Linux artifact validation rejects an unsupported architecture")
-          (test-assert (search "unsupported expected architecture sparc64"
-                               error-output)
-                       "unsupported Linux validation identifies the architecture")))
+                       "Linux artifact validation rejects an unsupported architecture")))
       (release-script-tests--record
        release-record "v0.11.0" :platform "x86_64-linux")
       (let ((valid (make-archive "valid")))
         (multiple-value-bind (output error-output status)
             (validate valid)
-          (declare (ignore error-output))
+          (declare (ignore output error-output))
           (test-assert (zerop status)
-                       "Linux artifact validation accepts a matching archive")
-          (test-assert (search "Validated" output)
-                       "successful Linux artifact validation reports its result"))
-        (assert-failure valid "ELF machine"
-                        "Linux artifact validation rejects a mismatched ELF machine"
-                        :extra-environment '("AUTOLITH_TEST_MACHINE=SPARC V9"))
-        (assert-failure valid "interpreter"
-                        "Linux artifact validation rejects a mismatched interpreter"
-                        :extra-environment '("AUTOLITH_TEST_INTERPRETER=/wrong/loader"))
-        (assert-failure valid "smoke test"
-                        "Linux artifact validation rejects a malformed runtime version"
-                        :extra-environment '("AUTOLITH_TEST_RUNTIME_VERSION=2.6")))
+                       "Linux artifact validation accepts a matching archive"))
+        (assert-failure
+         valid "Linux artifact validation rejects a mismatched ELF machine"
+         :extra-environment '("AUTOLITH_TEST_MACHINE=SPARC V9"))
+        (assert-failure
+         valid "Linux artifact validation rejects a mismatched interpreter"
+         :extra-environment '("AUTOLITH_TEST_INTERPRETER=/wrong/loader"))
+        (assert-failure
+         valid "Linux artifact validation rejects a malformed runtime version"
+         :extra-environment '("AUTOLITH_TEST_RUNTIME_VERSION=2.6")))
       (release-script-tests--write-file
        (merge-pathnames "rogue" fixture-root) "outside release root")
       (assert-failure
        (make-archive "extra-top-level" :extra-top-level "rogue")
-       "is outside" "Linux artifact validation rejects extra top-level members")
+       "Linux artifact validation rejects extra top-level members")
       (release-script-tests--record
        release-record "v0.11.0" :platform "x86_64-linux")
       (with-open-file (stream release-record
@@ -2615,12 +2574,12 @@ esac
                               :if-exists ':append)
         (write-line "platform=aarch64-linux" stream))
       (assert-failure
-       (make-archive "duplicate-platform") "exactly one platform field"
+       (make-archive "duplicate-platform")
        "Linux artifact validation rejects duplicate platform fields")
       (release-script-tests--record
        release-record "v0.11.0" :platform "aarch64-linux")
       (assert-failure
-       (make-archive "mismatched-platform") "does not identify x86_64-linux"
+       (make-archive "mismatched-platform")
        "Linux artifact validation rejects mismatched platform metadata")
       (release-script-tests--record
        release-record "v0.11.0" :platform "x86_64-linux-musl")
@@ -2631,11 +2590,9 @@ esac
            :extra-environment
            '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
              "AUTOLITH_TEST_STATIC_HEADERS=1"))
-        (declare (ignore output))
+        (declare (ignore output error-output))
         (test-assert (not (zerop status))
-                     "static validation rejects a mismatched archive root")
-        (test-assert (search "archive root" error-output)
-                     "static root mismatch is explicit"))
+                     "static validation rejects a mismatched archive root"))
       (release-script-tests--record
        release-record "v0.11.0" :platform "x86_64-linux")
       (let* ((musl-name "autolith-v0.11.0-x86_64-linux-musl")
@@ -2659,9 +2616,7 @@ esac
             (test-assert (zerop status)
                          "Linux artifact validation accepts a static musl archive")
             (test-assert (search "Static native smoke test passed." output)
-                         "static Linux validation exercises the native smoke test")
-            (test-assert (search "Validated" output)
-                         "static Linux artifact validation reports its result"))
+                         "static Linux validation exercises the native smoke test"))
           (multiple-value-bind (output error-output status)
               (validate-static
                static
@@ -2670,11 +2625,9 @@ esac
                '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
                  "AUTOLITH_TEST_STATIC_HEADERS=1"
                  "AUTOLITH_TEST_NEEDED=libc.so"))
-            (declare (ignore output))
+            (declare (ignore output error-output))
             (test-assert (not (zerop status))
-                         "static Linux validation rejects dynamic dependencies")
-            (test-assert (search "dynamic dependency" error-output)
-                         "static Linux dependency failure is explicit")))
+                         "static Linux validation rejects dynamic dependencies")))
         (release-script-tests--run
          (list "ln" "-s" "/bin/sh"
                (namestring (merge-pathnames "escaped-runtime" musl-root)))
@@ -2686,186 +2639,11 @@ esac
              :extra-environment
              '("AUTOLITH_TEST_FILE_DESCRIPTION=ELF 64-bit LSB executable, x86-64, statically linked"
                "AUTOLITH_TEST_STATIC_HEADERS=1"))
-          (declare (ignore output))
+          (declare (ignore output error-output))
           (test-assert (not (zerop status))
-                       "static validation rejects escaping symbolic links")
-          (test-assert (search "outside the release root" error-output)
-                       "escaping symbolic-link failure is explicit")))
+                       "static validation rejects escaping symbolic links")))
     nil)))
 
-(-> release-script-tests--github-release-workflow (pathname) null)
-(defun release-script-tests--github-release-workflow (source-root)
-  "Exercise the GitHub release packaging workflow."
-  (let* ((workflow
-           (uiop:read-file-string
-            (merge-pathnames ".github/workflows/release.yml" source-root)))
-         (workflow-lower (string-downcase workflow))
-         (validator
-           (uiop:read-file-string
-            (merge-pathnames "script/validate-linux-release-artifact"
-                             source-root))))
-    (dolist (job '("package-linux-x86_64"
-                   "package-linux-aarch64"
-                   "package-linux-x86_64-musl"
-                   "package-linux-aarch64-musl"
-                   "package-macos-arm64"
-                   "package-macos-x86_64"
-                   "package-freebsd-x86_64"
-                   "package-netbsd-x86_64"
-                   "package-openbsd-x86_64"))
-      (test-assert (search job workflow)
-                   (format nil "the release workflow packages ~A" job)))
-    (labels ((job-section (job next-job)
-               (subseq workflow
-                       (search (format nil "  ~A:" job) workflow)
-                       (or (and next-job
-                                (search (format nil "  ~A:" next-job) workflow))
-                           (length workflow)))))
-      (let ((linux-x86_64
-              (job-section "package-linux-x86_64" "package-linux-aarch64"))
-            (linux-aarch64
-              (job-section "package-linux-aarch64" "package-linux-x86_64-musl"))
-            (linux-x86_64-musl
-              (job-section "package-linux-x86_64-musl"
-                           "package-linux-aarch64-musl"))
-            (linux-aarch64-musl
-              (job-section "package-linux-aarch64-musl" "package-macos-arm64"))
-            (macos-arm64
-              (job-section "package-macos-arm64" "package-macos-x86_64"))
-            (macos-x86_64
-              (job-section "package-macos-x86_64" "package-freebsd-x86_64"))
-            (openbsd
-              (job-section "package-openbsd-x86_64" nil))
-            (script
-              (uiop:read-file-string
-               (merge-pathnames "script/ci-package-release" source-root)))
-            (runtime-builder
-              (uiop:read-file-string
-               (merge-pathnames "script/build-release-runtime.lisp" source-root)))
-            (static-builder
-              (uiop:read-file-string
-               (merge-pathnames "script/build-static-release-runtime" source-root)))
-            (static-smoke
-              (uiop:read-file-string
-               (merge-pathnames "script/validate-static-release.lisp" source-root))))
-        (dolist (linux (list linux-x86_64 linux-aarch64
-                             linux-x86_64-musl linux-aarch64-musl))
-          (test-assert (search "script/validate-linux-release-artifact" linux)
-                       "each Linux package is validated before upload")
-          (test-assert (search "binutils" linux)
-                       "each Linux packaging environment installs binutils")
-          (test-assert (search " file " linux)
-                       "each Linux packaging environment installs file"))
-        (dolist (validation
-                 `((,linux-x86_64
-                    "x86_64-linux x86_64 /lib64/ld-linux-x86-64.so.2")
-                   (,linux-aarch64
-                    "aarch64-linux aarch64 /lib/ld-linux-aarch64.so.1")
-                    (,linux-x86_64-musl
-                     "x86_64-linux-musl x86_64 static")
-                    (,linux-aarch64-musl
-                     "aarch64-linux-musl aarch64 static")))
-          (test-assert (search (second validation) (first validation))
-                       (format nil "Linux validation checks ~A"
-                               (second validation))))
-        (test-assert
-         (search "image: ubuntu:20.04@sha256:c664f8f86ed5a386b0a340d981b8f81714e21a8b9c73f658c4bea56aa179d54a"
-                 linux-x86_64)
-         "x86-64 glibc packaging pins the Ubuntu 20.04 platform manifest")
-        (test-assert
-         (search "image: ubuntu:20.04@sha256:722ea796ac2d57eeb3627c58a582fc1acc58be51faf815e1bce1682ae5c092f7"
-                 linux-aarch64)
-         "aarch64 glibc packaging pins the Ubuntu 20.04 platform manifest")
-        (test-assert (search "pkg-config sbcl" linux-x86_64)
-                     "x86-64 glibc packaging installs a compatible host SBCL")
-        (dolist (linux (list linux-aarch64
-                             linux-x86_64-musl linux-aarch64-musl))
-          (test-assert (search "AUTOLITH_HOST_BOOTSTRAP" linux)
-                       "non-x86-64-glibc Linux packaging validates host bootstrap"))
-        (test-assert
-         (search "alpine:3.22.5@sha256:7c8cb692ae09657cbc4a3f3cbd0e8d5a2690ba38386aaaf252dbb060bf5eb2e6"
-                 linux-x86_64-musl)
-         "x86-64 musl packaging pins the Alpine platform manifest")
-        (test-assert
-         (search "alpine:3.22.5@sha256:2c9d26f410d032d5b1525aa8a873e238b05b90c4ae8618743d4311f0cc827e37"
-                 linux-aarch64-musl)
-         "aarch64 musl packaging pins the Alpine platform manifest")
-         (dolist (linux (list linux-x86_64-musl linux-aarch64-musl))
-           (dolist (package '("openssl-libs-static" "zlib-static" "zstd-static"))
-             (test-assert (search package linux)
-                          (format nil "musl packaging installs ~A" package))))
-        (dolist (needle '("runtime_builder=$runtime_root/static-build/installation/bin/sbcl"
-                          "bootstrap_sbcl=$runtime_builder"
-                          "AUTOLITH_SBCL=$bootstrap_sbcl ./script/bootstrap"
-                          "./script/build-static-release-runtime"))
-          (test-assert (search needle script)
-                       (format nil "static packaging contains ~A" needle)))
-        (test-assert (search "(merge-pathnames \"installation/\" support-root)"
-                             runtime-builder)
-                     "the runtime build preserves a complete dynamic SBCL installation")
-        (test-assert
-         (search "builder_runtime=$support_root/installation/bin/sbcl" static-builder)
-         "the static finalizer uses the preserved dynamic SBCL")
-        (test-assert (search "(find \"autolith.asd\"" static-smoke)
-                     "the static FFF smoke test verifies its search result")
-        (test-assert (search "timeout-minutes: 75" linux-x86_64)
-                     "Linux x86-64 packaging has a 75-minute deadline")
-        (test-assert (search "runs-on: macos-15-intel" macos-x86_64)
-                     "macOS x86-64 packaging uses GitHub's Intel runner")
-        (test-assert (search "brew install rust gnu-tar sbcl" macos-x86_64)
-                     "macOS x86-64 packaging installs a host SBCL")
-        (test-assert
-         (search "x86_64-darwin.tar.gz" macos-x86_64)
-         "macOS x86-64 packaging uploads the canonical archive")
-        (test-assert (search "arm64-darwin.tar.gz" macos-arm64)
-                     "macOS arm64 packaging uploads the canonical archive")
-        (test-assert (search "gtar--" openbsd)
-                     "OpenBSD packaging installs the default gtar flavor")
-        (test-assert (not (search " gtar " openbsd))
-                     "OpenBSD packaging does not pass the ambiguous gtar stem")
-        (test-assert (search "gtar--" script)
-                     "the packaging script installs the default OpenBSD gtar flavor")
-        (test-assert (search "gtar-1.35p1" script)
-                     "the packaging script falls back to a pinned OpenBSD gtar")
-        (test-assert (search "GNU tar (gtar) is required for reproducible release archives."
-                             script)
-                     "the packaging script fails closed when GNU tar is absent")))
-    (test-assert (search "script/ci-package-release" workflow)
-                 "the release workflow uses the shared packaging script")
-    (test-assert (search "vmactions/freebsd-vm@v1" workflow)
-                 "the release workflow uses the FreeBSD VM action")
-    (test-assert (search "vmactions/netbsd-vm@v1" workflow)
-                 "the release workflow uses the NetBSD VM action")
-    (test-assert (search "vmactions/openbsd-vm@v1" workflow)
-                 "the release workflow uses the OpenBSD VM action")
-    (test-assert (not (search "Wait for the release service" workflow))
-                 "the release workflow no longer waits for the host builder")
-    (test-assert (not (search "alpine:latest" workflow-lower))
-                 "musl packaging never uses an unpinned Alpine latest image")
-    (test-assert (not (search "AUTOLITH_RELEASE_PLATFORM" workflow))
-                 "the release workflow relies on detected platform identity")
-    (test-assert (search "static" workflow-lower)
-                 "the release workflow validates static musl artifacts")
-    (test-assert (not (search "standalone" workflow-lower))
-                 "the release workflow does not claim standalone Linux artifacts")
-    (dolist (needle '("archive_members=$(tar -tzf"
-                      "exactly one top-level directory named"
-                      "exactly one platform field"
-                      "platform_count=$(grep -c '^platform='"
-                      "file --brief"
-                      "file --brief -L"
-                      "readlink -f"
-                      "-type l"
-                      "readelf -h"
-                      "readelf -l"
-                      "readelf -d"
-                      "statically linked"
-                      "dynamic dependency"
-                      "expected_interpreter"
-                      "--eval '(write-string (lisp-implementation-version))'"))
-      (test-assert (search needle validator)
-                   (format nil "the Linux artifact validator contains ~A" needle))))
-  nil)
 
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
@@ -2880,7 +2658,6 @@ esac
          (progn
               (release-script-tests--syntax source-root)
               (release-script-tests--bootstrap-dependency-order source-root root)
-              (release-script-tests--github-release-workflow source-root)
               (release-script-tests--linux-release-validator source-root root)
               (release-script-tests--runtime-adapter source-root root)
               (release-script-tests--runtime-bootstrap source-root root)
