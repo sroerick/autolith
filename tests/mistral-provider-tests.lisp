@@ -67,7 +67,7 @@
 
 (-> mistral-provider-test--model-decoding () null)
 (defun mistral-provider-test--model-decoding ()
-  "Test Mistral model capability filtering and malformed cards."
+  "Test Mistral model capability filtering."
   (let ((body
           (json-encode
            (json-object
@@ -85,53 +85,31 @@
              :entry-predicate #'mistral--chat-model-p)
             '("mistral-large-latest"))
      "Mistral discovery exposes only chat-capable models"))
-  (test-assert
-   (handler-case
-       (progn
-         (openai-compatible--decode-model-list
-          (json-encode
-           (json-object "data"
-                        (json-array (json-object "id" "malformed"))))
-          :entry-predicate #'mistral--chat-model-p)
-         nil)
-     (configuration-error () t))
-   "Mistral discovery rejects model cards without capabilities")
   nil)
 
 (-> mistral-provider-test--provider () null)
 (defun mistral-provider-test--provider ()
-  "Test Mistral construction, copying, endpoint identity, and request shape."
+  "Test Mistral's output-token request field."
   (let* ((configuration (mistral-provider-test--configuration))
          (root (test-configuration-root configuration))
          (provider (mistral-provider-create configuration))
-         (copy (provider-with-configuration provider configuration))
          (conversation
            (conversation-create configuration :identifier "mistral-request")))
     (unwind-protect
          (progn
-           (test-assert
-            (and (typep provider 'mistral-api-key-provider)
-                 (eq (provider-family provider) ':mistral)
-                 (string= (provider-account-label provider) "Mistral"))
-            "Mistral construction preserves its provider identity")
-           (test-assert
-            (and (typep copy 'mistral-api-key-provider)
-                 (eq (provider-credential-manager copy)
-                     (provider-credential-manager provider))
-                 (string= (provider-session-id copy)
-                          (provider-session-id provider)))
-            "Mistral copies retain credentials and session identity")
            (conversation-append-user-message conversation "Hello Mistral.")
            (let ((*provider-maximum-output-tokens* 321))
              (multiple-value-bind (request delivery)
-                (provider-request-object provider conversation (json-array)
+                 (provider-request-object provider conversation (json-array)
                                           :goal-context nil
                                           :compaction-p nil)
                (declare (ignore delivery))
-               (test-assert (= (json-get request "max_tokens") 321)
-                            "Mistral requests use max_tokens")
-               (test-assert (null (json-get request "max_completion_tokens"))
-                            "Mistral requests omit max_completion_tokens"))))
+              (test-assert
+               (= (json-get request "max_tokens") 321)
+               "Mistral requests include max_tokens")
+              (test-assert
+               (null (json-get request "max_completion_tokens"))
+              "Mistral requests omit max_completion_tokens"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

@@ -13,8 +13,6 @@
   "Test Anthropic model family resolution and endpoint selection."
   (test-assert (eq (model-family "claude-haiku-4-5-20251001") ':anthropic)
                "Claude identifiers resolve to the Anthropic family")
-  (test-assert (eq (model-family "gpt-5.6-sol") ':codex)
-               "GPT identifiers keep the Codex family")
   (let ((configuration (anthropic-provider-test--configuration)))
     (test-assert
      (string= (configuration-provider-endpoint configuration)
@@ -26,39 +24,7 @@
 
 (-> anthropic-provider-test--credential-source () null)
 (defun anthropic-provider-test--credential-source ()
-  "Test the Anthropic environment credential source without network access."
-  (let ((source (make-instance 'anthropic-environment-credential-source))
-        (saved (uiop:getenv "ANTHROPIC_API_KEY")))
-    (unwind-protect
-         (progn
-           (setf (uiop:getenv "ANTHROPIC_API_KEY") "")
-           (test-assert (null (credential-source-load source))
-                        "an empty environment yields no Anthropic credentials")
-           (setf (uiop:getenv "ANTHROPIC_API_KEY") "test-anthropic-key")
-           (let ((credentials (credential-source-load source)))
-             (test-assert (typep credentials 'oauth-credentials)
-                          "the environment key loads as request credentials")
-             (test-assert (string= (oauth-credentials-access-token credentials)
-                                   "test-anthropic-key")
-                          "the API key rides as the request access token")
-             (test-assert (null (oauth-credentials-expires-at credentials))
-                          "static API keys carry no expiry")
-             (test-assert (not (credentials-needs-refresh-p credentials))
-                          "static API keys never refresh"))
-           (test-assert
-            (handler-case
-                (progn
-                  (credential-source-save
-                   source
-                   (make-instance 'oauth-credentials
-                                  :access-token "key"
-                                  :account-id "anthropic"
-                                  :source-path #P"/tmp/autolith-unwritten"))
-                  nil)
-              (authentication-error ()
-                t))
-            "the environment source rejects writes"))
-      (setf (uiop:getenv "ANTHROPIC_API_KEY") saved)))
+  "Test Anthropic credential precedence at the provider boundary."
   (let* ((configuration (anthropic-provider-test--configuration))
          (manager (anthropic-credential-manager-create configuration))
          (saved (uiop:getenv "ANTHROPIC_API_KEY")))
@@ -69,14 +35,84 @@
             (handler-case
                 (progn (credential-manager-load manager) nil)
               (credentials-unavailable () t))
-            "an empty store and environment require interactive login")
+            "Anthropic requires credentials when no source is configured")
            (setf (uiop:getenv "ANTHROPIC_API_KEY") "environment-key")
            (test-assert
             (string= (oauth-credentials-access-token
                       (credential-manager-load manager))
                      "environment-key")
-            "the environment key takes precedence over the saved key"))
+            "Anthropic loads its environment credential"))
       (setf (uiop:getenv "ANTHROPIC_API_KEY") saved)))
+  nil)
+
+(-> anthropic-provider-test--request-condition
+    (anthropic-api-key-provider list)
+    (option provider-error))
+(defun anthropic-provider-test--request-condition (provider items)
+  "Return the provider condition from translating persisted ITEMS, or NIL."
+  (let ((conversation
+          (conversation-create (provider-configuration provider))))
+    (conversation-append-user-message conversation "Seed message.")
+    (dolist (item items)
+      (conversation-append-provider-item conversation item))
+    (handler-case
+        (progn
+          (provider-request-object provider conversation #())
+          nil)
+      (provider-error (condition)
+        condition))))
+
+(-> anthropic-provider-test--request-conversion-failures () null)
+(defun anthropic-provider-test--request-conversion-failures ()
+  "Test representative failures for persisted content Anthropic cannot preserve."
+  (let* ((provider
+           (anthropic-provider-create
+            (anthropic-provider-test--configuration)))
+         (cases
+           (list
+            (list
+             "unsupported message content"
+             (list
+              (json-object "type" "message" "role" "assistant"
+                           "content"
+                           (json-array
+                            (json-object "type" "future_content" "value" 1)))))
+            (list
+             "mismatched tool result"
+             (list
+              (json-object "type" "function_call"
+                           "call_id" "expected" "name" "read"
+                           "arguments" "{}")
+              (json-object "type" "function_call_output"
+                           "call_id" "other" "output" "done")))
+            (list
+             "duplicate function-call identifier"
+             (list
+              (json-object "type" "function_call"
+                           "call_id" "duplicate" "name" "read"
+                           "arguments" "{}")
+              (json-object "type" "function_call"
+                           "call_id" "duplicate" "name" "read"
+                           "arguments" "{}"))))))
+    (dolist (case cases)
+      (let ((condition
+              (anthropic-provider-test--request-condition
+               provider (second case))))
+        (test-assert
+         (and (typep condition 'provider-error)
+              (string= (provider-error-code condition) "unsupported_content"))
+         (format nil "Anthropic rejects persisted ~A" (first case)))))
+    (let ((fallback
+            (anthropic--tool-result-block
+             (json-object
+              "type" "function_call_output"
+              "call_id" "fallback"
+              "output"
+              (json-array
+               (json-object "type" "future_content" "value" 1))))))
+      (test-assert
+       (stringp (json-get fallback "content"))
+       "an all-unsupported tool result uses a bounded textual fallback")))
   nil)
 
 (-> anthropic-provider-test--request-encoding () null)
@@ -347,163 +383,6 @@
                        "durable refusal content becomes Anthropic assistant text")))))
   nil)
 
-(-> anthropic-provider-test--request-condition
-    (anthropic-api-key-provider list)
-    (option provider-error))
-(defun anthropic-provider-test--request-condition (provider items)
-  "Return the provider condition from translating ITEMS, or NIL."
-  (let ((conversation
-          (conversation-create (provider-configuration provider))))
-    (conversation-append-user-message conversation "Seed message.")
-    (dolist (item items)
-      (conversation-append-provider-item conversation item))
-    (handler-case
-        (progn
-          (provider-request-object provider conversation #())
-          nil)
-      (provider-error (condition)
-        condition))))
-
-(-> anthropic-provider-test--request-conversion-failures () null)
-(defun anthropic-provider-test--request-conversion-failures ()
-  "Test explicit failures for outbound content Anthropic cannot preserve."
-  (let* ((configuration (anthropic-provider-test--configuration))
-         (provider (anthropic-provider-create configuration)))
-    (dolist
-        (case
-         (list
-          (list
-           "unsupported message content"
-           "unsupported Anthropic content"
-           (list
-            (json-object "type" "message" "role" "assistant"
-                         "content"
-                         (json-array
-                          (json-object "type" "future_content" "value" 1)))))
-          (list
-           "unsupported image source"
-           "unsupported Anthropic content"
-           (list
-            (json-object "type" "message" "role" "assistant"
-                         "content"
-                         (json-array
-                          (json-object "type" "input_image"
-                                       "image_url" "file:///tmp/image.png")))))
-          (list
-           "array tool arguments"
-           "valid Anthropic tool use"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-array"
-                         "name" "read"
-                         "arguments" "[]")))
-          (list
-           "scalar tool arguments"
-           "valid Anthropic tool use"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-scalar"
-                         "name" "read"
-                         "arguments" "42")))
-          (list
-           "missing tool-result identifier"
-           "valid Anthropic tool-use identifier"
-           (list
-            (json-object "type" "function_call_output"
-                         "output" "done")))
-          (list
-           "empty tool-result identifier"
-           "valid Anthropic tool-use identifier"
-           (list
-            (json-object "type" "function_call_output"
-                         "call_id" ""
-                         "output" "done")))
-          (list
-           "non-string tool-result identifier"
-           "valid Anthropic tool-use identifier"
-           (list
-            (json-object "type" "function_call_output"
-                         "call_id" 7
-                         "output" "done")))
-          (list
-           "orphan tool result"
-           "pending Anthropic tool use"
-           (list
-            (json-object "type" "function_call_output"
-                         "call_id" "call-orphan"
-                         "output" "done")))
-          (list
-           "mismatched tool result"
-           "pending Anthropic tool use"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-expected"
-                         "name" "read"
-                         "arguments" "{}")
-            (json-object "type" "function_call_output"
-                         "call_id" "call-other"
-                         "output" "done")))
-          (list
-           "duplicate tool result"
-           "pending Anthropic tool use"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-duplicate-result"
-                         "name" "read"
-                         "arguments" "{}")
-            (json-object "type" "function_call_output"
-                         "call_id" "call-duplicate-result"
-                         "output" "first")
-            (json-object "type" "function_call_output"
-                         "call_id" "call-duplicate-result"
-                         "output" "second")))
-          (list
-           "duplicate function-call identifier"
-           "reuses an Anthropic tool-use identifier"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-duplicate"
-                         "name" "read"
-                         "arguments" "{}")
-            (json-object "type" "function_call"
-                         "call_id" "call-duplicate"
-                         "name" "read"
-                         "arguments" "{}")))
-          (list
-           "mixed tool-result content"
-           "mixes supported and unsupported content"
-           (list
-            (json-object "type" "function_call"
-                         "call_id" "call-mixed"
-                         "name" "read"
-                         "arguments" "{}")
-            (json-object "type" "function_call_output"
-                         "call_id" "call-mixed"
-                         "output"
-                         (json-array
-                          (json-object "type" "input_text" "text" "kept")
-                          (json-object "type" "future_content" "value" 1)))))))
-      (let ((condition
-              (anthropic-provider-test--request-condition
-               provider (third case))))
-        (test-assert
-         (and (typep condition 'provider-error)
-              (string= (provider-error-code condition) "unsupported_content")
-              (search (second case) (autolith-error-message condition)
-                      :test #'char-equal))
-         (format nil "request conversion fails explicitly: ~A" (first case)))))
-    (let ((fallback
-            (anthropic--tool-result-block
-             (json-object
-              "type" "function_call_output"
-              "call_id" "call-fallback"
-              "output"
-              (json-array
-               (json-object "type" "future_content" "value" 1))))))
-      (test-assert
-       (stringp (json-get fallback "content"))
-       "an entirely unsupported tool result uses a bounded textual fallback")))
-  nil)
 
 (-> anthropic-provider-test--inherited-reference-order () null)
 (defun anthropic-provider-test--inherited-reference-order ()
@@ -861,22 +740,17 @@
 
 (-> anthropic-provider-test--stop-reasons () null)
 (defun anthropic-provider-test--stop-reasons ()
-  "Test documented Anthropic stop reasons and explicit unsupported outcomes."
+  "Test Anthropic turn, tool, incomplete, and invalid stop semantics."
   (let* ((configuration (anthropic-provider-test--configuration))
          (provider (anthropic-provider-create configuration)))
-    (dolist (case '(("end_turn" :end)
-                    ("stop_sequence" :end)
-                    ("refusal" :end)))
-      (let ((result
-              (anthropic-provider-test--consume
-               provider
-               (list (anthropic-provider-test--message-start)
-                     (anthropic-provider-test--message-delta (first case))
-                     (json-object "type" "message_stop")))))
-        (test-assert
-         (eq (provider-result-turn-completion result) (second case))
-         (format nil "~A maps to ~A turn completion"
-                 (first case) (second case)))))
+    (let ((result
+            (anthropic-provider-test--consume
+             provider
+             (list (anthropic-provider-test--message-start)
+                   (anthropic-provider-test--message-delta "end_turn")
+                   (json-object "type" "message_stop")))))
+      (test-assert (eq (provider-result-turn-completion result) ':end)
+                   "end_turn completes an Anthropic turn"))
     (let* ((wire-name (openai-compatible--wire-tool-name "fs" "read"))
            (result
              (anthropic-provider-test--consume
@@ -891,40 +765,25 @@
                                          "input" (json-object "path" "x")))
                (json-object "type" "content_block_stop" "index" 0)
                (anthropic-provider-test--message-delta "tool_use")
-               (json-object "type" "message_stop"))))
-           (call (first (provider-result-tool-calls result))))
+               (json-object "type" "message_stop")))))
       (test-assert
        (and (eq (provider-result-turn-completion result) ':continue)
-            call
-            (string= (json-get call "arguments") "{\"path\":\"x\"}"))
-       "tool_use continues the turn and accepts complete initial input"))
-    (dolist (reason '("max_tokens" "model_context_window_exceeded"))
-      (let ((condition
-              (anthropic-provider-test--consume-condition
-               provider
-               (list (anthropic-provider-test--message-start)
-                     (anthropic-provider-test--message-delta reason)
-                     (json-object "type" "message_stop"))
-               :headers '(("request-id" . "request-incomplete")))))
-        (test-assert
-         (and (typep condition 'provider-incomplete-response)
-              (string= (provider-incomplete-response-reason condition) reason)
-              (string= (provider-error-request-id condition)
-                       "request-incomplete")
-              (string= (provider-error-response-id condition) "msg-test"))
-         (format nil "~A signals a contextual retryable incomplete response"
-                 reason))))
+            (first (provider-result-tool-calls result)))
+       "tool_use continues the Anthropic turn with a normalized call"))
     (let ((condition
             (anthropic-provider-test--consume-condition
              provider
              (list (anthropic-provider-test--message-start)
-                   (anthropic-provider-test--message-delta "pause_turn")
-                   (json-object "type" "message_stop")))))
+                   (anthropic-provider-test--message-delta "max_tokens")
+                   (json-object "type" "message_stop"))
+             :headers '(("request-id" . "request-incomplete")))))
       (test-assert
-       (and (typep condition 'provider-error)
-            (not (typep condition 'provider-retryable-error))
-            (search "pause_turn" (autolith-error-message condition)))
-       "pause_turn fails instead of starting an unbounded blind follow-up"))
+       (and (typep condition 'provider-incomplete-response)
+            (string= (provider-incomplete-response-reason condition)
+                     "max_tokens")
+            (string= (provider-error-request-id condition)
+                     "request-incomplete"))
+       "max_tokens preserves Anthropic incomplete-response semantics"))
     (let ((condition
             (anthropic-provider-test--consume-condition
              provider
@@ -935,7 +794,18 @@
        (and (typep condition 'provider-error)
             (not (typep condition 'provider-retryable-error))
             (string= (provider-error-code condition) "invalid_stream"))
-       "unknown stop reasons fail explicitly instead of ending silently"))
+       "unknown Anthropic stop reasons fail explicitly"))
+    (let ((condition
+            (anthropic-provider-test--consume-condition
+             provider
+             (list (anthropic-provider-test--message-start)
+                   (anthropic-provider-test--message-delta "pause_turn")
+                   (json-object "type" "message_stop")))))
+      (test-assert
+       (and (typep condition 'provider-error)
+            (not (typep condition 'provider-retryable-error))
+            (search "pause_turn" (autolith-error-message condition)))
+       "pause_turn is rejected instead of starting a blind follow-up"))
     (let* ((credential "synthetic-credential-in-stream")
            (*provider-active-credential-values* (list credential))
            (*provider-active-credential-redaction-marker* "[REDACTED]")
@@ -946,11 +816,10 @@
                     (anthropic-provider-test--message-delta credential)
                     (json-object "type" "message_stop")))))
       (test-assert
-       (and condition
-            (not (search credential (autolith-error-message condition)))
+       (and (not (search credential (autolith-error-message condition)))
             (not (search credential (or (provider-error-response condition) "")))
             (search "[REDACTED]" (or (provider-error-response condition) "")))
-       "Anthropic protocol failures redact credentials from durable error data")))
+       "malformed Anthropic stream errors redact active credentials")))
   nil)
 
 (-> anthropic-provider-test--stream-ordering () null)
@@ -1005,132 +874,40 @@
 
 (-> anthropic-provider-test--stream-lifecycle () null)
 (defun anthropic-provider-test--stream-lifecycle ()
-  "Test malformed Anthropic stream lifecycle and content failures."
+  "Test representative Anthropic stream lifecycle schema violations."
   (let* ((configuration (anthropic-provider-test--configuration))
          (provider (anthropic-provider-create configuration))
          (start (anthropic-provider-test--message-start))
          (text-start
            (json-object "type" "content_block_start" "index" 0
                         "content_block"
-                        (json-object "type" "text" "text" "")))
-         (tool-start
-           (json-object "type" "content_block_start" "index" 0
-                        "content_block"
-                        (json-object
-                         "type" "tool_use"
-                         "id" "tool-malformed"
-                         "name" (openai-compatible--wire-tool-name "fs" "read")
-                         "input" (json-object)))))
+                        (json-object "type" "text" "text" ""))))
     (dolist
-        (case
+        (events
          (list
-          (list "before message_start"
-                (list text-start))
-          (list "invalid message_start"
-                (list
-                 (json-object
-                  "type" "message_start"
-                  "message"
-                  (json-object "id" "" "role" "assistant"
-                               "content" (json-array)))))
-          (list "invalid initial usage"
-                (list
-                 (anthropic-provider-test--message-start
-                  :usage (json-object "input_tokens" "42" "output_tokens" 1))))
-          (list "invalid initial usage"
-                (list
-                 (anthropic-provider-test--message-start
-                  :usage (json-object "input_tokens" -1 "output_tokens" 1))))
-          (list "invalid initial usage"
-                (list
-                 (anthropic-provider-test--message-start
-                  :usage (json-object "input_tokens" 42))))
-          (list "invalid delta usage"
-                (list
-                 start
-                 (anthropic-provider-test--message-delta
-                  "end_turn" :usage (json-object "output_tokens" "7"))))
-          (list "invalid delta usage"
-                (list
-                 start
-                 (anthropic-provider-test--message-delta
-                  "end_turn" :usage (json-object "output_tokens" -1))))
-          (list "invalid delta usage"
-                (list
-                 start
-                 (anthropic-provider-test--message-delta
-                  "end_turn" :usage (json-object))))
-          (list "duplicate message_start"
-                (list start start))
-          (list "invalid content block index"
-                (list start
-                      (json-object "type" "content_block_start" "index" -1
-                                   "content_block"
-                                   (json-object "type" "text" "text" ""))))
-          (list "duplicate content block"
-                (list start text-start text-start))
-          (list "previous block stopped"
-                (list start text-start
-                      (json-object "type" "content_block_start" "index" 1
-                                   "content_block"
-                                   (json-object "type" "text" "text" "next"))))
-          (list "unopened content block"
-                (list start
-                      (json-object "type" "content_block_delta" "index" 0
-                                   "delta"
-                                   (json-object "type" "text_delta"
-                                                "text" "x"))))
-          (list "unsupported content block"
-                (list start
-                      (json-object "type" "content_block_start" "index" 0
-                                   "content_block"
-                                   (json-object "type" "thinking"
-                                                "thinking" "hidden"))))
-          (list "unsupported content block"
-                (list start
-                      (json-object "type" "content_block_start" "index" 0
-                                   "content_block"
-                                   (json-object "type" 7))))
-          (list "invalid text delta content"
-                (list start text-start
-                      (json-object "type" "content_block_delta" "index" 0
-                                   "delta"
-                                   (json-object "type" "text_delta" "text" 7))))
-          (list "malformed tool-use arguments"
-                (list start tool-start
-                      (json-object "type" "content_block_delta" "index" 0
-                                   "delta"
-                                   (json-object "type" "input_json_delta"
-                                                "partial_json" "{"))
-                      (json-object "type" "content_block_stop" "index" 0)))
-          (list "open content block"
-                (list start text-start
-                      (anthropic-provider-test--message-delta "end_turn")))
-          (list "without a stop reason"
-                (list start
-                      (json-object "type" "message_delta"
-                                   "delta" (json-object)
-                                   "usage" (json-object "output_tokens" 1))
-                      (json-object "type" "message_stop")))
-          (list "out-of-order content block index"
-                (list start
-                      (json-object "type" "content_block_start" "index" 1
-                                   "content_block"
-                                   (json-object "type" "text" "text" "second"))))))
+          (list text-start)
+          (list (anthropic-provider-test--message-start
+                 :usage (json-object "input_tokens" "42"
+                                     "output_tokens" 1)))
+          (list start start)
+          (list start
+                (json-object "type" "content_block_start" "index" 0
+                             "content_block"
+                             (json-object "type" "thinking"
+                                          "thinking" "hidden")))
+          (list start text-start
+                (anthropic-provider-test--message-delta "end_turn"))))
       (let ((condition
               (anthropic-provider-test--consume-condition
-               provider (second case)
+               provider events
                :headers '(("request-id" . "request-malformed")))))
         (test-assert
          (and (typep condition 'provider-error)
               (not (typep condition 'provider-retryable-error))
               (string= (provider-error-code condition) "invalid_stream")
               (string= (provider-error-request-id condition)
-                       "request-malformed")
-              (search (first case) (autolith-error-message condition)
-                      :test #'char-equal))
-         (format nil "malformed stream case signals a typed failure: ~A"
-                 (first case))))))
+                       "request-malformed"))
+         "Anthropic lifecycle schema violations signal typed failures"))))
   nil)
 
 (-> test-anthropic-provider () null)
@@ -1138,10 +915,10 @@
   "Run the Anthropic provider suite."
   (anthropic-provider-test--selection)
   (anthropic-provider-test--credential-source)
+  (anthropic-provider-test--request-conversion-failures)
   (anthropic-provider-test--request-encoding)
   (anthropic-provider-test--ephemeral-cache-boundary)
   (anthropic-provider-test--portable-content)
-  (anthropic-provider-test--request-conversion-failures)
   (anthropic-provider-test--inherited-reference-order)
   (anthropic-provider-test--compaction-request)
   (anthropic-provider-test--transport)

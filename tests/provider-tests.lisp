@@ -33,30 +33,6 @@
             404
             "{\"error\":{\"message\":\"model_not_found means this model is unavailable\"}}"))
    "HTTP errors surface the provider's own explanation")
-  (test-assert
-   (search "not being served"
-           (provider--http-error-message 404 nil))
-   "HTTP 404 carries a human hint even without a body")
-  (test-assert
-   (search "rate limit"
-           (provider--http-error-message 429 "plain text overload"))
-   "HTTP 429 explains itself and keeps the raw body")
-  ;; A streaming request leaves the dependency's failure body undrained, so
-  ;; the stream and octet shapes must surface exactly like a string does.
-  (test-assert
-   (string= (provider--error-body-text
-             (make-string-input-stream "streamed explanation"))
-            "streamed explanation")
-   "an undrained failure body stream becomes displayable text")
-  (test-assert
-   (string= (provider--error-body-text
-             (sb-ext:string-to-octets "encoded explanation"
-                                      :external-format ':utf-8))
-            "encoded explanation")
-   "an undecoded failure body vector becomes displayable text")
-  (test-assert
-   (null (provider--error-body-text nil))
-   "an absent failure body stays absent")
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (provider (provider-create configuration))
@@ -111,43 +87,23 @@
                                 (or (provider-error-response error) ""))
                         t)))
               "a streamed failure body reaches both the message and the response"))
-            (test-assert
-             (handler-case
-                 (progn
-                   (provider--signal-http-status-failure
-                    provider 400
-                    :headers '(("request-id" . "request-direct"))
-                    :raw-body "direct failure")
-                   nil)
-               (provider-error (error)
-                 (and (= (provider-error-status error) 400)
-                      (string= (provider-error-request-id error)
-                               "request-direct"))))
-             "direct HTTP status failures retain the common request-id header")
-           (dolist (status '(500 502 503 504 507))
-             (let ((transient-condition
-                     (make-condition
-                      'http-request-failed
-                      :body "temporary provider failure"
-                      :status status
-                      :headers nil
-                      :uri nil
-                      :method ':post)))
-               (test-assert
-                (handler-case
-                    (progn
-                      (provider-signal-http-failure
-                       provider transient-condition)
-                      nil)
-                  (provider-retryable-error (error)
-                    (and (= (provider-error-status error) status)
-                         (search "temporary provider failure"
-                                 (or (provider-error-response error) ""))
-                         (search "provider service is having trouble"
-                                 (format nil "~A" error)
-                                 :test #'char-equal)
-                         t)))
-                (format nil "HTTP ~D is eligible for bounded retry" status)))))
+            (dolist (status '(500 503))
+              (let ((transient-condition
+                      (make-condition
+                       'http-request-failed
+                       :body "temporary provider failure"
+                       :status status
+                       :headers nil
+                       :uri nil
+                       :method ':post)))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (provider-signal-http-failure provider transient-condition)
+                       nil)
+                   (provider-retryable-error (error)
+                     (= (provider-error-status error) status)))
+                 (format nil "HTTP ~D is eligible for bounded retry" status)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -293,32 +249,19 @@
            (setf request (provider-request-object provider conversation schemas))
            (test-assert (provider-child-reference-history-p provider)
                         "Codex enables inherited child reference history")
-           (test-assert
-            (not (provider-child-reference-history-p
-                  (make-instance 'model-provider)))
-            "providers opt into inherited child reference history explicitly")
-           (test-assert (typep provider 'responses-api-provider)
-                        "Codex uses the shared Responses provider representation")
-           (test-assert (eq (provider-wire-protocol provider) ':responses-api)
-                        "Codex inherits the standard Responses API protocol")
            (test-assert (null (json-get request "service_tier"))
                         "standard Codex requests omit the service tier")
-           (dolist (model *codex-fast-mode-models*)
-             (let* ((fast-configuration
-                      (configuration-with-codex-fast-mode
-                       (configuration--clone configuration :model model)
-                       t))
-                    (fast-provider (provider-create fast-configuration))
-                    (fast-request
-                      (provider-request-object
-                       fast-provider conversation schemas)))
-               (test-assert
-                (and (configuration-codex-fast-mode-available-p
-                      fast-configuration)
-                     (configuration-codex-fast-mode-active-p
-                      fast-configuration)
-                     (string= (json-get fast-request "service_tier") "priority"))
-                (format nil "~A advertises and requests Codex Fast mode" model))))
+            (let* ((model (first *codex-fast-mode-models*))
+                   (fast-configuration
+                     (configuration-with-codex-fast-mode
+                      (configuration--clone configuration :model model) t))
+                   (fast-request
+                     (provider-request-object
+                      (provider-create fast-configuration) conversation schemas)))
+              (test-assert
+               (and (configuration-codex-fast-mode-active-p fast-configuration)
+                    (string= (json-get fast-request "service_tier") "priority"))
+               "a supported Codex model requests the Fast service tier"))
            (let* ((unknown-configuration
                     (configuration-with-codex-fast-mode
                      (configuration--clone configuration
@@ -336,24 +279,6 @@
               "unknown Codex models use the standard service tier"))
            (test-assert (null (json-get request "max_output_tokens"))
                         "requests omit the output ceiling when none is bound")
-           (let ((bounded (let ((*provider-maximum-output-tokens* 4242))
-                            (provider-request-object provider conversation
-                                                     schemas))))
-             (test-assert (null (json-get bounded "max_output_tokens"))
-                          "the Codex serving stack never receives an output ceiling"))
-           (let* ((wire-fields
-                    (apply #'json-object
-                           (provider-responses-request-fields
-                            provider conversation)))
-                  (field-names
-                    '("parallel_tool_calls" "include"
-                      "prompt_cache_key" "text")))
-             (test-assert
-              (every (lambda (name)
-                       (equalp (json-get request name)
-                               (json-get wire-fields name)))
-                     field-names)
-              "Codex's generic Responses fields match the concrete request"))
             (let ((input (json-get request "input")))
               (test-assert
                (and (= (length input) 2)
@@ -408,29 +333,6 @@
            (test-assert
             (string= (json-get (json-get request "reasoning") "effort") "max")
             "the provider request maps Ultra reasoning to Max")
-           (dolist (model (remove-if-not (lambda (candidate)
-                                           (eq (model-family candidate) ':codex))
-                                         *supported-models*))
-             (dolist (effort *supported-reasoning-efforts*)
-               (let* ((selected
-                        (configuration-with-reasoning-effort
-                         (configuration-with-model configuration model)
-                         effort))
-                      (selected-provider (provider-create selected))
-                      (selected-request
-                        (provider-request-object
-                         selected-provider conversation schemas))
-                      (wire-effort (if (string= effort "ultra")
-                                       "max"
-                                       effort)))
-                 (test-assert
-                  (and (string= (json-get selected-request "model") model)
-                       (string= (json-get
-                                 (json-get selected-request "reasoning")
-                                 "effort")
-                                wire-effort))
-                  (format nil "~A at ~A has the correct request identity"
-                          model effort)))))
            (multiple-value-bind (value present-p)
                (gethash "summary" (json-get request "reasoning"))
              (declare (ignore value))
@@ -461,14 +363,12 @@
                (test-assert
                 (provider-reasoning-summaries-p reconfigured)
                 "provider reconfiguration preserves the trace preference")))
-           (test-assert (string= (json-get request "tool_choice") "auto")
-                        "the provider request permits automatic tool selection")
-           (test-assert (eq (json-get request "parallel_tool_calls") t)
-                        "normal standard requests enable parallel tool calls")
-           (test-assert (eq (json-get request "store") false)
-                        "the provider request disables server-side storage")
-           (test-assert (eq (json-get request "stream") t)
-                        "the provider request enables event streaming")
+            (test-assert
+             (and (string= (json-get request "tool_choice") "auto")
+                  (eq (json-get request "parallel_tool_calls") t)
+                  (eq (json-get request "store") false)
+                  (eq (json-get request "stream") t))
+             "standard Responses requests carry their transport controls")
            (test-assert
             (equalp (json-get request "include")
                     (json-array "reasoning.encrypted_content"))

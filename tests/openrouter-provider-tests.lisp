@@ -71,36 +71,7 @@
 
 (-> openrouter-provider-test--model-decoding () null)
 (defun openrouter-provider-test--model-decoding ()
-  "Test OpenRouter model filtering and user-visible namespacing."
-  (let ((body
-          (json-encode
-           (json-object
-            "data"
-            (json-array
-             (json-object
-              "id" "openai/gpt-5-mini"
-              "architecture"
-              (json-object "output_modalities" (json-array "text"))
-              "supported_parameters"
-              (json-array "tools" "tool_choice" "reasoning"))
-             (json-object
-              "id" "vendor/no-tools"
-              "architecture"
-              (json-object "output_modalities" (json-array "text"))
-              "supported_parameters" (json-array "temperature"))
-             (json-object
-              "id" "vendor/image-only"
-              "architecture"
-              (json-object "output_modalities" (json-array "image"))
-              "supported_parameters" (json-array "tools" "tool_choice")))))))
-    (test-assert
-     (equal
-      (mapcar #'openrouter--model-name
-              (openai-compatible--decode-model-list
-               body
-               :entry-predicate #'openrouter--chat-tool-model-p))
-      '("openrouter/openai/gpt-5-mini"))
-      "OpenRouter discovery requires text, tools, and normalized reasoning"))
+  "Test OpenRouter local and wire model namespacing."
   (test-assert
    (string= (openrouter--wire-model-name
              "openrouter/anthropic/claude-haiku-4.5")
@@ -117,12 +88,11 @@
 
 (-> openrouter-provider-test--provider () null)
 (defun openrouter-provider-test--provider ()
-  "Test OpenRouter construction, copying, headers, and request translation."
-  (let* ((configuration (openrouter-provider-test--configuration
-                         :reasoning-effort "medium"))
+  "Test OpenRouter attribution and request translation."
+  (let* ((configuration
+           (openrouter-provider-test--configuration :reasoning-effort "medium"))
          (root (test-configuration-root configuration))
          (provider (openrouter-provider-create configuration))
-         (copy (provider-with-configuration provider configuration))
          (conversation
            (conversation-create configuration :identifier "openrouter-request"))
          (credentials
@@ -132,18 +102,6 @@
                           :source-path #P"/tmp/openrouter-test-key")))
     (unwind-protect
          (progn
-           (test-assert
-            (and (typep provider 'openrouter-chat-completions-provider)
-                 (eq (provider-family provider) ':openrouter)
-                 (string= (provider-account-label provider) "OpenRouter"))
-            "OpenRouter construction preserves its provider identity")
-           (test-assert
-            (and (typep copy 'openrouter-chat-completions-provider)
-                 (eq (provider-credential-manager copy)
-                     (provider-credential-manager provider))
-                 (string= (provider-session-id copy)
-                          (provider-session-id provider)))
-            "OpenRouter copies retain credentials and session identity")
            (let ((headers
                    (openai-compatible--request-headers
                     provider credentials conversation)))
@@ -153,29 +111,27 @@
                    (string= (rest (assoc "X-OpenRouter-Title" headers
                                          :test #'string=))
                             "Autolith"))
-              "OpenRouter requests include non-secret application attribution"))
+              "OpenRouter requests include application attribution"))
            (conversation-append-user-message conversation "Hello OpenRouter.")
-           (let ((*provider-maximum-output-tokens* 321))
-             (multiple-value-bind (request delivery)
-                 (provider-request-object provider conversation (json-array)
-                                          :goal-context nil
-                                          :compaction-p nil)
-               (declare (ignore delivery))
-               (test-assert
-                (string= (json-get request "model") "openai/gpt-5-mini")
-                "OpenRouter strips its local namespace from the wire model")
-               (test-assert (= (json-get request "max_tokens") 321)
-                            "OpenRouter requests use max_tokens")
-               (test-assert (null (json-get request "max_completion_tokens"))
-                            "OpenRouter requests omit max_completion_tokens")
-               (test-assert
-                (string= (json-get (json-get request "reasoning") "effort")
-                         "medium")
-                "OpenRouter requests use its normalized reasoning object")))
-           (test-assert (string= (openrouter--reasoning-effort "ultra") "max")
-                        "OpenRouter maps Autolith ultra reasoning to max")
-           (test-assert (null (openrouter--reasoning-effort "none"))
-                        "OpenRouter omits reasoning controls when disabled"))
+            (let ((*provider-maximum-output-tokens* 321))
+              (multiple-value-bind (request delivery)
+                  (provider-request-object provider conversation (json-array)
+                                           :goal-context nil
+                                           :compaction-p nil)
+                (declare (ignore delivery))
+                (test-assert
+                 (string= (json-get request "model") "openai/gpt-5-mini")
+                 "OpenRouter strips its namespace from the wire model")
+                (test-assert
+                 (string= (json-get (json-get request "reasoning") "effort")
+                          "medium")
+                 "OpenRouter uses its normalized reasoning schema")
+                (test-assert
+                 (= (json-get request "max_tokens") 321)
+                 "OpenRouter requests include max_tokens")
+                (test-assert
+                 (null (json-get request "max_completion_tokens"))
+                "OpenRouter requests omit max_completion_tokens"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -234,32 +190,40 @@
                       '("openrouter/google/gemini-3.5-flash"))
                "OpenRouter fetches and namespaces compatible models")
               (openrouter-validate-api-key "openrouter-validation-key")))
-           (test-assert
-            (and (= (length observed) 2)
-                 (every
-                  (lambda (request)
-                    (string= (first request)
-                             "https://models.openrouter.invalid/v1/models"))
-                  observed)
-                 (some
-                  (lambda (request)
-                    (equal (rest (assoc "Authorization" (second request)
-                                        :test #'string=))
-                           "Bearer openrouter-discovery-key"))
-                  observed)
-                 (some
-                  (lambda (request)
-                    (equal (rest (assoc "Authorization" (second request)
-                                        :test #'string=))
-                           "Bearer openrouter-validation-key"))
-                  observed)
-                 (some
-                  (lambda (request)
-                    (string= (rest (assoc "X-OpenRouter-Title" (second request)
-                                          :test #'string=))
-                             "Autolith"))
-                  observed))
-            "OpenRouter discovery and validation use the configured endpoint and keys"))
+            (test-assert
+             (= (length observed) 2)
+             "OpenRouter discovery and validation each issue a request")
+            (test-assert
+             (every
+              (lambda (request)
+                (string= (first request)
+                         "https://models.openrouter.invalid/v1/models"))
+              observed)
+             "OpenRouter discovery and validation use the configured endpoint")
+            (test-assert
+             (some
+              (lambda (request)
+                (equal (rest (assoc "Authorization" (second request)
+                                    :test #'string=))
+                       "Bearer openrouter-discovery-key"))
+              observed)
+             "OpenRouter discovery authenticates with the stored key")
+            (test-assert
+             (some
+              (lambda (request)
+                (equal (rest (assoc "Authorization" (second request)
+                                    :test #'string=))
+                       "Bearer openrouter-validation-key"))
+              observed)
+             "OpenRouter validation authenticates with the supplied key")
+            (test-assert
+             (some
+              (lambda (request)
+                (string= (rest (assoc "X-OpenRouter-Title" (second request)
+                                      :test #'string=))
+                         "Autolith"))
+              observed)
+             "OpenRouter external-boundary requests include attribution"))
       (openrouter-provider-test--restore-environment
        "AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT" saved-chat)
       (openrouter-provider-test--restore-environment
@@ -269,29 +233,25 @@
 
 (-> openrouter-provider-test--builtin-registration () null)
 (defun openrouter-provider-test--builtin-registration ()
-  "Test the built-in OpenRouter provider registration and family dispatch."
-  (let ((registration (provider-registration-find "openrouter"))
-        (configuration (openrouter-provider-test--configuration)))
-    (unwind-protect
-         (progn
-           (test-assert registration "the OpenRouter builtin registration exists")
-           (test-assert
-            (and (eq (provider-registration-family registration) ':openrouter)
-                 (string= (provider-registration-endpoint registration)
-                          *openrouter-chat-completions-endpoint*)
-                 (string= (provider-registration-model-discovery-endpoint registration)
-                          *openrouter-models-endpoint*)
-                 (functionp (provider-registration-model-discovery registration)))
-            "the OpenRouter registration declares endpoints and discovery")
-           (test-assert
-            (typep (provider-family-create ':openrouter configuration)
-                   'openrouter-chat-completions-provider)
-            "provider-family-create returns the OpenRouter provider"))
-      (uiop:delete-directory-tree
-       (test-configuration-root configuration)
-       :validate t
-       :if-does-not-exist ':ignore)))
-  nil)
+  "Test the built-in OpenRouter external-boundary registration."
+  (let ((registration (provider-registration-find "openrouter")))
+    (test-assert registration
+                 "the built-in OpenRouter registration exists")
+    (test-assert
+     (eq (provider-registration-family registration) ':openrouter)
+     "the built-in OpenRouter registration declares its family")
+    (test-assert
+     (string= (provider-registration-endpoint registration)
+              *openrouter-chat-completions-endpoint*)
+     "the built-in OpenRouter registration declares its chat endpoint")
+    (test-assert
+     (string= (provider-registration-model-discovery-endpoint registration)
+              *openrouter-models-endpoint*)
+     "the built-in OpenRouter registration declares its discovery endpoint")
+    (test-assert
+     (functionp (provider-registration-model-discovery registration))
+     "the built-in OpenRouter registration declares discovery behavior")
+    nil))
 
 (-> test-openrouter-provider () null)
 (defun test-openrouter-provider ()

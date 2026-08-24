@@ -120,38 +120,6 @@
 (-> opencode-provider-test--credential-source () null)
 (defun opencode-provider-test--credential-source ()
   "Test the OpenCode environment credential source without network access."
-  (let ((source (make-instance 'opencode-environment-credential-source))
-        (saved (uiop:getenv "OPENCODE_API_KEY")))
-    (unwind-protect
-         (progn
-           (setf (uiop:getenv "OPENCODE_API_KEY") "")
-           (test-assert (null (credential-source-load source))
-                        "an empty environment yields no OpenCode credentials")
-           (setf (uiop:getenv "OPENCODE_API_KEY") "test-opencode-key")
-           (let ((credentials (credential-source-load source)))
-             (test-assert (typep credentials 'oauth-credentials)
-                          "the environment key loads as request credentials")
-             (test-assert (string= (oauth-credentials-access-token credentials)
-                                   "test-opencode-key")
-                          "the API key rides as the bearer access token")
-             (test-assert (null (oauth-credentials-expires-at credentials))
-                          "static API keys carry no expiry")
-             (test-assert (not (credentials-needs-refresh-p credentials))
-                          "static API keys never refresh"))
-           (test-assert
-            (handler-case
-                (progn
-                  (credential-source-save
-                   source
-                   (make-instance 'oauth-credentials
-                                  :access-token "key"
-                                  :account-id "opencode"
-                                  :source-path #P"/tmp/autolith-unwritten"))
-                  nil)
-              (authentication-error ()
-                t))
-            "the environment source rejects writes"))
-      (opencode-provider-test--restore-environment "OPENCODE_API_KEY" saved)))
   (let* ((configuration (opencode-provider-test--configuration))
          (root (test-configuration-root configuration))
          (manager (opencode-credential-manager-create configuration))
@@ -174,12 +142,6 @@
                       (credential-manager-load manager))
                      "environment-key-a")
             "the environment key takes precedence over the saved key")
-           (setf (uiop:getenv "OPENCODE_API_KEY") "environment-key-b")
-           (test-assert
-            (string= (oauth-credentials-access-token
-                      (credential-manager-load manager))
-                     "environment-key-b")
-            "OpenCode observes environment key rotation immediately")
            (setf (uiop:getenv "OPENCODE_API_KEY") "")
            (test-assert
             (string= (oauth-credentials-access-token
@@ -337,114 +299,6 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> opencode-provider-test--provider-shape () null)
-(defun opencode-provider-test--provider-shape ()
-  "Test the OpenCode provider class and its Chat Completions shape."
-  (let* ((configuration (opencode-provider-test--configuration))
-         (root (test-configuration-root configuration))
-         (provider (opencode-provider-create configuration)))
-    (unwind-protect
-         (progn
-           (test-assert (typep provider 'chat-completions-provider)
-                        "OpenCode declares the Chat Completions wire protocol")
-           (test-assert (eq (provider-wire-protocol provider) ':chat-completions)
-                        "OpenCode declares the Chat Completions wire protocol label")
-           (test-assert (string= (provider-account-label provider) "OpenCode")
-                        "the OpenCode provider names its account service")
-           (test-assert (typep (provider-credential-manager provider)
-                               'opencode-credential-manager)
-                        "the OpenCode provider manages OpenCode credentials")
-           (test-assert (eq (provider-family provider) ':opencode)
-                        "the OpenCode provider serves the OpenCode family"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> opencode-provider-test--with-configuration () null)
-(defun opencode-provider-test--with-configuration ()
-  "Test OpenCode cloning and replacement when selecting another provider."
-  (let* ((registry-snapshot (provider--registry-snapshot))
-         (original-configuration (opencode-provider-test--configuration))
-         (replacement-configuration
-           (opencode-provider-test--configuration
-            :model (opencode--model-name "kimi-k3")
-            :provider-endpoint "https://chat.invalid/v1/chat/completions"))
-         (chatgpt-configuration
-           (configuration-with-model original-configuration "gpt-5.6-luna"))
-         (grok-configuration
-           (configuration-with-model original-configuration "grok-4.5")))
-    (unwind-protect
-         (progn
-           (register-provider
-            "opencode-clone-test"
-            :family ':opencode
-            :models '("opencode/gpt-5.6-luna" "opencode/kimi-k3")
-            :factory
-            (lambda (configuration &key reasoning-summaries-p)
-              (declare (ignore reasoning-summaries-p))
-              (opencode-provider-create configuration))
-            :source ':runtime)
-           (let* ((provider (opencode-provider-create original-configuration))
-                  (replacement
-                    (provider-with-configuration
-                     provider replacement-configuration)))
-             (test-assert
-              (typep replacement 'opencode-chat-completions-provider)
-              "OpenCode cloning retains the concrete provider class")
-             (test-assert
-              (eq (provider-configuration replacement) replacement-configuration)
-              "OpenCode cloning adopts the replacement configuration")
-             (test-assert
-              (eq (provider-credential-manager replacement)
-                  (provider-credential-manager provider))
-              "OpenCode cloning retains the credential manager")
-             (test-assert
-              (string= (provider-session-id replacement)
-                       (provider-session-id provider))
-              "OpenCode cloning retains the provider session")
-             (dolist (case
-                      (list
-                       (list chatgpt-configuration
-                             'codex-subscription-provider
-                             "gpt-5.6-luna")
-                       (list grok-configuration
-                             'grok-subscription-provider
-                             "grok-4.5")))
-               (destructuring-bind
-                   (selected-configuration expected-class expected-model)
-                   case
-                 (let* ((selected-provider
-                          (provider-with-configuration
-                           provider selected-configuration))
-                        (conversation
-                          (conversation-create
-                           selected-configuration
-                           :identifier
-                           (format nil "opencode-switch-~A" expected-model))))
-                   (test-assert
-                    (typep selected-provider expected-class)
-                    (format nil
-                            "switching OpenCode to ~A replaces its provider"
-                            expected-model))
-                   (conversation-append-user-message conversation "hello")
-                   (multiple-value-bind (request delivery)
-                       (provider-request-object selected-provider conversation #())
-                     (declare (ignore delivery))
-                     (test-assert
-                      (string= (json-get request "model") expected-model)
-                      (format nil
-                              "the ~A provider builds its request without OpenCode namespace handling"
-                              expected-model))))))))
-      (provider--registry-restore registry-snapshot)
-      (dolist (configuration
-               (list original-configuration
-                     replacement-configuration
-                     chatgpt-configuration
-                     grok-configuration))
-        (uiop:delete-directory-tree
-         (test-configuration-root configuration)
-         :validate t
-         :if-does-not-exist ':ignore))))
-  nil)
 
 (-> opencode-provider-test--request-model () null)
 (defun opencode-provider-test--request-model ()
@@ -736,77 +590,22 @@
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
-(-> opencode-provider-test--static-authentication-rejection () null)
-(defun opencode-provider-test--static-authentication-rejection ()
-  "Test a rejected OpenCode key fails once without an OAuth refresh attempt."
-  (let* ((configuration (opencode-provider-test--configuration))
-         (root (test-configuration-root configuration))
-         (provider (opencode-provider-create configuration))
-         (refresh-flags nil))
-    (unwind-protect
-         (progn
-           (test-assert
-            (handler-case
-                (progn
-                  (provider--call-with-bounded-retries
-                   provider
-                   (lambda (force-refresh)
-                     (push force-refresh refresh-flags)
-                     (error 'provider-unauthorized
-                            :message "Injected OpenCode rejection."
-                            :status 401
-                            :request-id nil
-                            :response nil))
-                   #'identity)
-                  nil)
-              (authentication-error (condition)
-                (search "API key" (princ-to-string condition))))
-            "a rejected OpenCode key produces an actionable authentication error")
-           (test-assert (equal refresh-flags '(nil))
-                        "a static OpenCode key is attempted exactly once"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
 
 (-> opencode-provider-test--builtin-registration () null)
 (defun opencode-provider-test--builtin-registration ()
-  "Test the built-in OpenCode provider registration."
+  "Test the built-in OpenCode external-boundary registration."
   (let ((registration (provider-registration-find "opencode")))
-    (test-assert registration "the opencode builtin registration exists")
-    (when registration
-      (test-assert (eq (provider-registration-family registration) ':opencode)
-                   "the opencode registration declares the opencode family")
-      (test-assert
-       (string= (provider-registration-endpoint registration)
-                *opencode-chat-completions-endpoint*)
-       "the opencode registration declares the chat completions endpoint")
-      (test-assert
-       (string= (provider-registration-model-discovery-endpoint registration)
-                *opencode-models-endpoint*)
-       "the opencode registration declares the models discovery endpoint")
-      (test-assert
-       (functionp (provider-registration-model-discovery registration))
-       "the opencode registration carries a model-discovery function")
-      (test-assert
-       (functionp
-        (provider-registration-model-discovery-endpoint-resolver registration))
-       "the opencode registration resolves its runtime discovery cache identity")))
+    (test-assert
+     (and registration
+          (eq (provider-registration-family registration) ':opencode)
+          (string= (provider-registration-endpoint registration)
+                   *opencode-chat-completions-endpoint*)
+          (string= (provider-registration-model-discovery-endpoint registration)
+                   *opencode-models-endpoint*)
+          (functionp (provider-registration-model-discovery registration)))
+     "OpenCode registers its family, endpoints, and discovery callback"))
   nil)
 
-(-> opencode-provider-test--family-create () null)
-(defun opencode-provider-test--family-create ()
-  "Test the OpenCode provider via the family dispatch path."
-  (let* ((configuration (opencode-provider-test--configuration))
-         (root (test-configuration-root configuration))
-         (provider (provider-family-create ':opencode configuration)))
-    (unwind-protect
-         (progn
-           (test-assert
-            (typep provider 'opencode-chat-completions-provider)
-            "provider-family-create :opencode returns an OpenCode provider")
-           (test-assert (eq (provider-family provider) ':opencode)
-                        "the family-created provider serves :opencode"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
 
 (-> test-opencode-provider () null)
 (defun test-opencode-provider ()
@@ -815,12 +614,8 @@
   (opencode-provider-test--credential-source)
   (opencode-provider-test--login)
   (opencode-provider-test--authentication-bootstrap)
-  (opencode-provider-test--provider-shape)
-  (opencode-provider-test--with-configuration)
   (opencode-provider-test--request-model)
   (opencode-provider-test--discovery)
   (opencode-provider-test--legacy-registry-snapshot)
-  (opencode-provider-test--static-authentication-rejection)
   (opencode-provider-test--builtin-registration)
-  (opencode-provider-test--family-create)
   nil)

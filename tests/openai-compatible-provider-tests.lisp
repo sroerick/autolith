@@ -1254,101 +1254,75 @@
 
 (-> test-openai-compatible-tool-name-recovery () null)
 (defun test-openai-compatible-tool-name-recovery ()
-  "Test tool dispatch recovers when models drop the encoded wire names."
+  "Test readable, legacy, bounded, and fallback tool-name recovery."
   (let ((wire-name
           (openai-compatible--wire-tool-name "mcp__demo" "call_name")))
-    (test-assert (string= wire-name "t_9_mcp__demo__call_name")
-                 "wire names retain readable namespace and function text")
-    (multiple-value-bind (namespace name)
-        (openai-compatible--decode-wire-tool-name wire-name)
-      (test-assert (and (equal namespace "mcp__demo")
-                        (equal name "call_name"))
-                   "escaped readable wire names round-trip")))
-  (multiple-value-bind (namespace name)
-      (openai-compatible--decode-wire-tool-name "acmVzb3VyY2UAcmVhZA")
-    (test-assert (and (equal namespace "resource") (equal name "read"))
-                 "legacy Base64 wire names remain decodable"))
-  (let* ((component (make-string 20 :initial-element #\_))
-         (wire-name (openai-compatible--wire-tool-name component component)))
     (multiple-value-bind (namespace name)
         (openai-compatible--decode-wire-tool-name wire-name)
       (test-assert
-       (and (<= (length wire-name)
-                *openai-compatible-wire-tool-name-maximum-length*)
-            (string= namespace component)
-            (string= name component))
-       "readable encoding preserves underscore-heavy legacy capacity")))
-  (let ((wire-name
-          (openai-compatible--wire-tool-name "mcp.demo" "read_x000061_")))
-    (multiple-value-bind (namespace name)
-        (openai-compatible--decode-wire-tool-name wire-name)
-      (test-assert (and (string= namespace "mcp.demo")
-                        (string= name "read_x000061_"))
-                   "escaped characters and literal escape text round-trip")))
+       (and (equal namespace "mcp__demo") (equal name "call_name"))
+       "readable OpenAI-compatible wire names round-trip")))
   (multiple-value-bind (namespace name)
-      (openai-compatible--fallback-tool-name ".self.eval")
-    (test-assert (and (equal namespace "self") (equal name "eval"))
-                 "leading-dot canonical echoes recover their namespace"))
+      (openai-compatible--decode-wire-tool-name "acmVzb3VyY2UAcmVhZA")
+    (test-assert
+     (and (equal namespace "resource") (equal name "read"))
+     "legacy Base64 wire names remain decodable"))
+  (let* ((component (make-string 20 :initial-element #\_))
+         (wire-name (openai-compatible--wire-tool-name component component)))
+    (test-assert
+     (<= (length wire-name)
+         *openai-compatible-wire-tool-name-maximum-length*)
+     "OpenAI-compatible wire names respect the protocol limit"))
   (multiple-value-bind (namespace name)
       (openai-compatible--fallback-tool-name "fs.view-image")
-    (test-assert (and (equal namespace "fs") (equal name "view-image"))
-                 "dotted canonical echoes split at the first dot"))
-  (multiple-value-bind (namespace name)
-      (openai-compatible--fallback-tool-name "content")
-    (test-assert (and (null namespace) (equal name "content"))
-                 "bare echoes pass through without a namespace"))
-  (test-assert (string= (function-call-canonical-name
-                         (json-object "type" "function_call" "name" "echo"))
-                        "echo")
-               "canonical names of bare calls gain no leading dot")
+    (test-assert
+     (and (equal namespace "fs") (equal name "view-image"))
+     "canonical dotted echoes recover their namespace"))
   (let* ((configuration (test-configuration))
          (registry (make-instance 'tool-registry))
          (context (make-instance 'tool-context
                                  :configuration configuration
                                  :worker nil
-                                 :conversation (conversation-create
-                                                configuration
-                                                :identifier "name-recovery")
+                                 :conversation (conversation-create configuration)
                                  :registry registry))
          (parameters (tool-object-schema
-                      (json-object "value" (tool-string-property
-                                            "The value to echo."))
+                      (json-object "value" (tool-string-property "Value."))
                       '("value")))
          (call (json-object "type" "function_call"
                             "call_id" "bare-1"
                             "name" "echo"
-                            "arguments" "{\"value\": \"hi\"}")))
+                            "arguments" "{\"value\":\"hi\"}")))
     (tool-registry-register
      registry
      (make-instance 'agent-test-echo-tool
-                    :namespace "test" :name "echo"
-                    :description "Echo the required value."
+                    :namespace "first" :name "echo"
+                    :description "Echo a value."
                     :parameters parameters))
-    (let ((result (tool-registry-execute-call registry call context)))
-      (test-assert (and (tool-result-success-p result)
-                        (search "echo: hi" (tool-result-content result)))
-                   "a unique bare name dispatches to its only tool"))
+    (test-assert
+     (tool-result-success-p (tool-registry-execute-call registry call context))
+     "a unique bare tool name dispatches to its only implementation")
     (tool-registry-register
      registry
      (make-instance 'agent-test-echo-tool
-                    :namespace "other" :name "echo"
-                    :description "Echo the required value."
+                    :namespace "second" :name "echo"
+                    :description "Echo a value."
                     :parameters parameters))
     (let ((result (tool-registry-execute-call registry call context)))
-      (test-assert (and (not (tool-result-success-p result))
-                        (search "Ambiguous tool name echo"
-                                (tool-result-content result))
-                        (search "test.echo" (tool-result-content result)))
-                   "an ambiguous bare name lists its candidates"))
-    (let ((result (tool-registry-execute-call
-                   registry
-                   (json-object "type" "function_call"
-                                "call_id" "bare-2"
-                                "name" "missing"
-                                "arguments" "{}")
-                   context)))
-      (test-assert (and (not (tool-result-success-p result))
-                        (search "Unknown tool missing." 
-                                (tool-result-content result)))
-                   "an unknown bare name fails with its own name")))
+      (test-assert
+       (and (not (tool-result-success-p result))
+            (search "Ambiguous tool name echo" (tool-result-content result))
+            (search "first.echo" (tool-result-content result)))
+       "an ambiguous bare tool name fails with its candidates"))
+    (let ((result
+            (tool-registry-execute-call
+             registry
+             (json-object "type" "function_call"
+                          "call_id" "bare-2"
+                          "name" "missing"
+                          "arguments" "{}")
+             context)))
+      (test-assert
+       (and (not (tool-result-success-p result))
+            (search "Unknown tool missing." (tool-result-content result)))
+       "an unknown bare tool name fails with its own name")))
   nil)

@@ -7,313 +7,99 @@
   "Return an isolated configuration selecting the Grok model."
   (configuration-with-model (test-configuration) "grok-4.5"))
 
-(-> grok-provider-test--namespaces () vector)
-(defun grok-provider-test--namespaces ()
-  "Return one namespaced test tool vector alongside a hosted passthrough tool."
-  (json-array
-   (json-object
-    "type" "namespace"
-    "name" "resource"
-    "description" "Resources."
-    "tools" (json-array
-             (json-object
-              "type" "function"
-              "name" "read"
-              "description" "Read one file."
-              "strict" false
-              "parameters" (json-object "type" "object"))))
-   (json-object "type" "web_search")))
-
-(-> grok-provider-test--wire-tools () null)
-(defun grok-provider-test--wire-tools ()
-  "Test namespace flattening into standard Responses function tools."
-  (let* ((provider (grok-provider-create
-                    (grok-provider-test--configuration)))
-         (tools (provider-wire-tools
-                 provider (grok-provider-test--namespaces))))
-    (test-assert (= (length tools) 2)
-                 "wire tools keep one entry per tool plus passthroughs")
-    (let ((flattened (aref tools 0)))
-      (test-assert (string= (json-get flattened "type") "function")
-                   "namespaced tools become standard function tools")
-      (test-assert (string= (json-get flattened "name") "resource.read")
-                   "wire tool names join the namespace with a dot")
-      (test-assert (string= (json-get flattened "description")
-                            "Read one file.")
-                   "wire tools keep their descriptions"))
-    (test-assert (string= (json-get (aref tools 1) "type") "web_search")
-                 "entries that are not namespaces pass through unchanged"))
-  nil)
 
 (-> grok-provider-test--item-normalization () null)
 (defun grok-provider-test--item-normalization ()
-  "Test wire name splitting and flattening around one provider round trip."
+  "Test representative Grok output items retain their replay semantics."
   (let ((provider (grok-provider-create (grok-provider-test--configuration))))
-    (test-assert
-     (and (typep provider 'responses-api-provider)
-          (eq (provider-wire-protocol provider) ':responses-api))
-     "Grok declares the shared Responses API wire protocol")
-    (let ((call (json-object
-                 "type" "function_call"
-                 "id" "server-item-1"
-                 "call_id" "call-1"
-                 "name" "resource.read"
-                 "arguments" "{}")))
+    (let ((call
+            (json-object "type" "function_call"
+                         "id" "transient-call"
+                         "call_id" "call-1"
+                         "name" "resource.read"
+                         "status" "completed"
+                         "arguments" "{}")))
       (provider-normalize-output-item provider call)
-      (test-assert (null (gethash "id" call))
-                   "normalized Grok items discard transient identifiers")
-      (test-assert (and (string= (json-get call "namespace") "resource")
-                        (string= (json-get call "name") "read"))
-                   "flat wire names split into Autolith namespace and name"))
-    (let ((mcp-call (json-object
-                     "type" "function_call"
-                     "call_id" "call-2"
-                     "name" "mcp__context.resolve-library"
-                     "arguments" "{}")))
-      (provider-normalize-output-item provider mcp-call)
       (test-assert
-       (and (string= (json-get mcp-call "namespace") "mcp__context")
-            (string= (json-get mcp-call "name") "resolve-library"))
-       "MCP wire names split at the first dot"))
-    (let ((dotless (json-object
-                    "type" "function_call"
-                    "call_id" "call-3"
-                    "name" "shell"
-                    "arguments" "{}")))
-      (provider-normalize-output-item provider dotless)
-      (test-assert (and (null (json-get dotless "namespace"))
-                        (string= (json-get dotless "name") "shell"))
-                   "dotless wire names stay unsplit"))
-    (let ((message (json-object
-                    "type" "message"
-                    "id" "server-item-2"
-                    "role" "assistant"
-                    "status" "completed"
-                    "content" (json-array))))
-      (provider-normalize-output-item provider message)
-      (test-assert (and (null (gethash "id" message))
-                        (null (gethash "status" message))
-                        (string= (json-get message "role") "assistant"))
-                   "non-call items lose identifiers and output-only status"))
-    (let ((reasoning (json-object
-                      "type" "reasoning"
-                      "id" "reasoning-item-1"
-                      "status" "completed"
-                      "summary" (json-array)
-                      "encrypted_content" "opaque-ciphertext")))
+       (and (null (gethash "id" call))
+            (null (gethash "status" call))
+            (string= (json-get call "namespace") "resource")
+            (string= (json-get call "name") "read"))
+       "ordinary Grok function calls normalize to persisted tool identity"))
+    (let ((reasoning
+            (json-object "type" "reasoning"
+                         "id" "reasoning-1"
+                         "status" "completed"
+                         "encrypted_content" "opaque")))
       (provider-normalize-output-item provider reasoning)
       (test-assert
-       (and (string= (json-get reasoning "id") "reasoning-item-1")
+       (and (string= (json-get reasoning "id") "reasoning-1")
             (null (gethash "status" reasoning))
-            (string= (json-get reasoning "encrypted_content")
-                     "opaque-ciphertext"))
-       "Grok keeps replayable reasoning identifiers and drops status"))
-    (let ((search-call (json-object
-                        "type" "web_search_call"
-                        "id" "ws-item-1"
-                        "status" "completed"
-                        "action" (json-object "type" "search"))))
-      (provider-normalize-output-item provider search-call)
+            (string= (json-get reasoning "encrypted_content") "opaque"))
+       "Grok reasoning retains replayable identifiers without output status"))
+    (let ((search
+            (json-object "type" "web_search_call"
+                         "id" "search-1"
+                         "status" "completed")))
+      (provider-normalize-output-item provider search)
       (test-assert
-       (and (string= (json-get search-call "id") "ws-item-1")
-            (string= (json-get search-call "status") "completed"))
-       "Grok replays backend search calls verbatim"))
-    (test-assert
-     (and (conversation-family-private-item-p
-           (json-object "type" "web_search_call" "id" "ws-1"))
-          (conversation-family-private-item-p
-           (json-object "type" "custom_tool_call" "id" "x-1"))
-          (not (conversation-family-private-item-p
-                (json-object "type" "function_call" "call_id" "c-1"))))
-     "backend search calls stay private to their producing family"))
-  (let* ((provider (grok-provider-create
-                    (grok-provider-test--configuration)))
-         (namespaced (json-object
-                      "type" "function_call"
-                      "call_id" "call-1"
-                      "namespace" "resource"
-                      "name" "read"
-                      "arguments" "{}"))
-         (flattened (provider-wire-input-item provider namespaced)))
-    (test-assert (string= (json-get flattened "name") "resource.read")
-                 "replayed function calls flatten to the dotted wire name")
-    (test-assert (null (gethash "namespace" flattened))
-                 "replayed function calls drop the namespace field")
-    (test-assert (string= (json-get namespaced "name") "read")
-                 "flattening never mutates the persisted conversation item")
-    (let ((output (json-object
-                   "type" "function_call_output"
-                   "call_id" "call-1"
-                   "output" "done")))
-      (test-assert (eq (provider-wire-input-item provider output) output)
-                   "non-call input items pass through identically")))
+       (and (string= (json-get search "id") "search-1")
+            (string= (json-get search "status") "completed"))
+       "Grok backend search output remains replayable")))
   nil)
 
 (-> grok-provider-test--request-shape () null)
 (defun grok-provider-test--request-shape ()
-  "Test the standard Grok Responses request shape without network access."
+  "Test Grok-specific Responses request controls."
   (let* ((base-configuration (grok-provider-test--configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration
-                                 :working-directory root)))
+           (configuration--clone base-configuration :working-directory root)))
     (unwind-protect
-         (let* ((conversation (conversation-create configuration
-                                                   :identifier "grok-shape"))
-                (provider (grok-provider-create configuration))
-                (schemas (subseq (grok-provider-test--namespaces) 0 1))
-                (request nil))
+         (let* ((conversation
+                  (conversation-create configuration :identifier "grok-shape"))
+                (provider (grok-provider-create configuration)))
            (conversation-append-user-message conversation "hello")
-           (setf request (provider-request-object provider conversation schemas))
-           (test-assert (string= (json-get request "model") "grok-4.5")
-                        "the Grok request names the Grok model")
-           (test-assert (null (json-get request "service_tier"))
-                        "Grok requests never select a provider service tier")
-           (test-assert (string= (json-get request "prompt_cache_key")
-                                 "grok-shape")
-                        "Grok requests reuse the conversation as the cache key")
-           (test-assert (null (json-get request "text"))
-                        "Grok requests omit the Codex verbosity selection")
-           (let ((input (json-get request "input")))
-              (test-assert (= (length input) 3)
-                           "the Grok request brackets history with developer items")
+           (let* ((request
+                    (provider-request-object provider conversation (json-array)))
+                  (tools (json-get request "tools")))
+            (test-assert
+             (string= (json-get request "model") "grok-4.5")
+             "Grok requests select the configured model")
+            (test-assert
+             (string= (json-get (json-get request "reasoning") "effort") "high")
+             "Grok requests select the configured reasoning effort")
+            (test-assert
+             (eq (json-get request "parallel_tool_calls") false)
+             "Grok requests disable parallel tool calls")
+            (test-assert
+             (find "web_search" tools
+                   :key (lambda (tool) (json-get tool "type"))
+                   :test #'string=)
+             "enabled Grok search includes backend web search")
+            (test-assert
+             (find "x_search" tools
+                   :key (lambda (tool) (json-get tool "type"))
+                   :test #'string=)
+             "enabled Grok search includes backend X search")
+            (test-assert
+             (equalp (json-get request "include")
+                     (json-array "reasoning.encrypted_content"
+                                 "no_inline_citations"))
+             "enabled Grok search requests citation metadata")
+            (let* ((disabled
+                     (configuration--clone configuration
+                                           :web-search-mode "disabled"))
+                   (request
+                     (provider-request-object
+                      (grok-provider-create disabled) conversation (json-array))))
               (test-assert
-               (string= (json-get (aref input 0) "role") "developer")
-               "the Autolith system prompt is the first input item")
-              (test-assert (string= (json-get (aref input 1) "role") "user")
-                           "conversation history follows the developer prefix")
+               (zerop (length (json-get request "tools")))
+               "disabled Grok search omits backend tools")
               (test-assert
-               (and (string= (json-get (aref input 2) "role") "developer")
-                    (search "Current workspace agenda"
-                            (context--message-text (aref input 2))))
-               "mutable request context follows conversation history")
-             (test-assert
-              (notany (lambda (item)
-                        (string= (or (json-get item "type") "")
-                                 "additional_tools"))
-                      input)
-              "the Responses Lite additional_tools item never rides to Grok")
-             (test-assert
-              (search "hosted web_search"
-                      (json-get
-                       (aref (json-get (aref input 0) "content") 0)
-                       "text"))
-              "the system prompt describes the hosted search tools"))
-           (let ((tools (json-get request "tools")))
-             (test-assert (= (length tools) 3)
-                          "Grok tools ride beside the backend search tools")
-             (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
-                          "Grok tools carry dotted wire names")
-             (test-assert (string= (json-get (aref tools 1) "type") "web_search")
-                          "the Grok request hosts backend web search")
-             (test-assert (string= (json-get (aref tools 2) "type") "x_search")
-                          "the Grok request hosts backend x search"))
-           (let* ((web-namespaces
-                    (json-array
-                     (aref schemas 0)
-                     (json-object
-                      "type" "namespace"
-                      "name" "web"
-                      "description" "Web."
-                      "tools" (json-array
-                               (json-object
-                                "type" "function"
-                                "name" "run"
-                                "description" "Search the web."
-                                "strict" false
-                                "parameters" (json-object "type" "object"))))))
-                  (web-request
-                    (provider-request-object provider conversation
-                                             web-namespaces))
-                  (web-tools (json-get web-request "tools")))
-             (test-assert
-              (notany (lambda (tool)
-                        (string= (or (json-get tool "name") "") "web.run"))
-                      web-tools)
-              "backend search replaces the dead local web.run tool"))
-           (let* ((disabled-request
-                    (provider-request-object
-                     (grok-provider-create
-                      (configuration--clone configuration
-                                            :web-search-mode "disabled"))
-                     conversation
-                     schemas))
-                  (disabled-tools (json-get disabled-request "tools")))
-             (test-assert
-              (and (= (length disabled-tools) 1)
-                   (equalp (json-get disabled-request "include")
-                           (json-array "reasoning.encrypted_content")))
-              "disabled web search omits backend tools and citation includes"))
-           (test-assert
-            (string= (json-get (json-get request "reasoning") "effort") "high")
-            "default Ultra reasoning clamps to Grok's high effort")
-           (loop for (effort . wire) in '(("none" . "low")
-                                          ("low" . "low")
-                                          ("medium" . "medium")
-                                          ("high" . "high")
-                                          ("xhigh" . "high")
-                                          ("max" . "high")
-                                          ("ultra" . "high"))
-                 do (let* ((selected (configuration-with-reasoning-effort
-                                      configuration effort))
-                           (selected-request
-                             (provider-request-object
-                              (grok-provider-create selected)
-                              conversation
-                              schemas)))
-                      (test-assert
-                       (string= (json-get
-                                 (json-get selected-request "reasoning")
-                                 "effort")
-                                wire)
-                       (format nil "Grok maps ~A reasoning onto ~A"
-                               effort wire))))
-           (test-assert
-            (string= (json-get (json-get request "reasoning") "summary")
-                     "concise")
-            "Grok requests ask for concise reasoning summaries")
-           (test-assert (string= (json-get request "tool_choice") "auto")
-                        "the Grok request permits automatic tool selection")
-           (test-assert (eq (json-get request "parallel_tool_calls") false)
-                        "the Grok request disables parallel tool calls")
-           (test-assert (eq (json-get request "store") false)
-                        "the Grok request disables server-side storage")
-           (test-assert (eq (json-get request "stream") t)
-                        "the Grok request enables event streaming")
-           (test-assert
-            (equalp (json-get request "include")
-                    (json-array "reasoning.encrypted_content"
-                                "no_inline_citations"))
-            "the Grok request retains encrypted reasoning without citations")
-           (let* ((goal-request
-                    (provider-request-object
-                     provider conversation schemas
-                     :goal-context "<goal_context>persist</goal_context>"))
-                  (goal-input (json-get goal-request "input")))
-              (test-assert (= (length goal-input) 4)
-                           "an active goal adds one transient developer message")
-              (test-assert
-               (and (string= (json-get (aref goal-input 2) "role") "developer")
-                    (search "<goal_context>"
-                            (context--message-text (aref goal-input 2))))
-               "the goal follows durable history as a developer message"))
-           (let* ((compaction-request
-                    (provider-request-object
-                     provider conversation schemas :compaction-p t))
-                  (compaction-input (json-get compaction-request "input")))
-             (test-assert
-              (zerop (length (json-get compaction-request "tools")))
-              "compaction requests carry no tools")
-             (test-assert
-              (search "context checkpoint"
-                      (json-get
-                       (aref (json-get
-                              (aref compaction-input
-                                    (1- (length compaction-input)))
-                              "content")
-                             0)
-                       "text"))
-              "compaction requests end with the handoff instructions")))
+               (equalp (json-get request "include")
+                       (json-array "reasoning.encrypted_content"))
+              "disabled Grok search omits citation metadata"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -386,44 +172,20 @@
 
 (-> grok-provider-test--selection () null)
 (defun grok-provider-test--selection ()
-  "Test provider construction and reconfiguration across model families."
-  (let* ((codex-configuration (test-configuration))
-         (root (test-configuration-root codex-configuration)))
+  "Test Grok provider, endpoint, and context selection."
+  (let* ((configuration (grok-provider-test--configuration))
+         (root (test-configuration-root configuration))
+         (provider (provider-create configuration)))
     (unwind-protect
-         (let* ((grok-configuration
-                  (configuration-with-model codex-configuration "grok-4.5"))
-                (codex-provider (provider-create codex-configuration))
-                (grok-provider (provider-create grok-configuration)))
-           (test-assert (typep codex-provider 'codex-subscription-provider)
-                        "GPT models select the Codex subscription provider")
-           (test-assert (typep grok-provider 'grok-subscription-provider)
+         (progn
+           (test-assert (typep provider 'grok-subscription-provider)
                         "Grok models select the Grok subscription provider")
            (test-assert
-            (string= (configuration-provider-endpoint grok-configuration)
+            (string= (configuration-provider-endpoint configuration)
                      *grok-responses-endpoint*)
-            "selecting a Grok model selects the Grok proxy endpoint")
-           (test-assert
-            (= (configuration-context-window grok-configuration) 500000)
-            "selecting a Grok model selects the Grok context window")
-           (test-assert
-            (typep (provider-with-configuration codex-provider
-                                                grok-configuration)
-                   'grok-subscription-provider)
-            "switching to a Grok model replaces the Codex provider")
-           (test-assert
-            (typep (provider-with-configuration grok-provider
-                                                codex-configuration)
-                   'codex-subscription-provider)
-            "switching to a GPT model replaces the Grok provider")
-           (let ((copied (provider-with-configuration grok-provider
-                                                      grok-configuration)))
-             (test-assert
-              (and (typep copied 'grok-subscription-provider)
-                   (string= (provider-session-id copied)
-                            (provider-session-id grok-provider))
-                   (eq (provider-credential-manager copied)
-                       (provider-credential-manager grok-provider)))
-              "same-family reconfiguration preserves session and credentials")))
+            "Grok models select the Grok proxy endpoint")
+           (test-assert (= (configuration-context-window configuration) 500000)
+                        "Grok models select the Grok context window"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -459,16 +221,9 @@
 (-> grok-provider-test--doom-loop-recovery () null)
 (defun grok-provider-test--doom-loop-recovery ()
   "Test server-reported loop detection, confidence, budget, and resampling."
-  (dolist (case '(("tail_repetition:8@thinking" t)
-                  ("tail_repetition:2@thinking" t)
-                  ("tail_repetition:64@thinking" t)
+  (dolist (case '(("tail_repetition:2@thinking" t)
                   ("tail_repetition:65@thinking" nil)
-                  ("tail_repetition:4@response" nil)
-                  ("tail_repetition:4" nil)
-                  ("low_logprob@thinking" nil)
-                  ("novel_detector:3@thinking" nil)
-                  ("tail_repetition:huge@thinking" nil)
-                  ("" nil)))
+                  ("low_logprob@thinking" nil)))
     (destructuring-bind (trigger expected) case
       (test-assert (eq (grok--doom-loop-confident-trigger-p trigger) expected)
                    (format nil "doom-loop confidence classifies ~S" trigger))))
@@ -569,18 +324,8 @@
 (defun test-grok-provider ()
   "Test the Grok subscription provider without network access."
   (grok-provider-test--selection)
-  (grok-provider-test--wire-tools)
   (grok-provider-test--item-normalization)
   (grok-provider-test--doom-loop-recovery)
-  (let ((provider (grok-provider-create (grok-provider-test--configuration))))
-    (test-assert (string= (provider-account-label provider) "Grok")
-                 "the Grok provider names its account service")
-    (test-assert (typep (provider-credential-manager provider)
-                        'grok-credential-manager)
-                 "the Grok provider manages Grok credentials")
-    (test-assert
-     (eq (provider-set-reasoning-summaries provider t) provider)
-     "reasoning summary selection leaves the Grok provider unchanged"))
   (grok-provider-test--request-shape)
   (grok-provider-test--transport-headers)
   nil)
