@@ -8772,7 +8772,9 @@
                   :response-id "two"
                   :usage '(("input_tokens" 2000)
                            ("output_tokens" 300)
-                           ("total_tokens" 2300))))
+                           ("total_tokens" 2300)
+                           ("cached_input_tokens" 1200)
+                           ("cache_creation_input_tokens" 300))))
            (setf (provider-rate-limits provider)
                  (list :captured-at (get-universal-time)
                        :primary (list :used-percent 28
@@ -8785,6 +8787,9 @@
                         (application-status-entry application))))
              (test-assert (search "3.8K total (3.0K input + 800 output)" text)
                           "status sums token usage across requests")
+             (test-assert
+              (search "1.2K read (40% of input), 300 written" text)
+              "status reports the conversation prompt-cache hit rate")
              (test-assert (search "5h limit" text)
                           "the primary window is named by its duration")
              (test-assert (search "weekly limit" text)

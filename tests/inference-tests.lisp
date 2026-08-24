@@ -36,6 +36,49 @@
                "an absent context stays empty")
   nil)
 
+(-> test-rlm-response-usage-normalization () null)
+(defun test-rlm-response-usage-normalization ()
+  "Test inference traces persist canonical provider cache usage."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "rlm-cache-usage"))
+         (result
+           (make-instance
+            'provider-result
+            :response-id "rlm-cache-response"
+            :output-items nil
+            :tool-calls nil
+            :usage (json-object
+                    "prompt_tokens" 100
+                    "completion_tokens" 25
+                    "prompt_tokens_details"
+                    (json-object "cached_tokens" 80
+                                 "cache_write_tokens" 10))
+            :turn-state nil
+            :turn-completion ':unspecified)))
+    (unwind-protect
+         (progn
+           (rlm--record-response conversation result)
+           (let* ((records
+                    (conversation--read-records
+                     (conversation-pathname conversation)))
+                  (record (find :provider records :key #'first))
+                  (usage (getf (getf (rest record) :metadata) :usage)))
+             (test-assert
+              (and (= (second (assoc "input_tokens" usage :test #'string=)) 100)
+                   (= (second (assoc "output_tokens" usage :test #'string=)) 25)
+                   (= (second (assoc "total_tokens" usage :test #'string=)) 125)
+                   (= (second (assoc "cached_input_tokens" usage
+                                     :test #'string=))
+                      80)
+                   (= (second (assoc "cache_creation_input_tokens" usage
+                                     :test #'string=))
+                      10))
+              "inference metadata persists canonical cache usage")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (defclass rlm-inference-test-provider (model-provider)
   ((results
     :initarg :results

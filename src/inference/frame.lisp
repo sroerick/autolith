@@ -187,7 +187,9 @@ null distinguishable, matching the contract validator."
     (conversation-append-provider-item conversation item))
   (conversation-append-provider-metadata
    conversation
-   (list :usage (agent--portable-value (provider-result-usage result))))
+   (list :usage (agent--portable-value
+                 (provider-usage-normalize
+                  (provider-result-usage result)))))
   nil)
 
 (-> rlm--context-designators (t) list)

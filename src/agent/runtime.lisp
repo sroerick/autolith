@@ -617,7 +617,9 @@
      conversation
      (list :request-number request-number
            :response-id (provider-result-response-id result)
-           :usage (agent--portable-value (provider-result-usage result)))))
+           :usage (agent--portable-value
+                   (provider-usage-normalize
+                    (provider-result-usage result))))))
   nil)
 
 (-> agent--note-persisted-assistant-response
@@ -1245,7 +1247,9 @@ checkpoint preserves the current model's opaque reasoning state."
            :provider-request-completed
            (list :request-number request-number
                  :response-id (provider-result-response-id result)
-                 :usage (agent--portable-value (provider-result-usage result))
+                 :usage (agent--portable-value
+                         (provider-usage-normalize
+                          (provider-result-usage result)))
                  :output-item-count
                  (length (provider-result-output-items result))
                  :tool-call-count (length calls)

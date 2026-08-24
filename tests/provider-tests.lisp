@@ -680,6 +680,58 @@
          :handle nil
          :syscall 'close))
 
+(-> test-provider-usage-normalization () null)
+(defun test-provider-usage-normalization ()
+  "Test portable prompt-cache counters across provider usage shapes."
+  (labels ((assert-case (usage expected-cached expected-created label)
+             "Assert one normalized USAGE case named LABEL."
+             (let ((normalized (provider-usage-normalize usage)))
+               (test-assert (= (json-get normalized "cached_input_tokens")
+                               expected-cached)
+                            (format nil "~A cache reads normalize" label))
+               (test-assert (= (json-get normalized
+                                         "cache_creation_input_tokens")
+                               expected-created)
+                            (format nil "~A cache writes normalize" label))
+               (test-assert
+                (and (= (json-get normalized "input_tokens") 100)
+                     (= (json-get normalized "output_tokens") 25)
+                     (= (json-get normalized "total_tokens") 125))
+                (format nil "~A ordinary usage normalizes" label)))))
+    (assert-case
+     (json-object "input_tokens" 100
+                  "output_tokens" 25
+                  "input_tokens_details"
+                  (json-object "cached_tokens" 70 "cache_write_tokens" 20))
+     70 20 "Responses")
+    (assert-case
+     (json-object "prompt_tokens" 100
+                  "completion_tokens" 25
+                  "prompt_tokens_details"
+                  (json-object "cached_tokens" 60 "cache_write_tokens" 10))
+     60 10 "Chat Completions")
+    (assert-case
+     (json-object "prompt_tokens" 100
+                  "completion_tokens" 25
+                  "prompt_cache_hit_tokens" 55
+                  "cache_creation_input_tokens" 5)
+     55 5 "DeepSeek")
+    (assert-case
+     (json-object "input_tokens" 100
+                  "output_tokens" 25
+                  "cache_read_input_tokens" 50
+                  "cache_creation_input_tokens" 30)
+     50 30 "Anthropic"))
+  (multiple-value-bind (value present-p)
+      (gethash "cached_input_tokens"
+               (provider-usage-normalize (json-object "input_tokens" 100)))
+    (declare (ignore value))
+    (test-assert (not present-p)
+                 "usage without cache counters stays distinguishable"))
+  (test-assert (null (provider-usage-normalize nil))
+               "absent usage stays absent")
+  nil)
+
 (-> test-provider-stream-decoding () null)
 (defun test-provider-stream-decoding ()
   "Test semantic stream decoding from a deterministic SSE fixture."

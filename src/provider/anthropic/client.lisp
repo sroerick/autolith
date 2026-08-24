@@ -647,13 +647,25 @@ after a completed response."
 (-> anthropic--portable-usage (json-object json-object) json-object)
 (defun anthropic--portable-usage (start-usage delta-usage)
   "Combine Anthropic message_start and message_delta USAGE into portable form."
-  (let ((input (or (anthropic--usage-field start-usage "input_tokens") 0))
-        (output (or (anthropic--usage-field delta-usage "output_tokens")
-                    (anthropic--usage-field start-usage "output_tokens")
-                    0)))
-    (json-object "input_tokens" input
-                 "output_tokens" output
-                 "total_tokens" (+ input output))))
+  (let* ((uncached-input
+           (or (anthropic--usage-field start-usage "input_tokens") 0))
+         (cache-read
+           (anthropic--usage-field start-usage "cache_read_input_tokens"))
+         (cache-created
+           (anthropic--usage-field start-usage "cache_creation_input_tokens"))
+         (input (+ uncached-input (or cache-read 0) (or cache-created 0)))
+         (output (or (anthropic--usage-field delta-usage "output_tokens")
+                     (anthropic--usage-field start-usage "output_tokens")
+                     0))
+         (portable
+           (json-object "input_tokens" input
+                        "output_tokens" output
+                        "total_tokens" (+ input output))))
+    (when (or cache-read cache-created)
+      (setf (gethash "uncached_input_tokens" portable) uncached-input
+            (gethash "cache_read_input_tokens" portable) (or cache-read 0)
+            (gethash "cache_creation_input_tokens" portable) (or cache-created 0)))
+    portable))
 
 (defmethod provider-consume-stream
     ((provider anthropic-api-key-provider) stream headers event-callback)

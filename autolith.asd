@@ -99,6 +99,7 @@
                              (:file "provider/openrouter/client")
                              (:file "provider/mistral/authentication")
                              (:file "provider/mistral/client")
+                             (:file "provider/usage")
                              (:file "provider/builtins")
                              (:file "resource/protocol")
                              (:file "tools/registry")

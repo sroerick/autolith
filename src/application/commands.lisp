@@ -180,16 +180,19 @@
 
 (-> application--conversation-usage (application) list)
 (defun application--conversation-usage (application)
-  "Return summed (:input N :output N :total N) usage for the active conversation."
+  "Return summed token and prompt-cache usage for the active conversation."
   (let ((input 0)
         (output 0)
-        (total 0))
+        (total 0)
+        (cached 0)
+        (cache-created 0)
+        (cache-seen-p nil))
     (labels ((usage-count (usage key)
-               "Return the integer usage value stored under KEY, or zero."
-               (let ((value (second (assoc key usage :test #'string=))))
-                 (if (integerp value)
-                     value
-                     0))))
+               "Return the integer usage value stored under KEY and whether it exists."
+               (let* ((entry (assoc key usage :test #'string=))
+                      (value (and entry (second entry))))
+                 (values (if (integerp value) value 0)
+                         (and entry (integerp value))))))
       (conversation-map-records
        (application-conversation application)
        (lambda (record)
@@ -198,8 +201,21 @@
              (when (listp usage)
                (incf input (usage-count usage "input_tokens"))
                (incf output (usage-count usage "output_tokens"))
-               (incf total (usage-count usage "total_tokens"))))))))
-    (list :input input :output output :total total)))
+               (incf total (usage-count usage "total_tokens"))
+               (multiple-value-bind (count present-p)
+                   (usage-count usage "cached_input_tokens")
+                 (incf cached count)
+                 (setf cache-seen-p (or cache-seen-p present-p)))
+               (multiple-value-bind (count present-p)
+                   (usage-count usage "cache_creation_input_tokens")
+                 (incf cache-created count)
+                 (setf cache-seen-p (or cache-seen-p present-p)))))))))
+    (list :input input
+          :output output
+          :total total
+          :cached cached
+          :cache-created cache-created
+          :cache-seen-p cache-seen-p)))
 
 (-> application--token-count-description (integer) string)
 (defun application--token-count-description (count)
@@ -211,6 +227,19 @@
      (format nil "~,1FK" (/ count 1000)))
     (t
      (format nil "~,2FM" (/ count 1000000)))))
+
+(-> application--prompt-cache-description (list) string)
+(defun application--prompt-cache-description (usage)
+  "Return a compact prompt-cache summary for aggregate USAGE."
+  (let* ((input (getf usage :input))
+         (cached (getf usage :cached))
+         (created (getf usage :cache-created))
+         (rate (and (plusp input)
+                    (min 100 (round (* 100 cached) input)))))
+    (format nil "~A read~A, ~A written"
+            (application--token-count-description cached)
+            (if rate (format nil " (~D% of input)" rate) "")
+            (application--token-count-description created))))
 
 (-> application--window-label ((option integer) string) string)
 (defun application--window-label (minutes fallback)
@@ -368,6 +397,11 @@
                                         (getf usage :input))
                                        (application--token-count-description
                                         (getf usage :output))))
+     (if (getf usage :cache-seen-p)
+         (application--field-spans
+          "prompt cache"
+          (application--prompt-cache-description usage))
+         nil)
      (application--field-spans
       "context"
       (let ((used (conversation-last-total-tokens

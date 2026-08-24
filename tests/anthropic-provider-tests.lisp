@@ -607,7 +607,10 @@
     json-object)
 (defun anthropic-provider-test--message-start
     (&key (id "msg-test")
-          (usage (json-object "input_tokens" 42 "output_tokens" 1)))
+          (usage (json-object "input_tokens" 42
+                              "output_tokens" 1
+                              "cache_read_input_tokens" 30
+                              "cache_creation_input_tokens" 20)))
   "Return one valid Anthropic message_start event."
   (json-object
    "type" "message_start"
@@ -720,10 +723,13 @@
           (string= (json-get call "arguments") "{\"path\":\"x\"}"))
      "fragmented tool_use input becomes a namespaced function call")
     (test-assert
-     (and (= (json-get usage "input_tokens") 42)
+     (and (= (json-get usage "input_tokens") 92)
+          (= (json-get usage "uncached_input_tokens") 42)
+          (= (json-get usage "cache_read_input_tokens") 30)
+          (= (json-get usage "cache_creation_input_tokens") 20)
           (= (json-get usage "output_tokens") 7)
-          (= (json-get usage "total_tokens") 49))
-     "message_start and message_delta usage combine into portable usage")
+          (= (json-get usage "total_tokens") 99))
+     "Anthropic usage preserves cache reads, writes, and total input")
     (test-assert
      (and (eq (provider-result-turn-completion result) ':continue)
           (find-if (lambda (event) (typep event 'assistant-delta-event)) events)

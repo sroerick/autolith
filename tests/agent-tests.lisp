@@ -335,16 +335,19 @@
     (string list
      &key
      (:turn-state (option string))
-     (:turn-completion turn-completion))
+     (:turn-completion turn-completion)
+     (:usage json-object))
     provider-result)
 (defun agent-test-result
-    (response-id output-items &key turn-state (turn-completion :unspecified))
+    (response-id output-items
+     &key turn-state (turn-completion :unspecified)
+       (usage (json-object "input_tokens" 1 "output_tokens" 1)))
   "Return a scripted provider result containing OUTPUT-ITEMS."
   (make-instance 'provider-result
                  :response-id response-id
                  :output-items output-items
                  :tool-calls (remove-if-not #'function-call-item-p output-items)
-                 :usage (json-object "input_tokens" 1 "output_tokens" 1)
+                 :usage usage
                  :turn-state turn-state
                  :turn-completion turn-completion))
 
@@ -422,10 +425,19 @@
               "response-1"
               (list call blank-message)
               :turn-state "turn-state-1")
-             (agent-test-result "response-2" (list message)))))
+             (agent-test-result
+              "response-2"
+              (list message)
+              :usage (json-object
+                      "input_tokens" 10
+                      "output_tokens" 2
+                      "input_tokens_details"
+                      (json-object "cached_tokens" 8
+                                   "cache_write_tokens" 1))))))
          (registry (agent-test-registry))
          (deltas nil)
          (statuses nil)
+         (completed-usages nil)
          (persisted-responses nil))
     (unwind-protect
          (progn
@@ -444,6 +456,9 @@
                      :status-callback
                      (lambda (status details)
                        (push status statuses)
+                       (when (eq status ':provider-request-completed)
+                         (push (copy-tree (getf details :usage))
+                               completed-usages))
                        (when (eq status ':assistant-response-persisted)
                          (let ((text (getf details :text)))
                            (push
@@ -488,6 +503,15 @@
              (test-assert
               (member :user-message-persisted statuses)
               "the observer learns when user input becomes durable")
+             (let ((usage (first completed-usages)))
+               (test-assert
+                (and (= (second (assoc "cached_input_tokens" usage
+                                       :test #'string=))
+                        8)
+                     (= (second (assoc "cache_creation_input_tokens" usage
+                                       :test #'string=))
+                        1))
+                "provider completion status carries normalized cache usage"))
              (let* ((responses (nreverse persisted-responses))
                     (response (first responses))
                     (details (getf response :details))
@@ -514,13 +538,31 @@
                       (conversation--read-records
                        (conversation-pathname conversation)))
                     (tool-result
-                      (find :tool-result records :key #'first)))
+                      (find :tool-result records :key #'first))
+                    (provider-record
+                      (find-if
+                       (lambda (record)
+                         (and (eq (first record) :provider)
+                              (string= (getf (getf (rest record) :metadata)
+                                             :response-id)
+                                       "response-2")))
+                       records))
+                    (persisted-usage
+                      (getf (getf (rest provider-record) :metadata) :usage)))
                (test-assert
                 (and (typep (getf (rest tool-result) :cpu-microseconds)
                             '(integer 0))
                      (typep (getf (rest tool-result) :real-microseconds)
                             '(integer 0)))
-                "executed tool results persist CPU and real timing"))
+                "executed tool results persist CPU and real timing")
+               (test-assert
+                (and (= (second (assoc "cached_input_tokens" persisted-usage
+                                       :test #'string=))
+                        8)
+                     (= (second (assoc "cache_creation_input_tokens"
+                                       persisted-usage :test #'string=))
+                        1))
+                "provider metadata persists normalized cache usage"))
              (test-assert
               (= (count :provider-progress statuses) 2)
               "every streamed delta refreshes visible provider progress")))
