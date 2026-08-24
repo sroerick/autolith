@@ -489,7 +489,8 @@
 (defun main-authenticate (configuration selection)
   "Authenticate a registered provider before the conversation UI starts."
   (configuration-ensure-directories configuration)
-  (let ((provider (main--authentication-provider configuration selection)))
+  (let ((provider (main--authentication-provider configuration selection))
+        (*api-key-input-file-descriptor* 0))
     (format t "~&~A~%"
             (provider-authenticate provider
                                    :stream *standard-output*

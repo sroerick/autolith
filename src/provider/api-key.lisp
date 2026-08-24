@@ -195,6 +195,9 @@
 (defparameter *api-key-input-echo-disabled-p* nil
   "Whether the dynamically bound API-key input transport already suppresses echo.")
 
+(defparameter *api-key-input-file-descriptor* nil
+  "The known descriptor for dynamically bound standard API-key input.")
+
 (-> api-key--strip-bracketed-paste (string) string)
 (defun api-key--strip-bracketed-paste (text)
   "Remove one terminal bracketed-paste wrapper from TEXT."
@@ -263,7 +266,9 @@
     (provider-name
      &key
        (input *standard-input*)
-       input-file-descriptor
+       (input-file-descriptor
+         (and (eq input *standard-input*)
+              *api-key-input-file-descriptor*))
        (stream *standard-output*)
        note)
   "Clearly prompt for PROVIDER-NAME's API key and read it without terminal echo."
@@ -521,7 +526,9 @@ never retains the resulting credential after this call."
      &key
        (stream *standard-output*)
        (input *standard-input*)
-       input-file-descriptor
+       (input-file-descriptor
+         (and (eq input *standard-input*)
+              *api-key-input-file-descriptor*))
        validate)
   "Prompt for MANAGER's API key, optionally validate it, and persist it."
   (call-with-secret-use

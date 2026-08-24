@@ -1675,24 +1675,26 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (-> application--authentication-streams
     (application)
-    (values stream stream boolean boolean))
+    (values stream stream boolean boolean (option integer)))
 (defun application--authentication-streams (application)
-  "Return authentication input, output, UI-stop, and echo-disabled state."
+  "Return authentication input, output, UI-stop, echo, and descriptor state."
   (let ((terminal (terminal-ui-terminal (application-ui application))))
     (typecase terminal
       (stream-terminal
        (values (stream-terminal-input-stream terminal)
                (stream-terminal-output-stream terminal)
-               t nil))
+               t nil
+               (stream-terminal-input-file-descriptor terminal)))
       (localgroup-terminal
        (values
         (make-instance 'application-authentication-input-stream
                        :terminal terminal)
         (make-instance 'application-authentication-output-stream
                        :terminal terminal)
-        nil t))
+        nil t nil))
       (t
-       (values *standard-input* *standard-output* t nil)))))
+       (values *standard-input* *standard-output* t nil
+               (api-key--input-file-descriptor *standard-input* nil))))))
 
 (-> application-authenticate (application string) null)
 (defun application-authenticate (application provider-name)
@@ -1703,7 +1705,8 @@ are forwarded to TERMINAL-UI-SELECT."
     (application-present
      application
      (format nil "Authenticating provider ~A." provider-name))
-    (multiple-value-bind (input output stop-ui-p input-echo-disabled-p)
+    (multiple-value-bind
+          (input output stop-ui-p input-echo-disabled-p input-file-descriptor)
         (application--authentication-streams application)
       (if stop-ui-p
           (terminal-ui-stop ui)
@@ -1711,7 +1714,8 @@ are forwarded to TERMINAL-UI-SELECT."
       (unwind-protect
            (let ((*standard-input* input)
                  (*standard-output* output)
-                 (*api-key-input-echo-disabled-p* input-echo-disabled-p))
+                 (*api-key-input-echo-disabled-p* input-echo-disabled-p)
+                 (*api-key-input-file-descriptor* input-file-descriptor))
              (setf message
                    (provider-authenticate provider
                                           :stream output

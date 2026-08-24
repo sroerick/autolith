@@ -614,7 +614,7 @@
 
 (-> test-openai-compatible-provider-authentication-bootstrap () null)
 (defun test-openai-compatible-provider-authentication-bootstrap ()
-  "Test named authentication can bootstrap a discovery-only provider."
+  "Test named authentication bootstraps through a standard-input wrapper."
   (let* ((registry-snapshot (provider--registry-snapshot))
          (configuration (test-configuration))
          (root (test-configuration-root configuration)))
@@ -628,18 +628,19 @@
                     (provider-authentication-provider
                      configuration "bootstrap-auth"))
                   (output (make-string-output-stream))
-                   (message
-                     (openai-compatible-provider-tests--call-with-input
-                      (format nil
-                              "~C[200~~bootstrap-key~C[201~~~%"
-                              *terminal-escape-character*
-                              *terminal-escape-character*)
-                      (lambda (input)
-                        (let ((*standard-input* input)
-                              (*standard-output* output))
-                          (provider-authenticate provider
-                                                 :stream output
-                                                 :open-browser-p nil))))))
+                  (input
+                    (make-string-input-stream
+                     (format nil
+                             "~C[200~~bootstrap-key~C[201~~~%"
+                             *terminal-escape-character*
+                             *terminal-escape-character*)))
+                  (message
+                    (let ((*standard-input* input)
+                          (*standard-output* output)
+                          (*api-key-input-file-descriptor* -1))
+                      (provider-authenticate provider
+                                             :stream output
+                                             :open-browser-p nil))))
              (test-assert
               (typep provider 'openai-compatible-provider)
               "named authentication creates a discovery-only provider before a key exists")

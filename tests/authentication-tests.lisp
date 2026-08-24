@@ -272,6 +272,16 @@
     (test-assert
      (string= (read-line input) "bound-wrapper-key")
      "a descriptorless standard-input wrapper remains unread"))
+  (let* ((input (make-string-input-stream (format nil "known-wrapper-key~%")))
+         (*standard-input* input)
+         (*api-key-input-file-descriptor* -1))
+    (test-assert
+     (string= (api-key-read-hidden
+               "Example"
+               :input input
+               :stream (make-string-output-stream))
+              "known-wrapper-key")
+     "a transport-provided descriptor permits hidden input through a wrapper"))
   (let ((process nil))
     (unwind-protect
          (progn
@@ -419,6 +429,35 @@
      "Fireworks validation failure releases its secret scope"))
   nil)
 
+(-> authentication-tests--test-main-input-descriptor () null)
+(defun authentication-tests--test-main-input-descriptor ()
+  "Test command-line authentication identifies the standard-input descriptor."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (observed-descriptor nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'main--authentication-provider
+                 (lambda (candidate selection)
+                   (declare (ignore candidate selection))
+                   ':test-provider))
+           (list 'provider-authenticate
+                 (lambda (provider &key stream open-browser-p)
+                   (declare (ignore stream))
+                   (test-assert (and (eq provider ':test-provider)
+                                     open-browser-p)
+                                "command-line auth invokes the selected provider")
+                   (setf observed-descriptor *api-key-input-file-descriptor*)
+                   "Provider authentication was saved.")))
+          (lambda ()
+            (let ((*standard-output* (make-string-output-stream)))
+              (main-authenticate configuration "example"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+    (test-assert (= observed-descriptor 0)
+                 "command-line auth supplies the POSIX stdin descriptor"))
+  nil)
+
 (-> test-authentication-store () null)
 (defun test-authentication-store ()
   "Test private credential storage without exposing real authentication data."
@@ -427,6 +466,7 @@
   (authentication-tests--test-api-key-prompt)
   (authentication-tests--test-api-key-terminal-mode)
   (authentication-tests--test-provider-api-key-prompts)
+  (authentication-tests--test-main-input-descriptor)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (source (make-instance 'autolith-credential-source

@@ -713,6 +713,11 @@
     :accessor application-authentication-test-provider-stream
     :type (option stream)
     :documentation "The direct stream received by the test authenticator.")
+   (input-file-descriptor
+    :initform nil
+    :accessor application-authentication-test-provider-input-file-descriptor
+    :type (option integer)
+    :documentation "The dynamically supplied descriptor for hidden input.")
    (open-browser-p
     :initform nil
     :accessor application-authentication-test-provider-open-browser-p
@@ -742,6 +747,8 @@
      &key stream open-browser-p)
   "Write immediate public instructions for PROVIDER to STREAM."
   (setf (application-authentication-test-provider-stream provider) stream
+        (application-authentication-test-provider-input-file-descriptor provider)
+        *api-key-input-file-descriptor*
         (application-authentication-test-provider-open-browser-p provider)
         open-browser-p)
   (format stream "Open the provider login page now.~%")
@@ -903,7 +910,10 @@
        (and stopped-p started-p
             (eq (application-authentication-test-provider-stream provider)
                 terminal-output)
-            (application-authentication-test-provider-open-browser-p provider))
+            (application-authentication-test-provider-open-browser-p provider)
+            (= (application-authentication-test-provider-input-file-descriptor
+                provider)
+               -1))
        "auth uses the direct terminal stream and restores terminal ownership")
       (test-assert
        (and (search "Authenticating provider grok." terminal-text)
@@ -1007,6 +1017,9 @@
               (and (typep
                     (application-authentication-test-provider-stream provider)
                     'application-authentication-output-stream)
+                   (null
+                    (application-authentication-test-provider-input-file-descriptor
+                     provider))
                    (string= paste-input "secret")
                    (string= line-input "line-secret"))
               "localgroup auth accepts pasted, edited, and completed hidden lines")
