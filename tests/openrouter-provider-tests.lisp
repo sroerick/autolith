@@ -149,7 +149,7 @@
                     provider credentials conversation)))
              (test-assert
               (and (string= (rest (assoc "HTTP-Referer" headers :test #'string=))
-                            "https://github.com/luciusmagn/autolith")
+                            "https://github.com/lambda-symbolics/autolith")
                    (string= (rest (assoc "X-OpenRouter-Title" headers
                                          :test #'string=))
                             "Autolith"))

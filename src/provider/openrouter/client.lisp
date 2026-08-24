@@ -6,7 +6,7 @@
   "The namespace distinguishing OpenRouter models from other providers.")
 
 (defparameter *openrouter-request-headers*
-  '(("HTTP-Referer" . "https://github.com/luciusmagn/autolith")
+  '(("HTTP-Referer" . "https://github.com/lambda-symbolics/autolith")
     ("X-OpenRouter-Title" . "Autolith"))
   "The non-secret OpenRouter attribution headers sent with provider requests.")
 
