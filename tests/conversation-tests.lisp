@@ -2453,6 +2453,23 @@ assistant needle"))
                 (equal (conversation-title-generated-normalize input) expected)
                 (format nil "generated title validation maps ~S to ~S"
                         input expected))))
+           (let* ((image-pathname (merge-pathnames "title-image.png" root))
+                  (image-conversation
+                    (conversation-create configuration :identifier "image-title")))
+             (test-conversation--write-tiny-png image-pathname)
+             (conversation-append-user-message
+              image-conversation
+              (user-message-input-create
+               :image-pathnames (list image-pathname)))
+             (test-assert
+              (and (string= (conversation-title image-conversation)
+                            "Image attachment")
+                   (equal
+                    (conversation-picker-search-index-messages
+                     (conversation-picker-search-find
+                      (conversation-pathname image-conversation)))
+                    '("Image attachment")))
+              "an image-only first turn gets a local title and provider context"))
            (conversation-append-user-message
             conversation
             "add titles to autolith sessions. Make them automatic.")
@@ -2579,15 +2596,17 @@ assistant needle"))
               :automatic-p t)
              (test-assert
               (and (= (conversation-user-turn-count image-automatic) 1)
-                   (null (conversation-title image-automatic)))
-              "an automatic continuation cannot name an image-only actual turn")
+                   (string= (conversation-title image-automatic)
+                            "Image attachment"))
+              "an image-only actual turn keeps its local title through continuation")
              (let ((reloaded
                      (conversation-load-by-id
                       configuration "image-automatic-title-turn")))
                (test-assert
                 (and (= (conversation-user-turn-count reloaded) 1)
-                     (null (conversation-title reloaded)))
-                "replay excludes automatic continuation text from title derivation")))
+                     (string= (conversation-title reloaded)
+                              "Image attachment"))
+                "replay preserves the image title and excludes continuation text")))
            (let* ((published
                     (conversation-create configuration
                                          :identifier "published-title"))

@@ -2,7 +2,7 @@
 
 ;;;; -- Global Preferences --
 
-(defparameter *preferences-version* 2
+(defparameter *preferences-version* 4
   "The readable global preferences file format version.")
 
 (defclass preference-state ()
@@ -37,19 +37,26 @@
     :reader preference-state-turn-timestamps-p
     :type boolean
     :documentation "Whether transcript turn headers include local timestamps.")
-    (simple-technical-english-p
-     :initarg :simple-technical-english-p
-     :initform nil
-     :reader preference-state-simple-technical-english-p
-     :type boolean
-     :documentation "Whether natural-language replies use Simple Technical English.")
-    (permission-mode
-     :initarg :permission-mode
-     :initform nil
-     :reader preference-state-permission-mode
-     :type (option (member :ask :auto))
-     :documentation
-     "The last saved durable command-permission mode, or NIL when unset."))
+   (simple-technical-english-p
+    :initarg :simple-technical-english-p
+    :initform nil
+    :reader preference-state-simple-technical-english-p
+    :type boolean
+    :documentation "Whether natural-language replies use Simple Technical English.")
+   (session-title-generation-p
+    :initarg :session-title-generation-p
+    :initform t
+    :reader preference-state-session-title-generation-p
+    :type boolean
+    :documentation
+    "Whether the provider may refresh locally derived session titles.")
+   (permission-mode
+    :initarg :permission-mode
+    :initform nil
+    :reader preference-state-permission-mode
+    :type (option (member :ask :auto))
+    :documentation
+    "The last saved durable command-permission mode, or NIL when unset."))
    (:documentation "Validated global choices restored across Autolith processes."))
 
 (-> preferences--form-p (t) boolean)
@@ -67,7 +74,7 @@
                   (case version
                     (1
                      t)
-                    ((2 3)
+                    ((2 3 4)
                        (let ((model (getf properties :model))
                              (effort (getf properties :reasoning-effort))
                              (compact-present-p
@@ -79,7 +86,11 @@
                              (simple-technical-english-present-p
                                (readable-state-property-present-p
                                 properties :simple-technical-english-p))
-                             (permission-mode (getf properties :permission-mode))
+                             (session-title-generation-present-p
+                               (readable-state-property-present-p
+                                properties :session-title-generation-p))
+                             (permission-mode
+                               (getf properties :permission-mode))
                              (permission-mode-present-p
                                (readable-state-property-present-p
                                 properties :permission-mode)))
@@ -103,9 +114,16 @@
                               (typep
                                (getf properties :simple-technical-english-p)
                                'boolean))
-                            (or (not permission-mode-present-p)
-                                (member permission-mode '(nil :ask :auto) :test #'eq))
-                          (or (= version 2) compact-present-p))))
+                          (or (not permission-mode-present-p)
+                              (member permission-mode '(nil :ask :auto)
+                                      :test #'eq))
+                          (or (not session-title-generation-present-p)
+                              (typep
+                               (getf properties :session-title-generation-p)
+                               'boolean))
+                          (or (= version 2) compact-present-p)
+                          (or (/= version 4)
+                              session-title-generation-present-p))))
                     (otherwise
                      nil)))))
     (error ()
@@ -125,6 +143,8 @@
                      (getf properties :turn-timestamps-p nil)
                      :simple-technical-english-p
                      (getf properties :simple-technical-english-p nil)
+                     :session-title-generation-p
+                     (getf properties :session-title-generation-p t)
                      :permission-mode
                      (getf properties :permission-mode))))
 
@@ -144,6 +164,8 @@
           (preference-state-turn-timestamps-p preferences)
           :simple-technical-english-p
           (preference-state-simple-technical-english-p preferences)
+          :session-title-generation-p
+          (preference-state-session-title-generation-p preferences)
           :permission-mode
           (preference-state-permission-mode preferences)))
 
@@ -187,7 +209,7 @@
   (handler-case
       (multiple-value-bind (preferences version)
           (preferences--read configuration)
-        (when (= version 3)
+        (when (/= version *preferences-version*)
           (ignore-errors
             (snapshot-write
              (configuration-preferences-path configuration)
@@ -218,6 +240,12 @@
 (defun preferences-simple-technical-english-p (configuration)
   "Return the persisted Simple Technical English setting, defaulting to false."
   (preference-state-simple-technical-english-p
+   (preferences-load configuration)))
+
+(-> preferences-session-title-generation-p (configuration) boolean)
+(defun preferences-session-title-generation-p (configuration)
+  "Return whether provider-generated session-title refreshes are enabled."
+  (preference-state-session-title-generation-p
    (preferences-load configuration)))
 
 (-> preferences-permission-mode (configuration) (option (member :ask :auto)))
@@ -278,6 +306,7 @@ model no provider can serve."
      (:compact-view-p boolean)
      (:turn-timestamps-p boolean)
      (:simple-technical-english-p boolean)
+     (:session-title-generation-p boolean)
      (:permission-mode (option (member :ask :auto))))
     preference-state)
 (defun preferences--copy
@@ -290,6 +319,8 @@ model no provider can serve."
                     (preference-state-turn-timestamps-p previous))
                    (simple-technical-english-p
                     (preference-state-simple-technical-english-p previous))
+                   (session-title-generation-p
+                    (preference-state-session-title-generation-p previous))
                    (permission-mode (preference-state-permission-mode previous)))
   "Return a replacement preference state based on PREVIOUS."
   (make-instance 'preference-state
@@ -299,6 +330,7 @@ model no provider can serve."
                  :compact-view-p compact-view-p
                  :turn-timestamps-p turn-timestamps-p
                  :simple-technical-english-p simple-technical-english-p
+                 :session-title-generation-p session-title-generation-p
                  :permission-mode permission-mode))
 
 (-> preferences-set-model-selection (configuration) null)
@@ -346,6 +378,15 @@ model no provider can serve."
    configuration
    (preferences--copy (preferences-load configuration)
                       :simple-technical-english-p enabled-p))
+  nil)
+
+(-> preferences-set-session-title-generation (configuration boolean) null)
+(defun preferences-set-session-title-generation (configuration enabled-p)
+  "Persist whether providers may refresh locally derived session titles."
+  (preferences--write
+   configuration
+   (preferences--copy (preferences-load configuration)
+                      :session-title-generation-p enabled-p))
   nil)
 
 (-> preferences-set-permission-mode

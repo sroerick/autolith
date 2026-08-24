@@ -165,14 +165,14 @@ The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
 
 ** Session titles and resume
 
-A session gets an immediate local title from its first prompt. After the third
-actual user turn, Autolith asks the active model for one concise replacement and
-persists it with the conversation.
+A session gets an immediate local title from its first prompt or image. After the
+third actual user turn, Autolith may ask the active model for one concise
+replacement and persist it with the conversation. The local title does not depend
+on provider generation.
 
-Titles are conversation-scoped; the agenda remains workspace-scoped. Active
-=:doing= and =:blocked= agenda items are supplied as supporting context for the
-model replacement only when they align with the conversation. Title generation
-does not edit the agenda.
+Provider-generated refreshes are enabled by default. Use =/titles on|off= or
+=(titles "on")= / =(titles "off")= to inspect or change the durable global
+preference.
 
 =/resume= displays titles in its picker while explicit =/resume ID= and
 =(resume "ID")= continue to address the stable conversation identifier. The

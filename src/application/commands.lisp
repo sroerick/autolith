@@ -296,6 +296,10 @@
       (application--toggle-state
        (preferences-simple-technical-english-p configuration)))
      (application--field-spans
+      "session titles"
+      (application--toggle-state
+       (preferences-session-title-generation-p configuration)))
+     (application--field-spans
       "hurry-up"
       (application--toggle-state
        (application-hurry-up-p application)))
@@ -714,6 +718,33 @@
       (t
        (error 'configuration-error
               :message "Usage: /ste on or /ste off."))))
+  nil)
+
+(-> application-session-titles-command (application (option string)) null)
+(defun application-session-titles-command (application argument)
+  "Show or change automatic provider-generated session-title refreshes."
+  (let* ((configuration (application-configuration application))
+         (mode (and argument (string-downcase argument))))
+    (cond
+      ((null mode)
+       (application-present
+        application
+        (format nil
+                "Provider-generated session titles are ~:[disabled~;enabled~]. This setting persists across restarts."
+                (preferences-session-title-generation-p configuration))))
+      ((string= mode "on")
+       (preferences-set-session-title-generation configuration t)
+       (application-present
+        application
+        "Provider-generated session titles are enabled and saved."))
+      ((string= mode "off")
+       (preferences-set-session-title-generation configuration nil)
+       (application-present
+        application
+        "Provider-generated session titles are disabled and saved."))
+      (t
+       (error 'configuration-error
+              :message "Usage: /titles on or /titles off."))))
   nil)
 
 (-> application-compact-view-command (application string) null)
@@ -2100,6 +2131,19 @@ are forwarded to TERMINAL-UI-SELECT."
      :slash-argument-mode :first)
     (application mode)
   (application-simple-technical-english-command application mode)
+  ':continue)
+
+(define-application-command application--builtin-session-titles-command
+    (:name "/titles"
+     :argument "on|off"
+     :description "allow provider-generated session-title refreshes"
+     :tip "toggles automatic provider-generated session-title refreshes."
+     :busy-behavior :apply
+     :terminal-behavior :shared
+     :call-lambda-list (mode)
+     :slash-argument-mode :first)
+    (application mode)
+  (application-session-titles-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command

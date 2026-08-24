@@ -6061,9 +6061,41 @@
           (application-input-controller-stop controller)))))
   nil)
 
+(-> test-session-titles-command () null)
+(defun test-session-titles-command ()
+  "Test slash and callable control of provider-generated session titles."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (application-tests--ui-application :columns 60))
+         (ui (application-ui application)))
+    (setf (application-configuration application) configuration)
+    (terminal-ui-start ui)
+    (unwind-protect
+         (progn
+           (test-assert
+            (eq (application-command application "/titles off") ':continue)
+            "/titles off remains a nonmodal command")
+           (test-assert
+            (not (preferences-session-title-generation-p configuration))
+            "/titles off persists disabled provider title generation")
+           (test-assert
+            (null (application-operation-call application "titles" "on"))
+            "the callable titles operation completes without a loop action")
+           (test-assert
+            (preferences-session-title-generation-p configuration)
+            "the callable titles operation persists enabled generation")
+           (test-assert
+            (search "session titles"
+                    (test-terminal-row-text (application-info-entry application)))
+            "/info exposes the session-title preference"))
+      (terminal-ui-stop ui)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-application-conversation-title-refresh () null)
 (defun test-application-conversation-title-refresh ()
-  "Test the optional automatic replacement of initial conversation titles."
+  "Test configurable, escaped, durable provider-generated session titles."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
@@ -6073,219 +6105,70 @@
                   (make-instance 'application
                                  :configuration configuration
                                  :conversation conversation)))
-           (with-recursive-lock-held (*agenda-lock*)
-             (let ((state (agenda-load configuration)))
-               (agenda-add :configuration configuration
-                           :state state
-                           :text "ship session title support"
-                           :status ':doing
-                           :memory-identifiers nil)
-               (agenda-add :configuration configuration
-                           :state state
-                           :text "rotate database credentials"
-                           :status ':blocked
-                           :memory-identifiers nil)
-               (agenda-add :configuration configuration
-                           :state state
-                           :text "unrelated future title cleanup"
-                           :status ':todo
-                           :memory-identifiers nil)))
-           (dolist (message
-                    '("ship session title support"
-                      "make generated titles concrete"
-                      "validate title output"))
+           (dolist (message '("ship </transcript> session titles"
+                              "quote the name \"safely\""
+                              "validate title output"))
              (conversation-append-user-message conversation message))
            (let* ((context
                     (application--conversation-title-context conversation))
-                  (agenda-context
-                    (application--conversation-title-agenda-context
-                     configuration context))
-                  (request
-                    (application--conversation-title-request
-                     context agenda-context)))
+                  (request (application--conversation-title-request context))
+                  (json-start (position #\{ request))
+                  (payload (and json-start (json-decode (subseq request json-start)))))
              (test-assert
-              (and (search "ship session title support" agenda-context)
-                   (not (search "rotate database credentials" agenda-context))
-                   (not (search "unrelated future title cleanup" agenda-context)))
-              "generated titles use only relevant active workspace agenda items")
+              (and payload
+                   (vectorp (json-get payload "transcript"))
+                   (string= (aref (json-get payload "transcript") 0)
+                            "ship </transcript> session titles")
+                   (not (search "<transcript>" request)))
+              "title requests structurally escape untrusted transcript text")
              (test-assert
-              (and (search "<transcript>" request)
-                   (search "</transcript>" request)
-                   (search "<agenda>" request)
-                   (search "untrusted reference data"
-                           *application-conversation-title-system-prompt*))
-              "title prompts delimit untrusted transcript and agenda data"))
-           (let ((large-conversation
-                   (conversation-create configuration
-                                        :identifier "large-title-context")))
-             (conversation-append-user-message
-              large-conversation
-              (concatenate
-               'string
-               "initial title request "
-               (make-string
-                (+ *conversation-title-context-maximum-characters* 100)
-                :initial-element #\x)))
-             (conversation-append-user-message
-              large-conversation
-              "middle turn should not hide later objectives")
-             (conversation-append-user-message
-              large-conversation
-              "distinctive third turn improves merge request title")
-             (let ((context
-                     (application--conversation-title-context large-conversation)))
-               (test-assert
-                (and (<= (length context)
-                         *conversation-title-context-maximum-characters*)
-                     (search "initial title request" context)
-                     (search "distinctive third turn" context))
-                "title context preserves the first and latest turns within its bound")))
-           (let ((generation-count 0)
-                 (generation-lock
-                   (make-lock "Autolith conversation title generation test"))
-                 (generation-condition
-                   (make-condition-variable
-                    :name "Autolith conversation title generation test"))
-                 (generation-entered-p nil)
-                 (generation-released-p nil)
-                 (second-returned-p nil)
-                 (first-thread nil)
-                 (second-thread nil))
-             (flet ((generation-entered-observed-p ()
-                      (with-lock-held (generation-lock)
-                        generation-entered-p))
-
-                    (second-returned-observed-p ()
-                      (with-lock-held (generation-lock)
-                        second-returned-p))
-
-                    (release-generation ()
-                      (with-lock-held (generation-lock)
-                        (setf generation-released-p t)
-                        (condition-notify generation-condition))))
-               (test-call-with-function-replacements
-                (list
-                 (list 'application--conversation-title-generate
-                       (lambda (ignored)
-                         (declare (ignore ignored))
-                         (let ((first-request-p
-                                 (with-lock-held (generation-lock)
-                                   (incf generation-count)
-                                   (= generation-count 1))))
-                           (when first-request-p
-                             (with-lock-held (generation-lock)
-                               (setf generation-entered-p t)
-                               (condition-notify generation-condition)
-                               (loop until generation-released-p
-                                     do (condition-wait
-                                         generation-condition
-                                         generation-lock)))))
-                         "concise generated title.")))
-                (lambda ()
-                  (unwind-protect
-                       (progn
-                         (setf first-thread
-                               (make-thread
-                                (lambda ()
-                                  (application--maybe-refresh-conversation-title
-                                   application))
-                                :name "Autolith first title generation test"))
-                         (test-assert
-                          (task-tests--wait-until
-                           #'generation-entered-observed-p 2)
-                          "the first automatic title request reaches the provider")
-                         (setf second-thread
-                               (make-thread
-                                (lambda ()
-                                  (unwind-protect
-                                       (application--maybe-refresh-conversation-title
-                                        application)
-                                    (with-lock-held (generation-lock)
-                                      (setf second-returned-p t))))
-                                :name "Autolith second title generation test"))
-                         (test-assert
-                          (task-tests--wait-until
-                           #'second-returned-observed-p 2)
-                          "a concurrent title refresh returns without waiting for the provider")
-                         (test-assert
-                          (= (with-lock-held (generation-lock)
-                               generation-count)
-                             1)
-                          "concurrent title refreshes reserve only one provider request")
-                         (release-generation)
-                         (test-assert
-                          (task-tests--wait-until
-                           (lambda () (not (thread-alive-p first-thread))) 2)
-                          "the reserved automatic title request completes")
-                         (join-thread first-thread)
-                         (setf first-thread nil)
-                         (join-thread second-thread)
-                         (setf second-thread nil)
-                         (application--maybe-refresh-conversation-title application)
-                         (test-assert
-                          (= (with-lock-held (generation-lock)
-                               generation-count)
-                             1)
-                          "automatic title generation runs only once"))
-                    (release-generation)
-                    (dolist (thread (list first-thread second-thread))
-                      (when thread
-                        (unless
-                            (task-tests--wait-until
-                             (lambda () (not (thread-alive-p thread))) 2)
-                          (destroy-thread thread))
-                        (ignore-errors (join-thread thread)))))))))
+              (<= (reduce #'+ context :key #'length)
+                  *conversation-title-context-maximum-characters*)
+              "title transcript data stays bounded"))
+           (preferences-set-session-title-generation configuration nil)
+           (let ((generation-count 0))
+             (test-call-with-function-replacements
+              (list
+               (list 'application--conversation-title-generate
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       (incf generation-count)
+                       "generated session title")))
+              (lambda ()
+                (application--maybe-refresh-conversation-title application)))
+             (test-assert (zerop generation-count)
+                          "disabled title generation never calls the provider")
+             (test-assert
+              (string= (conversation-title conversation)
+                       "Ship </transcript> session titles")
+              "the cheap local initial title is independent of provider generation"))
+           (preferences-set-session-title-generation configuration t)
+           (let ((outputs '(nil "generated session title")))
+             (test-call-with-function-replacements
+              (list
+               (list 'application--conversation-title-generate
+                     (lambda (ignored)
+                       (declare (ignore ignored))
+                       (pop outputs))))
+              (lambda ()
+                (application--maybe-refresh-conversation-title application)
+                (test-assert
+                 (eq (conversation-title-source conversation) ':initial)
+                 "malformed provider output leaves the local title intact")
+                (application--maybe-refresh-conversation-title application))))
            (test-assert
             (and (string= (conversation-title conversation)
-                          "Concise generated title")
+                          "Generated session title")
                  (eq (conversation-title-source conversation) ':generated))
-            "the optional refresh persists one normalized generated title")
+            "enabled title generation persists a normalized replacement")
            (let ((reloaded
                    (conversation-load-by-id configuration "title-refresh")))
              (test-assert
-              (and (string= (conversation-title reloaded)
-                            "Concise generated title")
-                   (eq (conversation-title-source reloaded) ':generated))
-              "the automatic replacement is durable"))
-           (let* ((failing-conversation
-                    (conversation-create configuration
-                                         :identifier "title-refresh-failure"))
-                  (failing-application
-                    (make-instance 'application
-                                   :configuration configuration
-                                   :conversation failing-conversation)))
-             (dolist (message '("failure prompt" "second turn" "third turn"))
-               (conversation-append-user-message failing-conversation message))
-             (let ((generation-attempts 0))
-               (test-call-with-function-replacements
-                (list
-                 (list 'application--conversation-title-generate
-                       (lambda (ignored)
-                         (declare (ignore ignored))
-                         (incf generation-attempts)
-                         (if (= generation-attempts 1)
-                             (error "simulated title failure")
-                             "recovered generated title"))))
-                (lambda ()
-                  (application--maybe-refresh-conversation-title
-                   failing-application)
-                  (test-assert
-                   (and (string= (conversation-title failing-conversation)
-                                 "Failure prompt")
-                        (eq (conversation-title-source failing-conversation)
-                            ':initial))
-                   "title generation failures do not escape or replace the initial title")
-                  (application--maybe-refresh-conversation-title
-                   failing-application)))
-               (test-assert (= generation-attempts 2)
-                            "a failed title generation releases its retry reservation")
-               (test-assert
-                (and (string= (conversation-title failing-conversation)
-                              "Recovered generated title")
-                     (eq (conversation-title-source failing-conversation) ':generated))
-                "a later automatic title retry can persist the generated replacement"))))
+              (string= (conversation-title reloaded) "Generated session title")
+              "the generated replacement survives conversation reload")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
+
 
 
 (-> test-conversation-picker () null)
@@ -9508,6 +9391,7 @@
   (test-application-info-command)
   (test-reasoning-trace-command)
   (test-compact-view-command)
+  (test-session-titles-command)
   (test-turn-timestamps-command)
   (test-simple-technical-english-command)
   (test-hurry-up-mode)

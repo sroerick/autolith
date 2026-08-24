@@ -51,6 +51,9 @@
                 (not (preference-state-simple-technical-english-p preferences))
                 "missing preferences default Simple Technical English to disabled")
                (test-assert
+                (preference-state-session-title-generation-p preferences)
+                "missing preferences enable generated session titles")
+               (test-assert
                 (null (preference-state-permission-mode preferences))
                 "missing preferences have no saved command-permission mode"))
            (ensure-directories-exist pathname)
@@ -77,8 +80,8 @@
                  (snapshot-read pathname)
                (test-assert sole-form-p
                             "normalizing preferences preserves one form")
-               (test-assert (= (getf (rest form) :version) 2)
-                            "version three preferences normalize to version two")
+               (test-assert (= (getf (rest form) :version) 4)
+                            "version three preferences migrate to version four")
                (test-assert
                (not (getf (rest form) :compact-view-p))
                 "normalizing preferences preserves compact presentation")
@@ -87,7 +90,10 @@
                 "normalizing preferences preserves turn-timestamp presentation")
                (test-assert
                 (not (getf (rest form) :simple-technical-english-p))
-                "normalizing preferences adds the disabled response style")))
+                "normalizing preferences adds the disabled response style")
+               (test-assert
+                (getf (rest form) :session-title-generation-p)
+                "migration enables generated session titles")))
            (with-open-file (stream pathname
                                    :direction ':output
                                    :if-exists ':supersede
@@ -112,7 +118,10 @@
               "version one preferences default turn timestamps to hidden")
              (test-assert
               (not (preference-state-simple-technical-english-p legacy))
-              "version one preferences default Simple Technical English to disabled"))
+              "version one preferences default Simple Technical English to disabled")
+             (test-assert
+              (preference-state-session-title-generation-p legacy)
+              "version one preferences enable generated session titles"))
            (let* ((selected
                     (configuration-with-reasoning-effort
                      (configuration-with-model configuration "gpt-5.6-luna")
@@ -165,6 +174,14 @@
              (test-assert
               (not (preference-state-turn-timestamps-p preferences))
               "changing traces preserves hidden turn timestamps"))
+           (preferences-set-session-title-generation configuration nil)
+           (test-assert
+            (not (preferences-session-title-generation-p configuration))
+            "disabled generated session titles survive a preference reload")
+           (preferences-set-session-title-generation configuration t)
+           (test-assert
+            (preferences-session-title-generation-p configuration)
+            "enabled generated session titles survive a preference reload")
            (preferences-set-compact-view configuration nil)
            (let ((preferences (preferences-load configuration)))
              (test-assert

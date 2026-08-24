@@ -12,6 +12,9 @@
 (defparameter *conversation-title-refresh-turn-count* 3
   "The durable user-turn count after which the initial session title is refreshed.")
 
+(defparameter *conversation-image-only-title* "Image attachment"
+  "The immediate local title and transcript marker for image-only turns.")
+
 (defparameter *conversation-title-context-maximum-characters* 12000
   "The maximum transcript characters supplied to automatic title generation.")
 
@@ -645,7 +648,10 @@ reports an operating-system failure."
          (when (and (eq (getf (rest record) :role) ':user)
                     (not (getf (rest record) :automatic-p))
                     (stringp content))
-           content)))
+           (if (non-empty-string-p content)
+               content
+               (and (getf (rest record) :images)
+                    *conversation-image-only-title*)))))
     (:provider-item
      (let ((wire-json (getf (rest record) :wire-json)))
        ;; Only assistant messages yield previews, and their locally
@@ -1756,7 +1762,10 @@ copied."
                (and (not automatic-p)
                     (zerop (conversation-user-turn-count conversation))
                     (null (conversation-title conversation))
-                    (conversation-title-derive content)))
+                    (conversation-title-derive
+                     (if (non-empty-string-p content)
+                         content
+                         *conversation-image-only-title*))))
              (previous-title (conversation-title conversation))
              (previous-title-source (conversation-title-source conversation))
              (record nil)
