@@ -14,7 +14,8 @@
 ;;; Conversations therefore persist in the same namespaced shape regardless
 ;;; of the serving provider.
 
-(defclass anthropic-api-key-provider (subscription-provider)
+(defclass anthropic-api-key-provider
+    (session-preserving-provider-mixin subscription-provider)
   ()
   (:documentation
    "A static API key client for the Anthropic Messages API."))
@@ -45,15 +46,6 @@
                  :credential-manager (anthropic-credential-manager-create
                                       configuration)
                  :session-id (make-identifier)))
-
-(defmethod provider-with-configuration
-    ((provider anthropic-api-key-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance 'anthropic-api-key-provider
-                 :configuration configuration
-                 :registration (model-provider-registration provider)
-                 :credential-manager (provider-credential-manager provider)
-                 :session-id (provider-session-id provider)))
 
 (defmethod provider-authenticate ((provider anthropic-api-key-provider)
                                   &key stream open-browser-p)

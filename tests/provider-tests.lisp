@@ -358,11 +358,28 @@
                  (test-assert
                   (not present-p)
                   "side-channel compaction does not request unused summaries")))
-             (let ((reconfigured
-                     (provider-with-configuration trace-provider configuration)))
-               (test-assert
-                (provider-reasoning-summaries-p reconfigured)
-                "provider reconfiguration preserves the trace preference")))
+              (setf (provider-rate-limits trace-provider)
+                    '((:primary (:used-percent 42))))
+              (let* ((reconfiguration
+                       (configuration-with-reasoning-effort configuration "high"))
+                     (reconfigured
+                       (provider-with-configuration
+                        trace-provider reconfiguration)))
+                (test-assert
+                 (and (eq (class-of reconfigured) (class-of trace-provider))
+                      (eq (provider-configuration reconfigured) reconfiguration)
+                      (eq (model-provider-registration reconfigured)
+                          (model-provider-registration trace-provider))
+                      (eq (provider-credential-manager reconfigured)
+                          (provider-credential-manager trace-provider))
+                      (string= (provider-session-id reconfigured)
+                               (provider-session-id trace-provider))
+                      (provider-reasoning-summaries-p reconfigured)
+                      (equal (provider-rate-limits reconfigured)
+                             (provider-rate-limits trace-provider))
+                      (not (eq (provider-rate-limits reconfigured)
+                               (provider-rate-limits trace-provider))))
+                 "Codex reconfiguration preserves copied protocol and session state")))
             (test-assert
              (and (string= (json-get request "tool_choice") "auto")
                   (eq (json-get request "parallel_tool_calls") t)

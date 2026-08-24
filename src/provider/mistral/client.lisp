@@ -42,18 +42,6 @@
    :display-name "Mistral"
    :family ':mistral))
 
-(defmethod provider-with-configuration
-    ((provider mistral-api-key-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance
-   'mistral-api-key-provider
-   :configuration configuration
-   :registration (model-provider-registration provider)
-   :credential-manager (provider-credential-manager provider)
-   :session-id (provider-session-id provider)
-   :display-name "Mistral"
-   :family ':mistral))
-
 (defmethod provider-authenticate ((provider mistral-api-key-provider)
                                   &key stream open-browser-p)
   "Prompt for, validate, and save the Mistral API key."

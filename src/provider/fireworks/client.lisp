@@ -14,7 +14,8 @@
 ;;; items. Conversations therefore persist in the same namespaced shape
 ;;; regardless of the serving provider.
 
-(defclass fireworks-api-key-provider (responses-api-provider)
+(defclass fireworks-api-key-provider
+    (session-preserving-provider-mixin responses-api-provider)
   ()
   (:documentation
    "A static API key client for the Fireworks Responses API."))
@@ -45,15 +46,6 @@
                  :credential-manager (fireworks-credential-manager-create
                                       configuration)
                  :session-id (make-identifier)))
-
-(defmethod provider-with-configuration
-    ((provider fireworks-api-key-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance 'fireworks-api-key-provider
-                 :configuration configuration
-                 :registration (model-provider-registration provider)
-                 :credential-manager (provider-credential-manager provider)
-                 :session-id (provider-session-id provider)))
 
 
 ;;;; -- Fireworks Protocol Specializations --

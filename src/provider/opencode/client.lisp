@@ -65,17 +65,6 @@
                  :display-name "OpenCode"
                  :family ':opencode))
 
-(defmethod provider-with-configuration
-    ((provider opencode-chat-completions-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance 'opencode-chat-completions-provider
-                 :configuration configuration
-                 :registration (model-provider-registration provider)
-                 :credential-manager (provider-credential-manager provider)
-                 :session-id (provider-session-id provider)
-                 :display-name "OpenCode"
-                 :family ':opencode))
-
 (defmethod provider-request-object :around
     ((provider opencode-chat-completions-provider)
      (conversation conversation)

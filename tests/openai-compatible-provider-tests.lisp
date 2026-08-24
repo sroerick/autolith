@@ -765,7 +765,9 @@
                :description "Synthetic chat model"
                :context-window 123456
                :reasoning-efforts ("none" "high")))
-            :endpoint "https://provider.invalid/v1/chat/completions")
+            :endpoint "https://provider.invalid/v1/chat/completions"
+            :headers '(("X-Test-Provider" . "synthetic"))
+            :reasoning-parameter "reasoning_effort")
            (setf configuration
                  (test-configuration)
                  root
@@ -826,6 +828,33 @@
                     (string= (configuration-provider-endpoint provider-configuration)
                              "https://provider.invalid/v1/chat/completions"))
               "registered models create the configured OpenAI-compatible provider")
+              (let* ((reconfiguration
+                       (configuration-with-reasoning-effort
+                        provider-configuration "high"))
+                     (reconfigured
+                       (provider-with-configuration provider reconfiguration)))
+                (test-assert
+                 (and (eq (class-of reconfigured) (class-of provider))
+                      (eq (provider-configuration reconfigured) reconfiguration)
+                      (eq (model-provider-registration reconfigured)
+                          (model-provider-registration provider))
+                      (eq (provider-credential-manager reconfigured)
+                          (provider-credential-manager provider))
+                      (string= (provider-session-id reconfigured)
+                               (provider-session-id provider))
+                      (string= (openai-compatible-provider-display-name
+                                reconfigured)
+                               "test-openai")
+                      (eq (openai-compatible-provider-family reconfigured)
+                          ':test-openai)
+                      (equal (openai-compatible-provider-headers reconfigured)
+                             '(("X-Test-Provider" . "synthetic")))
+                      (not (eq (openai-compatible-provider-headers reconfigured)
+                               (openai-compatible-provider-headers provider)))
+                      (string= (openai-compatible-provider-reasoning-parameter
+                                reconfigured)
+                               "reasoning_effort"))
+                 "OpenAI-compatible reconfiguration composes session and wire initargs"))
              (let ((application
                      (make-instance 'application
                                     :configuration provider-configuration)))

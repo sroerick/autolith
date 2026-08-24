@@ -28,7 +28,8 @@
 (defvar *grok-doom-loop-resamples-remaining* nil
   "The armed per-turn resample budget, or NIL outside a Grok streaming turn.")
 
-(defclass grok-subscription-provider (responses-api-provider)
+(defclass grok-subscription-provider
+    (session-preserving-provider-mixin responses-api-provider)
   ()
   (:documentation "A direct Grok subscription client for the xAI Responses proxy."))
 
@@ -64,15 +65,6 @@
                  :credential-manager (grok-credential-manager-create
                                       configuration)
                  :session-id (make-identifier)))
-
-(defmethod provider-with-configuration
-    ((provider grok-subscription-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance 'grok-subscription-provider
-                 :configuration configuration
-                 :registration (model-provider-registration provider)
-                 :credential-manager (provider-credential-manager provider)
-                 :session-id (provider-session-id provider)))
 
 
 ;;;; -- Grok Protocol Specializations --

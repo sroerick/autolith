@@ -2,7 +2,8 @@
 
 ;;;; -- OpenAI-Compatible Chat Completions Provider --
 
-(defclass openai-compatible-provider (chat-completions-provider)
+(defclass openai-compatible-provider
+    (session-preserving-provider-mixin chat-completions-provider)
   ((display-name
     :initarg :display-name
     :reader openai-compatible-provider-display-name
@@ -76,21 +77,14 @@
    :headers (copy-tree headers)
    :reasoning-parameter reasoning-parameter))
 
-(defmethod provider-with-configuration
-    ((provider openai-compatible-provider) (configuration configuration))
-  "Copy PROVIDER for CONFIGURATION while retaining its key source and session."
-  (make-instance
-   'openai-compatible-provider
-   :configuration configuration
-   :credential-manager (provider-credential-manager provider)
-   :session-id (provider-session-id provider)
-   :registration (model-provider-registration provider)
-   :display-name (openai-compatible-provider-display-name provider)
-   :family (openai-compatible-provider-family provider)
-   :headers (copy-tree (openai-compatible-provider-headers provider))
-   :reasoning-parameter
-   (openai-compatible-provider-reasoning-parameter provider)))
-
+(defmethod provider-reconfiguration-initargs append
+    ((provider openai-compatible-provider))
+  "Preserve PROVIDER's display, family, headers, and reasoning parameter."
+  (list :display-name (openai-compatible-provider-display-name provider)
+        :family (openai-compatible-provider-family provider)
+        :headers (copy-tree (openai-compatible-provider-headers provider))
+        :reasoning-parameter
+        (openai-compatible-provider-reasoning-parameter provider)))
 
 (-> openai-compatible--authenticate
     (openai-compatible-provider &key

@@ -103,20 +103,6 @@
    :family ':openrouter
    :headers *openrouter-request-headers*))
 
-(defmethod provider-with-configuration
-    ((provider openrouter-chat-completions-provider)
-     (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials and session state."
-  (make-instance
-   'openrouter-chat-completions-provider
-   :configuration configuration
-   :registration (model-provider-registration provider)
-   :credential-manager (provider-credential-manager provider)
-   :session-id (provider-session-id provider)
-   :display-name "OpenRouter"
-   :family ':openrouter
-   :headers (copy-tree (openai-compatible-provider-headers provider))))
-
 (-> openrouter--reasoning-effort (string) (option string))
 (defun openrouter--reasoning-effort (effort)
   "Translate Autolith reasoning EFFORT to OpenRouter's normalized values."

@@ -2,7 +2,13 @@
 
 ;;;; -- Provider Protocol --
 
-(defclass codex-subscription-provider (responses-api-provider)
+(defclass session-preserving-provider-mixin ()
+  ()
+  (:documentation
+   "Mixin for providers whose reconfiguration preserves session state."))
+
+(defclass codex-subscription-provider
+    (session-preserving-provider-mixin responses-api-provider)
   ((reasoning-summaries-p
     :initarg :reasoning-summaries-p
     :initform nil
@@ -10,6 +16,7 @@
     :type boolean
     :documentation "Whether requests opt in to provider-visible reasoning summaries.")
    (rate-limits
+    :initarg :rate-limits
     :initform nil
     :accessor provider-rate-limits
     :type list
@@ -350,6 +357,27 @@ so authentication can bootstrap credentials before model discovery."
              :reasoning-summaries-p reasoning-summaries-p
              :registration registration))))))
 
+(-> provider-reconfiguration-initargs
+    (session-preserving-provider-mixin)
+    list)
+(defgeneric provider-reconfiguration-initargs (provider)
+  (:method-combination append)
+  (:documentation
+   "Return additional MAKE-INSTANCE initargs preserved while reconfiguring PROVIDER."))
+
+(defmethod provider-reconfiguration-initargs append
+    ((provider session-preserving-provider-mixin))
+  "Preserve PROVIDER's registration, credentials, and session identity."
+  (list :registration (model-provider-registration provider)
+        :credential-manager (provider-credential-manager provider)
+        :session-id (provider-session-id provider)))
+
+(defmethod provider-reconfiguration-initargs append
+    ((provider codex-subscription-provider))
+  "Preserve Codex reasoning-summary and portable rate-limit state."
+  (list :reasoning-summaries-p (provider-reasoning-summaries-p provider)
+        :rate-limits (copy-tree (provider-rate-limits provider))))
+
 (defmethod provider-with-configuration ((provider model-provider)
                                         (configuration configuration))
   "Create a fresh registered provider for a generic provider implementation."
@@ -370,19 +398,13 @@ so authentication can bootstrap credentials before model discovery."
         (provider-create configuration))))
 
 (defmethod provider-with-configuration
-    ((provider codex-subscription-provider) (configuration configuration))
-  "Copy PROVIDER with CONFIGURATION, retaining credentials, session, and limits."
-  (let ((copy
-          (make-instance 'codex-subscription-provider
-                         :configuration configuration
-                         :registration (model-provider-registration provider)
-                         :credential-manager
-                         (provider-credential-manager provider)
-                         :session-id (provider-session-id provider)
-                         :reasoning-summaries-p
-                         (provider-reasoning-summaries-p provider))))
-    (setf (provider-rate-limits copy) (copy-tree (provider-rate-limits provider)))
-    copy))
+    ((provider session-preserving-provider-mixin)
+     (configuration configuration))
+  "Copy PROVIDER with CONFIGURATION while preserving its session state."
+  (apply #'make-instance
+         (class-of provider)
+         :configuration configuration
+         (provider-reconfiguration-initargs provider)))
 
 (defmethod provider-set-reasoning-summaries
     ((provider codex-subscription-provider) (enabled-p t))
