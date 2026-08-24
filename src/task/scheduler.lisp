@@ -406,11 +406,11 @@ start under a cancelled ancestor, and hands over to the child."
                        :parent-call-id parent-call-id
                        :detached-p detached-p
                        :tool-name tool-name
-                        :description
-                        (and description
-                             (bounded-string
-                              description
-                              :limit *tool-execution-summary-limit*))
+                       :description
+                       (and (non-empty-string-p description)
+                            (bounded-string
+                             description
+                             :limit *tool-execution-summary-limit*))
                        :summary
                        (bounded-string summary
                                        :limit *tool-execution-summary-limit*)

@@ -293,14 +293,14 @@
       "command" (tool-string-property "The shell command line to execute.")
       "description"
       (tool-string-property
-       "A short present-tense description of the command's purpose for display.")
+       "An optional short description used to label the live command row.")
       "directory" (tool-string-property
                    "The working directory; defaults to the workspace.")
       "timeout-seconds" (tool-integer-property
                          "Seconds before the command is stopped; defaults to 60 with no maximum.")
       "async" (tool-boolean-property
                "Run as an inspectable background job; defaults to false."))
-     '("command" "description"))))
+     '("command"))))
   registry)
 
 (-> default-tools--register-web (tool-registry) tool-registry)

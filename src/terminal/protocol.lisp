@@ -284,18 +284,18 @@
      :type list
      :documentation
      "Sanitized queued and running primary command summaries in stable order.")
-    (command-activities-unpainted-p
+    (command-unpainted-identifiers
      :initform nil
-     :accessor terminal-ui-command-activities-unpainted-p
-     :type boolean
+     :accessor terminal-ui-command-unpainted-identifiers
+     :type list
      :documentation
-     "Whether the newest non-empty primary command snapshot has not been painted.")
-    (command-activities-clear-after-paint-p
+     "Current command identifiers that have not reached a reader-owned paint.")
+    (command-pending-completions
      :initform nil
-     :accessor terminal-ui-command-activities-clear-after-paint-p
-     :type boolean
+     :accessor terminal-ui-command-pending-completions
+     :type list
      :documentation
-     "Whether command rows must clear after their first reader-owned paint.")
+     "Bounded completed command snapshots awaiting their first visible paint.")
    (status-rendered-signature
     :initform nil
     :accessor terminal-ui-status-rendered-signature

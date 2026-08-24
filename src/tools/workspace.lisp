@@ -237,7 +237,9 @@ roots after resolving existing symlinks and the nearest existing parent."
                          (arguments hash-table))
   "Authorize one command, then run it once directly or as an inspectable job."
   (let* ((command (tool-argument arguments "command" :required t))
-         (description (tool-argument arguments "description" :required t))
+         (description
+           (let ((value (tool-argument arguments "description")))
+             (and (non-empty-string-p value) value)))
          (directory (workspace-tool-path
                      context
                      (tool-argument arguments "directory")))
@@ -248,10 +250,6 @@ roots after resolving existing symlinks and the nearest existing parent."
     (unless (non-empty-string-p command)
       (error 'tool-error
              :message "shell.run requires a non-empty command."
-             :tool-name "shell.run"))
-    (unless (non-empty-string-p description)
-      (error 'tool-error
-             :message "shell.run requires a non-empty purpose description."
              :tool-name "shell.run"))
     (let ((authorization
             (tool-context-authorize-command context command directory)))

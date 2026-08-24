@@ -2758,7 +2758,6 @@
                     "arguments" (json-encode
                                  (json-object
                                   "command" "printf hello && printf world"
-                                  "description" "Print the greeting"
                                   "directory" "/tmp/work"
                                   "timeout-seconds" 30)))))
            (text (test-terminal-row-text entry)))
@@ -2962,8 +2961,7 @@
                (call-entry
                 application "shell" "run"
                 :arguments
-                (json-object "command" "printf '%s\\n' highlighted"
-                             "description" "Print highlighted text")))
+                (json-object "command" "printf '%s\\n' highlighted")))
              (text (test-terminal-row-text entry)))
         (test-assert
          (and (find (terminal-span :success "│ ") entry :test #'equal)
@@ -8051,6 +8049,27 @@
            (test-assert
             (= (length (task-orchestrator-listeners orchestrator)) 1)
             "reconnection retains exactly one task presentation listener")
+            (let ((stale-command
+                    (list :id "exec:stale" :type ':tool :index 1
+                          :tool "shell.run" :description "Old session command"
+                          :state ':running :duration-ms 0 :detached nil)))
+              (terminal-ui-set-command-activities ui (list stale-command))
+              (terminal-ui-set-command-activities ui nil)
+              (test-assert
+               (terminal-ui-command-pending-completions ui)
+               "a command completed before paint is pending presentation")
+              (application-disconnect-task-presentation application)
+              (test-assert
+               (and (null (terminal-ui-command-activities ui))
+                    (null (terminal-ui-command-unpainted-identifiers ui))
+                    (null (terminal-ui-command-pending-completions ui)))
+               "disconnect discards every old-session command presentation")
+              (application-connect-task-presentation application)
+              (recording-terminal-reset terminal)
+              (terminal-ui-refresh-status ui)
+              (test-assert
+               (not (search "exec:stale" (recording-terminal-output terminal)))
+               "reconnect cannot paint a command retained by the old session"))
            (let* ((original-add-listener
                     (symbol-function 'task-orchestrator-add-listener))
                   (gate-lock

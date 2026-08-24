@@ -1969,7 +1969,7 @@
 
 (-> test-terminal-command-activities () null)
 (defun test-terminal-command-activities ()
-  "Test primary command rows, timing, fast completion, and shared row bounds."
+  "Test primary command rows, timing, completion retention, and row bounds."
   (let* ((clock 65)
          (terminal (make-instance 'recording-terminal
                                   :columns 90
@@ -1997,7 +1997,7 @@
            (list :id "exec:1" :type ':tool :index 1
                  :tool "shell.run" :description ""
                  :state ':running :duration-ms 0 :detached nil)))
-     "command rows require a non-empty model-authored purpose")
+     "command rows require a non-empty display label")
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-status active-ui "receiving response")
       (recording-terminal-reset terminal)
@@ -2016,17 +2016,18 @@
           (terminal-ui--live-content active-ui clock)
         (declare (ignore cursor))
         (test-assert
-         (and (search "commands 2" text)
-              (search "exec:1 · shell.run · Run repository checks" text)
+         (and (search "exec:1" text)
+              (search "Run repository checks" text)
               (search "01:00" text)
-              (search "exec:2 · shell.run · Build the release" text)
-              (search "· queued" text)
+              (search "exec:2" text)
+              (search "Build the release" text)
+              (search "queued" text)
               (search "review-3" text)
               (search "receiving response" text)
               (search (terminal-style-sequence ':command-spinner) display)
               (search (terminal-style-sequence ':command-id) display)
               (search (terminal-style-sequence ':command-tool) display))
-         "commands render beside child and provider activity within one region"))
+         "commands render with child and provider activity"))
       (test-assert
        (<= (terminal-ui-live-row-count active-ui)
            (live-region-maximum-rows (terminal-ui-live-region active-ui)))
@@ -2042,31 +2043,68 @@
               (search "01:01" text))
          "command elapsed time advances from its observed duration"))
       (terminal-ui-set-command-activities active-ui nil)
-      (test-assert (null (terminal-ui-command-activities active-ui))
-                   "painted command rows clear at terminal state")))
+      (test-assert
+       (and (null (terminal-ui-command-activities active-ui))
+            (null (terminal-ui-command-pending-completions active-ui)))
+       "painted command rows clear at terminal state")))
   (let* ((clock 0)
-         (terminal (make-instance 'recording-terminal :columns 80))
+         (terminal (make-instance 'recording-terminal :columns 80 :rows 8))
          (ui (terminal-ui-create
               :terminal terminal
               :clock-function (lambda () clock)))
-         (command
+         (command-a
            (list :id "exec:1" :type ':tool :index 1
-                 :tool "shell.run" :description "Run true"
+                 :tool "shell.run" :description "Command A"
+                 :state ':running :duration-ms 0 :detached nil))
+         (command-b
+           (list :id "exec:2" :type ':tool :index 2
+                 :tool "shell.run" :description "Command B"
                  :state ':running :duration-ms 0 :detached nil)))
     (with-terminal-ui (active-ui ui)
       (recording-terminal-reset terminal)
-      (terminal-ui-set-command-activities active-ui (list command))
+      (terminal-ui-set-command-activities
+       active-ui (list command-a command-b))
+      (terminal-ui-set-command-activities active-ui (list command-b))
       (terminal-ui-set-command-activities active-ui nil)
-      (test-assert (terminal-ui-command-activities active-ui)
-                   "a fast completion retains its command until one reader paint")
+      (test-assert
+       (equal
+        (mapcar (lambda (activity) (getf activity :id))
+                (terminal-ui-command-pending-completions active-ui))
+        '("exec:1" "exec:2"))
+       "concurrent fast completions are retained independently")
       (test-assert (terminal-ui-refresh-status active-ui)
-                   "the reader paints a fast command before clearing it")
-      (test-assert (search "Run true" (recording-terminal-output terminal))
-                   "a fast primary command is visible for one frame")
-      (test-assert (null (terminal-ui-command-activities active-ui))
-                   "the first command paint applies its deferred terminal clear")
+                   "the reader paints the first completed command")
+      (let ((output (recording-terminal-output terminal)))
+        (test-assert
+         (and (search "exec:1" output)
+              (search "Command A" output)
+              (not (search "exec:2" output)))
+         "the first command reaches its first viewport-limited paint"))
+      (test-assert
+       (equal
+        (mapcar (lambda (activity) (getf activity :id))
+                (terminal-ui-command-pending-completions active-ui))
+        '("exec:2"))
+       "an unpainted completion survives for the following frame")
+      (recording-terminal-reset terminal)
       (test-assert (terminal-ui-refresh-status active-ui)
-                   "the next reader frame removes a completed fast command")))
+                   "the reader advances to the remaining completed command")
+      (let ((output (recording-terminal-output terminal)))
+        (test-assert
+         (and (search "exec:2" output)
+              (search "Command B" output))
+         "the second command reaches its own first paint"))
+      (test-assert
+       (null (terminal-ui-command-pending-completions active-ui))
+       "paint releases each pending command completion")
+      (recording-terminal-reset terminal)
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "the following frame removes completed command rows")
+      (let ((output (recording-terminal-output terminal)))
+        (test-assert
+         (and (not (search "Command A" output))
+              (not (search "Command B" output)))
+         "completed command rows do not persist after their first paint"))))
   nil)
 
 (-> test-terminal-stream-update () null)

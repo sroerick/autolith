@@ -31,6 +31,9 @@
 (defparameter *terminal-ui-command-visible-limit* 8
   "The maximum queued and running primary commands shown above the modeline.")
 
+(defparameter *terminal-ui-command-pending-completion-limit* 64
+  "The maximum completed primary commands retained until their first paint.")
+
 (defparameter *terminal-ui-agent-compact-trace-limit* 3
   "The child tool milestones retained on one compact activity row.")
 
@@ -1154,6 +1157,25 @@ columns: name, tally, and description."
       state-spans)
      row-width)))
 
+(-> terminal-ui--command-presentation-activities (terminal-ui) list)
+(defun terminal-ui--command-presentation-activities (ui)
+  "Return current and not-yet-painted completed command rows in job order."
+  (let ((current (terminal-ui-command-activities ui)))
+    (sort
+     (append
+      (copy-list current)
+      (remove-if
+       (lambda (pending)
+         (find (getf pending :id)
+               current
+               :key (lambda (activity)
+                      (getf activity :id))
+               :test #'string=))
+       (copy-list (terminal-ui-command-pending-completions ui))))
+     #'<
+     :key (lambda (activity)
+            (getf activity :index)))))
+
 (-> terminal-ui--status-row-visible-p (terminal-ui) boolean)
 (defun terminal-ui--status-row-visible-p (ui)
   "Return whether UI needs its animated status row above live activity."
@@ -1162,7 +1184,7 @@ columns: name, tally, and description."
     (or (terminal-ui-status ui)
         (terminal-ui-local-activity ui)
         (terminal-ui-compacting-p ui)
-        (terminal-ui-command-activities ui)
+        (terminal-ui--command-presentation-activities ui)
         (terminal-ui-agent-activities ui)
         (terminal-ui-preview-rows ui)
         (terminal-ui-stream-tail ui)))))
@@ -1187,7 +1209,8 @@ columns: name, tally, and description."
 (-> terminal-ui--command-row-demand (terminal-ui) (integer 0))
 (defun terminal-ui--command-row-demand (ui)
   "Return the useful maximum row demand for UI's command activity strip."
-  (let ((count (length (terminal-ui-command-activities ui))))
+  (let ((count
+          (length (terminal-ui--command-presentation-activities ui))))
     (if (plusp count)
         (+ 2 (min count *terminal-ui-command-visible-limit*))
         0)))
@@ -1198,7 +1221,9 @@ columns: name, tally, and description."
 (defun terminal-ui--activity-row-budgets (ui)
   "Return fair command and child row budgets within UI's shared viewport bound."
   (let ((total (terminal-ui--activity-row-budget ui))
-        (commands-p (not (null (terminal-ui-command-activities ui))))
+        (commands-p
+          (not
+           (null (terminal-ui--command-presentation-activities ui))))
         (agents-p (not (null (terminal-ui-agent-activities ui)))))
     (cond
       ((and commands-p agents-p)
@@ -1223,12 +1248,12 @@ columns: name, tally, and description."
   "Return UI's allocated child-agent activity rows."
   (nth-value 1 (terminal-ui--activity-row-budgets ui)))
 
-(-> terminal-ui--command-activity-rows-at
-    (terminal-ui real integer)
-    list)
-(defun terminal-ui--command-activity-rows-at (ui now row-width)
-  "Return viewport-bounded primary command rows for UI at monotonic NOW."
-  (let* ((activities (terminal-ui-command-activities ui))
+(-> terminal-ui--command-activity-selection
+    (terminal-ui)
+    (values list list (integer 0) boolean (integer 0)))
+(defun terminal-ui--command-activity-selection (ui)
+  "Return all, visible, header, overflow, and omission command row values."
+  (let* ((activities (terminal-ui--command-presentation-activities ui))
          (row-budget (terminal-ui--command-row-budget ui))
          (header-row-count
            (cond
@@ -1249,49 +1274,67 @@ columns: name, tally, and description."
                (min *terminal-ui-command-visible-limit*
                     (length activities)
                     (1- body-row-budget))
-               limited-visible-count))
-         (omitted-count (- (length activities) visible-count))
-         (visible-activities (subseq activities 0 visible-count))
-         (column-widths
-           (layout-column-widths
-            (loop for activity in visible-activities
-                  collect
-                  (list (getf activity :id)
-                        (getf activity :tool)))
-            (max 0
-                 (- row-width
-                    (text-cell-width "  ○  ·  ·  00:00")
-                    12))
-            :gap-width 3
-            :minimum-widths '(1 1)))
-         (identity-width (or (first column-widths) 0))
-         (tool-width (or (second column-widths) 0))
-         (header-row
-           (terminal--clip-spans
-            (list (terminal-span ':tool "commands")
-                  (terminal-span ':dim
-                                 (format nil " ~D" (length activities))))
-            row-width)))
-    (when (and activities (plusp row-budget))
-      (append
-       (when (plusp header-row-count)
-         (append (list header-row)
-                 (when (= header-row-count 2)
-                   (list nil))))
-       (loop for activity in visible-activities
-             collect
-             (terminal-ui--command-activity-row-at
-              activity now row-width
-              :identity-width identity-width
-              :tool-width tool-width))
-       (when overflow-row-p
-         (list
-          (terminal--clip-spans
-           (list (terminal-span ':dim "  ")
-                 (terminal-span
-                  ':dim
-                  (format nil "… ~D more command~:P" omitted-count)))
-           row-width)))))))
+               limited-visible-count)))
+    (values activities
+            (subseq activities 0 visible-count)
+            header-row-count
+            (not (null overflow-row-p))
+            (- (length activities) visible-count))))
+
+(-> terminal-ui--command-visible-activities (terminal-ui) list)
+(defun terminal-ui--command-visible-activities (ui)
+  "Return the command activities represented by rows in UI's next paint."
+  (nth-value 1 (terminal-ui--command-activity-selection ui)))
+
+(-> terminal-ui--command-activity-rows-at
+    (terminal-ui real integer)
+    list)
+(defun terminal-ui--command-activity-rows-at (ui now row-width)
+  "Return viewport-bounded primary command rows for UI at monotonic NOW."
+  (multiple-value-bind
+      (activities visible-activities header-row-count overflow-row-p omitted-count)
+      (terminal-ui--command-activity-selection ui)
+    (let* ((column-widths
+             (layout-column-widths
+              (loop for activity in visible-activities
+                    collect
+                    (list (getf activity :id)
+                          (getf activity :tool)))
+              (max 0
+                   (- row-width
+                      (text-cell-width "  ○  ·  ·  00:00")
+                      12))
+              :gap-width 3
+              :minimum-widths '(1 1)))
+           (identity-width (or (first column-widths) 0))
+           (tool-width (or (second column-widths) 0))
+           (header-row
+             (terminal--clip-spans
+              (list (terminal-span ':tool "commands")
+                    (terminal-span ':dim
+                                   (format nil " ~D" (length activities))))
+              row-width)))
+      (when (and activities
+                 (plusp (terminal-ui--command-row-budget ui)))
+        (append
+         (when (plusp header-row-count)
+           (append (list header-row)
+                   (when (= header-row-count 2)
+                     (list nil))))
+         (loop for activity in visible-activities
+               collect
+               (terminal-ui--command-activity-row-at
+                activity now row-width
+                :identity-width identity-width
+                :tool-width tool-width))
+         (when overflow-row-p
+           (list
+            (terminal--clip-spans
+             (list (terminal-span ':dim "  ")
+                   (terminal-span
+                    ':dim
+                    (format nil "… ~D more command~:P" omitted-count)))
+             row-width))))))))
 
 
 (-> terminal-ui--agent-activity-rows-at
@@ -1409,10 +1452,10 @@ columns: name, tally, and description."
     ((terminal-ui-compacting-p ui)
      (let ((started-at (or (terminal-ui-compaction-started-at ui) now)))
        (values started-at started-at)))
-    ((or (terminal-ui-command-activities ui)
+    ((or (terminal-ui--command-presentation-activities ui)
          (terminal-ui-agent-activities ui))
      (let* ((activities
-              (append (terminal-ui-command-activities ui)
+              (append (terminal-ui--command-presentation-activities ui)
                       (terminal-ui-agent-activities ui)))
             (started-at
               (or (loop for activity in activities
@@ -1493,7 +1536,7 @@ columns: name, tally, and description."
   (not
    (null
     (find ':running
-          (append (terminal-ui-command-activities ui)
+          (append (terminal-ui--command-presentation-activities ui)
                   (terminal-ui-agent-activities ui))
           :key (lambda (activity)
                  (getf activity ':state))
@@ -1515,7 +1558,7 @@ columns: name, tally, and description."
     (option list))
 (defun terminal-ui--animation-signature-at (ui now)
   "Return visible status, compaction, command, and child values for a live paint."
-  (let ((commands (terminal-ui-command-activities ui))
+  (let ((commands (terminal-ui--command-presentation-activities ui))
         (agents (terminal-ui-agent-activities ui))
         (compacting-p (terminal-ui-compacting-p ui)))
     (when (terminal-ui--status-row-visible-p ui)
@@ -1772,7 +1815,7 @@ form keeps every speculative Markdown wrap live until the logical line commits."
             (append rows
                     (list (terminal-ui--local-activity-row ui row-width)))))
     (let ((command-rows
-            (and (terminal-ui-command-activities ui)
+            (and (terminal-ui--command-presentation-activities ui)
                  (terminal-ui--command-activity-rows-at
                   ui status-now row-width)))
           (agent-rows
@@ -1946,6 +1989,25 @@ removes it."
                        display)))
   nil)
 
+(-> terminal-ui--note-command-paint (terminal-ui list) null)
+(defun terminal-ui--note-command-paint (ui activities)
+  "Mark ACTIVITIES visible and release painted pending command completions."
+  (let ((identifiers
+          (mapcar (lambda (activity)
+                    (getf activity :id))
+                  activities)))
+    (setf (terminal-ui-command-unpainted-identifiers ui)
+          (remove-if
+           (lambda (identifier)
+             (member identifier identifiers :test #'string=))
+           (terminal-ui-command-unpainted-identifiers ui))
+          (terminal-ui-command-pending-completions ui)
+          (remove-if
+           (lambda (activity)
+             (member (getf activity :id) identifiers :test #'string=))
+           (terminal-ui-command-pending-completions ui))))
+  nil)
+
 (-> terminal-ui--present-live
     (terminal-ui &key (:status-now (option real))
                       (:appended-text string)
@@ -1975,28 +2037,26 @@ removes it."
               (and status-now
                    (terminal-ui--animation-signature-at ui status-now)))
         (when (terminal-interactive-p terminal)
-          (multiple-value-bind (text display cursor)
-              (terminal-ui--live-content ui status-now)
-            (if (plusp (length appended-text))
-                (live-region-append-and-present
-                 (terminal-ui-live-region ui)
-                 appended-text
-                 text
-                 :appended-display appended-display
-                 :cursor cursor
-                 :display display)
-                (live-region-present (terminal-ui-live-region ui)
-                                     text
-                                     :cursor cursor
-                                     :display display)))
-          (when (terminal-ui-command-activities ui)
-            (setf (terminal-ui-command-activities-unpainted-p ui) nil))
-          (when (terminal-ui-command-activities-clear-after-paint-p ui)
-            (setf (terminal-ui-command-activities ui) nil
-                  (terminal-ui-command-activities-unpainted-p ui) nil
-                  (terminal-ui-command-activities-clear-after-paint-p ui) nil))
-          (setf (terminal-ui-deferred-live-appended-text ui) ""
-                (terminal-ui-deferred-live-appended-display ui) ""))))
+          (let ((painted-command-activities
+                  (terminal-ui--command-visible-activities ui)))
+            (multiple-value-bind (text display cursor)
+                (terminal-ui--live-content ui status-now)
+              (if (plusp (length appended-text))
+                  (live-region-append-and-present
+                   (terminal-ui-live-region ui)
+                   appended-text
+                   text
+                   :appended-display appended-display
+                   :cursor cursor
+                   :display display)
+                  (live-region-present (terminal-ui-live-region ui)
+                                       text
+                                       :cursor cursor
+                                       :display display)))
+            (terminal-ui--note-command-paint
+             ui painted-command-activities)
+            (setf (terminal-ui-deferred-live-appended-text ui) ""
+                  (terminal-ui-deferred-live-appended-display ui) "")))))
   nil)
 
 (-> terminal-ui--paint-live
@@ -2657,12 +2717,26 @@ frames, so this function never paints directly from a child thread."
         :observed-at observed-at
         :detached (not (null (getf activity :detached)))))
 
+(-> terminal-ui--bounded-command-completions (list) list)
+(defun terminal-ui--bounded-command-completions (activities)
+  "Return ACTIVITIES in job order within the pending completion bound."
+  (let ((ordered
+          (sort (copy-list activities)
+                #'<
+                :key (lambda (activity)
+                       (getf activity :index)))))
+    (subseq ordered
+            0
+            (min (length ordered)
+                 *terminal-ui-command-pending-completion-limit*))))
+
 (-> terminal-ui-set-command-activities (terminal-ui list) terminal-ui)
 (defun terminal-ui-set-command-activities (ui activities)
   "Replace UI's queued and running primary command presentation state.
 
-The responsive input reader coalesces execution notifications with animation
-frames, so this function never paints directly from a worker thread."
+Commands that finish before their first reader-owned paint are retained
+individually within a fixed bound. This function never paints from a worker
+thread."
   (unless (every #'terminal-command-activity-p activities)
     (error 'terminal-error
            :message "Every command activity must be a valid live snapshot."
@@ -2679,18 +2753,61 @@ frames, so this function never paints directly from a worker thread."
             :key (lambda (activity)
                    (getf activity :index)))))
     (with-terminal-ui-locked (ui)
-      (unless (equal safe-activities (terminal-ui-command-activities ui))
-        (cond
-          (safe-activities
-           (setf (terminal-ui-command-activities ui) safe-activities
-                 (terminal-ui-command-activities-unpainted-p ui) t
-                 (terminal-ui-command-activities-clear-after-paint-p ui) nil))
-          ((and (terminal-ui-command-activities ui)
-                (terminal-ui-command-activities-unpainted-p ui))
-           (setf (terminal-ui-command-activities-clear-after-paint-p ui) t))
-          (t
-           (setf (terminal-ui-command-activities ui) nil
-                 (terminal-ui-command-activities-clear-after-paint-p ui) nil))))))
+      (let ((current (terminal-ui-command-activities ui)))
+        (unless (equal safe-activities current)
+          (let* ((current-unpainted
+                   (terminal-ui-command-unpainted-identifiers ui))
+                 (new-identifiers
+                   (mapcar (lambda (activity)
+                             (getf activity :id))
+                           safe-activities))
+                 (removed-unpainted
+                   (loop for activity in current
+                         for identifier = (getf activity :id)
+                         when (and
+                               (member identifier current-unpainted
+                                       :test #'string=)
+                               (not (member identifier new-identifiers
+                                            :test #'string=)))
+                           collect activity))
+                 (removed-identifiers
+                   (mapcar (lambda (activity)
+                             (getf activity :id))
+                           removed-unpainted))
+                 (pending
+                   (remove-if
+                    (lambda (activity)
+                      (let ((identifier (getf activity :id)))
+                        (or (member identifier new-identifiers :test #'string=)
+                            (member identifier removed-identifiers
+                                    :test #'string=))))
+                    (terminal-ui-command-pending-completions ui)))
+                 (next-unpainted
+                   (loop for activity in safe-activities
+                         for identifier = (getf activity :id)
+                         when (or
+                               (member identifier current-unpainted
+                                       :test #'string=)
+                               (not (find identifier current
+                                          :key (lambda (old-activity)
+                                                 (getf old-activity :id))
+                                          :test #'string=)))
+                           collect identifier)))
+            (setf (terminal-ui-command-activities ui) safe-activities
+                  (terminal-ui-command-unpainted-identifiers ui)
+                  next-unpainted
+                  (terminal-ui-command-pending-completions ui)
+                  (terminal-ui--bounded-command-completions
+                   (append pending removed-unpainted))))))))
+  ui)
+
+(-> terminal-ui-clear-command-activities (terminal-ui) terminal-ui)
+(defun terminal-ui-clear-command-activities (ui)
+  "Unconditionally discard every current and pending primary command row."
+  (with-terminal-ui-locked (ui)
+    (setf (terminal-ui-command-activities ui) nil
+          (terminal-ui-command-unpainted-identifiers ui) nil
+          (terminal-ui-command-pending-completions ui) nil))
   ui)
 
 (-> terminal-ui-refresh-status (terminal-ui) boolean)

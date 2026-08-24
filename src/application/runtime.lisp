@@ -440,6 +440,14 @@ model's effort choice to CONFIGURATION--CLONE."
                           activities))))))
   nil)
 
+(-> application--wake-input-controller (application) null)
+(defun application--wake-input-controller (application)
+  "Wake APPLICATION's reader when one is available."
+  (let ((controller (application-input-controller application)))
+    (when controller
+      (application-input-controller-wake controller)))
+  nil)
+
 (-> application--refresh-task-presentation
     (application task-orchestrator)
     null)
@@ -447,9 +455,7 @@ model's effort choice to CONFIGURATION--CLONE."
   "Project ORCHESTRATOR's newest live session jobs into APPLICATION's UI."
   (with-lock-held ((application-task-presentation-lock application))
     (application--refresh-task-presentation-locked application orchestrator))
-  (let ((controller (application-input-controller application)))
-    (when controller
-      (application-input-controller-wake controller)))
+  (application--wake-input-controller application)
   nil)
 
 (-> application--present-task-response
@@ -484,7 +490,7 @@ model's effort choice to CONFIGURATION--CLONE."
                  (application-ui application))))
       (when (typep ui 'terminal-ui)
         (terminal-ui-set-agent-activities ui nil)
-        (terminal-ui-set-command-activities ui nil))))
+        (terminal-ui-clear-command-activities ui))))
   nil)
 
 (-> application-disconnect-task-presentation (application) null)
@@ -492,6 +498,7 @@ model's effort choice to CONFIGURATION--CLONE."
   "Disconnect APPLICATION's task observer and clear its live session-job rows."
   (with-lock-held ((application-task-presentation-lock application))
     (application--disconnect-task-presentation-locked application))
+  (application--wake-input-controller application)
   nil)
 
 (-> application-connect-task-presentation (application) null)
@@ -525,6 +532,7 @@ model's effort choice to CONFIGURATION--CLONE."
           (task-orchestrator-add-listener orchestrator listener)
           (application--refresh-task-presentation-locked
            application orchestrator)))))
+  (application--wake-input-controller application)
   nil)
 
 (-> application--create-tool-registry (configuration) tool-registry)

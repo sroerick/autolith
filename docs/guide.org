@@ -386,8 +386,8 @@ with one =yield.submit= of =success=, =failed=, or =aborted=.
 
 Primary shell and Lisp executions and child agents appear as live rows with
 spinners and elapsed time. The command and agent strips share a viewport bound,
-and provider activity remains visible below them. =shell.run= requires a short
-=:description= of the command's purpose; that text labels its live row.
+and provider activity remains visible below them. =shell.run= accepts an optional
+short =:description= for its row label; otherwise it derives one from the command.
 
 The default pool admits eight concurrent children.
 =AUTOLITH_TASK_MAX_CONCURRENCY= raises that up to 32. Child jobs have no

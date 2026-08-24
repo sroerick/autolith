@@ -673,12 +673,11 @@
                          ':sandboxed)))
                 (lambda ()
                   (application-input-controller--handle-submission
-                    controller
-                    "(shell.run :command \"true\" :description \"Run true\")")))
+                   controller "(shell.run :command \"true\")")))
                (test-assert
                 (and (zerop authorization-calls)
-                      (equal (application-input-controller--state controller :work-items)
-                             '((:lisp "(shell.run :command \"true\" :description \"Run true\")")))
+                     (equal (application-input-controller--state controller :work-items)
+                            '((:lisp "(shell.run :command \"true\")")))
                      (search "local evaluation scheduled"
                              (recording-terminal-output terminal)
                              :test #'char-equal))
@@ -691,9 +690,9 @@
                     (progn
                       (setf (application-input-controller-reader-thread controller)
                             (current-thread))
-                       (application-input-controller--handle-submission
-                        controller
-                        "(eval-now (shell.run :command \"true\" :description \"Run true\"))"))
+                      (application-input-controller--handle-submission
+                       controller
+                       "(eval-now (shell.run :command \"true\"))"))
                  (setf (application-input-controller-reader-thread controller)
                        previous-reader)))
              (let ((output

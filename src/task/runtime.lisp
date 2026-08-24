@@ -837,8 +837,10 @@ values from either side of a terminal transition."
               :index (session-job-order job)
               :tool (tool-execution-job-tool-name job)
               :description
-              (or (tool-execution-job-description job)
-                  (tool-execution-job-summary job))
+              (let ((description (tool-execution-job-description job)))
+                (if (non-empty-string-p description)
+                    description
+                    (tool-execution-job-summary job)))
               :state state
               :duration-ms
               (and (job-started-at job)

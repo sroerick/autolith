@@ -1455,9 +1455,7 @@ exactly that race."
                "Execute shell.run with decoded test ARGUMENTS."
                (tool-execute
                 shell-tool execution-context
-                (apply #'json-object
-                       "description" "Exercise shell execution jobs"
-                       arguments)))
+                (apply #'json-object arguments)))
 
              (execution-count ()
                "Return the retained asynchronous execution count."
@@ -1480,12 +1478,17 @@ exactly that race."
                     (properties (json-get parameters "properties"))
                     (required (json-get parameters "required"))
                     (async-schema (and properties
-                                       (gethash "async" properties))))
+                                       (gethash "async" properties)))
+                    (description-schema
+                      (and properties
+                           (gethash "description" properties))))
                (test-assert
                 (and (json-object-p async-schema)
                      (string= (json-get async-schema "type") "boolean")
-                     (find "description" required :test #'string=))
-                "shell.run advertises async and requires a purpose description"))
+                     (json-object-p description-schema)
+                     (string= (json-get description-schema "type") "string")
+                     (not (find "description" required :test #'string=)))
+                "shell.run advertises an optional description"))
              (let ((before (execution-count))
                    (result
                      (run-shell denied-context
@@ -1533,6 +1536,14 @@ exactly that race."
                      (session-job-detached-p job)
                      (= (execution-count) (1+ before)))
                 "a slow default shell call hands off its existing execution job")
+               (let* ((activity (session-job-live-activity job))
+                      (summary (tool-execution-job-summary job)))
+                 (test-assert
+                  (and (null (tool-execution-job-description job))
+                       (string= (getf activity :description) summary)
+                       (<= (length summary) *tool-execution-summary-limit*)
+                       (search "sleep 1" summary))
+                  "an omitted description uses the retained bounded job summary"))
                (let* ((wait-result
                         (tool-execute
                          (tool-registry-find registry "job" "wait")
@@ -1545,12 +1556,11 @@ exactly that race."
                   (and (tool-result-success-p wait-result)
                        (getf wait-details :terminal-p)
                        (string= (getf record :id) identifier)
-                       (string= (getf record :description)
-                                "Exercise shell execution jobs")
+                       (null (getf record :description))
                        (eq (getf record :state) :completed)
                        (string= (uiop:read-file-string slow-path) "once")
                        (= (execution-count) (1+ before)))
-                  "job.wait retains the shell purpose after exactly one execution")))
+                  "job.wait retains one shell execution without a description")))
              (let* ((result
                       (run-shell
                        context
