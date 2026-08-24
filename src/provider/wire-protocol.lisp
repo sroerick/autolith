@@ -1,11 +1,74 @@
 (in-package #:autolith)
 
-;;;; -- Provider Wire Protocols --
+;;;; -- Shared Function Names --
 
-(defmethod provider-wire-protocol ((provider codex-subscription-provider))
-  "Identify Codex as a standard Responses API provider."
+(defparameter *provider-wire-function-name-maximum-length* 64
+  "Maximum function name length accepted by the shared provider wire codec.")
+
+(-> provider-wire-function-name--valid-p (t) boolean)
+(defun provider-wire-function-name--valid-p (name)
+  "Return true when NAME obeys the standard provider function-name grammar."
+  (and (stringp name)
+       (plusp (length name))
+       (<= (length name) *provider-wire-function-name-maximum-length*)
+       (every (lambda (character)
+                (or (and (char<= #\a character) (char<= character #\z))
+                    (and (char<= #\A character) (char<= character #\Z))
+                    (and (char<= #\0 character) (char<= character #\9))
+                    (find character "_-")))
+              name)
+       t))
+
+(-> provider-wire-function-name--encode (string string) string)
+(defun provider-wire-function-name--encode (namespace name)
+  "Encode NAMESPACE and NAME as one reversible standard function name."
+  (let* ((payload
+           (concatenate 'string namespace (string (code-char 0)) name))
+         (encoded
+           (string-right-trim
+            "."
+            (usb8-array-to-base64-string
+             (sb-ext:string-to-octets payload :external-format ':utf-8)
+             :uri t)))
+         (wire-name (format nil "a~A" encoded)))
+    (unless (provider-wire-function-name--valid-p wire-name)
+      (error 'configuration-error
+             :message
+             (format nil
+                     "Tool name ~A.~A cannot fit the provider function-name grammar."
+                     namespace name)))
+    wire-name))
+
+(-> provider-wire-function-name--decode
+    (string)
+    (values (option string) (option string)))
+(defun provider-wire-function-name--decode (wire-name)
+  "Decode an Autolith provider function WIRE-NAME into namespace and name."
+  (if (and (provider-wire-function-name--valid-p wire-name)
+           (char= (char wire-name 0) #\a))
+      (handler-case
+          (let* ((decoded
+                   (base64-string-to-string
+                    (padded-base64url (subseq wire-name 1))
+                    :uri t))
+                 (separator (position (code-char 0) decoded)))
+            (if (and separator
+                     (plusp separator)
+                     (< (1+ separator) (length decoded)))
+                (values (subseq decoded 0 separator)
+                        (subseq decoded (1+ separator)))
+                (values nil nil)))
+        (error ()
+          (values nil nil)))
+      (values nil nil)))
+
+
+;;;; -- Responses Protocol --
+(defmethod provider-wire-tool-name
+    ((provider codex-subscription-provider) (namespace string) (name string))
+  "Encode one Codex tool name with the shared grammar-safe wire codec."
   (declare (ignore provider))
-  ':responses-api)
+  (provider-wire-function-name--encode namespace name))
 
 (defmethod provider-wire-tool
     ((provider responses-api-provider) (namespace string) (tool hash-table))
@@ -72,11 +135,46 @@
   (call-next-method)
   (when (function-call-item-p item)
     (multiple-value-bind (namespace name)
-        (responses-standard-tool-name->components (json-get item "name"))
+        (provider-wire-function-name--decode (json-get item "name"))
       (when (and namespace name)
         (setf (gethash "namespace" item) namespace
               (gethash "name" item) name))))
   item)
+
+(defmethod provider-responses-wire-effort
+    ((provider codex-subscription-provider) configuration)
+  "Return CONFIGURATION's Codex reasoning effort."
+  (declare (ignore provider))
+  (configuration-wire-effort configuration))
+
+(defmethod provider-responses-reasoning-summary
+    ((provider codex-subscription-provider) configuration)
+  "Request automatic Codex summaries when visible reasoning is enabled."
+  (declare (ignore configuration))
+  (when (provider-reasoning-summaries-p provider)
+    "auto"))
+
+(defmethod provider-responses-hosted-tools
+    ((provider codex-subscription-provider) configuration)
+  "Return Codex's enabled hosted tool declarations."
+  (declare (ignore provider))
+  (let ((web-search-tool (provider-web-search-tool configuration)))
+    (when web-search-tool
+      (list web-search-tool))))
+
+(defmethod provider-responses-instructions-placement
+    ((provider codex-subscription-provider))
+  "Place Codex instructions in the top-level Responses request field."
+  (declare (ignore provider))
+  ':top-level)
+
+(defmethod provider-responses-request-fields
+    ((provider codex-subscription-provider)
+     (conversation conversation)
+     &key compaction-p)
+  "Return the fields sent by one Codex Responses request."
+  (provider--codex-responses-request-fields
+   provider conversation :compaction-p compaction-p))
 
 (defmethod provider-request-object
     ((provider responses-api-provider)
@@ -85,9 +183,9 @@
      &key goal-context compaction-p)
   "Build a standard stateless Responses API request for CONVERSATION.
 
-Concrete providers specialize the reasoning effort, hosted tools, served
-namespaces, and extra request fields. The second value is the context
-delivery consumed only after a completed response."
+Concrete providers specialize instruction placement, reasoning effort, hosted
+tools, served namespaces, and extra request fields. The second value is the
+context delivery consumed only after a completed response."
   (let* ((configuration (provider-configuration provider))
          (hosted-tools
            (and (not compaction-p)
@@ -99,14 +197,6 @@ delivery consumed only after a completed response."
                             (provider-responses-request-namespaces
                              provider tool-namespaces)
                             (coerce hosted-tools 'vector))))
-         (prefix
-           (append
-            (list (responses-developer-message
-                   (let ((*system-prompt-hosted-web-search-p*
-                           (not (null hosted-tools))))
-                     (system-prompt configuration))))
-            (when (and goal-context (not compaction-p))
-              (list (responses-developer-message goal-context)))))
          (delivery
            (unless compaction-p
              (context-resolve-request
@@ -114,15 +204,45 @@ delivery consumed only after a completed response."
               conversation
               effective-namespaces
               :goal-context goal-context)))
-         (context-message
-           (and delivery
-                (context-delivery-rendered delivery)
-                (responses-developer-message
-                 (context-delivery-rendered delivery))))
+         (rendered-context
+           (and delivery (context-delivery-rendered delivery)))
+         (instruction-prefix
+           (list
+            (let ((*system-prompt-hosted-web-search-p*
+                    (not (null hosted-tools))))
+              (system-prompt configuration))
+            (and (not compaction-p) goal-context)))
+         (instruction-suffix
+           (list rendered-context
+                 (and compaction-p *compaction-instructions*)))
+         (instruction-placement
+           (provider-responses-instructions-placement provider))
+         (top-level-instructions
+           (case instruction-placement
+             (:input
+              nil)
+             (:top-level
+              (responses-standard-instructions
+               (append instruction-prefix instruction-suffix)))
+             (otherwise
+              (error 'configuration-error
+                     :message
+                     (format nil
+                             "Provider ~S returned unsupported Responses instruction placement ~S."
+                             (class-name (class-of provider))
+                             instruction-placement)))))
+         (input-prefix
+           (when (eq instruction-placement ':input)
+             (mapcar #'responses-developer-message
+                     (remove-if-not #'non-empty-string-p instruction-prefix))))
+         (input-suffix
+           (when (eq instruction-placement ':input)
+             (mapcar #'responses-developer-message
+                     (remove-if-not #'non-empty-string-p instruction-suffix))))
          (input
            (coerce
             (append
-             prefix
+             input-prefix
              (mapcar
               (lambda (item)
                 (provider-wire-input-item provider item))
@@ -130,18 +250,16 @@ delivery consumed only after a completed response."
                conversation
                (provider-family provider)
                :include-ephemeral-p (not compaction-p)))
-             (when context-message
-               (list context-message))
-             (when compaction-p
-               (list (responses-developer-message
-                      *compaction-instructions*))))
+             input-suffix)
             'vector))
          (tools (provider-wire-tools provider effective-namespaces)))
     (values
      (apply #'json-object
             (append
-             (list "model" (configuration-model configuration)
-                   "input" input
+             (list "model" (configuration-model configuration))
+             (when top-level-instructions
+               (list "instructions" top-level-instructions))
+             (list "input" input
                    "tools" tools)
              (when (plusp (length tools))
                (list "tool_choice" "auto"))
@@ -151,8 +269,9 @@ delivery consumed only after a completed response."
              (let ((effort
                      (provider-responses-wire-effort provider configuration))
                    (summary
-                     (provider-responses-reasoning-summary
-                      provider configuration)))
+                     (and (not compaction-p)
+                          (provider-responses-reasoning-summary
+                           provider configuration))))
                (when effort
                  (list "reasoning"
                        (apply #'json-object
@@ -165,5 +284,6 @@ delivery consumed only after a completed response."
                (list "max_output_tokens" *provider-maximum-output-tokens*))
              (list "store" false
                    "stream" t)
-             (provider-responses-request-fields provider conversation)))
+             (provider-responses-request-fields
+              provider conversation :compaction-p compaction-p)))
      delivery)))

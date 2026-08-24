@@ -199,8 +199,10 @@
             (not (provider-child-reference-history-p
                   (make-instance 'model-provider)))
             "providers opt into inherited child reference history explicitly")
+           (test-assert (typep provider 'responses-api-provider)
+                        "Codex uses the shared Responses provider representation")
            (test-assert (eq (provider-wire-protocol provider) ':responses-api)
-                        "Codex reports the standard Responses API protocol")
+                        "Codex inherits the standard Responses API protocol")
            (test-assert (null (json-get request "service_tier"))
                         "standard Codex requests omit the service tier")
            (dolist (model *codex-fast-mode-models*)
@@ -241,6 +243,19 @@
                                                      schemas))))
              (test-assert (null (json-get bounded "max_output_tokens"))
                           "the Codex serving stack never receives an output ceiling"))
+           (let* ((wire-fields
+                    (apply #'json-object
+                           (provider-responses-request-fields
+                            provider conversation)))
+                  (field-names
+                    '("parallel_tool_calls" "include"
+                      "prompt_cache_key" "text")))
+             (test-assert
+              (every (lambda (name)
+                       (equalp (json-get request name)
+                               (json-get wire-fields name)))
+                     field-names)
+              "Codex's generic Responses fields match the concrete request"))
            (let ((input (json-get request "input")))
              (test-assert
               (and (= (length input) 1)
@@ -369,16 +384,14 @@
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
-           (let ((tools (provider-tests--request-tools request)))
+           (let* ((tools (provider-tests--request-tools request))
+                  (wire-name
+                    (provider-wire-tool-name provider "test" "inspect")))
              (test-assert
               (and (= (length tools) 1)
-                   (string= (json-get (aref tools 0) "name")
-                            (responses-standard-tool-name "test" "inspect"))
-                   (every (lambda (character)
-                            (or (alphanumericp character)
-                                (find character "_-")))
-                          (json-get (aref tools 0) "name")))
-              "standard Responses uses a grammar-safe flattened tool name"))
+                   (string= (json-get (aref tools 0) "name") wire-name)
+                   (provider-wire-function-name--valid-p wire-name))
+              "standard Responses uses the shared grammar-safe tool codec"))
            (let ((compaction-request
                    (provider-request-object
                     provider conversation schemas :compaction-p t)))
@@ -388,17 +401,23 @@
                    (search "context checkpoint compaction"
                            (json-get compaction-request "instructions")))
               "portable compaction fallback is tool-free and serial"))
-           (let ((normalized
-                   (provider-normalize-output-item
-                    provider
+           (let* ((local-call
                     (json-object
                      "type" "function_call"
-                     "name" (responses-standard-tool-name "test" "inspect")
-                     "call_id" "call-standard"))))
+                     "namespace" "test"
+                     "name" "inspect"
+                     "call_id" "call-standard"))
+                  (wire-call (provider-wire-input-item provider local-call))
+                  (normalized
+                    (provider-normalize-output-item
+                     provider (json-object-copy wire-call))))
              (test-assert
-              (and (string= (json-get normalized "namespace") "test")
+              (and (null (json-get wire-call "namespace"))
+                   (provider-wire-function-name--valid-p
+                    (json-get wire-call "name"))
+                   (string= (json-get normalized "namespace") "test")
                    (string= (json-get normalized "name") "inspect"))
-              "standard Codex output restores the local tool namespace")))
+              "Codex wire hooks round-trip the local tool namespace")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

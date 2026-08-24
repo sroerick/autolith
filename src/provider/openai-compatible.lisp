@@ -344,55 +344,25 @@ REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers."
 
 ;;;; -- Chat Completions Tool Encoding --
 
-(defparameter *openai-compatible-wire-tool-name-maximum-length* 64
+(defparameter *openai-compatible-wire-tool-name-maximum-length*
+    *provider-wire-function-name-maximum-length*
   "The maximum Chat Completions function name length accepted by Autolith.")
 
 (-> openai-compatible--wire-tool-name (string string) string)
 (defun openai-compatible--wire-tool-name (namespace name)
-  "Return a reversible grammar-safe name for NAMESPACE and NAME.
-
-The Chat Completions protocol does not accept dots in function names. A compact
-URL-safe Base64 payload keeps the namespace separator unambiguous while using only
-letters, digits, hyphens, and underscores on the wire."
-  (let* ((payload
-           (concatenate 'string namespace (string (code-char 0)) name))
-         (encoded
-           (string-right-trim
-            "."
-            (usb8-array-to-base64-string
-             (sb-ext:string-to-octets payload :external-format ':utf-8)
-             :uri t)))
-         (wire-name (format nil "a~A" encoded)))
-    (when (> (length wire-name) *openai-compatible-wire-tool-name-maximum-length*)
-      (error 'configuration-error
-             :message
-             (format nil
-                     "OpenAI-compatible tool name ~A.~A is too long for Chat Completions."
-                     namespace name)))
-    wire-name))
+  "Encode NAMESPACE and NAME with the shared grammar-safe provider codec."
+  (let ((*provider-wire-function-name-maximum-length*
+          *openai-compatible-wire-tool-name-maximum-length*))
+    (provider-wire-function-name--encode namespace name)))
 
 (-> openai-compatible--decode-wire-tool-name
     (string)
     (values (option string) (option string)))
 (defun openai-compatible--decode-wire-tool-name (wire-name)
   "Decode a namespaced Chat Completions function name, if it is ours."
-  (if (and (plusp (length wire-name))
-           (char= (char wire-name 0) #\a))
-      (handler-case
-          (let* ((decoded
-                   (base64-string-to-string
-                    (padded-base64url (subseq wire-name 1))
-                    :uri t))
-                 (separator (position (code-char 0) decoded)))
-            (if (and separator
-                     (plusp separator)
-                     (< (1+ separator) (length decoded)))
-                (values (subseq decoded 0 separator)
-                        (subseq decoded (1+ separator)))
-                (values nil nil)))
-        (error ()
-          (values nil nil)))
-      (values nil nil)))
+  (let ((*provider-wire-function-name-maximum-length*
+          *openai-compatible-wire-tool-name-maximum-length*))
+    (provider-wire-function-name--decode wire-name)))
 
 (-> openai-compatible--wire-function (string json-object) json-object)
 (defun openai-compatible--wire-function (name tool)

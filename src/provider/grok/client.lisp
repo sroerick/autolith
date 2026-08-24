@@ -166,12 +166,15 @@ proxy, so the local tool could only fail."
   "concise")
 
 (defmethod provider-responses-request-fields
-    ((provider grok-subscription-provider) (conversation conversation))
+    ((provider grok-subscription-provider)
+     (conversation conversation)
+     &key compaction-p)
   "Add Grok's encrypted reasoning, citation, and prompt-cache request fields.
 
 The no_inline_citations include suppresses inline citation markup during
 backend search, and the conversation identifier doubles as the prompt cache
 key, both matching Grok Build reference commit 5163763e."
+  (declare (ignore compaction-p))
   (let ((configuration (provider-configuration provider))
         (cache-key (conversation-prompt-cache-key conversation)))
     (append

@@ -2,7 +2,7 @@
 
 ;;;; -- Provider Protocol --
 
-(defclass codex-subscription-provider (subscription-provider)
+(defclass codex-subscription-provider (responses-api-provider)
   ((reasoning-summaries-p
     :initarg :reasoning-summaries-p
     :initform nil
@@ -400,97 +400,6 @@ so authentication can bootstrap credentials before model discovery."
                "type" "input_text"
                "text" instructions))))
 
-(defparameter *responses-standard-tool-name-maximum-length* 64
-  "Maximum standard Responses function name length accepted by Autolith.")
-
-(-> responses-standard-tool-name (string string) string)
-(defun responses-standard-tool-name (namespace name)
-  "Return a reversible grammar-safe name for NAMESPACE and NAME."
-  (let* ((payload
-           (concatenate 'string namespace (string (code-char 0)) name))
-         (encoded
-           (string-right-trim
-            "."
-            (usb8-array-to-base64-string
-             (sb-ext:string-to-octets payload :external-format ':utf-8)
-             :uri t)))
-         (wire-name (format nil "a~A" encoded)))
-    (when (> (length wire-name)
-             *responses-standard-tool-name-maximum-length*)
-      (error 'configuration-error
-             :message
-             (format nil
-                     "Tool name ~A.~A is too long for standard Responses."
-                     namespace name)))
-    wire-name))
-
-(-> responses-standard-tool-name->components
-    (string)
-    (values (option string) (option string)))
-(defun responses-standard-tool-name->components (wire-name)
-  "Decode a standard Responses function WIRE-NAME created by Autolith."
-  (if (and (plusp (length wire-name))
-           (char= (char wire-name 0) #\a))
-      (handler-case
-          (let* ((decoded
-                   (base64-string-to-string
-                    (padded-base64url (subseq wire-name 1))
-                    :uri t))
-                 (separator (position (code-char 0) decoded)))
-            (if (and separator
-                     (plusp separator)
-                     (< (1+ separator) (length decoded)))
-                (values (subseq decoded 0 separator)
-                        (subseq decoded (1+ separator)))
-                (values nil nil)))
-        (error ()
-          (values nil nil)))
-      (values nil nil)))
-
-(-> responses-standard-tool (string json-object) json-object)
-(defun responses-standard-tool (namespace tool)
-  "Encode one namespaced TOOL as a standard Responses function tool."
-  (json-object
-   "type" "function"
-   "name" (responses-standard-tool-name namespace (json-get tool "name"))
-   "description" (json-get tool "description")
-   "strict" false
-   "parameters" (json-get tool "parameters")))
-
-(-> responses-standard-tools (vector) vector)
-(defun responses-standard-tools (tool-namespaces)
-  "Flatten TOOL-NAMESPACES for a standard Responses request."
-  (coerce
-   (loop for entry across tool-namespaces
-         if (and (json-object-p entry)
-                 (json-string= (json-get entry "type") "namespace")
-                 (vectorp (json-get entry "tools"))
-                 (non-empty-string-p (json-get entry "name")))
-           append (loop for tool across (json-get entry "tools")
-                        when (and (json-object-p tool)
-                                  (non-empty-string-p (json-get tool "name")))
-                          collect (responses-standard-tool
-                                   (json-get entry "name") tool))
-         else
-           collect entry)
-   'vector))
-
-(-> responses-standard-input-item (t) t)
-(defun responses-standard-input-item (item)
-  "Flatten a namespaced function-call ITEM for a standard Responses request."
-  (if (and (json-object-p item)
-           (function-call-item-p item)
-           (non-empty-string-p (json-get item "namespace"))
-           (non-empty-string-p (json-get item "name")))
-      (let ((copy (json-object-copy item)))
-        (setf (gethash "name" copy)
-              (responses-standard-tool-name
-               (json-get item "namespace")
-               (json-get item "name")))
-        (remhash "namespace" copy)
-        copy)
-      item))
-
 (-> responses-standard-instructions (list) string)
 (defun responses-standard-instructions (parts)
   "Join non-empty instruction PARTS for a standard Responses request."
@@ -592,86 +501,22 @@ between roots while allowing a root and its task children to share a prefix."
 ;; Codex Fast mode uses service_tier="priority", the canonical request value
 ;; for Fast mode, only when the current model advertises support. This follows
 ;; Codex reference commit 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56.
-(defmethod provider-request-object
-    ((provider codex-subscription-provider)
-     (conversation conversation)
-     (tool-namespaces vector)
-     &key goal-context compaction-p)
-  "Build a standard Codex Responses request for CONVERSATION.
 
-Fast mode adds service_tier=priority; the standard path omits service_tier. The
-second value is the context delivery consumed only after a completed response."
-  (let* ((configuration (provider-configuration provider))
-         (web-search-tool (and (not compaction-p)
-                               (provider-web-search-tool configuration)))
-         (effective-tools
-           (cond
-             (compaction-p
-              #())
-             (web-search-tool
-              (concatenate 'vector
-                           tool-namespaces
-                           (vector web-search-tool)))
-             (t
-              tool-namespaces)))
-         (delivery
-           (unless compaction-p
-             (context-resolve-request
-              configuration
-              conversation
-              effective-tools
-              :goal-context goal-context)))
-         (rendered-context
-           (and delivery (context-delivery-rendered delivery)))
-         (reasoning
-           (json-object
-            "effort" (configuration-wire-effort configuration)))
-         (instructions
-           (responses-standard-instructions
-            (list
-             (let ((*system-prompt-hosted-web-search-p*
-                     (not (null web-search-tool))))
-               (system-prompt configuration))
-             (and (not compaction-p) goal-context)
-             rendered-context
-             (and compaction-p *compaction-instructions*))))
-         (input
-           (map 'vector
-                #'responses-standard-input-item
-                (conversation-input-items-for-family
-                 conversation
-                 (provider-family provider)
-                 :include-ephemeral-p (not compaction-p))))
-         (tools (responses-standard-tools effective-tools)))
-    (when (and (provider-reasoning-summaries-p provider)
-               (not compaction-p))
-      (setf (gethash "summary" reasoning) "auto"))
-    (values
-     (apply
-      #'json-object
-      (append
-       (list
-        "model" (configuration-model configuration)
-        "instructions" instructions
-        "input" input
-        "tools" tools)
-       (when (plusp (length tools))
-         (list "tool_choice" "auto"))
-       (list
-        "parallel_tool_calls" (if compaction-p false t)
-        "reasoning" reasoning
-        "store" false
-        "stream" t
-        "include" (json-array "reasoning.encrypted_content")
-        "prompt_cache_key" (provider--codex-prompt-cache-key
-                            provider conversation)
-        "text" (json-object "verbosity" "low"))
-       (when (configuration-codex-fast-mode-active-p configuration)
-         (list "service_tier" "priority"))
-       (when (and *provider-maximum-output-tokens*
-                  (provider-output-ceiling-p provider))
-         (list "max_output_tokens" *provider-maximum-output-tokens*))))
-     delivery)))
+(-> provider--codex-responses-request-fields
+    (codex-subscription-provider conversation &key (:compaction-p boolean))
+    list)
+(defun provider--codex-responses-request-fields
+    (provider conversation &key compaction-p)
+  "Return Codex fields shared by the concrete and generic Responses views."
+  (let ((configuration (provider-configuration provider)))
+    (append
+     (list "parallel_tool_calls" (if compaction-p false t)
+           "include" (json-array "reasoning.encrypted_content")
+           "prompt_cache_key" (provider--codex-prompt-cache-key
+                               provider conversation)
+           "text" (json-object "verbosity" "low"))
+     (when (configuration-codex-fast-mode-active-p configuration)
+       (list "service_tier" "priority")))))
 
 (-> provider-native-compaction-request-object
     (codex-subscription-provider conversation vector)
@@ -690,13 +535,14 @@ stay outside it."
             (list
              (let ((*system-prompt-hosted-web-search-p* nil))
                (system-prompt configuration)))))
-         (input
-           (map 'vector
-                #'responses-standard-input-item
-                (conversation-input-items-for-family
-                 conversation
-                 (provider-family provider)
-                 :include-ephemeral-p nil))))
+          (input
+            (map 'vector
+                 (lambda (item)
+                   (provider-wire-input-item provider item))
+                 (conversation-input-items-for-family
+                  conversation
+                  (provider-family provider)
+                  :include-ephemeral-p nil))))
     (apply
      #'json-object
      (append

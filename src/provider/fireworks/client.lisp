@@ -88,9 +88,11 @@ request builder to omit the reasoning object entirely."
     (configuration-fireworks-wire-effort configuration)))
 
 (defmethod provider-responses-request-fields
-    ((provider fireworks-api-key-provider) (conversation conversation))
+    ((provider fireworks-api-key-provider)
+     (conversation conversation)
+     &key compaction-p)
   "Add CONVERSATION's stable Fireworks prompt cache key."
-  (declare (ignore provider))
+  (declare (ignore provider compaction-p))
   (list "prompt_cache_key" (conversation-prompt-cache-key conversation)))
 
 
