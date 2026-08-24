@@ -115,7 +115,9 @@
 (-> fireworks-provider-test--wire-tools () null)
 (defun fireworks-provider-test--wire-tools ()
   "Test Fireworks tool flattening and item normalization round trips."
-  (let* ((namespaces
+  (let* ((provider (fireworks-provider-create
+                    (fireworks-provider-test--configuration)))
+         (namespaces
            (json-array
             (json-object
              "type" "namespace"
@@ -128,7 +130,7 @@
                        "description" "Read one file."
                        "strict" false
                        "parameters" (json-object "type" "object"))))))
-         (tools (grok-wire-tools namespaces)))
+         (tools (provider-wire-tools provider namespaces)))
     (test-assert (string= (json-get (aref tools 0) "name") "resource.read")
                  "Fireworks wire tool names join the namespace with a dot"))
   (let ((provider (fireworks-provider-create

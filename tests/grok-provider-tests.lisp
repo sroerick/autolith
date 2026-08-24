@@ -27,7 +27,10 @@
 (-> grok-provider-test--wire-tools () null)
 (defun grok-provider-test--wire-tools ()
   "Test namespace flattening into standard Responses function tools."
-  (let ((tools (grok-wire-tools (grok-provider-test--namespaces))))
+  (let* ((provider (grok-provider-create
+                    (grok-provider-test--configuration)))
+         (tools (provider-wire-tools
+                 provider (grok-provider-test--namespaces))))
     (test-assert (= (length tools) 2)
                  "wire tools keep one entry per tool plus passthroughs")
     (let ((flattened (aref tools 0)))
@@ -123,13 +126,15 @@
           (not (conversation-family-private-item-p
                 (json-object "type" "function_call" "call_id" "c-1"))))
      "backend search calls stay private to their producing family"))
-  (let* ((namespaced (json-object
+  (let* ((provider (grok-provider-create
+                    (grok-provider-test--configuration)))
+         (namespaced (json-object
                       "type" "function_call"
                       "call_id" "call-1"
                       "namespace" "resource"
                       "name" "read"
                       "arguments" "{}"))
-         (flattened (grok-wire-input-item namespaced)))
+         (flattened (provider-wire-input-item provider namespaced)))
     (test-assert (string= (json-get flattened "name") "resource.read")
                  "replayed function calls flatten to the dotted wire name")
     (test-assert (null (gethash "namespace" flattened))
@@ -140,7 +145,7 @@
                    "type" "function_call_output"
                    "call_id" "call-1"
                    "output" "done")))
-      (test-assert (eq (grok-wire-input-item output) output)
+      (test-assert (eq (provider-wire-input-item provider output) output)
                    "non-call input items pass through identically")))
   nil)
 

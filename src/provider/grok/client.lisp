@@ -3,11 +3,10 @@
 ;;;; -- Grok Subscription Provider --
 
 ;;; The Grok subscription proxy speaks the standard streaming Responses API,
-;;; as read from grok-build reference commit 5163763e. Unlike the Codex
-;;; Responses Lite dialect, tools ride in the request's flat tools array and
-;;; function calls return one flat wire name, so this provider joins
-;;; Autolith's namespaced tool names with a dot on the way out and splits
-;;; them again on completed items. Conversations therefore persist in the
+;;; as read from grok-build reference commit 5163763e. Tools ride in the
+;;; request's flat tools array and function calls return one flat wire name, so
+;;; this provider joins Autolith's namespaced tool names with a dot on the way
+;;; out and splits them again on completed items. Conversations persist in the
 ;;; same namespaced shape regardless of the serving provider.
 ;;;
 ;;; Grok generation loops are stochastic, so the proxy offers a server-side
@@ -74,56 +73,6 @@
                  :registration (model-provider-registration provider)
                  :credential-manager (provider-credential-manager provider)
                  :session-id (provider-session-id provider)))
-
-
-;;;; -- Wire Tool Names --
-
-(-> grok-wire-tool-name (string string) string)
-(defun grok-wire-tool-name (namespace name)
-  "Return the flat Grok wire name of NAME inside NAMESPACE."
-  (format nil "~A.~A" namespace name))
-
-(-> grok-wire-tool (string json-object) json-object)
-(defun grok-wire-tool (namespace tool)
-  "Return namespaced TOOL as a standard Responses function tool."
-  (json-object
-   "type" "function"
-   "name" (grok-wire-tool-name namespace (json-get tool "name"))
-   "description" (json-get tool "description")
-   "strict" false
-   "parameters" (json-get tool "parameters")))
-
-(-> grok-wire-tools (vector) vector)
-(defun grok-wire-tools (tool-namespaces)
-  "Flatten namespaced TOOL-NAMESPACES into standard Responses function tools.
-
-Entries that are not tool namespaces pass through unchanged so hosted tools
-remain expressible."
-  (coerce
-   (loop for entry across tool-namespaces
-         if (and (json-object-p entry)
-                 (json-string= (json-get entry "type") "namespace")
-                 (vectorp (json-get entry "tools")))
-           append (loop for tool across (json-get entry "tools")
-                        when (json-object-p tool)
-                          collect (grok-wire-tool (json-get entry "name") tool))
-         else
-           collect entry)
-   'vector))
-
-(-> grok-wire-input-item (t) t)
-(defun grok-wire-input-item (item)
-  "Return ITEM with namespaced function calls flattened for the Grok wire."
-  (if (and (json-object-p item)
-           (function-call-item-p item)
-           (non-empty-string-p (json-get item "namespace")))
-      (let ((copy (json-object-copy item)))
-        (setf (gethash "name" copy)
-              (grok-wire-tool-name (json-get item "namespace")
-                                   (json-get item "name")))
-        (remhash "namespace" copy)
-        copy)
-      item))
 
 
 ;;;; -- Grok Protocol Specializations --
