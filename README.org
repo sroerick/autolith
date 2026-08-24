@@ -85,6 +85,7 @@ autolith auth nous
 autolith auth anthropic
 autolith auth fireworks
 autolith auth opencode
+autolith auth openrouter
 autolith auth mistral
 #+END_SRC
 

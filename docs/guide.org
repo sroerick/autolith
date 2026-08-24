@@ -268,8 +268,8 @@ available. =(models)= triggers discovery. You can also pass non-secret
 providers that have no model-list endpoint.
 
 Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
-browser device flow. Anthropic, Fireworks, OpenCode, Mistral, and user-registered
-OpenAI-compatible providers use API keys.
+browser device flow. Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and
+user-registered OpenAI-compatible providers use API keys.
 
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support and uses 2x plan usage. The built-in GPT-5.6 models
@@ -311,6 +311,16 @@ Mistral models are discovered from the authenticated account and filtered to
 models advertising Chat Completions support. =MISTRAL_API_KEY= takes precedence
 over Autolith's private Mistral key. =AUTOLITH_MISTRAL_PROVIDER_ENDPOINT= and
 =AUTOLITH_MISTRAL_MODELS_ENDPOINT= override the chat and discovery endpoints
+independently.
+
+OpenRouter models are discovered from the authenticated catalog and use
+=openrouter/<vendor>/<model>= identifiers locally. Discovery includes only models
+that emit text and advertise function tools, tool choice, and normalized
+reasoning, matching the request shape Autolith sends. =OPENROUTER_API_KEY= takes
+precedence over Autolith's private OpenRouter key. Authenticate with
+=autolith auth openrouter=, =/auth openrouter=, or =(auth "openrouter")=.
+=AUTOLITH_OPENROUTER_PROVIDER_ENDPOINT= and
+=AUTOLITH_OPENROUTER_MODELS_ENDPOINT= override the chat and discovery endpoints
 independently.
 
 ** Commands
