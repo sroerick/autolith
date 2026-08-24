@@ -3699,6 +3699,17 @@
                    (eq (getf (application-goal application) :status) ':paused))
               "applying pending commands executes their effects")
              (application-input-controller--handle-submission
+              controller "(goal \"resume\")")
+             (test-assert
+              (equal (deque->list
+                      (application-input-controller-pending-apply-items controller))
+                     (list "(goal \"resume\")"))
+              "canonical Lisp state changes queue for the next safe boundary")
+             (application-input-controller--apply-pending-commands controller)
+             (test-assert
+              (eq (getf (application-goal application) :status) ':active)
+              "canonical Lisp pending changes execute noninteractively")
+             (application-input-controller--handle-submission
               controller "/goal resume")
              (application-input-controller--finish-work controller)
              (test-assert

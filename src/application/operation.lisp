@@ -13,18 +13,64 @@
     :reader application-operation-description
     :type non-empty-string
     :documentation "The concise user-facing operation description.")
-   (kind
-    :initarg :kind
-    :reader application-operation-kind
-    :type (member :command :local :tool)
-    :documentation "The authoritative backend family for this operation.")
    (backend
     :initarg :backend
     :reader application-operation-backend
-    :type (or symbol application-command tool)
-    :documentation "The exact registered command, local form, or tool invoked."))
-  (:documentation
-   "One immutable user-facing projection of a registered command or tool."))
+    :type t
+    :documentation "The exact registered operation backend."))
+  (:documentation "One immutable user-facing registered operation."))
+
+(defclass application-command-operation (application-operation)
+  ((backend :type application-command))
+  (:documentation "A user-facing interactive command operation."))
+
+(defclass application-local-operation (application-operation)
+  ((backend :type symbol))
+  (:documentation "A built-in local Lisp operation."))
+
+(defclass application-tool-operation (application-operation)
+  ((backend :type tool))
+  (:documentation "A locally callable tool operation."))
+
+(-> application-operation-kind (application-operation) keyword)
+(defgeneric application-operation-kind (operation)
+  (:documentation "Return OPERATION's compatibility family keyword."))
+
+(defmethod application-operation-kind ((operation application-command-operation))
+  "Identify a command operation through the compatibility protocol."
+  (declare (ignore operation))
+  ':command)
+
+(defmethod application-operation-kind ((operation application-local-operation))
+  "Identify a local operation through the compatibility protocol."
+  (declare (ignore operation))
+  ':local)
+
+(defmethod application-operation-kind ((operation application-tool-operation))
+  "Identify a tool operation through the compatibility protocol."
+  (declare (ignore operation))
+  ':tool)
+
+(-> application-operation-completion-argument (application-operation) (option string))
+(defgeneric application-operation-completion-argument (operation)
+  (:documentation "Return OPERATION's completion argument suffix, when present."))
+
+(-> application-operation-active-turn-action
+    (application-operation list) (member :apply :cancel :execute :hold))
+(defgeneric application-operation-active-turn-action (operation argument-forms)
+  (:documentation "Return OPERATION's active-turn admission for ARGUMENT-FORMS."))
+
+(-> application-operation-immediate-arguments-p (application-operation list) boolean)
+(defgeneric application-operation-immediate-arguments-p (operation argument-forms)
+  (:documentation "Return whether OPERATION may inspect ARGUMENT-FORMS immediately."))
+
+(-> application-operation-invoke (application-operation application list) t)
+(defgeneric application-operation-invoke (operation application arguments)
+  (:documentation "Invoke OPERATION for APPLICATION with evaluated ARGUMENTS."))
+
+(-> application-operation-binding-eligible-p (application-operation) boolean)
+(defgeneric application-operation-binding-eligible-p (operation)
+  (:documentation "Return whether OPERATION receives a canonical function binding."))
 
 (define-condition application-operation-loop-action (error)
   ((action
@@ -268,24 +314,18 @@ local-user override."
 
 (defparameter *application-local-operations*
   (list
-   (make-instance
-    'application-operation
-    :name "prompt"
-    :description "Prompt primary Autolith or steer a named running child."
-    :kind ':local
-    :backend 'prompt)
-   (make-instance
-    'application-operation
-    :name "read-file"
-    :description "Read bounded UTF-8 text for a computed local prompt."
-    :kind ':local
-    :backend 'read-file)
-   (make-instance
-    'application-operation
-    :name "eval-now"
-    :description "Force explicit local Lisp to run during an active turn."
-    :kind ':local
-    :backend 'eval-now))
+   (make-instance 'application-local-operation
+                  :name "prompt"
+                  :description "Prompt primary Autolith or steer a named running child."
+                  :backend 'prompt)
+   (make-instance 'application-local-operation
+                  :name "read-file"
+                  :description "Read bounded UTF-8 text for a computed local prompt."
+                  :backend 'read-file)
+   (make-instance 'application-local-operation
+                  :name "eval-now"
+                  :description "Force explicit local Lisp to run during an active turn."
+                  :backend 'eval-now))
   "The built-in local forms advertised beside registered commands and tools.")
 
 (-> tool-user-callable-p (tool) boolean)
@@ -307,81 +347,34 @@ local-user override."
   (:documentation
    "Return whether an explicit local call to TOOL may overlap an active turn."))
 
-(defmethod tool-active-turn-action ((tool tool))
-  "Hold unclassified tools at the agent boundary by default."
-  (declare (ignore tool))
-  ':hold)
+(defmacro define-tool-active-turn-actions (action &body specifications)
+  "Define constant ACTION methods for tool classes in SPECIFICATIONS."
+  `(progn
+     ,@(loop for (class documentation) in specifications
+             collect
+             `(defmethod tool-active-turn-action ((tool ,class))
+                ,documentation
+                (declare (ignore tool))
+                ,action))))
 
-(defmethod tool-active-turn-action ((tool resource-tool))
-  "Permit revision-gated resource operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
+(define-tool-active-turn-actions :hold
+  (tool "Hold unclassified tools at the agent boundary by default.")
+  (shell-run-tool "Hold shell execution because authorization may require terminal ownership.")
+  (mcp-provider-tool "Hold external MCP calls because approval may require terminal ownership."))
 
-(defmethod tool-active-turn-action ((tool workspace-tool))
-  "Permit non-modal workspace operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool shell-run-tool))
-  "Hold shell execution because authorization may require terminal ownership."
-  (declare (ignore tool))
-  ':hold)
-
-(defmethod tool-active-turn-action ((tool lisp-tool))
-  "Permit isolated worker operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool web-run-tool))
-  "Permit provider-backed web searches during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool papercut-tool))
-  "Permit papercut reporting during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool agenda-tool))
-  "Permit workspace-agenda operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool plan-tool))
-  "Permit workspace-plan operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool task-orchestrator-tool))
-  "Permit lock-protected child and job operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool mcp-managed-tool))
-  "Permit non-modal MCP discovery and resource operations during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool mcp-provider-tool))
-  "Hold external MCP calls because approval may require terminal ownership."
-  (declare (ignore tool))
-  ':hold)
-
-
-(defmethod tool-active-turn-action ((tool self-status-tool))
-  "Permit read-only active-image status inspection during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool self-diff-tool))
-  "Permit read-only active-image mutation inspection during an active turn."
-  (declare (ignore tool))
-  ':execute)
-
-(defmethod tool-active-turn-action ((tool self-generations-tool))
-  "Permit read-only retained-generation inspection during an active turn."
-  (declare (ignore tool))
-  ':execute)
+(define-tool-active-turn-actions :execute
+  (resource-tool "Permit revision-gated resource operations during an active turn.")
+  (workspace-tool "Permit non-modal workspace operations during an active turn.")
+  (lisp-tool "Permit isolated worker operations during an active turn.")
+  (web-run-tool "Permit provider-backed web searches during an active turn.")
+  (papercut-tool "Permit papercut reporting during an active turn.")
+  (agenda-tool "Permit workspace-agenda operations during an active turn.")
+  (plan-tool "Permit workspace-plan operations during an active turn.")
+  (task-orchestrator-tool "Permit lock-protected child and job operations during an active turn.")
+  (mcp-managed-tool "Permit non-modal MCP discovery and resource operations during an active turn.")
+  (self-status-tool "Permit read-only active-image status inspection during an active turn.")
+  (self-diff-tool "Permit read-only active-image mutation inspection during an active turn.")
+  (self-generations-tool "Permit read-only retained-generation inspection during an active turn."))
 
 
 ;;;; -- Registry Projection --
@@ -393,22 +386,20 @@ local-user override."
 
 (-> application-operation--from-command
     (application-command)
-    application-operation)
+    application-command-operation)
 (defun application-operation--from-command (command)
   "Project registered COMMAND into one user-facing operation."
-  (make-instance 'application-operation
+  (make-instance 'application-command-operation
                  :name (application-operation--command-name command)
                  :description (application-command-description command)
-                 :kind ':command
                  :backend command))
 
-(-> application-operation--from-tool (tool) application-operation)
+(-> application-operation--from-tool (tool) application-tool-operation)
 (defun application-operation--from-tool (tool)
   "Project registered TOOL into one user-facing operation."
-  (make-instance 'application-operation
+  (make-instance 'application-tool-operation
                  :name (tool-canonical-name tool)
                  :description (tool-description tool)
-                 :kind ':tool
                  :backend tool))
 
 (-> application-operation--tools (application) list)
@@ -464,13 +455,6 @@ local-user override."
 (defparameter *application-operation-property-name-characters* 80
   "The largest JSON property name displayed in one operation completion.")
 
-(-> application-operation--displayable-property-name-p (t) boolean)
-(defun application-operation--displayable-property-name-p (value)
-  "Return whether VALUE is a bounded non-empty string safe for one completion row."
-  (and (non-empty-string-p value)
-       (<= (length value) *application-operation-property-name-characters*)
-       (every #'graphic-char-p value)))
-
 (-> application-operation--tool-property-names (tool) (values list list))
 (defun application-operation--tool-property-names (tool)
   "Return TOOL's displayable required and optional properties in stable order."
@@ -479,44 +463,38 @@ local-user override."
                           (json-get parameters "properties")))
          (required-value (and (json-object-p parameters)
                               (json-get parameters "required")))
-         (property-names
-           (if (json-object-p properties)
-               (sort (loop for name being the hash-keys of properties
-                           when (application-operation--displayable-property-name-p
-                                 name)
-                             collect name)
-                     #'string<)
-               nil))
          (required-order
            (remove-if-not
             #'stringp
             (typecase required-value
-              (null nil)
               (list required-value)
               (vector (coerce required-value 'list))
               (t nil))))
+         (names
+           (and (json-object-p properties)
+                (sort
+                 (loop for name being the hash-keys of properties
+                       when (and (non-empty-string-p name)
+                                 (<= (length name)
+                                     *application-operation-property-name-characters*)
+                                 (every #'graphic-char-p name))
+                         collect name)
+                 #'string<)))
          (required
            (remove-if-not (lambda (name)
-                            (member name property-names :test #'string=))
-                          required-order))
-         (optional
-           (remove-if (lambda (name)
-                        (member name required :test #'string=))
-                      property-names)))
-    (values required optional)))
-
-(-> application-operation--tool-property-keyword (string) string)
-(defun application-operation--tool-property-keyword (name)
-  "Return property NAME as one reader-safe Lisp keyword token."
-  (application--lisp-key-token name))
+                            (member name names :test #'string=))
+                          required-order)))
+    (values required
+            (remove-if (lambda (name)
+                         (member name required :test #'string=))
+                       names))))
 
 (-> application-operation--tool-argument-fragment (string boolean) string)
 (defun application-operation--tool-argument-fragment (name required-p)
   "Return one readable completion fragment for tool property NAME."
   (let ((fragment
-          (format nil
-                  "~A ~A"
-                  (application-operation--tool-property-keyword name)
+          (format nil "~A ~A"
+                  (application--lisp-key-token name)
                   (if (application--lisp-simple-symbol-name-p name)
                       (string-upcase name)
                       "VALUE"))))
@@ -528,30 +506,34 @@ local-user override."
   (multiple-value-bind (required optional)
       (application-operation--tool-property-names tool)
     (let ((fragments
-            (append
-             (mapcar (lambda (name)
-                       (application-operation--tool-argument-fragment name t))
-                     required)
-             (mapcar (lambda (name)
-                       (application-operation--tool-argument-fragment name nil))
-                     optional))))
-      (when fragments
-        (format nil "~{~A~^ ~})" fragments)))))
+            (loop for name in (append required optional)
+                  collect
+                  (application-operation--tool-argument-fragment
+                   name (and (member name required :test #'string=) t)))))
+      (and fragments (format nil "~{~A~^ ~})" fragments)))))
+
+(defmethod application-operation-completion-argument
+    ((operation application-command-operation))
+  "Return a command's registered argument hint with its closing parenthesis."
+  (let ((hint (application-command-argument
+               (application-operation-backend operation))))
+    (and hint (format nil "~A)" hint))))
+
+(defmethod application-operation-completion-argument ((operation application-local-operation))
+  "Return the generic local-form completion argument."
+  (declare (ignore operation))
+  "FORM)")
+
+(defmethod application-operation-completion-argument ((operation application-tool-operation))
+  "Return a tool's schema-derived keyword argument hint."
+  (application-operation--tool-argument-hint
+   (application-operation-backend operation)))
 
 (-> application-operation-completion-entry (application-operation) list)
 (defun application-operation-completion-entry (operation)
   "Return OPERATION's canonical parenthesized completion entry."
   (let* ((name (application-operation-name operation))
-         (backend (application-operation-backend operation))
-         (argument
-           (ecase (application-operation-kind operation)
-             (:command
-              (let ((hint (application-command-argument backend)))
-                (and hint (format nil "~A)" hint))))
-             (:local
-              "FORM)")
-             (:tool
-              (application-operation--tool-argument-hint backend)))))
+         (argument (application-operation-completion-argument operation)))
     (list :name (if argument
                     (format nil "(~A" name)
                     (format nil "(~A)" name))
@@ -585,24 +567,17 @@ local-user override."
 (-> application-operation-help (application) string)
 (defun application-operation-help (application)
   "Return APPLICATION's canonical local, command, and tool operation reference."
-  (let* ((operations (application-operation-list application))
-         (commands (remove-if-not
-                    (lambda (operation)
-                      (eq (application-operation-kind operation) ':command))
-                    operations))
-         (locals (remove-if-not
-                  (lambda (operation)
-                    (eq (application-operation-kind operation) ':local))
-                  operations))
-         (tools (remove-if-not
-                 (lambda (operation)
-                   (eq (application-operation-kind operation) ':tool))
-                 operations)))
-    (format nil
-            "Registered operations~%~%~A~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
-            (application-operation--help-group "Commands" commands)
-            (application-operation--help-group "Local evaluation" locals)
-            (application-operation--help-group "Tools" tools))))
+  (let ((operations (application-operation-list application)))
+    (flet ((group (title class)
+             (application-operation--help-group
+              title
+              (remove-if-not (lambda (operation) (typep operation class))
+                             operations))))
+      (format nil
+              "Registered operations~%~%~A~%~%~A~%~%~A~%~%Slash commands remain compatibility spellings."
+              (group "Commands" 'application-command-operation)
+              (group "Local evaluation" 'application-local-operation)
+              (group "Tools" 'application-tool-operation)))))
 
 (-> application-operation-connect-ui (application) application)
 (defun application-operation-connect-ui (application)
@@ -619,9 +594,7 @@ local-user override."
   "Connect a newly initialized APPLICATION to dynamic operation completion."
   (application-operation-connect-ui application))
 
-(-> application-operation-command-hint-form
-    (application-command-invocation)
-    string)
+(-> application-operation-command-hint-form (application-command-invocation) string)
 (defun application-operation-command-hint-form (invocation)
   "Return INVOCATION's preferred canonical Lisp spelling."
   (let* ((command (application-command-invocation-command invocation))
@@ -632,8 +605,7 @@ local-user override."
         (format nil "(~A)" name))))
 
 (-> application-operation-present-command-hint
-    (application application-command-invocation)
-    null)
+    (application application-command-invocation) null)
 (defun application-operation-present-command-hint (application invocation)
   "Present INVOCATION's canonical Lisp spelling once per command and session."
   (let ((command (application-command-invocation-command invocation)))
@@ -755,17 +727,14 @@ local-user override."
     (t (princ-to-string value))))
 
 (-> application-operation--command-invocation
-    (application-command list)
-    application-command-invocation)
+    (application-command list) application-command-invocation)
 (defun application-operation--command-invocation (command arguments)
   "Return COMMAND's canonical compatibility invocation for evaluated ARGUMENTS."
   (let* ((name (application-command-name command))
          (remainder
-           (string-trim
-            *application-command-whitespace*
-            (format nil
-                    "~{~A~^ ~}"
-                    (mapcar #'application-operation--command-value arguments))))
+           (string-trim *application-command-whitespace*
+                         (format nil "~{~A~^ ~}"
+                                 (mapcar #'application-operation--command-value arguments))))
          (input
            (if (non-empty-string-p remainder)
                (format nil "~A ~A" name remainder)
@@ -790,12 +759,11 @@ local-user override."
            (member (first form) '(list vector json-object) :test #'eq)
            (every #'application-operation--immediate-argument-p (rest form)))))
 
-(-> application-operation--command-active-turn-action
-    (application-command list)
-    (member :cancel :execute :hold))
-(defun application-operation--command-active-turn-action (command argument-forms)
-  "Return COMMAND's existing busy action for literal ARGUMENT-FORMS."
-  (let* ((invocation
+(defmethod application-operation-active-turn-action
+    ((operation application-command-operation) argument-forms)
+  "Return a command's existing busy action for literal ARGUMENT-FORMS."
+  (let* ((command (application-operation-backend operation))
+         (invocation
            (application-operation--command-invocation command argument-forms))
          (action (application-command-busy-action command invocation)))
     (if (and (eq action ':execute)
@@ -803,23 +771,33 @@ local-user override."
         ':hold
         action)))
 
-(-> application-operation--active-turn-action
-    (application-operation list)
-    (member :cancel :execute :hold))
-(defun application-operation--active-turn-action (operation argument-forms)
-  "Return OPERATION's active-turn admission decision for ARGUMENT-FORMS."
-  (ecase (application-operation-kind operation)
-    (:command
-     (application-operation--command-active-turn-action
-      (application-operation-backend operation) argument-forms))
-    (:local
-     ':execute)
-    (:tool
-     (tool-active-turn-action (application-operation-backend operation)))))
+(defmethod application-operation-active-turn-action
+    ((operation application-local-operation) argument-forms)
+  "Permit local operations whose own runtime guards enforce their boundaries."
+  (declare (ignore operation argument-forms))
+  ':execute)
+
+(defmethod application-operation-active-turn-action
+    ((operation application-tool-operation) argument-forms)
+  "Return the tool backend's active-turn policy."
+  (declare (ignore argument-forms))
+  (tool-active-turn-action (application-operation-backend operation)))
+
+(defmethod application-operation-immediate-arguments-p
+    ((operation application-operation) argument-forms)
+  "Require every ordinary operation argument to be immediate literal data."
+  (declare (ignore operation))
+  (every #'application-operation--immediate-argument-p argument-forms))
+
+(defmethod application-operation-immediate-arguments-p
+    ((operation application-local-operation) argument-forms)
+  "Permit local operations to apply their own argument evaluation policy."
+  (declare (ignore operation argument-forms))
+  t)
 
 (-> application-operation-source-active-turn-action
     (application string)
-    (member :cancel :execute :hold))
+    (member :apply :cancel :execute :hold))
 (defun application-operation-source-active-turn-action (application source)
   "Classify one complete explicit Lisp SOURCE beside APPLICATION's active turn.
 
@@ -835,10 +813,8 @@ serialized application boundary."
         (let* ((operation (application-operation-find application (first form)))
                (arguments (rest form)))
           (if (and operation
-                   (or (eq (application-operation-kind operation) ':local)
-                       (every #'application-operation--immediate-argument-p
-                              arguments)))
-              (application-operation--active-turn-action operation arguments)
+                   (application-operation-immediate-arguments-p operation arguments))
+              (application-operation-active-turn-action operation arguments)
               ':hold)))
     (error ()
       ':hold)))
@@ -873,12 +849,11 @@ serialized application boundary."
    (lambda (tool arguments)
      (application-authorize-tool application tool arguments))))
 
-(-> application-operation--call-command
-    (application application-command list)
-    null)
-(defun application-operation--call-command (application command arguments)
-  "Invoke COMMAND through its existing handler without duplicating the Lisp source."
-  (let* ((invocation
+(defmethod application-operation-invoke
+    ((operation application-command-operation) application arguments)
+  "Invoke a command through its existing handler without duplicating Lisp source."
+  (let* ((command (application-operation-backend operation))
+         (invocation
            (application-operation--command-invocation command arguments))
          (*application-command-presentation-invocation* invocation)
          (*application-command-presentation-pending-p* nil)
@@ -889,10 +864,11 @@ serialized application boundary."
       (:quit
        (error 'application-operation-loop-action :action ':quit)))))
 
-(-> application-operation--call-tool (application tool list) string)
-(defun application-operation--call-tool (application tool arguments)
-  "Invoke TOOL through its existing decoder and execution method for APPLICATION."
-  (let* ((canonical-name (tool-canonical-name tool))
+(defmethod application-operation-invoke
+    ((operation application-tool-operation) application arguments)
+  "Invoke a tool through its existing decoder and execution method."
+  (let* ((tool (application-operation-backend operation))
+         (canonical-name (tool-canonical-name tool))
          (json-arguments (application-operation--tool-arguments arguments))
          (decoded-arguments
            (tool-decode-arguments tool (json-encode json-arguments))))
@@ -915,17 +891,23 @@ serialized application boundary."
                      (application-operation--tool-context application)
                      decoded-arguments))
                (when ui
-                 (application-set-local-activity
-                  application previous-activity)))))
+                 (application-set-local-activity application previous-activity)))))
       (unless (tool-result-success-p result)
         (error 'tool-error
                :message (tool-result-content result)
                :tool-name canonical-name))
       (tool-result-content result))))
 
-(-> application-operation-call
-    (application (or string symbol) &rest t)
-    t)
+(defmethod application-operation-invoke
+    ((operation application-local-operation) application arguments)
+  "Reject indirect invocation of a local special form."
+  (declare (ignore application arguments))
+  (error 'configuration-error
+         :message
+         (format nil "Local form ~A must be submitted directly."
+                 (application-operation-name operation))))
+
+(-> application-operation-call (application (or string symbol) &rest t) t)
 (defun application-operation-call (application identifier &rest arguments)
   "Invoke APPLICATION's registered IDENTIFIER with evaluated Lisp ARGUMENTS."
   (let ((operation (application-operation-find application identifier)))
@@ -933,18 +915,7 @@ serialized application boundary."
       (error 'configuration-error
              :message
              (format nil "No registered user operation is named ~S." identifier)))
-    (ecase (application-operation-kind operation)
-      (:command
-       (application-operation--call-command
-        application (application-operation-backend operation) arguments))
-      (:local
-       (error 'configuration-error
-              :message
-              (format nil "Local form ~A must be submitted directly."
-                      (application-operation-name operation))))
-      (:tool
-       (application-operation--call-tool
-        application (application-operation-backend operation) arguments)))))
+    (application-operation-invoke operation application arguments)))
 
 
 ;;;; -- Canonical Function Bindings --
@@ -991,9 +962,20 @@ serialized application boundary."
                (application-operation-description operation))
          symbol)))))
 
+(defmethod application-operation-binding-eligible-p ((operation application-operation))
+  "Permit canonical bindings for ordinary operations."
+  (declare (ignore operation))
+  t)
+
+(defmethod application-operation-binding-eligible-p
+    ((operation application-local-operation))
+  "Keep local special forms on their directly defined bindings."
+  (declare (ignore operation))
+  nil)
+
 (-> application-operation-install-bindings (application) list)
 (defun application-operation-install-bindings (application)
   "Install canonical function bindings for APPLICATION's commands and tools."
   (loop for operation in (application-operation-list application)
-        unless (eq (application-operation-kind operation) ':local)
+        when (application-operation-binding-eligible-p operation)
           collect (application-operation--install-binding operation)))

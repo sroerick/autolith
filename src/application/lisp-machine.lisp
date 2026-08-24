@@ -455,27 +455,31 @@ journaling or provider conversation projection."
         (format nil "~A~%loop action: ~(~A~)" rendered action)
         rendered)))
 
-(-> application-run-lisp-input (application string) keyword)
-(defun application-run-lisp-input (application source)
+(-> application-run-lisp-input
+    (application string &key (:interactive-p boolean))
+    keyword)
+(defun application-run-lisp-input (application source &key (interactive-p t))
   "Evaluate local Lisp SOURCE and retain bounded context for later requests.
 
-Present completed evaluation results before durable retention so a persistence
-failure cannot conceal local side effects. The persistence failure still
-propagates to the caller."
+INTERACTIVE-P permits command pickers and restart selection. Present completed
+evaluation results before durable retention so a persistence failure cannot
+conceal local side effects. The persistence failure still propagates to the
+caller."
   (application-present application (application-lisp--source-entry source))
   (application-set-local-activity application "evaluating local Lisp")
   (let* ((evaluation
            (unwind-protect
                 (let ((*application-local-user-evaluation-p* t)
-                      (*application-command-interactive-p* t)
+                      (*application-command-interactive-p* interactive-p)
                       (*application-user-operation-recording-suppressed-p* t))
                   (application-lisp-evaluate
                    source
                    :application application
                    :restart-selector
-                   (lambda (condition restarts)
-                     (application-lisp--select-restart
-                      application condition restarts))))
+                   (and interactive-p
+                        (lambda (condition restarts)
+                          (application-lisp--select-restart
+                           application condition restarts)))))
              (application-set-local-activity application nil)))
          (result-entry (application-lisp--result-entry evaluation))
          (status       (application-lisp-evaluation-status evaluation))

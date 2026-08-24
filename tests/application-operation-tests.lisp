@@ -458,7 +458,13 @@
       (application-operation-tests--application)
     (unwind-protect
          (let* ((operations (application-operation-list application))
-                (names (mapcar #'application-operation-name operations)))
+                (names (mapcar #'application-operation-name operations))
+                (command-operation
+                  (application-operation-find application 'help))
+                (local-operation
+                  (application-operation-find application 'eval-now))
+                (tool-operation
+                  (application-operation-find application "RESOURCE.READ")))
            (test-assert (member "help" names :test #'string=)
                         "interactive commands appear as canonical Lisp operations")
            (test-assert (member "update" names :test #'string=)
@@ -476,22 +482,37 @@
            (test-assert (member "read-file" names :test #'string=)
                         "bounded prompt file input is discoverable")
            (test-assert
-            (eq (application-operation-kind
-                 (application-operation-find application 'eval-now))
-                ':local)
-            "operation lookup identifies the immediate local form")
+            (and (typep command-operation 'application-command-operation)
+                 (typep (application-operation-backend command-operation)
+                        'application-command)
+                 (typep local-operation 'application-local-operation)
+                 (symbolp (application-operation-backend local-operation))
+                 (typep tool-operation 'application-tool-operation)
+                 (typep (application-operation-backend tool-operation) 'tool))
+            "operation subclasses expose their typed backend protocol")
+           (test-assert
+            (and (application-operation-binding-eligible-p command-operation)
+                 (not (application-operation-binding-eligible-p local-operation))
+                 (application-operation-binding-eligible-p tool-operation))
+            "operation subclasses control canonical binding eligibility")
+           (test-assert
+            (every (lambda (name)
+                     (typep (fdefinition name) 'generic-function))
+                   '(application-operation-kind
+                     application-operation-completion-argument
+                     application-operation-active-turn-action
+                     application-operation-immediate-arguments-p
+                     application-operation-invoke
+                     application-operation-binding-eligible-p))
+            "operation behavior is represented by CLOS generic functions")
+           (test-assert (eq (application-operation-kind local-operation) ':local)
+                        "operation lookup identifies the immediate local form")
            (test-assert (not (member "yield.submit" names :test #'string=))
                         "the child-only yield operation stays hidden from users")
-           (test-assert
-            (eq (application-operation-kind
-                 (application-operation-find application 'help))
-                ':command)
-            "operation lookup resolves command symbols case-insensitively")
-           (test-assert
-            (eq (application-operation-kind
-                 (application-operation-find application "RESOURCE.READ"))
-                ':tool)
-            "operation lookup resolves dotted tool names case-insensitively")
+           (test-assert (eq (application-operation-kind command-operation) ':command)
+                        "operation lookup resolves command symbols case-insensitively")
+           (test-assert (eq (application-operation-kind tool-operation) ':tool)
+                        "operation lookup resolves dotted tool names case-insensitively")
            (let* ((provider (terminal-ui-completion-function
                              (application-ui application)))
                   (entries (and provider (funcall provider)))
@@ -560,7 +581,7 @@
                      '(("(help)" :execute)
                        ("(prompt \"text\")" :execute)
                        ("(prompt (read-file \"/tmp/example\"))" :execute)
-                       ("(goal \"pause\")" :hold)
+                       ("(goal \"pause\")" :apply)
                        ("(quit)" :cancel)
                        ("(update)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)

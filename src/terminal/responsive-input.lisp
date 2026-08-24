@@ -1803,7 +1803,7 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
     (application-input-controller &key (:agent t))
     null)
 (defun application-input-controller--apply-pending-commands (controller &key agent)
-  "Apply queued commands now, then let running AGENT adopt replaced runtime.
+  "Apply queued command inputs, then let running AGENT adopt replaced runtime.
 
 Runs non-interactively so a boundary application never opens terminal
 pickers. AGENT, when supplied, is the loop still executing the current turn;
@@ -1813,15 +1813,17 @@ reaches the very next provider request."
         (application (application-input-controller-application controller)))
     (when inputs
       (dolist (input inputs)
-        (let ((*application-command-interactive-p* nil))
-          (application--run-command-input application input)))
+        (if (terminal-ui--lisp-draft-p input)
+            (application-run-lisp-input application input :interactive-p nil)
+            (let ((*application-command-interactive-p* nil))
+              (application--run-command-input application input))))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
 
 (-> application-input-controller--lisp-active-turn-action
     (application-input-controller string)
-    (member :cancel :execute :hold))
+    (member :apply :cancel :execute :hold))
 (defun application-input-controller--lisp-active-turn-action (controller source)
   "Return SOURCE's admission action when CONTROLLER has an active turn."
   (if (application-input-controller-turn-active-p controller)
@@ -2173,6 +2175,8 @@ may execute immediately; other Lisp waits for the idle boundary."
                             controller text)
                            ':quit)
                    (application-input-controller--request-exit controller ':quit)))
+                 (:apply
+                  (application-input-controller--schedule-apply controller text))
                 (:hold
                  (application-input-controller--schedule-lisp controller text)))
               (application-input-controller--enqueue controller ':lisp text)))
