@@ -99,6 +99,11 @@
   (reset-sequence :level ':basic)
   "The trusted control that restores default terminal rendition.")
 
+(-> terminal-style-reset-sequence () string)
+(defun terminal-style-reset-sequence ()
+  "Return the trusted control that restores default terminal rendition."
+  *terminal-style-reset*)
+
 (-> terminal-environment-indexed-color-p () boolean)
 (defun terminal-environment-indexed-color-p ()
   "Return true when the process environment advertises indexed colors."

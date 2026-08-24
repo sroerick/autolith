@@ -267,7 +267,7 @@
       (write-string sequence stream))
     (write-string (sanitize-text text :single-line-p t) stream)
     (when sequence
-      (write-string *terminal-style-reset* stream)))
+      (write-string (terminal-style-reset-sequence) stream)))
   nil)
 
 (-> api-key-read-hidden
