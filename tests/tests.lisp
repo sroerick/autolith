@@ -57,14 +57,23 @@
                           "gpt-5.6-luna")
                  "model copies swap only the model")
     (test-assert (= (configuration-context-window configuration) 272000)
-                 "5.6 models carry the live catalog context window")
+                 "5.6 subscription models carry the verified Codex window")
     (test-assert (= (configuration-context-window
                      (configuration-with-model configuration "gpt-5.6-terra"))
                     272000)
                  "model copies recompute the context window")
+    (test-assert (= *default-context-window* 272000)
+                 "unknown models retain the conservative context window fallback")
     (test-assert (= (configuration-compaction-token-limit configuration)
                     217600)
                  "compaction triggers at the threshold share of the window")
+    (dolist (model '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra"))
+      (test-assert (= (rest (assoc model *model-context-windows*
+                                   :test #'string=))
+                      272000)
+                   "GPT-5.6 fallbacks use the verified Codex subscription window")
+      (test-assert (= (provider-model-context-window-for model) 272000)
+                   "GPT-5.6 ChatGPT metadata uses the subscription window"))
     (test-assert (handler-case
                      (progn
                        (configuration-with-model configuration "gpt-4")

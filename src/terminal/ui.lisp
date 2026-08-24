@@ -13,6 +13,9 @@
 (defparameter *terminal-ui-status-spinner-frames-per-second* 4
   "The number of live status animation frames painted each second.")
 
+(defparameter *terminal-ui-context-track-cells* 12
+  "The preferred number of context-capacity cells beside the compaction marker.")
+
 (defparameter *terminal-ui-compaction-track-cells* 32
   "The maximum width of the indeterminate compaction track.")
 
@@ -1176,9 +1179,9 @@ columns: name, tally, and description."
      :key (lambda (activity)
             (getf activity :index)))))
 
-(-> terminal-ui--status-row-visible-p (terminal-ui) boolean)
-(defun terminal-ui--status-row-visible-p (ui)
-  "Return whether UI needs its animated status row above live activity."
+(-> terminal-ui--animated-status-row-p (terminal-ui) boolean)
+(defun terminal-ui--animated-status-row-p (ui)
+  "Return whether UI has live activity needing an animated status row."
   (not
    (null
     (or (terminal-ui-status ui)
@@ -1188,6 +1191,14 @@ columns: name, tally, and description."
         (terminal-ui-agent-activities ui)
         (terminal-ui-preview-rows ui)
         (terminal-ui-stream-tail ui)))))
+
+(-> terminal-ui--status-row-visible-p (terminal-ui) boolean)
+(defun terminal-ui--status-row-visible-p (ui)
+  "Return whether UI needs its persistent context or animated status row."
+  (not
+   (null
+    (or (terminal-ui--animated-status-row-p ui)
+        (terminal-ui-context-window ui)))))
 
 (-> terminal-ui--activity-row-budget (terminal-ui) (integer 1))
 (defun terminal-ui--activity-row-budget (ui)
@@ -1557,15 +1568,17 @@ columns: name, tally, and description."
     (terminal-ui real)
     (option list))
 (defun terminal-ui--animation-signature-at (ui now)
-  "Return visible status, compaction, command, and child values for a live paint."
+  "Return visible status, compaction, command, child, and context values."
   (let ((commands (terminal-ui--command-presentation-activities ui))
         (agents (terminal-ui-agent-activities ui))
-        (compacting-p (terminal-ui-compacting-p ui)))
+        (compacting-p (terminal-ui-compacting-p ui))
+        (animated-p (terminal-ui--animated-status-row-p ui)))
     (when (terminal-ui--status-row-visible-p ui)
       (list
-       (list (terminal-ui-status ui)
-             (terminal-ui-local-activity ui)
-             (terminal-ui--status-signature-at ui now))
+       (and animated-p
+            (list (terminal-ui-status ui)
+                  (terminal-ui-local-activity ui)
+                  (terminal-ui--status-signature-at ui now)))
        (and compacting-p
             (terminal-ui--compaction-phase-at
              ui now (max 1 (terminal-columns (terminal-ui-terminal ui)))))
@@ -1584,7 +1597,11 @@ columns: name, tally, and description."
                                (getf activity :state))
                         :test #'eq)
                   (terminal-ui--agent-spinner-phase-at now))
-             agents))))))
+             agents))
+       (and (terminal-ui-context-window ui)
+            (list (terminal-ui-context-used ui)
+                  (terminal-ui-context-window ui)
+                  (terminal-ui-context-compaction-limit ui)))))))
 
 (-> terminal-ui--status-text-at (terminal-ui real) string)
 (defun terminal-ui--status-text-at (ui now)
@@ -1608,6 +1625,108 @@ columns: name, tally, and description."
               (terminal-span ':status-plain
                              (terminal-ui--duration-text
                               (+ worked-seconds elapsed))))))))
+
+(-> terminal-ui--context-count-text ((integer 0)) string)
+(defun terminal-ui--context-count-text (count)
+  "Return token COUNT as a short whole-number context quantity."
+  (cond
+    ((< count 1000)
+     (format nil "~D" count))
+    ((< count 1000000)
+     (format nil "~DK" (floor (+ count 500) 1000)))
+    (t
+     (let ((decimal (format nil "~,2F" (/ count 1000000))))
+       (format nil "~AM" (string-right-trim "0." decimal))))))
+
+(-> terminal-ui--context-compact-text (terminal-ui) string)
+(defun terminal-ui--context-compact-text (ui)
+  "Return UI's complete compact used/window context count."
+  (format nil "~A/~A"
+          (terminal-ui--context-count-text (terminal-ui-context-used ui))
+          (terminal-ui--context-count-text (terminal-ui-context-window ui))))
+
+(-> terminal-ui--context-track-spans (terminal-ui (integer 1)) list)
+(defun terminal-ui--context-track-spans (ui track-width)
+  "Return a used capacity track with UI's compaction marker."
+  (let* ((used (min (terminal-ui-context-used ui)
+                    (terminal-ui-context-window ui)))
+         (window (terminal-ui-context-window ui))
+         (limit (terminal-ui-context-compaction-limit ui))
+         (used-cells (min track-width
+                          (round (* used track-width) window)))
+         (marker-at (min track-width
+                         (round (* limit track-width) window))))
+    (labels ((segment-spans (start end)
+               "Return used and remaining spans from START through END."
+               (let* ((width (- end start))
+                      (used-width (max 0 (- (min used-cells end) start)))
+                      (remaining-width (- width used-width)))
+                 (append
+                  (when (plusp used-width)
+                    (list
+                     (terminal-span
+                      ':status-accent
+                      (make-string used-width :initial-element #\=))))
+                  (when (plusp remaining-width)
+                    (list
+                     (terminal-span
+                      ':status-dim
+                      (make-string remaining-width :initial-element #\.))))))))
+      (append
+       (list (terminal-span ':status-dim "["))
+       (segment-spans 0 marker-at)
+       (list (terminal-span ':status-plain "|"))
+       (segment-spans marker-at track-width)
+       (list (terminal-span ':status-dim "]"))))))
+
+(-> terminal-ui--context-meter-spans (terminal-ui integer) list)
+(defun terminal-ui--context-meter-spans (ui maximum-width)
+  "Return UI's largest context meter variant fitting MAXIMUM-WIDTH cells."
+  (let ((used (terminal-ui-context-used ui))
+        (window (terminal-ui-context-window ui))
+        (limit (terminal-ui-context-compaction-limit ui)))
+    (when (and used window limit (plusp maximum-width))
+      (let* ((used-text (terminal-ui--context-count-text used))
+             (window-text (terminal-ui--context-count-text window))
+             (full-prefix "ctx ")
+             (full-suffix
+               (format nil " ~A / ~A used" used-text window-text))
+             (compact-prefix "")
+             (compact-suffix
+               (format nil " ~A" (terminal-ui--context-compact-text ui)))
+             (full-fixed-width
+               (+ (text-cell-width full-prefix)
+                  3
+                  (text-cell-width full-suffix)))
+             (compact-fixed-width
+               (+ 3 (text-cell-width compact-suffix))))
+        (labels ((meter-spans (prefix suffix fixed-width)
+                   "Return a context meter using its available track width."
+                   (let ((track-width
+                           (min *terminal-ui-context-track-cells*
+                                (- maximum-width fixed-width))))
+                     (append
+                      (when (plusp (length prefix))
+                        (list (terminal-span ':status-dim prefix)))
+                      (terminal-ui--context-track-spans ui track-width)
+                      (list (terminal-span ':status-dim suffix))))))
+          (cond
+            ((>= maximum-width (+ full-fixed-width 4))
+             (meter-spans full-prefix full-suffix full-fixed-width))
+            ((>= maximum-width (+ compact-fixed-width 4))
+             (meter-spans compact-prefix compact-suffix compact-fixed-width))
+            ((>= maximum-width
+                 (text-cell-width (format nil "ctx~A" compact-suffix)))
+             (list (terminal-span ':status-dim
+                                  (format nil "ctx~A" compact-suffix))))
+            ((>= maximum-width (1- (text-cell-width compact-suffix)))
+             (list (terminal-span ':status-dim
+                                  (subseq compact-suffix 1))))
+            (t
+             (terminal--clip-spans
+              (list (terminal-span ':status-dim
+                                   (format nil "ctx~A" compact-suffix)))
+              maximum-width))))))))
 
 (-> terminal-ui--compaction-head-text ((integer 1)) string)
 (defun terminal-ui--compaction-head-text (width)
@@ -1657,36 +1776,102 @@ columns: name, tally, and description."
 
 (-> terminal-ui--status-row-at (terminal-ui real integer) list)
 (defun terminal-ui--status-row-at (ui now row-width)
-  "Return UI's clipped status spans padded across ROW-WIDTH cells.
+  "Return UI's clipped status and context spans across ROW-WIDTH cells.
 
-Total worked time is right-aligned when it fits beside the activity
-content; a narrow row drops it before any activity detail."
-  (let* ((content
-           (append
-            (terminal-ui--status-spinner-spans-at ui now)
-            (list (terminal-span ':status-accent " ∙ ")
-                  (terminal-span ':status-dim
-                                 (terminal-ui--status-text-at ui now)))
-            (terminal-ui-status-details ui)))
-         (clipped (terminal--clip-spans content row-width))
-         (left-width (terminal--spans-width clipped))
-         (worked (terminal-ui--worked-spans-at ui now))
-         (gap (- row-width left-width (terminal--spans-width worked)))
-         (padding (and (terminal-styled-p (terminal-ui-terminal ui))
-                       (- row-width left-width))))
+The context meter is right-aligned. Narrow rows reserve their available cells
+for its complete used/window count before showing activity. Total worked time
+joins the meter when every segment fits."
+  (let* ((animated-p (terminal-ui--animated-status-row-p ui))
+         (content
+           (and animated-p
+                (append
+                 (terminal-ui--status-spinner-spans-at ui now)
+                 (list (terminal-span ':status-accent " ∙ ")
+                       (terminal-span ':status-dim
+                                      (terminal-ui--status-text-at ui now)))
+                 (terminal-ui-status-details ui))))
+         (minimum-activity-width (text-cell-width "READ  ∙ 00:00"))
+         (complete-context-width
+           (and (terminal-ui-context-window ui)
+                (text-cell-width (terminal-ui--context-compact-text ui))))
+         (context-gap
+           (if (and content
+                    complete-context-width
+                    (< row-width
+                       (+ minimum-activity-width complete-context-width 2)))
+               1
+               2))
+         (activity-context-budget
+           (- row-width minimum-activity-width context-gap))
+         (context
+           (and (terminal-ui-context-window ui)
+                (terminal-ui--context-meter-spans
+                 ui
+                 (if (and content
+                          (>= activity-context-budget
+                              (text-cell-width
+                               (terminal-ui--context-compact-text ui))))
+                     activity-context-budget
+                     row-width))))
+         (worked (and content (terminal-ui--worked-spans-at ui now))))
     (cond
-      ((and worked (>= gap 2))
-       (append clipped
-               (list (terminal-span ':status-plain
-                                    (make-string gap :initial-element #\Space)))
-               worked))
-      ((and padding (plusp padding))
-       (append clipped
-               (list (terminal-span ':status-plain
-                                    (make-string padding
-                                                 :initial-element #\Space)))))
+      (context
+       (let* ((context-width (terminal--spans-width context))
+              (activity-space (- row-width context-width context-gap))
+              (activity-p (and content
+                               (>= activity-space minimum-activity-width)))
+              (worked-with-context-p
+                (and activity-p
+                     worked
+                     (<= (+ (terminal--spans-width content)
+                            2
+                            (terminal--spans-width worked)
+                            2
+                            context-width)
+                         row-width)))
+              (right
+                (if worked-with-context-p
+                    (append worked
+                            (list (terminal-span ':status-plain "  "))
+                            context)
+                    context))
+              (right-width (terminal--spans-width right))
+              (left-limit
+                (if activity-p
+                    (max 0 (- row-width right-width context-gap))
+                    0))
+              (left (and activity-p
+                         (terminal--clip-spans content left-limit)))
+              (padding (- row-width
+                          (terminal--spans-width left)
+                          right-width)))
+         (append
+          left
+          (when (plusp padding)
+            (list (terminal-span
+                   ':status-plain
+                   (make-string padding :initial-element #\Space))))
+          right)))
       (t
-       clipped))))
+       (let* ((clipped (terminal--clip-spans content row-width))
+              (left-width (terminal--spans-width clipped))
+              (gap (- row-width left-width (terminal--spans-width worked)))
+              (padding (and (terminal-styled-p (terminal-ui-terminal ui))
+                            (- row-width left-width))))
+         (cond
+           ((and worked (>= gap 2))
+            (append clipped
+                    (list (terminal-span
+                           ':status-plain
+                           (make-string gap :initial-element #\Space)))
+                    worked))
+           ((and padding (plusp padding))
+            (append clipped
+                    (list (terminal-span
+                           ':status-plain
+                           (make-string padding :initial-element #\Space)))))
+           (t
+            clipped)))))))
 
 (-> terminal-ui--local-activity-row (terminal-ui integer) list)
 (defun terminal-ui--local-activity-row (ui row-width)
@@ -2564,6 +2749,30 @@ seen can offer the notice again."
                        (terminal-ui-notice-deadline ui) nil)
                  (terminal-ui--paint-live ui)))))))
     (values ui applied-p)))
+
+(-> terminal-ui-set-context-usage
+    (terminal-ui
+     &key (:used (integer 0)) (:window (integer 1))
+          (:compaction-limit (integer 1)))
+    terminal-ui)
+(defun terminal-ui-set-context-usage (ui &key used window compaction-limit)
+  "Set UI's provider-reported context usage, window, and compaction limit."
+  (unless (<= compaction-limit window)
+    (error 'terminal-error
+           :message "The context compaction limit cannot exceed its window."
+           :operation ':set-context-usage
+           :cause nil))
+  (with-terminal-ui-locked (ui)
+    (unless (equal (list used window compaction-limit)
+                   (list (terminal-ui-context-used ui)
+                         (terminal-ui-context-window ui)
+                         (terminal-ui-context-compaction-limit ui)))
+      (setf (terminal-ui-context-used ui) used
+            (terminal-ui-context-window ui) window
+            (terminal-ui-context-compaction-limit ui) compaction-limit)
+      (when (terminal-ui-started-p ui)
+        (terminal-ui--paint-live ui))))
+  ui)
 
 (-> terminal-ui-set-compacting (terminal-ui boolean) terminal-ui)
 (defun terminal-ui-set-compacting (ui compacting-p)

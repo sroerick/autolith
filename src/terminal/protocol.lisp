@@ -221,6 +221,21 @@
     :accessor terminal-ui-status
     :type (option string)
     :documentation "The optional unfinished activity shown above the prompt.")
+   (context-used
+    :initform nil
+    :accessor terminal-ui-context-used
+    :type (option (integer 0))
+    :documentation "The newest provider-reported context usage in tokens.")
+   (context-window
+    :initform nil
+    :accessor terminal-ui-context-window
+    :type (option (integer 1))
+    :documentation "The active model's context window in tokens.")
+   (context-compaction-limit
+    :initform nil
+    :accessor terminal-ui-context-compaction-limit
+    :type (option (integer 1))
+    :documentation "The context usage at which automatic compaction begins.")
    (compacting-p
     :initform nil
     :accessor terminal-ui-compacting-p

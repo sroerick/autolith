@@ -248,6 +248,17 @@ eventually disappear:
 Note that these are provider-request-only, and don't not count as a conversation turn,
 and do not get attached to your messages.
 
+The status line keeps a context meter visible while idle. It shows used tokens
+and the full model window. =|= marks the automatic compaction point. The
+ChatGPT subscription catalog currently reports a 272K-token window for GPT-5.6
+Sol, Luna, and Terra, which compact at about 218K tokens by default:
+
+#+BEGIN_EXAMPLE
+ctx [==========|..] 218K / 272K used
+#+END_EXAMPLE
+
+At narrow widths, the meter keeps the used and window counts and drops the bar.
+
 ** Providers
 
 Register a OpenAI-compatible provider:

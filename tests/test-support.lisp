@@ -114,6 +114,8 @@
                    :grok-bootstrap-auth-path
                    (merge-pathnames "missing-grok-auth.json" root)
                    :model *default-model*
+                   :context-window (configuration--context-window-for
+                                    *default-model*)
                    :reasoning-effort *default-reasoning-effort*
                    :provider-endpoint *codex-responses-endpoint*)))
 (-> test-configuration-root (configuration) pathname)

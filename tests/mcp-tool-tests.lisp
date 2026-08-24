@@ -1310,6 +1310,20 @@
                                 application))
                               "cleanup failure leaves the replacement runtime live")
                              (test-assert
+                              (let ((ui (application-ui application))
+                                    (configuration
+                                      (application-configuration application)))
+                                (and
+                                  (= (terminal-ui-context-used ui)
+                                     (conversation-last-total-tokens
+                                      (application-conversation application)))
+                                  (= (terminal-ui-context-window ui)
+                                     (configuration-context-window configuration))
+                                  (= (terminal-ui-context-compaction-limit ui)
+                                     (configuration-compaction-token-limit
+                                      configuration))))
+                              "committed MCP reload refreshes the context meter")
+                             (test-assert
                               (and
                                (find
                                 "mcp-reload-late-new-context"

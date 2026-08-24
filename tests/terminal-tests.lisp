@@ -832,6 +832,140 @@
      "protocol shutdown continues after one cleanup write fails"))
   nil)
 
+(-> test-terminal-context-meter () null)
+(defun test-terminal-context-meter ()
+  "Test the persistent context meter, threshold marker, and narrow presentation."
+  (flet ((row-text (ui width)
+           (format nil "~{~A~}"
+                   (mapcar #'terminal-span-text
+                           (terminal-ui--status-row-at ui 0 width)))))
+    (let* ((terminal (make-instance 'recording-terminal :columns 120))
+           (ui (terminal-ui-create :terminal terminal)))
+      (with-terminal-ui (active-ui ui)
+        (terminal-ui-set-context-usage active-ui
+                                       :used 0
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (test-assert (terminal-ui--status-row-visible-p active-ui)
+                     "context usage keeps the modeline visible while idle")
+        (test-assert
+         (search "ctx [..........|..] 0 / 1.05M used"
+                 (row-text active-ui 120))
+         "an empty context meter shows its full window and compaction marker")
+        (terminal-ui-set-context-usage active-ui
+                                       :used 262500
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (test-assert
+         (search "ctx [===.......|..] 263K / 1.05M used"
+                 (row-text active-ui 120))
+         "a quarter-full context meter shows used and window tokens")
+        (terminal-ui-set-context-usage active-ui
+                                       :used 840000
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (test-assert
+         (search "ctx [==========|..] 840K / 1.05M used"
+                 (row-text active-ui 120))
+         "the meter marks the automatic compaction threshold")
+        (terminal-ui-set-context-usage active-ui
+                                       :used 262500
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (terminal-ui-set-status active-ui "working")
+        (let ((wide (row-text active-ui 120)))
+          (test-assert (search "READ  ∙ 00:00" wide)
+                       "a wide context row retains live activity")
+          (test-assert
+           (search "ctx [===.......|..] 263K / 1.05M used" wide)
+           "a wide context row retains the full meter")
+          (test-assert
+           (let ((start (search "ctx [===.......|..] 263K / 1.05M used" wide)))
+             (and start
+                  (= (+ start (length "ctx [===.......|..] 263K / 1.05M used"))
+                     (length wide))))
+           "a wide context meter is right-aligned"))
+        (dolist (width '(25 30 33))
+          (let ((intermediate (row-text active-ui width)))
+            (test-assert (search "READ  ∙ 00:00" intermediate)
+                         (format nil
+                                 "an active ~D-column meter retains minimum activity"
+                                 width))
+            (test-assert (search "263K/1.05M" intermediate)
+                         (format nil
+                                 "an active ~D-column meter retains complete counts"
+                                 width))
+            (test-assert (<= (text-cell-width intermediate) width)
+                         (format nil
+                                 "an active ~D-column meter never overflows its row"
+                                 width))))
+        (let ((intermediate (row-text active-ui 30)))
+          (test-assert (search "ctx 263K/1.05M" intermediate)
+                       "a 30-column meter retains labelled compact context"))
+        (let ((intermediate (row-text active-ui 33)))
+          (test-assert (search "[=..|.] 263K/1.05M" intermediate)
+                       "a 33-column meter selects the largest compact bar"))
+        (terminal-ui-set-context-usage active-ui
+                                       :used 1050000
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (dolist (width '(24 25 26 27 28 29 30 31 32 33))
+          (let ((high-usage (row-text active-ui width)))
+            (test-assert (search "1.05M/1.05M" high-usage)
+                         (format nil
+                                 "a high-usage ~D-column meter retains complete counts"
+                                 width))
+            (test-assert (<= (text-cell-width high-usage) width)
+                         (format nil
+                                 "a high-usage ~D-column meter never overflows its row"
+                                 width))))
+        (let ((too-narrow (row-text active-ui 24))
+              (minimum (row-text active-ui 25))
+              (preferred (row-text active-ui 26)))
+          (test-assert (not (search "READ  ∙ 00:00" too-narrow))
+                       "below the combined minimum, context displaces activity")
+          (test-assert
+           (string= minimum "READ  ∙ 00:00 1.05M/1.05M")
+           "the combined minimum uses a one-cell activity and context gap")
+          (test-assert
+           (string= preferred "READ  ∙ 00:00  1.05M/1.05M")
+           "the next width restores the preferred two-cell gap"))
+        (dolist (width '(25 26 27 28 29 30 31 32 33))
+          (test-assert (search "READ  ∙ 00:00" (row-text active-ui width))
+                       (format nil
+                               "a high-usage ~D-column meter retains activity"
+                               width)))
+        (terminal-ui-set-context-usage active-ui
+                                       :used 262500
+                                       :window 1050000
+                                       :compaction-limit 840000)
+        (dolist (width '(12 13))
+          (let ((narrow (row-text active-ui width)))
+            (test-assert (and (search "263K/1.05M" narrow)
+                              (not (search "ctx" narrow)))
+                         (format nil
+                                 "an active ~D-column meter retains used and window tokens"
+                                 width))
+            (test-assert (<= (text-cell-width narrow) width)
+                         (format nil
+                                 "an active ~D-column meter never overflows its row"
+                                 width))))
+        (let ((narrow (row-text active-ui 14)))
+          (test-assert (string= narrow "ctx 263K/1.05M")
+                       "an active 14-column meter retains its context label")
+          (test-assert (<= (text-cell-width narrow) 14)
+                       "an active 14-column meter never overflows its row"))
+        (let ((narrow (row-text active-ui 10)))
+          (test-assert (string= narrow "263K/1.05M")
+                       "an active 10-column meter retains its complete counts"))
+        (dolist (width '(1 2 9))
+          (let ((narrow (row-text active-ui width)))
+            (test-assert (<= (text-cell-width narrow) width)
+                         (format nil
+                                 "only sub-count widths clip an active meter at ~D columns"
+                                 width)))))))
+  nil)
+
 
 (-> test-terminal-bounded-editor-repaint () null)
 (defun test-terminal-bounded-editor-repaint ()
@@ -2525,6 +2659,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-image-attachments)
   (test-terminal-input-decoding)
   (test-terminal-status-worked-time)
+  (test-terminal-context-meter)
   (test-terminal-bounded-editor-repaint)
   (test-terminal-transient-notice)
   (test-terminal-notice-lock-contention)

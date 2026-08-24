@@ -2497,7 +2497,12 @@
                (list 'configuration-create
                      (lambda (&rest arguments)
                        (declare (ignore arguments))
-                       configuration)))
+                       configuration))
+               (list 'application-terminal-ui-create
+                     (lambda ()
+                       (terminal-ui-create
+                        :terminal
+                        (make-instance 'recording-terminal :columns 80)))))
               (lambda ()
                 (setf application (application-create configuration))
                 (test-assert
@@ -2509,6 +2514,21 @@
                   (= (application-rendered-sequence application) 2)
                   (= (application-history-floor-sequence application) 1))
                  "clean-source recovery restores its conversation and cursors")
+                (let ((ui (application-ui application)))
+                  (test-assert
+                    (and (zerop (terminal-ui-context-used ui))
+                         (= (terminal-ui-context-window ui) 272000)
+                         (= (terminal-ui-context-compaction-limit ui) 217600))
+                   "application creation seeds its idle context meter")
+                  (test-assert (null (recording-terminal-chunks
+                                      (terminal-ui-terminal ui)))
+                               "seeding an unstarted meter does not paint")
+                  (terminal-ui-start ui)
+                   (test-assert (search "272K"
+                                        (recording-terminal-output
+                                         (terminal-ui-terminal ui)))
+                               "the first application paint includes its context meter")
+                  (terminal-ui-stop ui))
                 (publish-recovery-context)
                 (setf application
                       (application-reconnect
@@ -2533,7 +2553,22 @@
                    (conversation-identifier recovered))
                   (= (application-rendered-sequence application) 2)
                   (= (application-history-floor-sequence application) 1))
-                 "retained-generation reconnect restores recovery state"))))
+                 "retained-generation reconnect restores recovery state")
+                (let ((ui (application-ui application)))
+                  (test-assert
+                    (and (zerop (terminal-ui-context-used ui))
+                         (= (terminal-ui-context-window ui) 272000)
+                         (= (terminal-ui-context-compaction-limit ui) 217600))
+                   "application reconnect seeds its idle context meter")
+                  (test-assert (null (recording-terminal-chunks
+                                      (terminal-ui-terminal ui)))
+                               "reconnect seeding does not paint an unstarted UI")
+                  (terminal-ui-start ui)
+                   (test-assert (search "272K"
+                                        (recording-terminal-output
+                                         (terminal-ui-terminal ui)))
+                               "the first reconnect paint includes its context meter")
+                  (terminal-ui-stop ui)))))
         (close-application)
         (dolist (entry previous-environment)
           (if (rest entry)
@@ -3024,9 +3059,21 @@
          (progn
            (terminal-ui-start ui)
            (conversation-append-user-message conversation "history to compact")
+           (setf (conversation-last-total-tokens conversation) 262500)
+           (application-refresh-context-meter application)
+           (test-assert
+             (and (= (terminal-ui-context-used ui) 262500)
+                  (= (terminal-ui-context-window ui) 272000)
+                  (= (terminal-ui-context-compaction-limit ui) 217600))
+            "application refresh projects current provider usage into the idle meter")
            (let* ((observer (application-agent-observer application))
                   (send-status
                     (callback-agent-observer-status-callback observer)))
+             (setf (conversation-last-total-tokens conversation) 525000)
+             (funcall send-status :provider-request-completed nil)
+             (test-assert (= (terminal-ui-context-used ui) 525000)
+                          "provider completion refreshes the context meter")
+             (setf (conversation-last-total-tokens conversation) 262500)
              (funcall send-status :compaction-started nil)
              (test-assert
               (and (terminal-ui-compacting-p ui)
@@ -3038,9 +3085,12 @@
                (declare (ignore display cursor))
                (test-assert (search "COMPACTING  [====>" text)
                             "the application observer projects compaction live"))
+             (setf (conversation-last-total-tokens conversation) 0)
              (funcall send-status :compaction-completed nil)
              (test-assert (not (terminal-ui-compacting-p ui))
                           "completion removes the compaction indicator")
+             (test-assert (zerop (terminal-ui-context-used ui))
+                          "compaction completion refreshes the context meter")
              (funcall send-status :compaction-started nil)
              (funcall send-status :turn-completed nil)
              (test-assert (and (not (terminal-ui-compacting-p ui))
@@ -4934,7 +4984,10 @@
                                  :tool-registry registry
                                  :worker worker-pool
                                  :agent agent
-                                 :ui nil))
+                                 :ui
+                                 (terminal-ui-create
+                                  :terminal
+                                  (make-instance 'recording-terminal :columns 80))))
                 (worker nil))
            (setf pool worker-pool
                  closable-application application
@@ -4983,6 +5036,18 @@
                        (application-provider application)))
                      (truename workspace))
               "workspace switching reconnects the provider with the new directory")
+             (let ((ui (application-ui application))
+                   (active-configuration
+                     (application-configuration application)))
+              (test-assert
+               (and (= (terminal-ui-context-used ui)
+                       (conversation-last-total-tokens conversation))
+                    (= (terminal-ui-context-window ui)
+                       (configuration-context-window active-configuration))
+                    (= (terminal-ui-context-compaction-limit ui)
+                       (configuration-compaction-token-limit
+                        active-configuration)))
+               "workspace switching refreshes the context meter after replacement"))
               (test-assert
                (eq
                 (mcp-server-registration-source
