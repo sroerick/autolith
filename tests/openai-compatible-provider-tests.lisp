@@ -614,7 +614,7 @@
 
 (-> test-openai-compatible-provider-authentication-bootstrap () null)
 (defun test-openai-compatible-provider-authentication-bootstrap ()
-  "Test named authentication bootstraps through a standard-input wrapper."
+  "Test named authentication refreshes dynamic models after saving an API key."
   (let* ((registry-snapshot (provider--registry-snapshot))
          (configuration (test-configuration))
          (root (test-configuration-root configuration)))
@@ -635,12 +635,25 @@
                              *terminal-escape-character*
                              *terminal-escape-character*)))
                   (message
-                    (let ((*standard-input* input)
-                          (*standard-output* output)
-                          (*api-key-input-file-descriptor* -1))
-                      (provider-authenticate provider
-                                             :stream output
-                                             :open-browser-p nil))))
+                    (test-call-with-function-replacements
+                     (list
+                      (list 'dexador:get
+                            (lambda (url &rest arguments)
+                              (declare (ignore url arguments))
+                              (values
+                               (json-encode
+                                (json-object
+                                 "data"
+                                 (json-array
+                                  (json-object "id" "bootstrap-auth/live-model"))))
+                               200 nil))))
+                     (lambda ()
+                       (let ((*standard-input* input)
+                             (*standard-output* output)
+                             (*api-key-input-file-descriptor* -1))
+                         (provider-authenticate provider
+                                                :stream output
+                                                :open-browser-p nil))))))
              (test-assert
               (typep provider 'openai-compatible-provider)
               "named authentication creates a discovery-only provider before a key exists")
@@ -651,6 +664,11 @@
               (api-key-credential-available-p
                (provider-credential-manager provider))
               "the bootstrapped provider reports its stored key")
+             (test-assert
+              (member "bootstrap-auth/live-model"
+                      (provider-model-identifiers)
+                      :test #'string=)
+              "authentication immediately refreshes dynamic provider models")
              (let ((credentials
                      (credential-source-load
                       (credential-manager-primary-source
@@ -659,7 +677,34 @@
                 (and credentials
                      (string= (oauth-credentials-access-token credentials)
                               "bootstrap-key"))
-                "bracketed paste saves the exact API key without terminal markers"))))
+                "bracketed paste saves the exact API key without terminal markers"))
+             (let ((failure-message
+                     (test-call-with-function-replacements
+                      (list
+                       (list 'dexador:get
+                             (lambda (url &rest arguments)
+                               (declare (ignore url arguments))
+                               (error "synthetic discovery failure"))))
+                      (lambda ()
+                        (let ((*standard-input*
+                                (make-string-input-stream
+                                 (format nil "replacement-key~%")))
+                              (*standard-output* output)
+                              (*api-key-input-file-descriptor* -1))
+                          (provider-authenticate provider
+                                                 :stream output
+                                                 :open-browser-p nil))))))
+               (test-assert
+                (and (search "API key was saved" failure-message)
+                     (search "Model discovery warnings:" failure-message)
+                     (search "Could not discover models for provider bootstrap-auth."
+                             failure-message))
+                "authentication reports model discovery failure without failing login")
+               (test-assert
+                (member "bootstrap-auth/live-model"
+                        (provider-model-identifiers)
+                        :test #'string=)
+                "failed authentication refresh retains the last dynamic model list"))))
       (provider--registry-restore registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

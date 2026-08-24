@@ -278,7 +278,7 @@
 
 (-> opencode-provider-test--authentication-bootstrap () null)
 (defun opencode-provider-test--authentication-bootstrap ()
-  "Test named authentication bootstraps OpenCode before model discovery."
+  "Test named authentication bootstraps OpenCode and refreshes model discovery."
   (let* ((registry-snapshot (provider--registry-snapshot))
          (configuration (test-configuration))
          (root (test-configuration-root configuration))
@@ -294,7 +294,7 @@
             (lambda (selected)
               (declare (ignore selected))
               (setf discovery-called-p t)
-              nil)
+              '("opencode/live-model"))
             :model-discovery-endpoint *opencode-models-endpoint*
             :factory
             (lambda (selected &key reasoning-summaries-p)
@@ -327,8 +327,12 @@
                       (string= message
                                "OpenCode authentication was saved by Autolith."))
                  "named OpenCode authentication dispatches to hidden-key login"))))
-           (test-assert (not discovery-called-p)
-                        "named OpenCode authentication does not require discovery"))
+           (test-assert
+            (and discovery-called-p
+                 (member "opencode/live-model"
+                         (provider-model-identifiers)
+                         :test #'string=))
+            "named OpenCode authentication immediately refreshes model discovery"))
       (provider--registry-restore registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

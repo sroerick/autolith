@@ -38,18 +38,40 @@
   (:documentation
    "Authenticate PROVIDER and return a safe user-visible completion message."))
 
+(-> provider--authentication-completion-message
+    (model-provider string)
+    string)
+(defun provider--authentication-completion-message (provider message)
+  "Refresh PROVIDER's dynamic model catalog and append any warning to MESSAGE."
+  (let ((registration (model-provider-registration provider)))
+    (if (and registration
+             (provider-registration-model-discovery registration))
+        (let ((failures
+                (provider-refresh-models
+                 (provider-configuration provider)
+                 :provider-name (provider-registration-name registration))))
+          (if failures
+              (format nil
+                      "~A~%Model discovery warnings:~%~{~A~%~}"
+                      message
+                      (mapcar #'autolith-error-message failures))
+              message))
+        message)))
+
 (defmethod provider-authenticate :around
     ((provider model-provider) &key stream open-browser-p)
   "Give a registered provider authenticator precedence over protocol defaults."
-  (let ((authenticator
-          (and (model-provider-registration provider)
-               (provider-registration-authenticator
-                (model-provider-registration provider)))))
-    (if authenticator
-        (funcall authenticator provider
-                 :stream stream
-                 :open-browser-p open-browser-p)
-        (call-next-method))))
+  (let* ((registration (model-provider-registration provider))
+         (authenticator
+           (and registration
+                (provider-registration-authenticator registration)))
+         (message
+           (if authenticator
+               (funcall authenticator provider
+                        :stream stream
+                        :open-browser-p open-browser-p)
+               (call-next-method))))
+    (provider--authentication-completion-message provider message)))
 
 (defmethod provider-authenticate ((provider model-provider)
                                   &key stream open-browser-p)
