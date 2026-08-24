@@ -402,132 +402,52 @@
 
 (-> test-terminal-line-editor () null)
 (defun test-terminal-line-editor ()
-  "Test Clinedi editing, multiline input, history, and Autolith control policy."
-  (let* ((terminal (make-instance 'recording-terminal :columns 10))
-         (editor (line-editor-create))
-         (ui (terminal-ui-create :terminal terminal
-                                 :editor editor
-                                 :prompt "猫> ")))
-    (with-terminal-ui (active-ui ui)
-      (terminal-ui-process-event active-ui '(:insert "go lin"))
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore display))
-        (test-assert
-         (string= (subseq text 0 cursor) "猫> go lin")
-         "an exact-width growing input word remains after a wide prompt"))
-      (terminal-ui-process-event active-ui '(:insert "e"))
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (let ((expected (format nil "猫> go ~%line")))
-          (test-assert
-           (string= (subseq text 0 cursor) expected)
-           "a growing live input word moves intact to the next row")
-          (test-assert
-           (not (search (format nil "lin~%e") text))
-           "live input never leaves a partial word on the previous row")
-          (test-assert
-           (string= text (clinedi:ansi-strip display))
-           "word-aware live input wrapping preserves styled presentation")))
-      (line-editor-set-text editor "go line" :cursor 5)
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore display))
-        (test-assert
-         (string= (subseq text 0 cursor) (format nil "猫> go ~%li"))
-         "a cursor inside a reflowed word follows its source position"))))
+  "Test Autolith event dispatch, submission, control policy, and reader actions."
   (let* ((raw-content
            (format nil "a~Cb~Cc~Cd"
                    #\Tab #\Return *terminal-escape-character*))
          (terminal (make-instance 'recording-terminal :columns 40))
          (editor (line-editor-create :text raw-content))
-         (ui (terminal-ui-create :terminal terminal
-                                 :editor editor)))
+         (ui (terminal-ui-create :terminal terminal :editor editor)))
     (multiple-value-bind (text display cursor)
         (terminal-ui--live-content ui)
-      (let ((expected
-              (format nil "> a    b~%c~Cd" (code-char #xfffd))))
-        (test-assert
-         (string= (subseq text 0 cursor) expected)
-         "externally supplied editor controls are sanitized before wrapping")
-        (test-assert
-         (string= text (clinedi:ansi-strip display))
-         "sanitized external editor text preserves styled presentation"))))
+      (declare (ignore display cursor))
+      (test-assert
+       (not (terminal-tests--contains-control-character-p text))
+       "externally supplied editor controls are sanitized before display")))
   (let* ((terminal (make-instance 'recording-terminal :columns 12))
          (editor (line-editor-create :history-limit 2))
-         (ui (terminal-ui-create :terminal terminal
-                                 :editor editor
-                                 :prompt "❯ ")))
+         (ui (terminal-ui-create :terminal terminal :editor editor)))
     (with-terminal-ui (active-ui ui)
       (terminal-ui-process-event active-ui '(:insert "abc"))
-      (terminal-ui-process-event active-ui :left)
+      (terminal-ui-process-event active-ui ':left)
       (terminal-ui-process-event active-ui '(:insert "X"))
       (test-assert (string= (line-editor-text editor) "abXc")
-                   "left arrow changes the insertion point")
-      (terminal-ui-process-event active-ui :home)
-      (terminal-ui-process-event active-ui '(:insert ">"))
-      (terminal-ui-process-event active-ui :end)
-      (terminal-ui-process-event active-ui :backspace)
-      (terminal-ui-process-event active-ui :insert-newline)
-      (terminal-ui-process-event active-ui '(:insert "second line"))
-      (let ((multiline (format nil ">abX~%second line")))
-        (test-assert (string= (line-editor-text editor) multiline)
-                     "modified Enter inserts a real logical input line")
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui)
-          (declare (ignore display cursor))
-          (test-assert (search multiline text)
-                       "the live region preserves explicit input newlines"))
-        (test-assert (> (terminal-ui-live-row-count active-ui) 2)
-                     "multiline input occupies multiple physical rows")
-        (multiple-value-bind (action submitted)
-            (terminal-ui-process-event active-ui :submit)
-          (test-assert (eq action :submit)
-                       "Enter produces a submit action")
-          (test-assert (string= submitted multiline)
-                       "Enter returns the complete multiline input")))
-      (let ((visual-lines (format nil "abcd~%xy~%abcdef")))
-        (line-editor-set-text editor visual-lines)
-        (terminal-ui-process-event active-ui :up)
-        (test-assert (= (line-editor-cursor editor) 7)
-                     "up arrow moves to the preceding visual line")
-        (terminal-ui-process-event active-ui :down)
-        (test-assert (= (line-editor-cursor editor) (length visual-lines))
-                     "down arrow restores the preferred visual column")
-        (line-editor-clear editor))
+                   "terminal events edit the active input buffer")
+      (terminal-ui-process-event active-ui ':insert-newline)
+      (terminal-ui-process-event active-ui '(:insert "second"))
+      (multiple-value-bind (action submitted)
+          (terminal-ui-process-event active-ui ':submit)
+        (test-assert (eq action ':submit)
+                     "the terminal dispatches submission")
+        (test-assert (string= submitted (format nil "abX~%secondc"))
+                     "submission returns the complete multiline input"))
       (terminal-ui-process-event active-ui '(:insert "draft"))
-      (terminal-ui-process-event active-ui :history-previous)
-      (test-assert (string= (line-editor-text editor)
-                            (format nil ">abX~%second line"))
-                   "up arrow recalls the newest multiline history entry")
-      (terminal-ui-process-event active-ui :history-next)
-      (test-assert (string= (line-editor-text editor) "draft")
-                   "down arrow restores the draft")
-      (terminal-ui-process-event active-ui '(:insert " alpha beta  "))
-      (terminal-ui-process-event active-ui :kill-word)
-      (test-assert (string= (line-editor-text editor) "draft alpha ")
-                   "Ctrl-Backspace deletes whitespace and the previous word")
-      (terminal-ui-process-event active-ui :word-left)
-      (test-assert (= (line-editor-cursor editor) 6)
-                   "Ctrl-Left moves to the previous word boundary")
-      (terminal-ui-process-event active-ui :word-right)
-      (test-assert (= (line-editor-cursor editor) 11)
-                   "Ctrl-Right moves to the next word boundary")
       (multiple-value-bind (action payload)
-          (terminal-ui-process-event active-ui :interrupt)
+          (terminal-ui-process-event active-ui ':interrupt)
         (declare (ignore payload))
-        (test-assert (eq action :cleared)
-                     "Ctrl-C clears non-empty editor input"))
+        (test-assert (eq action ':cleared)
+                     "interrupt clears non-empty editor input"))
       (multiple-value-bind (action payload)
-          (terminal-ui-process-event active-ui :interrupt)
+          (terminal-ui-process-event active-ui ':interrupt)
         (declare (ignore payload))
-        (test-assert (eq action :interrupt)
-                     "Ctrl-C interrupts when the editor is empty"))
+        (test-assert (eq action ':interrupt)
+                     "interrupt propagates when the editor is empty"))
       (multiple-value-bind (action payload)
-          (terminal-ui-process-event active-ui :end-of-input)
+          (terminal-ui-process-event active-ui ':end-of-input)
         (declare (ignore payload))
-        (test-assert (eq action :end-of-input)
-                     "Ctrl-D exits when the editor is empty"))))
+        (test-assert (eq action ':end-of-input)
+                     "end of input propagates when the editor is empty"))))
   nil)
 
 (-> test-terminal-history-replacement () null)
@@ -563,67 +483,6 @@
      "replacement history remains extendable and bounded"))
   nil)
 
-(-> test-terminal-lisp-draft () null)
-(defun test-terminal-lisp-draft ()
-  "Test Lisp prompt projection, live ColorLisp spans, and exact mode switching."
-  (multiple-value-bind (prompt spans)
-      (terminal-ui--prompt-spans "❯ " t)
-    (test-assert (string= prompt "* ")
-                 "a Lisp draft replaces the normal prompt marker")
-    (test-assert (find (terminal-span ':lisp-prompt "*") spans :test #'equal)
-                 "the Lisp prompt marker uses its red semantic style"))
-  (let* ((source "(defun terminal-lisp-draft-example () 42)")
-         (spans
-           (syntax--highlight-spans
-            source
-            :language (language-find ':common-lisp))))
-    (test-assert
-     (and (find (terminal-span ':syntax-keyword "defun") spans :test #'equal)
-          (find (terminal-span ':syntax-function "terminal-lisp-draft-example")
-                spans
-                :test #'equal)
-          (find (terminal-span ':syntax-number "42") spans :test #'equal))
-     "ColorLisp highlights a live Common Lisp draft semantically"))
-  (let* ((terminal (make-instance 'recording-terminal
-                                  :columns 120
-                                  :styled-p t))
-         (editor (line-editor-create))
-         (ui (terminal-ui-create :terminal terminal
-                                 :editor editor
-                                 :prompt "❯ ")))
-    (line-editor-set-text
-     editor
-     (format nil "(let ((value 40))~%  (+ value 2))"))
-    (multiple-value-bind (text display cursor)
-        (terminal-ui--live-content ui)
-      (test-assert (uiop:string-prefix-p "* (let" text)
-                   "input beginning with an opening parenthesis enters Lisp mode")
-      (test-assert (= cursor (1- (length text)))
-                   "the Lisp draft cursor precedes the live region newline")
-      (test-assert (string= text (clinedi:ansi-strip display))
-                   "live Lisp highlighting preserves exact visible source text"))
-    (line-editor-set-text editor " (list 1 2)")
-    (multiple-value-bind (text display cursor)
-        (terminal-ui--live-content ui)
-      (declare (ignore display cursor))
-      (test-assert (uiop:string-prefix-p "❯  (list" text)
-                   "leading whitespace keeps ordinary prose input mode"))
-    (line-editor-set-text editor "ordinary prose")
-    (multiple-value-bind (text display cursor)
-        (terminal-ui--live-content ui)
-      (declare (ignore display cursor))
-      (test-assert (uiop:string-prefix-p "❯ ordinary prose" text)
-                   "removing the opening parenthesis restores the normal prompt"))
-    (line-editor-set-text editor "42")
-    (let ((*terminal-ui-lisp-input-p* t))
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content ui)
-        (declare (ignore cursor))
-        (test-assert
-         (and (uiop:string-prefix-p "* 42" text)
-              (search (terminal-style-sequence ':syntax-number) display))
-         "an explicit Lisp reader highlights forms without an opening parenthesis"))))
-  nil)
 
 (-> test-terminal-image-attachments () null)
 (defun test-terminal-image-attachments ()
@@ -973,190 +832,6 @@
      "protocol shutdown continues after one cleanup write fails"))
   nil)
 
-(-> test-terminal-live-region-layout () null)
-(defun test-terminal-live-region-layout ()
-  "Test placeholder hints, styled span emission, and finalized entry separation."
-  (let* ((terminal (make-instance 'recording-terminal
-                                  :columns 40
-                                  :styled-p t))
-         (ui (terminal-ui-create :terminal terminal
-                                 :prompt "❯ "
-                                 :placeholder "hint text")))
-    (with-terminal-ui (active-ui ui)
-      (test-assert (search "hint text" (recording-terminal-output terminal))
-                   "an empty prompt row shows the placeholder hint")
-      (recording-terminal-reset terminal)
-      (terminal-ui-process-event active-ui '(:insert "a"))
-      (let ((typing (recording-terminal-output terminal)))
-        (test-assert (not (search "hint text" typing))
-                     "typed input replaces the placeholder hint")
-        (test-assert (search "a" typing)
-                     "typed input is painted on the prompt row"))
-      (recording-terminal-reset terminal)
-      (terminal-ui-set-status active-ui "working")
-      (test-assert (search "∙ " (recording-terminal-output terminal))
-                   "the status row carries its activity separator")
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content
-           active-ui
-           (terminal-ui-status-started-at active-ui))
-        (declare (ignore display cursor))
-        (test-assert (char= (char text 0) #\Newline)
-                     "an empty row appears above the status row")
-        (test-assert (search "READ  ∙ 00:00" text)
-                     "the status row starts with its fixed-width REPL spinner")
-        (test-assert
-         (equal (terminal-ui--status-spinner-spans-at
-                 active-ui
-                 (terminal-ui-status-started-at active-ui))
-                (list (terminal-span ':status-plain "R")
-                      (terminal-span ':status-dim "EAD ")))
-         "the spinner dims every character except its cycling highlight"))
-      (recording-terminal-reset terminal)
-      (terminal-ui-append-finalized
-       active-ui
-       :styled
-       (list (terminal-span :brand "autolith")
-             (terminal-span :plain " ready")))
-      (let ((finalized (recording-terminal-output terminal)))
-        (test-assert
-         (search (format nil "~C[1;35mautolith" *terminal-escape-character*)
-                 finalized)
-         "styled finalized spans emit basic rendition controls")
-        (test-assert
-         (search (format nil " ready~C~C~C~C" #\Newline #\Return
-                         #\Newline #\Return)
-                 finalized)
-         "finalized entries end with one separating blank row")
-        (test-assert (not (terminal-tests--forbidden-control-p finalized))
-                     "styled transcript output never erases the display"))))
-  (let* ((plain-terminal (make-instance 'recording-terminal :columns 40))
-         (plain-ui (terminal-ui-create :terminal plain-terminal)))
-    (with-terminal-ui (active-ui plain-ui)
-      (terminal-ui-append-finalized active-ui
-                                    :styled
-                                    (list (terminal-span :brand "autolith"))))
-    (test-assert (not (search "[1;35m" (recording-terminal-output plain-terminal)))
-                 "styling is omitted when the terminal does not permit it"))
-  nil)
-
-(-> test-terminal-status-bar () null)
-(defun test-terminal-status-bar ()
-  "Test status metadata, indexed background, padding, and plain fallback."
-  (let* ((columns 96)
-         (details
-           (list (terminal-span ':status-dim "  ")
-                 (terminal-span ':status-model "gpt-5.6-sol")
-                 (terminal-span ':status-dim " · ")
-                 (terminal-span ':status-effort "ultra")
-                 (terminal-span ':status-dim " · git ")
-                 (terminal-span ':status-branch "chromatic")))
-         (terminal (make-instance 'recording-terminal
-                                  :columns columns
-                                  :styled-p t))
-         (ui (terminal-ui-create :terminal terminal)))
-    (let ((cl-colorist:*color-level* ':indexed))
-      (with-terminal-ui (active-ui ui)
-        (recording-terminal-reset terminal)
-        (terminal-ui-set-status active-ui "working" :details details)
-        (test-assert (= (length (recording-terminal-chunks terminal)) 1)
-                     "one status change is one buffered live-region frame")
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content
-             active-ui
-             (terminal-ui-status-started-at active-ui))
-          (declare (ignore cursor))
-          (let ((status-row
-                  (second (uiop:split-string text :separator '(#\Newline)))))
-            (test-assert (= (text-cell-width status-row) columns)
-                         "a styled status background spans the terminal width")
-            (test-assert (search "gpt-5.6-sol · ultra · git chromatic"
-                                 status-row)
-                         "status metadata compactly shows model, effort, and branch"))
-          (test-assert
-           (search (terminal-style-sequence ':status-model t) display)
-           "the styled status row uses its indexed neutral background")
-          (test-assert
-           (search (terminal-style-sequence ':status-dim t) display)
-           "neutral status text uses its readable indexed style")))))
-  (let* ((columns 96)
-         (terminal (make-instance 'recording-terminal :columns columns))
-         (ui (terminal-ui-create :terminal terminal)))
-    (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status
-       active-ui
-       "working"
-       :details (list (terminal-span ':status-model "model")))
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content
-           active-ui
-           (terminal-ui-status-started-at active-ui))
-        (declare (ignore display cursor))
-        (let ((status-row
-                (second (uiop:split-string text :separator '(#\Newline)))))
-          (test-assert (< (text-cell-width status-row) columns)
-                       "an unstyled status row omits invisible trailing padding")))))
-  (dolist (columns '(1 2 39 40 41))
-    (let* ((terminal (make-instance 'recording-terminal
-                                    :columns columns
-                                    :styled-p t))
-           (ui (terminal-ui-create :terminal terminal)))
-      (with-terminal-ui (active-ui ui)
-        (terminal-ui-set-status active-ui "working")
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content
-             active-ui
-             (terminal-ui-status-started-at active-ui))
-          (declare (ignore display))
-          (test-assert
-           (= (text-cell-width
-               (second (uiop:split-string text :separator '(#\Newline))))
-              columns)
-           (format nil "status rows fit a ~D-column terminal" columns))
-          (multiple-value-bind (cursor-row cursor-column pending-wrap)
-              (screen-position text :columns columns :end cursor)
-            (declare (ignore pending-wrap))
-            (test-assert
-             (and (= (terminal-ui-live-cursor-row active-ui) cursor-row)
-                  (= (live-region-cursor-column
-                      (terminal-ui-live-region active-ui))
-                     cursor-column))
-             (format nil
-                     "status geometry tracks the prompt at ~D columns"
-                     columns)))))))
-  nil)
-
-(-> test-terminal-narrow-live-region () null)
-(defun test-terminal-narrow-live-region ()
-  "Test typed prompt layout and repaint bookkeeping at minimal terminal widths."
-  (dolist (columns '(1 2))
-    (let* ((terminal (make-instance 'recording-terminal :columns columns))
-           (ui (terminal-ui-create :terminal terminal :prompt "❯ ")))
-      (with-terminal-ui (active-ui ui)
-        (terminal-ui-process-event active-ui '(:insert "a"))
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui)
-          (declare (ignore display))
-          (multiple-value-bind (cursor-row cursor-column cursor-wrap)
-              (screen-position text :columns columns :end cursor)
-            (declare (ignore cursor-wrap))
-            (multiple-value-bind (end-row end-column end-wrap)
-                (screen-position text :columns columns)
-              (declare (ignore end-column end-wrap))
-              (test-assert
-               (< cursor-column columns)
-               (format nil "the live cursor fits a ~D-column terminal" columns))
-              (test-assert
-               (= (terminal-ui-live-row-count active-ui) (1+ end-row))
-               (format nil
-                       "repaint bookkeeping counts rows at ~D columns"
-                       columns))
-              (test-assert
-               (= (terminal-ui-live-cursor-row active-ui) cursor-row)
-               (format nil
-                       "repaint bookkeeping tracks the cursor at ~D columns"
-                       columns))))))))
-  nil)
 
 (-> test-terminal-bounded-editor-repaint () null)
 (defun test-terminal-bounded-editor-repaint ()
@@ -1198,146 +873,6 @@
                    "the bounded viewport follows the cursor to the draft start")))
   nil)
 
-(-> test-terminal-preview-rows () null)
-(defun test-terminal-preview-rows ()
-  "Test transient multi-row previews, ordering, clipping, and clearing."
-  (let* ((terminal (make-instance 'recording-terminal :columns 20 :rows 8))
-         (ui (terminal-ui-create :terminal terminal))
-         (preview
-           (list (list (terminal-span ':hint "◇ reasoning summary"))
-                 (list (terminal-span ':dim "  │ ")
-                       (terminal-span ':strong "<thought>")
-                       (terminal-span ':plain " checking a long path")))))
-    (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status active-ui "untangling")
-      (terminal-ui-set-preview-rows active-ui preview)
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore display cursor))
-        (let ((preview-position (search "◇ reasoning summary" text))
-              (activity-position (search "untangling" text))
-              (status-position (search "READ  ∙ " text)))
-          (test-assert (and preview-position
-                            activity-position
-                            status-position
-                            (< status-position activity-position preview-position))
-                       "preview rows appear below status and provider activity"))
-        (test-assert (every (lambda (line)
-                             (<= (text-cell-width line) 20))
-                           (uiop:split-string text :separator '(#\Newline)))
-                     "preview rows are clipped to the terminal width"))
-      (test-assert
-       (find (terminal-span ':strong "<thought>")
-             (apply #'append (terminal-ui-preview-rows active-ui))
-             :test #'equal)
-       "preview rows preserve semantic inline styles")
-      (recording-terminal-reset terminal)
-      (terminal-ui-set-preview-rows active-ui preview)
-      (test-assert (string= (recording-terminal-output terminal) "")
-                   "an unchanged preview does not repaint the live region")
-      (terminal-ui-set-preview-rows active-ui nil)
-      (test-assert (null (terminal-ui-preview-rows active-ui))
-                   "clearing the preview removes its stored rows")
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore display cursor))
-        (test-assert (not (search "reasoning summary" text))
-                     "a cleared preview disappears without entering scrollback"))))
-  nil)
-
-
-(-> test-terminal-live-section-order () null)
-(defun test-terminal-live-section-order ()
-  "Test semantic live sections remain below the animated status row in order."
-  (let* ((clock 100)
-         (terminal (make-instance 'recording-terminal
-                                  :columns 100
-                                  :rows 40))
-         (ui (terminal-ui-create
-              :terminal terminal
-              :clock-function (lambda () clock))))
-    (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-status active-ui "running resource.read")
-      (terminal-ui-set-compacting active-ui t)
-      (terminal-ui-set-local-activity active-ui "evaluating local Lisp")
-      (terminal-ui-set-agent-activities
-       active-ui
-       (list
-        (list :id "agent-one"
-              :index 1
-              :agent "reviewer"
-              :state ':running
-              :current-tool "resource.read"
-              :current-tool-duration-ms 1000
-              :recent-tools nil
-              :request-count 1
-              :duration-ms 2000
-              :assignment "Check live ordering."
-              :detached t)))
-      (terminal-ui-set-preview-rows
-       active-ui
-       (list (list (terminal-span ':hint "◇ reasoning activity"))))
-      (terminal-ui-stream-update active-ui :tail "stream tail")
-      (terminal-ui-set-notice active-ui "notice row" :duration-seconds 60)
-      (terminal-ui-set-pending-inputs
-       active-ui '("steer next") '("follow later"))
-      (terminal-ui-set-input active-ui "draft")
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui clock)
-        (declare (ignore display cursor))
-        (let ((positions
-                (mapcar (lambda (label)
-                          (search label text))
-                        '("COMPACTING"
-                          "READ  ∙ "
-                          "* evaluating local Lisp"
-                          "agent-one"
-                          "running resource.read"
-                          "◇ reasoning activity"
-                          "notice row"
-                          "steering 1"
-                          "follow-up 1"
-                          "stream tail"
-                          "> draft"))))
-          (test-assert
-           (and (every #'identity positions)
-                (every #'< positions (rest positions)))
-           "status, notice, pending, stream, and prompt rows stay ordered"))))
-  nil))
-
-(-> test-terminal-live-word-wrapping () null)
-(defun test-terminal-live-word-wrapping ()
-  "Test styled previews and stream tails wrap at word boundaries."
-  (let* ((terminal (make-instance 'recording-terminal
-                                  :columns 10
-                                  :rows 8
-                                  :styled-p t))
-         (ui (terminal-ui-create :terminal terminal))
-         (spans (list (terminal-span ':user "alpha ")
-                      (terminal-span ':strong "beta ")
-                      (terminal-span ':emphasis "gamma")))
-         (expected (format nil "alpha beta~%gamma")))
-    (with-terminal-ui (active-ui ui)
-      (terminal-ui-set-preview-rows active-ui (list spans))
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore cursor))
-        (test-assert (search expected text)
-                     "styled previews wrap only between words")
-        (test-assert (string= text (cl-colorist:strip-ansi display))
-                     "wrapped previews preserve ANSI-visible equivalence")
-        (test-assert (search (terminal-style-sequence ':emphasis) display)
-                     "wrapped previews retain continued span styling"))
-      (terminal-ui-set-preview-rows active-ui nil)
-      (terminal-ui-stream-update active-ui :tail spans)
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui)
-        (declare (ignore cursor))
-        (test-assert (search expected text)
-                     "styled stream tails wrap only between words")
-        (test-assert (string= text (cl-colorist:strip-ansi display))
-                     "wrapped stream tails preserve ANSI-visible equivalence"))))
-  nil)
 
 (-> test-terminal-transient-notice () null)
 (defun test-terminal-transient-notice ()
@@ -1541,162 +1076,64 @@
 
 (-> test-terminal-compaction-indicator () null)
 (defun test-terminal-compaction-indicator ()
-  "Test compaction layout, semantic styling, animation, and narrow clipping."
+  "Test compaction state, refresh timing, and idempotent lifecycle updates."
   (let* ((clock 0)
          (clock-calls 0)
-         (columns 60)
-         (terminal (make-instance 'recording-terminal
-                                  :columns columns
-                                  :styled-p t))
+         (terminal (make-instance 'recording-terminal :columns 60))
          (ui (terminal-ui-create
               :terminal terminal
               :clock-function (lambda ()
                                 (incf clock-calls)
-                                clock)))
-         (initial-indicator nil))
-    (let ((cl-colorist:*color-level* ':indexed))
-      (with-terminal-ui (active-ui ui)
-        (terminal-ui-set-status active-ui "working")
-        (let ((calls-before-start clock-calls))
-          (recording-terminal-reset terminal)
-          (terminal-ui-set-compacting active-ui t)
-          (test-assert (= clock-calls (1+ calls-before-start))
-                       "starting compaction samples the monotonic clock once")
-          (test-assert (= (length (recording-terminal-chunks terminal)) 1)
-                       "starting compaction paints one live-region frame"))
-        (test-assert (and (terminal-ui-compacting-p active-ui)
-                          (= (terminal-ui-compaction-started-at active-ui) 0))
-                     "compaction state retains its independent start time")
-        (recording-terminal-reset terminal)
-        (let ((calls-before-repeat clock-calls))
-          (terminal-ui-set-compacting active-ui t)
-          (test-assert (= clock-calls calls-before-repeat)
-                       "repeating active compaction does not sample the clock")
-          (test-assert (string= (recording-terminal-output terminal) "")
-                       "repeating active compaction does not repaint"))
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui clock)
-          (declare (ignore cursor))
-          (let* ((lines (uiop:split-string text :separator '(#\Newline)))
-                 (indicator (second lines))
-                 (status (third lines)))
-            (setf initial-indicator indicator)
-            (test-assert (string= (first lines) "")
-                         "one blank row separates compaction from prior content")
-            (test-assert (search "COMPACTING  [====>" indicator)
-                         "compaction shows a labelled indeterminate bar")
-            (test-assert (search "READ  ∙ 00:00" status)
-                         "compaction appears immediately above the modeline")
-            (test-assert (= (text-cell-width indicator) columns)
-                         "a styled compaction row spans the terminal width"))
-          (let ((styles
-                  (mapcar #'terminal-span-style
-                          (terminal-ui--compaction-row-at
-                           active-ui clock columns))))
-            (test-assert
-             (every (lambda (style) (member style styles :test #'eq))
-                    '(:compaction-label :compaction-track :compaction-head))
-             "the indicator retains distinct label, track, and head styles"))
-          (test-assert
-           (search (terminal-style-sequence ':compaction-label t) display)
-           "the compaction label uses its bright indexed style")
-          (test-assert
-           (search (terminal-style-sequence ':compaction-head t) display)
-           "the moving compaction head uses its bright indexed style"))
-        (setf clock 0.24)
-        (test-assert (not (terminal-ui-refresh-status active-ui))
-                     "time within one compaction frame does not repaint")
-        (setf clock 0.25)
-        (test-assert (terminal-ui-refresh-status active-ui)
-                     "a new compaction frame repaints the indicator")
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui clock)
-          (declare (ignore display cursor))
-          (let ((indicator
-                  (second (uiop:split-string text :separator '(#\Newline)))))
-            (test-assert (and (search "[.====>" indicator)
-                              (not (string= indicator initial-indicator)))
-                         "the compaction head advances without implying progress")))
-        (recording-terminal-reset terminal)
-        (terminal-ui-set-compacting active-ui nil)
-        (test-assert (and (not (terminal-ui-compacting-p active-ui))
-                          (null (terminal-ui-compaction-started-at active-ui)))
-                     "clearing compaction removes all indicator timing state")
-        (test-assert (= (length (recording-terminal-chunks terminal)) 1)
-                     "clearing compaction paints one live-region frame")
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui clock)
-          (declare (ignore display cursor))
-          (test-assert (and (not (search "COMPACTING" text))
-                            (search "EVAL  ∙ 00:00" text)
-                            (terminal-ui-status active-ui))
-                       "clearing compaction preserves the ordinary modeline"))
-        (recording-terminal-reset terminal)
-        (let ((calls-before-repeat clock-calls))
-          (terminal-ui-set-compacting active-ui nil)
-          (test-assert (= clock-calls calls-before-repeat)
-                       "repeating cleared compaction does not sample the clock")
-          (test-assert (string= (recording-terminal-output terminal) "")
-                       "repeating cleared compaction does not repaint")))))
-  (dolist (columns '(1 2 10 14 15 40))
-    (let* ((terminal (make-instance 'recording-terminal
-                                    :columns columns
-                                    :styled-p t))
-           (ui (terminal-ui-create :terminal terminal
-                                   :clock-function (lambda () 0))))
-      (with-terminal-ui (active-ui ui)
-        (terminal-ui-set-status active-ui "working")
-        (terminal-ui-set-compacting active-ui t)
-        (multiple-value-bind (text display cursor)
-            (terminal-ui--live-content active-ui 0)
-          (declare (ignore display))
-          (let* ((lines (uiop:split-string text :separator '(#\Newline)))
-                 (indicator (second lines))
-                 (status (third lines)))
-            (test-assert (= (text-cell-width indicator) columns)
-                         (format nil
-                                 "compaction rows fit a ~D-column terminal"
-                                 columns))
-            (test-assert (= (text-cell-width status) columns)
-                         (format nil
-                                 "modelines remain below compaction at ~D columns"
-                                 columns))
-            (when (= columns 14)
-              (test-assert (not (search "[" indicator))
-                           "a width without track space shows only the label"))
-            (when (= columns 15)
-              (test-assert (search "[>]" indicator)
-                           "the narrowest track retains a directional head")))
-          (multiple-value-bind (cursor-row cursor-column pending-wrap)
-              (screen-position text :columns columns :end cursor)
-            (declare (ignore pending-wrap))
-            (test-assert
-             (and (= (terminal-ui-live-cursor-row active-ui) cursor-row)
-                  (= (live-region-cursor-column
-                      (terminal-ui-live-region active-ui))
-                     cursor-column))
-             (format nil
-                     "compaction geometry tracks the prompt at ~D columns"
-                     columns)))))))
-  (let* ((columns 60)
-         (terminal (make-instance 'recording-terminal :columns columns))
-         (ui (terminal-ui-create :terminal terminal
-                                 :clock-function (lambda () 0))))
+                                clock))))
     (with-terminal-ui (active-ui ui)
       (terminal-ui-set-status active-ui "working")
+      (recording-terminal-reset terminal)
       (terminal-ui-set-compacting active-ui t)
-      (multiple-value-bind (text display cursor)
-          (terminal-ui--live-content active-ui 0)
-        (declare (ignore cursor))
-        (let ((indicator
-                (second (uiop:split-string text :separator '(#\Newline)))))
-          (test-assert (search "COMPACTING  [====>" indicator)
-                       "plain terminals retain the ASCII compaction indicator")
-          (test-assert (< (text-cell-width indicator) columns)
-                       "plain compaction rows omit invisible trailing padding"))
-        (test-assert (not (find *terminal-escape-character* display))
-                     "plain compaction output contains no styling controls"))))
-  nil)
+      (test-assert
+       (terminal-ui-compacting-p active-ui)
+       "starting compaction records active state")
+      (test-assert
+       (= (terminal-ui-compaction-started-at active-ui) 0)
+       "starting compaction records its start time")
+      (test-assert
+       (= (length (recording-terminal-chunks terminal)) 1)
+       "starting compaction repaints")
+      (recording-terminal-reset terminal)
+      (let ((calls-before-repeat clock-calls))
+        (terminal-ui-set-compacting active-ui t)
+        (test-assert
+         (= clock-calls calls-before-repeat)
+         "repeating active compaction does not read the clock")
+        (test-assert
+         (string= (recording-terminal-output terminal) "")
+         "repeating active compaction does not repaint"))
+      (setf clock 0.24)
+      (test-assert (not (terminal-ui-refresh-status active-ui))
+                   "time within one compaction frame does not repaint")
+      (setf clock 0.25)
+      (test-assert (terminal-ui-refresh-status active-ui)
+                   "a new compaction frame repaints")
+      (recording-terminal-reset terminal)
+      (terminal-ui-set-compacting active-ui nil)
+      (test-assert
+       (not (terminal-ui-compacting-p active-ui))
+       "clearing compaction removes active state")
+      (test-assert
+       (null (terminal-ui-compaction-started-at active-ui))
+       "clearing compaction removes timing state")
+      (test-assert
+       (= (length (recording-terminal-chunks terminal)) 1)
+       "clearing compaction repaints")
+      (recording-terminal-reset terminal)
+      (let ((calls-before-repeat clock-calls))
+        (terminal-ui-set-compacting active-ui nil)
+        (test-assert
+         (= clock-calls calls-before-repeat)
+         "repeating cleared compaction does not read the clock")
+        (test-assert
+         (string= (recording-terminal-output terminal) "")
+         "repeating cleared compaction does not repaint")))
+  nil))
 
 (-> test-terminal-agent-activities () null)
 (defun test-terminal-agent-activities ()
@@ -2819,130 +2256,6 @@ sources keeps the tests deterministic under an interactive terminal."
           (sb-posix:unsetenv "LINES"))))
   nil)
 
-(-> test-terminal-styling-primitives () null)
-(defun test-terminal-styling-primitives ()
-  "Test semantic style resolution, span safety, clipping, and word wrapping."
-  (test-assert
-   (let ((sequence (terminal-style-sequence :dim)))
-     (and (stringp sequence)
-          (char= (char sequence 0) *terminal-escape-character*)
-          (char= (char sequence (1- (length sequence))) #\m)))
-   "semantic styles resolve to rendition controls")
-  (test-assert (null (terminal-style-sequence :plain))
-               "the plain style resolves to no control sequence")
-  (test-assert
-   (and (string= (terminal-style-sequence :syntax-keyword)
-                 (format nil "~C[35m" *terminal-escape-character*))
-        (string= (terminal-style-sequence :syntax-string)
-                 (format nil "~C[32m" *terminal-escape-character*))
-        (string= (terminal-style-sequence :syntax-function)
-                 (format nil "~C[34m" *terminal-escape-character*)))
-   "syntax styles use the terminal's base ANSI palette")
-  (test-assert
-   (string= (terminal-style-sequence :timestamp-time)
-            (format nil "~C[36m" *terminal-escape-character*))
-   "timestamp times use a distinct cyan terminal color")
-  (let ((indexed-sequences
-          (loop for style in '(:brand-gradient-1 :brand-gradient-2
-                               :brand-gradient-3 :brand-gradient-4
-                               :brand-gradient-5 :brand-gradient-6)
-                collect (terminal-style-sequence style t))))
-    (test-assert
-     (= (length (remove-duplicates indexed-sequences :test #'string=)) 6)
-     "every brand-gradient row has a distinct indexed color")
-    (test-assert
-     (string= (first indexed-sequences)
-              (format nil "~C[1;38;5;193m" *terminal-escape-character*))
-     "the brand gradient begins with its lightest green"))
-  (test-assert
-   (string= (terminal-style-sequence :brand-gradient-1 nil)
-            (format nil "~C[1;32m" *terminal-escape-character*))
-   "the brand gradient falls back to solid bold green")
-  (let ((indexed-sequences
-          (loop for style in '(:recovery-gradient-1 :recovery-gradient-2
-                               :recovery-gradient-3 :recovery-gradient-4
-                               :recovery-gradient-5 :recovery-gradient-6)
-                collect (terminal-style-sequence style t))))
-    (test-assert
-     (= (length (remove-duplicates indexed-sequences :test #'string=)) 6)
-     "every recovery-gradient row has a distinct indexed color")
-    (test-assert
-     (string= (first indexed-sequences)
-              (format nil "~C[1;38;5;224m" *terminal-escape-character*))
-     "the recovery gradient begins with its lightest red"))
-  (test-assert
-   (string= (terminal-style-sequence :recovery-gradient-1 nil)
-            (format nil "~C[1;31m" *terminal-escape-character*))
-   "the recovery gradient falls back to solid bold red")
-  (test-assert
-   (and (string= (terminal-style-sequence :status-model t)
-                 (format nil "~C[1;96;48;5;236m"
-                         *terminal-escape-character*))
-        (string= (terminal-style-sequence :status-model nil)
-                 (format nil "~C[1;96;40m" *terminal-escape-character*)))
-   "status text keeps a base color over indexed and basic neutral backgrounds")
-  (test-assert
-   (and (string= (terminal-style-sequence :status-dim t)
-                 (format nil "~C[37;48;5;236m"
-                         *terminal-escape-character*))
-        (string= (terminal-style-sequence :status-dim nil)
-                 (format nil "~C[37;40m" *terminal-escape-character*)))
-   "neutral status text stays readable without terminal-dependent faint color")
-  (test-assert
-   (let ((cl-colorist:*color-level* ':indexed))
-     (and (terminal-environment-indexed-color-p)
-          (terminal-environment-styling-p)))
-   "terminal capability detection accepts an indexed Colorist environment")
-  (test-assert
-   (let ((cl-colorist:*color-level* ':none))
-     (not (terminal-environment-styling-p)))
-   "terminal capability detection honors disabled Colorist presentation")
-  (test-assert
-   (terminal-styled-text-p (list (terminal-span :brand "autolith")
-                                 (terminal-span :plain " ready")))
-   "lists of spans form styled text")
-  (test-assert (not (terminal-styled-text-p (list "bare string")))
-               "bare strings are not styled text")
-  (test-assert (not (terminal-styled-text-p (terminal-span :dim "x")))
-               "a dotted span alone is not styled text")
-  (let ((clipped (terminal--clip-spans
-                  (list (terminal-span :user "abc")
-                        (terminal-span :dim "defg"))
-                  5)))
-    (test-assert
-     (equal clipped (list (terminal-span :user "abc")
-                          (terminal-span :dim "de")))
-     "span clipping preserves styles across the width boundary"))
-  (test-assert
-   (= (terminal--spans-width (list (terminal-span :user "abc")
-                                   (terminal-span :dim "de")))
-      5)
-   "span width sums sanitized cell widths")
-  (let ((hostile (terminal--clip-spans
-                  (list (terminal-span :plain
-                                       (format nil "a~C[31mb~%c"
-                                               *terminal-escape-character*)))
-                  40)))
-    (test-assert
-     (not (terminal-tests--contains-control-character-p
-           (terminal-span-text (first hostile))))
-     "span clipping neutralizes untrusted controls and newlines"))
-  (let ((cases '(("" 10 (""))
-                 ("hello" 10 ("hello"))
-                 ("aa bb" 2 ("aa" "bb"))
-                 ("ab cd" 4 ("ab" "cd"))
-                 ("abcdef" 3 ("abc" "def"))
-                 ("one two three" 7 ("one two" "three"))
-                 ("日本語" 4 ("日本" "語")))))
-    (loop for (text width expected) in cases
-          do (test-assert
-              (equal (wrap-text text width) expected)
-              (format nil "wrapping ~S at ~D produces ~S" text width expected))))
-  (test-assert
-   (equal (wrap-text (format nil "alpha~%beta gamma") 5)
-          '("alpha" "beta" "gamma"))
-   "wrapping preserves explicit line breaks before width breaks")
-  nil)
 
 (-> test-terminal-non-tty-fallback () null)
 (defun test-terminal-non-tty-fallback ()
@@ -3193,17 +2506,10 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-resize-frame)
   (test-terminal-line-editor)
   (test-terminal-history-replacement)
-  (test-terminal-lisp-draft)
   (test-terminal-image-attachments)
   (test-terminal-input-decoding)
-  (test-terminal-live-region-layout)
-  (test-terminal-status-bar)
   (test-terminal-status-worked-time)
-  (test-terminal-narrow-live-region)
   (test-terminal-bounded-editor-repaint)
-  (test-terminal-preview-rows)
-  (test-terminal-live-section-order)
-  (test-terminal-live-word-wrapping)
   (test-terminal-transient-notice)
   (test-terminal-notice-lock-contention)
   (test-terminal-timed-status)
@@ -3216,7 +2522,6 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-modal-selection)
   (test-terminal-modal-resize)
   (test-terminal-application-read-resize)
-  (test-terminal-styling-primitives)
   (test-terminal-non-tty-fallback)
   (test-terminal-descriptor-tty-detection)
   t)

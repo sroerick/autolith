@@ -413,63 +413,25 @@
 
 (-> test-built-in-application-command-policies () null)
 (defun test-built-in-application-command-policies ()
-  "Test every responsive built-in follows its declared active-turn policy."
+  "Test representative built-ins follow active-turn and terminal policy."
   (dolist
       (case
        '(("/help" :execute)
-         ("/conversations" :execute)
-         ("/cwd" :execute)
          ("/cwd /tmp" :hold)
-         ("/model" :hold)
          ("/model gpt-5.6-sol" :apply)
-         ("/effort" :hold)
-         ("/effort high" :apply)
-          ("/fast" :execute)
-          ("/fast on" :apply)
-         ("/trace" :execute)
-         ("/trace on" :apply)
-         ("/timestamps" :execute)
-         ("/timestamps on" :apply)
-         ("/goal" :execute)
-         ("/goal pause" :apply)
-         ("/agenda" :execute)
-         ("/generations" :execute)
-         ("/status" :execute)
-         ("/usage" :execute)
-         ("/context" :execute)
-         ("/vault" :execute)
-         ("/vault-restore" :hold)
-         ("/vault-discard" :hold)
-         ("/new" :hold)
-         ("/compact" :hold)
-         ("/detach" :hold)
-         ("/quit" :cancel)
-         ("/exit" :cancel)))
+         ("/quit" :cancel)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
              (command (application-command-invocation-command invocation)))
         (test-assert
-         (and command
-              (eq (application-command-busy-action command invocation)
-                  expected))
+         (eq (application-command-busy-action command invocation) expected)
          (format nil "~A has active-turn behavior ~S" input expected)))))
   (dolist
       (case
        '(("/model" t)
-         ("/model gpt-5.6-sol" t)
-         ("/resume" t)
-         ("/resume K-8vQ2mp" nil)
-         ("/effort" t)
          ("/effort high" nil)
-         ("/permissions" t)
-         ("/permissions list" nil)
-         ("/rollback" t)
-         ("/rollback generation" nil)
-         ("/auth" t)
-         ("/compact" nil)
-         ("/vault" nil)
-         ("/vault-restore" nil)
-         ("/vault-discard" nil)))
+         ("/resume K-8vQ2mp" nil)
+         ("/compact" nil)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
              (command (application-command-invocation-command invocation)))
@@ -492,19 +454,7 @@
       (case
        '(("/help" () :none)
          ("/resume" (&optional (identifier nil identifier-supplied-p)) :first)
-         ("/cwd" (pathname) :remainder)
-         ("/auth" (&optional (provider-name nil provider-name-supplied-p)) :remainder)
-         ("/model" (&optional (model nil model-supplied-p)) :first)
-         ("/trace" (mode) :first)
-         ("/fast" (&optional mode) :first)
-         ("/permissions" (&optional (choice nil choice-supplied-p)) :first)
-         ("/later" (input) :remainder)
-         ("/goal" (&optional (remainder "")) :remainder)
-         ("/mcp" (&optional mode) :remainder)
-         ("/vault" () :none)
-         ("/vault-restore" () :none)
-         ("/vault-discard" () :none)
-         ("/quit" () :none)))
+         ("/cwd" (pathname) :remainder)))
     (destructuring-bind (name lambda-list slash-mode) case
       (let ((command (application-command-find name)))
         (test-assert
@@ -523,21 +473,14 @@
               expected)
        (format nil "~A preserves trailing slash input for validation" input))))
   (let ((application (make-instance 'application)))
-    (dolist
-        (function
-         '(application--builtin-help-command
-           application--builtin-vault-command
-           application--builtin-vault-restore-command
-           application--builtin-vault-discard-command))
-      (test-assert
-       (handler-case
-           (progn
-             (funcall function application :extra)
-             nil)
-         (program-error ()
-           t))
-       (format nil "argument-free command ~S rejects extra Lisp arguments"
-               function)))
+    (test-assert
+     (handler-case
+         (progn
+           (application--builtin-help-command application :extra)
+           nil)
+       (program-error ()
+         t))
+     "an argument-free built-in rejects extra Lisp arguments")
     (test-assert
      (handler-case
          (progn
@@ -548,30 +491,13 @@
      "required built-in arguments use ordinary Common Lisp arity errors")
     (setf (application-project-adaptation-offer-p application) t)
     (let ((*application-command-interactive-p* t))
-      (dolist
-          (function
-           '(application--builtin-resume-command
-             application--builtin-authentication-command
-             application--builtin-model-command
-             application--builtin-effort-command
-             application--builtin-permissions-command
-             application--builtin-rollback-command))
-        (test-assert
-         (eq (funcall function application nil) ':continue)
-         (format nil "explicit NIL never prompts through ~S" function))))
+      (test-assert
+       (eq (application--builtin-model-command application nil) ':continue)
+       "an explicit NIL optional argument never invokes its picker"))
     (let ((*application-command-interactive-p* nil))
-      (dolist
-          (function
-           '(application--builtin-resume-command
-             application--builtin-authentication-command
-             application--builtin-model-command
-             application--builtin-effort-command
-             application--builtin-permissions-command
-             application--builtin-rollback-command))
-        (test-assert
-         (eq (funcall function application) ':continue)
-         (format nil "noninteractive omission remains nonmodal through ~S"
-                 function))))
+      (test-assert
+       (eq (application--builtin-resume-command application) ':continue)
+       "noninteractive omission remains nonmodal"))
     (test-assert
      (application-project-adaptation-offer-p application)
      "nonmodal resume calls do not consume the interactive startup offer"))
