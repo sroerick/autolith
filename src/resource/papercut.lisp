@@ -92,6 +92,14 @@
   ()
   (:documentation "One conversation-local model observation of a papercut: resource."))
 
+(defmethod resource-observation-state-family-and-key
+    ((observation papercut-observation))
+  "Return the papercut state family and workspace-specific snapshot key."
+  (values 'papercut-observation-state (list (resource-observation-uri observation)
+                                           (papercut-observation-workspace observation)
+                                           (resource-observation-revision observation)
+                                           (papercut-observation-snapshot observation))))
+
 (defmethod resource-observation-state-maximum ((state papercut-observation-state))
   "Return the configured papercut observation limit."
   (declare (ignore state))
@@ -359,41 +367,6 @@
 
 ;;;; -- Conversation Observation State --
 
-(-> papercut-resource--observation-state-for-snapshot
-    (conversation papercut-observation)
-    papercut-observation-state)
-(defun papercut-resource--observation-state-for-snapshot (conversation observation)
-  "Return or create CONVERSATION's state for exact papercut OBSERVATION."
-  (with-recursive-lock-held
-      ((conversation-resource-observation-lock conversation))
-    (let* ((states (conversation-resource-observations conversation))
-           (matching
-             (nth-value
-              1
-              (fifo-cache-find-if
-               (lambda (alias state)
-                 (declare (ignore alias))
-                 (and (typep state 'papercut-observation-state)
-                      (let ((existing
-                              (resource-observation-state-observation state)))
-                        (and (string= (resource-observation-uri existing)
-                                      (resource-observation-uri observation))
-                             (string= (papercut-observation-workspace existing)
-                                      (papercut-observation-workspace observation))
-                             (string= (resource-observation-revision existing)
-                                      (resource-observation-revision observation))
-                             (equal (papercut-observation-snapshot existing)
-                                    (papercut-observation-snapshot observation))))))
-               states))))
-      (when matching
-        (return-from papercut-resource--observation-state-for-snapshot matching))
-      (let* ((alias (resource-observation-state-new-alias states))
-             (state (make-instance 'papercut-observation-state
-                                   :alias       alias
-                                   :observation observation)))
-        (fifo-cache-put states alias state)
-        (resource-observation-state-trim conversation state)
-        state))))
 
 (-> papercut-resource--find-observation-state
     (conversation papercut-resource non-empty-string)
@@ -633,7 +606,7 @@
            :tool-name "resource.read"))
   (let* ((observation (resource-observe resource context))
          (state
-           (papercut-resource--observation-state-for-snapshot
+            (resource-observation-state-ensure
             (tool-context-conversation context)
             observation)))
     (tool-success (papercut-resource--read-result state))))
@@ -660,7 +633,7 @@
                                        :base-revision base-revision
                                        :operations (coerce operation-array 'list))
           (let ((state
-                  (papercut-resource--observation-state-for-snapshot
+                   (resource-observation-state-ensure
                    (tool-context-conversation context)
                    observation)))
             (tool-success

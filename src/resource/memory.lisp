@@ -75,6 +75,13 @@
   ()
   (:documentation "One conversation-local model observation of a memory: resource."))
 
+(defmethod resource-observation-state-family-and-key
+    ((observation memory-observation))
+  "Return the memory state family and exact structural snapshot key."
+  (values 'memory-observation-state (list (resource-observation-uri observation)
+                                         (resource-observation-revision observation)
+                                         (memory-observation-snapshot observation))))
+
 (defmethod resource-observation-state-maximum ((state memory-observation-state))
   "Return the configured memory observation limit."
   (declare (ignore state))
@@ -370,39 +377,6 @@
 ;;;; -- Conversation Observation State --
 
 
-(-> memory-resource--observation-state-for-snapshot
-    (conversation memory-observation)
-    memory-observation-state)
-(defun memory-resource--observation-state-for-snapshot (conversation observation)
-  "Return or create CONVERSATION's state for exact memory OBSERVATION."
-  (with-recursive-lock-held
-      ((conversation-resource-observation-lock conversation))
-    (let* ((states (conversation-resource-observations conversation))
-           (matching
-             (nth-value
-              1
-              (fifo-cache-find-if
-               (lambda (alias state)
-                 (declare (ignore alias))
-                 (and (typep state 'memory-observation-state)
-                      (let ((existing
-                              (resource-observation-state-observation state)))
-                        (and (string= (resource-observation-uri existing)
-                                      (resource-observation-uri observation))
-                             (string= (resource-observation-revision existing)
-                                      (resource-observation-revision observation))
-                             (equal (memory-observation-snapshot existing)
-                                    (memory-observation-snapshot observation))))))
-               states))))
-      (when matching
-        (return-from memory-resource--observation-state-for-snapshot matching))
-      (let* ((alias (resource-observation-state-new-alias states))
-             (state (make-instance 'memory-observation-state
-                                   :alias       alias
-                                   :observation observation)))
-        (fifo-cache-put states alias state)
-        (resource-observation-state-trim conversation state)
-        state))))
 
 (-> memory-resource--find-observation-state
     (conversation memory-resource non-empty-string)
@@ -726,7 +700,7 @@
                (memory-item-resource
                 (resource-observe resource context))))
            (state
-             (memory-resource--observation-state-for-snapshot
+              (resource-observation-state-ensure
               (tool-context-conversation context)
               observation)))
       (tool-success (memory-resource--read-result state)))))
@@ -753,7 +727,7 @@
                                        :base-revision base-revision
                                        :operations (coerce operation-array 'list))
           (let ((state
-                  (memory-resource--observation-state-for-snapshot
+                   (resource-observation-state-ensure
                    (tool-context-conversation context)
                    observation)))
             (tool-success

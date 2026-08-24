@@ -89,6 +89,14 @@
     :documentation "Inclusive original line ranges fully shown to the model."))
   (:documentation "One conversation-local model observation of a workspace file."))
 
+(defmethod resource-observation-state-family-and-key
+    ((observation workspace-file-observation))
+  "Return the workspace-file state family and exact content snapshot key."
+  (values 'workspace-file-observation-state
+          (list (resource-observation-uri observation)
+                (resource-observation-revision observation)
+                (resource-observation-content observation))))
+
 (defmethod resource-observation-state-weight
     (alias (state workspace-file-observation-state))
   "Return STATE's retained workspace snapshot bytes."
@@ -104,19 +112,18 @@
   *workspace-file-resource-maximum-observations*)
 
 
-(-> workspace-file--trim-observation-storage (conversation) null)
-(defun workspace-file--trim-observation-storage (conversation)
+(defmethod resource-observation-state-trim-storage
+    ((conversation conversation) (state workspace-file-observation-state))
   "Evict oldest workspace observations until retained UTF-8 strings fit."
-  (with-recursive-lock-held
-      ((conversation-resource-observation-lock conversation))
-    (let ((states (conversation-resource-observations conversation)))
-      (loop while (> (fifo-cache-total-weight states)
-                     *workspace-file-resource-maximum-retained-bytes*)
-            do (fifo-cache-delete-first-if
-                (lambda (alias state)
-                  (declare (ignore alias))
-                  (typep state 'workspace-file-observation-state))
-                states))))
+  (declare (ignore state))
+  (let ((states (conversation-resource-observations conversation)))
+    (loop while (> (fifo-cache-total-weight states)
+                   *workspace-file-resource-maximum-retained-bytes*)
+          do (fifo-cache-delete-first-if
+              (lambda (alias candidate)
+                (declare (ignore alias))
+                (typep candidate 'workspace-file-observation-state))
+              states)))
   nil)
 
 
@@ -421,46 +428,18 @@ Return NIL when NAME disappears during enumeration."
             (push (copy-list range) result))))
     (nreverse result)))
 
+(defmethod resource-observation-state-merge
+    ((state workspace-file-observation-state)
+     (observation workspace-file-observation) &rest initargs)
+  "Merge newly visible line ranges into equivalent workspace-file STATE."
+  (declare (ignore observation))
+  (setf (workspace-file-observation-state-visible-ranges state)
+        (workspace-file--merge-visible-ranges
+         (workspace-file-observation-state-visible-ranges state)
+         (getf initargs ':visible-ranges)))
+  state)
 
-(-> workspace-file--observation-state-for-snapshot
-    (conversation workspace-file-observation list)
-    workspace-file-observation-state)
-(defun workspace-file--observation-state-for-snapshot
-    (conversation observation visible-ranges)
-  "Return or create CONVERSATION's state for OBSERVATION and VISIBLE-RANGES."
-  (with-recursive-lock-held ((conversation-resource-observation-lock conversation))
-    (let* ((states (conversation-resource-observations conversation))
-           (matching
-             (nth-value
-              1
-              (fifo-cache-find-if
-               (lambda (alias state)
-                 (declare (ignore alias))
-                 (and (typep state 'workspace-file-observation-state)
-                      (let ((existing
-                              (resource-observation-state-observation state)))
-                        (and (string= (resource-observation-uri existing)
-                                      (resource-observation-uri observation))
-                             (string= (resource-observation-revision existing)
-                                      (resource-observation-revision observation))
-                             (string= (resource-observation-content existing)
-                                      (resource-observation-content observation))))))
-               states))))
-      (when matching
-        (setf (workspace-file-observation-state-visible-ranges matching)
-              (workspace-file--merge-visible-ranges
-               (workspace-file-observation-state-visible-ranges matching)
-               visible-ranges))
-        (return-from workspace-file--observation-state-for-snapshot matching))
-      (let* ((alias (resource-observation-state-new-alias states))
-             (state (make-instance 'workspace-file-observation-state
-                                   :alias          alias
-                                   :observation    observation
-                                   :visible-ranges visible-ranges)))
-        (fifo-cache-put states alias state)
-        (resource-observation-state-trim conversation state)
-        (workspace-file--trim-observation-storage conversation)
-        state))))
+
 
 (-> workspace-file--find-observation-state
     (conversation non-empty-string non-empty-string)
@@ -997,8 +976,9 @@ the final check-to-rename window. Missing-file publication rejects that race."
                                     start-line)
                    :tool-name "resource.read"))
           (let ((state
-                  (workspace-file--observation-state-for-snapshot
-                   (tool-context-conversation context) observation visible-ranges)))
+                   (resource-observation-state-ensure
+                    (tool-context-conversation context) observation
+                    :visible-ranges visible-ranges)))
             (tool-success
              (workspace-file--read-result state body total-lines truncated-p))))))))
 
@@ -1035,9 +1015,9 @@ the final check-to-rename window. Missing-file publication rejects that race."
                    *workspace-file-resource-maximum-result-characters*)
                 (declare (ignore last-line))
                 (let* ((state
-                         (workspace-file--observation-state-for-snapshot
-                          (tool-context-conversation context)
-                          observation visible-ranges))
+                          (resource-observation-state-ensure
+                           (tool-context-conversation context) observation
+                           :visible-ranges visible-ranges))
                        (result-content
                          (format nil "Applied ~{~A~^; ~}.~%~A"
                                  (mapcar

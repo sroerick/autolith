@@ -166,6 +166,23 @@
       (fifo-cache-get states alias)
     (and present-p (typep state class) state)))
 
+(-> resource-observation-state-family-and-key
+    (resource-observation)
+    (values symbol list))
+(defgeneric resource-observation-state-family-and-key (observation)
+  (:documentation
+   "Return OBSERVATION's state class and exact retention-equivalence key."))
+
+(-> resource-observation-state-merge
+    (resource-observation-state resource-observation &rest t)
+    resource-observation-state)
+(defgeneric resource-observation-state-merge (state observation &rest initargs)
+  (:documentation "Merge family INITARGS into equivalent retained STATE.")
+  (:method ((state resource-observation-state)
+            (observation resource-observation) &rest initargs)
+    "Return an equivalent general STATE without additional retained metadata."
+    (declare (ignore observation initargs))
+    state))
 
 (-> resource-observation-state-maximum
     (resource-observation-state)
@@ -174,26 +191,57 @@
   (:documentation
    "Return the maximum conversation-local observations retained for STATE's family."))
 
-(-> resource-observation-state-trim
+(-> resource-observation-state-trim-storage
     (conversation resource-observation-state)
     null)
-(defun resource-observation-state-trim (conversation state)
-  "Trim STATE's observation family in CONVERSATION without disturbing others."
-  (let* ((states  (conversation-resource-observations conversation))
-         (class   (class-of state))
-         (maximum (resource-observation-state-maximum state)))
-    (loop while (> (fifo-cache-count-if
-                    (lambda (alias candidate)
-                      (declare (ignore alias))
-                      (typep candidate class))
-                    states)
-                   maximum)
-          do (fifo-cache-delete-first-if
-              (lambda (alias candidate)
-                (declare (ignore alias))
-                (typep candidate class))
-              states)))
-  nil)
+(defgeneric resource-observation-state-trim-storage (conversation state)
+  (:documentation "Apply family storage limits after retaining STATE in CONVERSATION.")
+  (:method ((conversation conversation) (state resource-observation-state))
+    "Apply no additional storage limit to a general observation STATE."
+    (declare (ignore conversation state))
+    nil))
+
+(-> resource-observation-state-ensure
+    (conversation resource-observation &rest t)
+    resource-observation-state)
+(defun resource-observation-state-ensure (conversation observation &rest initargs)
+  "Return or retain CONVERSATION's exact OBSERVATION with family INITARGS."
+  (with-recursive-lock-held
+      ((conversation-resource-observation-lock conversation))
+    (multiple-value-bind (family key)
+        (resource-observation-state-family-and-key observation)
+      (let* ((states
+               (conversation-resource-observations conversation))
+             (matching
+               (nth-value
+                1
+                (fifo-cache-find-if
+                 (lambda (alias state)
+                   (declare (ignore alias))
+                   (and (typep state family)
+                        (equal key
+                               (nth-value
+                                1
+                                (resource-observation-state-family-and-key
+                                 (resource-observation-state-observation state))))))
+                 states))))
+        (when matching
+          (return-from resource-observation-state-ensure
+            (apply #'resource-observation-state-merge
+                   matching observation initargs)))
+        (let* ((alias   (resource-observation-state-new-alias states))
+               (state   (apply #'make-instance family
+                               :alias alias :observation observation initargs))
+               (family-state-p
+                 (lambda (candidate-alias candidate)
+                   (declare (ignore candidate-alias))
+                   (typep candidate family)))
+               (maximum (resource-observation-state-maximum state)))
+          (fifo-cache-put states alias state)
+          (loop while (> (fifo-cache-count-if family-state-p states) maximum)
+                do (fifo-cache-delete-first-if family-state-p states))
+          (resource-observation-state-trim-storage conversation state)
+          state)))))
 
 (-> resource-snapshot-digest
     ((simple-array (unsigned-byte 8) (*)) string)

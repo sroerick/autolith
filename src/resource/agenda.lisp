@@ -54,6 +54,14 @@
   ()
   (:documentation "One conversation-local model observation of agenda:current."))
 
+(defmethod resource-observation-state-family-and-key
+    ((observation agenda-observation))
+  "Return the agenda state family and workspace-specific snapshot key."
+  (values 'agenda-observation-state (list (resource-observation-uri observation)
+                                         (agenda-observation-directory observation)
+                                         (resource-observation-revision observation)
+                                         (agenda-observation-snapshot observation))))
+
 (defmethod resource-observation-state-maximum ((state agenda-observation-state))
   "Return the configured agenda observation limit."
   (declare (ignore state))
@@ -173,41 +181,6 @@
 ;;;; -- Conversation Observation State --
 
 
-(-> agenda-resource--observation-state-for-snapshot
-    (conversation agenda-observation)
-    agenda-observation-state)
-(defun agenda-resource--observation-state-for-snapshot (conversation observation)
-  "Return or create CONVERSATION's state for exact agenda OBSERVATION."
-  (with-recursive-lock-held
-      ((conversation-resource-observation-lock conversation))
-    (let* ((states (conversation-resource-observations conversation))
-           (matching
-             (nth-value
-              1
-              (fifo-cache-find-if
-               (lambda (alias state)
-                 (declare (ignore alias))
-                 (and (typep state 'agenda-observation-state)
-                      (let ((existing
-                              (resource-observation-state-observation state)))
-                        (and (string= (resource-observation-uri existing)
-                                      (resource-observation-uri observation))
-                             (string= (agenda-observation-directory existing)
-                                      (agenda-observation-directory observation))
-                             (string= (resource-observation-revision existing)
-                                      (resource-observation-revision observation))
-                             (equal (agenda-observation-snapshot existing)
-                                    (agenda-observation-snapshot observation))))))
-               states))))
-      (when matching
-        (return-from agenda-resource--observation-state-for-snapshot matching))
-      (let* ((alias (resource-observation-state-new-alias states))
-             (state (make-instance 'agenda-observation-state
-                                   :alias       alias
-                                   :observation observation)))
-        (fifo-cache-put states alias state)
-        (resource-observation-state-trim conversation state)
-        state))))
 
 (-> agenda-resource--find-observation-state
     (conversation agenda-resource non-empty-string)
@@ -498,7 +471,7 @@
   (with-recursive-lock-held (*agenda-lock*)
     (let* ((observation (resource-observe resource context))
            (state
-             (agenda-resource--observation-state-for-snapshot
+              (resource-observation-state-ensure
               (tool-context-conversation context)
               observation)))
       (tool-success (agenda-resource--read-result state)))))
@@ -525,7 +498,7 @@
                                        :base-revision base-revision
                                        :operations (coerce operation-array 'list))
           (let ((state
-                  (agenda-resource--observation-state-for-snapshot
+                   (resource-observation-state-ensure
                    (tool-context-conversation context)
                    observation)))
             (tool-success

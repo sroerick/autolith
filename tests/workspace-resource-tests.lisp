@@ -203,6 +203,27 @@
                    (tool-error ()
                      t))
                  "bounded descriptor reads reject files that grow during validation"))
+              (let ((path (merge-pathnames "retained-ranges.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%four~%"))
+                (multiple-value-bind (first-result uri alias)
+                    (read-resource first-context "workspace:retained-ranges.txt"
+                                   :start-line 1 :line-count 1)
+                  (multiple-value-bind (second-result second-uri second-alias)
+                      (read-resource first-context "workspace:retained-ranges.txt"
+                                     :start-line 3 :line-count 1)
+                    (declare (ignore second-uri))
+                    (let ((state
+                            (workspace-file--find-observation-state
+                             first-conversation uri alias)))
+                      (test-assert
+                       (and (tool-result-success-p first-result)
+                            (tool-result-success-p second-result)
+                            (string= alias second-alias)
+                            (equal
+                             (workspace-file-observation-state-visible-ranges state)
+                             '((1 1) (3 3))))
+                       "equivalent workspace reads reuse state and merge visible ranges")))))
              (let* ((path (merge-pathnames "heterogeneous.txt" workspace))
                     (other-observation
                       (make-instance 'resource-observation
