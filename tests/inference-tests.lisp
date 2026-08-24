@@ -372,8 +372,8 @@
                    "the frame executed its restricted read-only tool")
       (test-assert (= (rlm-budget-remaining-calls budget) 3)
                    "each provider request in the frame charges one call")
-      (test-assert (= (rlm-budget-remaining-tokens budget) 900)
-                   "reported frame usage drains the token pool")))
+      (test-assert (= (rlm-budget-remaining-tokens budget) 898)
+                   "every reported frame usage drains the token pool")))
   nil)
 
 (-> test-rlm-infer-tool () null)
