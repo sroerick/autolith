@@ -577,7 +577,9 @@ message, which thinking-mode providers require passed back."
          (effective-tools
            (if compaction-p
                #()
-               (openai-compatible--wire-tools tool-namespaces)))
+               (openai-compatible--wire-tools
+                (provider-request-tool-namespaces
+                 configuration tool-namespaces))))
          (delivery
            (unless compaction-p
              (context-resolve-request
@@ -595,9 +597,9 @@ message, which thinking-mode providers require passed back."
            (append
             (list (openai-compatible--chat-system-message
                    (system-prompt configuration)))
+            (openai-compatible--chat-input-messages input-items)
             (when (and goal-context (not compaction-p))
               (list (openai-compatible--chat-system-message goal-context)))
-            (openai-compatible--chat-input-messages input-items)
             (when (and delivery
                        (non-empty-string-p
                         (context-delivery-rendered delivery)))

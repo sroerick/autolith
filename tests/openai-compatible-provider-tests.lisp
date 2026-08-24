@@ -842,9 +842,8 @@
                (multiple-value-bind (request delivery)
                    (provider-request-object
                     provider conversation tools
-                    :goal-context nil
+                    :goal-context "keep the active goal"
                     :compaction-p nil)
-                 (declare (ignore delivery))
                  (let* ((messages (json-get request "messages"))
                         (wire-tools (json-get request "tools"))
                         (wire-tool (aref wire-tools 0))
@@ -853,6 +852,20 @@
                     (and (vectorp messages)
                          (search "Read the file" (json-encode messages)))
                     "Chat Completions requests carry projected conversation messages")
+                   (test-assert
+                    (and delivery
+                         (string= (json-get
+                                   (aref messages (- (length messages) 2))
+                                   "content")
+                                  "keep the active goal")
+                         (search "Temporary context"
+                                 (json-get
+                                  (aref messages (1- (length messages)))
+                                  "content")))
+                    "goal and mutable context follow durable Chat Completions history")
+                   (test-assert
+                    (null (json-get request "prompt_cache_key"))
+                    "generic OpenAI-compatible requests omit unsupported cache fields")
                    (test-assert
                     (and (vectorp wire-tools)
                          (string= (json-get wire-tool "type") "function")
@@ -1196,11 +1209,36 @@
 (-> test-openai-compatible-tool-name-recovery () null)
 (defun test-openai-compatible-tool-name-recovery ()
   "Test tool dispatch recovers when models drop the encoded wire names."
+  (let ((wire-name
+          (openai-compatible--wire-tool-name "mcp__demo" "call_name")))
+    (test-assert (string= wire-name "t_9_mcp__demo__call_name")
+                 "wire names retain readable namespace and function text")
+    (multiple-value-bind (namespace name)
+        (openai-compatible--decode-wire-tool-name wire-name)
+      (test-assert (and (equal namespace "mcp__demo")
+                        (equal name "call_name"))
+                   "escaped readable wire names round-trip")))
   (multiple-value-bind (namespace name)
-      (openai-compatible--decode-wire-tool-name
-       (openai-compatible--wire-tool-name "resource" "read"))
+      (openai-compatible--decode-wire-tool-name "acmVzb3VyY2UAcmVhZA")
     (test-assert (and (equal namespace "resource") (equal name "read"))
-                 "encoded wire names round-trip"))
+                 "legacy Base64 wire names remain decodable"))
+  (let* ((component (make-string 20 :initial-element #\_))
+         (wire-name (openai-compatible--wire-tool-name component component)))
+    (multiple-value-bind (namespace name)
+        (openai-compatible--decode-wire-tool-name wire-name)
+      (test-assert
+       (and (<= (length wire-name)
+                *openai-compatible-wire-tool-name-maximum-length*)
+            (string= namespace component)
+            (string= name component))
+       "readable encoding preserves underscore-heavy legacy capacity")))
+  (let ((wire-name
+          (openai-compatible--wire-tool-name "mcp.demo" "read_x000061_")))
+    (multiple-value-bind (namespace name)
+        (openai-compatible--decode-wire-tool-name wire-name)
+      (test-assert (and (string= namespace "mcp.demo")
+                        (string= name "read_x000061_"))
+                   "escaped characters and literal escape text round-trip")))
   (multiple-value-bind (namespace name)
       (openai-compatible--fallback-tool-name ".self.eval")
     (test-assert (and (equal namespace "self") (equal name "eval"))

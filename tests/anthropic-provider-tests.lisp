@@ -124,16 +124,15 @@
         (test-assert (and (integerp (json-get request "max_tokens"))
                           (eq (json-get request "stream") t))
                      "the request streams with a bounded output budget")
-        (test-assert
-         (and (vectorp system)
-              (loop for block across system
-                    always (json-string= (json-get block "type") "text"))
-              (find "remember the goal"
-                    (loop for block across system
-                          collect (json-get block "text"))
-                    :test (lambda (needle text)
-                            (and (stringp text) (search needle text)))))
-        "system prompt, goal context, and developer text ride as system blocks")
+         (test-assert
+          (and (vectorp system)
+               (= (length system) 1)
+               (json-string=
+                (json-get (json-get (aref system 0) "cache_control") "type")
+                "ephemeral")
+               (not (search "remember the goal"
+                            (json-get (aref system 0) "text"))))
+          "the stable system prompt ends at an explicit cache breakpoint")
         (test-assert
          (equal (loop for message across messages
                       collect (json-get message "role"))
@@ -147,12 +146,24 @@
                         collect (json-get block "type"))
                   '("text" "tool_use"))
            "assistant messages join text and tool_use blocks in order"))
-        (let ((final-user (first (last (coerce messages 'list)))))
-          (test-assert
-           (equal (loop for block across (json-get final-user "content")
-                        collect (json-get block "type"))
-                  '("tool_result" "text"))
-           "user messages join tool_result and text blocks in order"))
+         (let* ((final-user (first (last (coerce messages 'list))))
+                (content (json-get final-user "content")))
+           (test-assert
+            (equal (loop for block across content
+                         collect (json-get block "type"))
+                   '("tool_result" "text" "text" "text"))
+            "goal and mutable context append after durable user history")
+           (test-assert
+            (and (json-string=
+                  (json-get (json-get (aref content 1) "cache_control") "type")
+                  "ephemeral")
+                 (string= (json-get (aref content 2) "text")
+                          "remember the goal")
+                 (null (json-get (aref content 2) "cache_control"))
+                 (search "Temporary context"
+                         (json-get (aref content 3) "text"))
+                 (null (json-get (aref content 3) "cache_control")))
+            "history is cache-marked immediately before volatile context"))
         (let ((assistant-calls
                 (loop for message across messages
                       when (string= (json-get message "role") "assistant")
@@ -179,19 +190,80 @@
                 (string= (json-get (first results) "tool_use_id") "call-1")
                 (string= (json-get (first results) "content") "done"))
            "function outputs become user tool_result blocks"))
-        (test-assert
-         (and (= (length tools) 1)
-              (json-object-p (json-get (aref tools 0) "input_schema"))
-              (json-object-p (json-get request "tool_choice")))
-         "tools flatten into input_schema declarations with automatic choice")
+         (test-assert
+          (and (= (length tools) 1)
+               (json-object-p (json-get (aref tools 0) "input_schema"))
+               (json-string=
+                (json-get
+                 (json-get (aref tools 0) "cache_control") "type")
+                "ephemeral")
+               (json-object-p (json-get request "tool_choice")))
+          "the final flattened tool is an explicit cache breakpoint")
         (let ((wire-name (json-get (aref tools 0) "name")))
           (multiple-value-bind (namespace name)
               (openai-compatible--decode-wire-tool-name wire-name)
             (test-assert (and (string= namespace "plan")
                               (string= name "update"))
-                         "wire tool names round-trip through the Base64 encoding"))))))
+                          "wire tool names round-trip through the readable encoding"))))))
   nil)
 
+
+(-> anthropic-provider-test--ephemeral-cache-boundary () null)
+(defun anthropic-provider-test--ephemeral-cache-boundary ()
+  "Test volatile input follows the explicit durable-history cache breakpoint."
+  (let* ((configuration (anthropic-provider-test--configuration))
+         (root (test-configuration-root configuration))
+         (provider (anthropic-provider-create configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "anthropic-ephemeral-cache")))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "durable question")
+           (conversation-append-provider-item
+            conversation
+            (json-object
+             "type" "message"
+             "role" "assistant"
+             "content" (json-array
+                        (json-object "type" "output_text"
+                                     "text" "durable answer"))))
+           (conversation-append-provider-item
+            conversation
+            (json-object "type" "function_call"
+                         "namespace" "skill"
+                         "name" "load"
+                         "call_id" "volatile-call"
+                         "arguments" "{}")
+            :persistence ':next-response)
+           (let* ((request (provider-request-object provider conversation #()))
+                  (messages (json-get request "messages"))
+                  (assistant
+                    (find "assistant" messages
+                          :test #'string=
+                          :key (lambda (message)
+                                 (json-get message "role"))))
+                  (content (json-get assistant "content")))
+             (test-assert
+              (and (= (length content) 2)
+                   (json-string=
+                    (json-get (json-get (aref content 0) "cache_control") "type")
+                    "ephemeral")
+                   (json-string= (json-get (aref content 1) "type") "tool_use")
+                   (null (json-get (aref content 1) "cache_control")))
+              "ephemeral calls follow the durable-history cache breakpoint"))
+           (test-assert
+            (not (search "cache_control"
+                         (json-encode (conversation-input-items conversation))))
+            "request cache annotations never mutate conversation input")
+           (test-assert
+            (not (search "cache_control"
+                         (json-encode
+                          (provider-request-object
+                           provider conversation #() :compaction-p t))))
+            "compaction omits every explicit cache breakpoint"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
 
 (-> anthropic-provider-test--portable-content () null)
 (defun anthropic-provider-test--portable-content ()
@@ -451,6 +523,13 @@
        "type" "message" "role" "assistant"
        "content" (json-array
                   (json-object "type" "output_text" "text" "Parent answer.")))))
+    (conversation-append-provider-item
+     conversation
+     (json-object
+      "type" "message" "role" "developer"
+      "content" (json-array
+                 (json-object "type" "input_text"
+                              "text" "Child guidance."))))
     (conversation-append-user-message conversation "Child assignment.")
     (multiple-value-bind (request delivery)
         (provider-request-object provider conversation #())
@@ -464,20 +543,30 @@
                       collect (json-get message "role"))
                 '("user" "assistant" "user"))
          "inherited history and child input preserve transcript role order")
-        (test-assert
-         (and (= (length final-content) 2)
-              (string= (json-get (aref final-content 0) "text")
-                       *conversation-inherited-reference-boundary*)
-              (string= (json-get (aref final-content 1) "text")
-                       "Child assignment."))
-         "the inherited-reference boundary remains before the child assignment")
-        (test-assert
-         (not
-          (some (lambda (block)
-                  (search *conversation-inherited-reference-boundary*
-                          (or (json-get block "text") "")))
-                (coerce system 'list)))
-         "the positional inherited-reference boundary is not hoisted into system"))))
+         (test-assert
+          (and (= (length final-content) 4)
+               (string= (json-get (aref final-content 0) "text")
+                        *conversation-inherited-reference-boundary*)
+               (string= (json-get (aref final-content 1) "text")
+                        "Child guidance.")
+               (string= (json-get (aref final-content 2) "text")
+                        "Child assignment.")
+               (json-string=
+                (json-get
+                 (json-get (aref final-content 2) "cache_control") "type")
+                "ephemeral")
+               (search "Temporary context"
+                       (json-get (aref final-content 3) "text")))
+          "developer guidance and child input retain transcript order")
+         (test-assert
+          (not
+           (some (lambda (block)
+                   (or (search *conversation-inherited-reference-boundary*
+                               (or (json-get block "text") ""))
+                       (search "Child guidance."
+                               (or (json-get block "text") ""))))
+                 (coerce system 'list)))
+           "positional developer content is not hoisted into system"))))
   nil)
 
 (-> anthropic-provider-test--compaction-request () null)
@@ -500,6 +589,7 @@
          :goal-context "request-local goal"
          :compaction-p t)
       (let* ((system (json-get request "system"))
+             (messages (json-get request "messages"))
              (texts (loop for block across system
                           collect (json-get block "text"))))
         (test-assert (null delivery)
@@ -507,6 +597,13 @@
         (test-assert (and (null (json-get request "tools"))
                           (null (json-get request "tool_choice")))
                      "compaction requests expose no tools")
+        (test-assert
+         (and (loop for block across system
+                    always (null (json-get block "cache_control")))
+              (loop for message across messages
+                    always (loop for block across (json-get message "content")
+                                 always (null (json-get block "cache_control")))))
+         "one-off compaction requests omit cache breakpoints")
         (test-assert
          (and (find *compaction-instructions* texts :test #'string=)
               (not (find "request-local goal" texts :test #'string=)))
@@ -1042,6 +1139,7 @@
   (anthropic-provider-test--selection)
   (anthropic-provider-test--credential-source)
   (anthropic-provider-test--request-encoding)
+  (anthropic-provider-test--ephemeral-cache-boundary)
   (anthropic-provider-test--portable-content)
   (anthropic-provider-test--request-conversion-failures)
   (anthropic-provider-test--inherited-reference-order)

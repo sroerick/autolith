@@ -370,7 +370,8 @@
 
 The function receives one REQUEST-CONTEXT and returns NIL, one contribution,
 or a proper list of contributions. Registering the same identifier replaces
-its previous definition without changing unrelated contributors."
+its previous definition without changing unrelated contributors. A built-in
+identifier can only reload its existing named definition."
   (context--validate-identifier identifier "Context contributor identifier")
   (unless (context--function-designator-p function-designator)
     (error 'configuration-error
@@ -396,6 +397,16 @@ its previous definition without changing unrelated contributors."
                      :test #'string=
                      :key (lambda (candidate)
                             (getf candidate :identifier)))))
+        (when (and existing
+                   (eq (getf existing :source) ':built-in)
+                   (not (and (eq source ':built-in)
+                             definition-name
+                             (eq definition-name
+                                 (getf existing :definition-name)))))
+          (error 'configuration-error
+                 :message
+                 (format nil "Built-in context contributor ~A cannot be replaced."
+                         identifier)))
         (setf *context-contributors*
               (if existing
                   (substitute registration existing *context-contributors*)
@@ -404,16 +415,19 @@ its previous definition without changing unrelated contributors."
 
 (-> unregister-context-contributor (string) boolean)
 (defun unregister-context-contributor (identifier)
-  "Remove context contributor IDENTIFIER and report whether it existed."
+  "Remove a non-built-in contributor IDENTIFIER and report whether it existed."
   (with-extension-registry-transaction
     (with-lock-held (*context-lock*)
-      (let ((remaining
-              (remove identifier *context-contributors*
-                      :test #'string=
-                      :key (lambda (registration)
-                             (getf registration :identifier)))))
-        (prog1 (< (length remaining) (length *context-contributors*))
-          (setf *context-contributors* remaining))))))
+      (let ((registration
+              (find identifier *context-contributors*
+                    :test #'string=
+                    :key (lambda (candidate)
+                           (getf candidate :identifier)))))
+        (when (and registration
+                   (not (eq (getf registration :source) ':built-in)))
+          (setf *context-contributors*
+                (remove registration *context-contributors* :test #'eq))
+          t)))))
 
 (-> context--definition-identifier (symbol) string)
 (defun context--definition-identifier (name)
@@ -436,6 +450,21 @@ have the same evaluation behavior as DEFUN."
        (register-context-contributor
         ,(context--definition-identifier name)
         ',name))))
+
+(-> context--session-state (request-context) (option context-contribution))
+(defun context--session-state (request)
+  "Return mutable session guidance unless a compact prompt overrides the persona."
+  (unless *system-prompt-override*
+    (make-context-contribution
+     :identifier "session-state"
+     :instruction
+     (request-context-session-state (request-context-configuration request))
+     :priority -1000
+     :class ':mandatory)))
+
+(eval-when (:load-toplevel :execute)
+  (register-context-contributor
+   "session-state" 'context--session-state :source ':built-in))
 
 (-> context-contributor-registrations () list)
 (defun context-contributor-registrations ()

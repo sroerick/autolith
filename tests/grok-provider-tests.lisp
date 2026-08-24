@@ -175,13 +175,18 @@
            (test-assert (null (json-get request "text"))
                         "Grok requests omit the Codex verbosity selection")
            (let ((input (json-get request "input")))
-             (test-assert (= (length input) 2)
-                          "the Grok request prefixes one developer item")
-             (test-assert
-              (string= (json-get (aref input 0) "role") "developer")
-              "the Autolith system prompt is the first input item")
-             (test-assert (string= (json-get (aref input 1) "role") "user")
-                          "conversation history follows the developer prefix")
+              (test-assert (= (length input) 3)
+                           "the Grok request brackets history with developer items")
+              (test-assert
+               (string= (json-get (aref input 0) "role") "developer")
+               "the Autolith system prompt is the first input item")
+              (test-assert (string= (json-get (aref input 1) "role") "user")
+                           "conversation history follows the developer prefix")
+              (test-assert
+               (and (string= (json-get (aref input 2) "role") "developer")
+                    (search "Current workspace agenda"
+                            (context--message-text (aref input 2))))
+               "mutable request context follows conversation history")
              (test-assert
               (notany (lambda (item)
                         (string= (or (json-get item "type") "")
@@ -285,11 +290,13 @@
                      provider conversation schemas
                      :goal-context "<goal_context>persist</goal_context>"))
                   (goal-input (json-get goal-request "input")))
-             (test-assert (= (length goal-input) 3)
-                          "an active goal adds one transient developer message")
-             (test-assert
-              (string= (json-get (aref goal-input 1) "role") "developer")
-              "the goal context is a developer message"))
+              (test-assert (= (length goal-input) 4)
+                           "an active goal adds one transient developer message")
+              (test-assert
+               (and (string= (json-get (aref goal-input 2) "role") "developer")
+                    (search "<goal_context>"
+                            (context--message-text (aref goal-input 2))))
+               "the goal follows durable history as a developer message"))
            (let* ((compaction-request
                     (provider-request-object
                      provider conversation schemas :compaction-p t))

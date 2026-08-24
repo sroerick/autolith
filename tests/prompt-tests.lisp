@@ -14,17 +14,29 @@
 
 (-> test-system-prompt () null)
 (defun test-system-prompt ()
-  "Test Org-templated system-prompt gating, slots, and the public entrypoint."
+  "Test stable system-prompt and mutable request-context rendering."
   (let ((configuration (test-configuration)))
     (unwind-protect
          (progn
            (test-assert (probe-file (system-prompt--template-path))
                         "the Org system prompt template is shipped with Autolith")
-           (let ((prompt (system-prompt configuration)))
+           (test-assert (probe-file (request-context--template-path))
+                        "the Org request-context template is shipped with Autolith")
+           (test-assert
+            (string= (request-context--bounded-complete-lines
+                      (format nil "first row~%second row is too long") 25)
+                     (format nil "first row~%... [truncated]"))
+            "mutable context bounds only at complete row boundaries")
+           (let ((prompt (system-prompt configuration))
+                 (context (request-context-session-state configuration)))
              (prompt-tests--contains prompt "You are Autolith"
                                      "the rendered prompt keeps the Autolith identity")
-             (prompt-tests--contains prompt "Current workspace agenda: empty."
-                                     "an empty agenda uses the empty-agenda section")
+             (prompt-tests--contains context "Current workspace agenda: empty."
+                                     "mutable context describes an empty agenda")
+             (prompt-tests--contains context "Saved Lisp worker images"
+                                     "mutable context carries worker-image state")
+             (prompt-tests--absent prompt "Current workspace agenda"
+                                   "agenda state stays outside the stable prompt")
              (prompt-tests--contains prompt "Your main power is the live image"
                                      "a mutable session uses the live-image section")
              (prompt-tests--contains prompt "Use web.run"
@@ -33,17 +45,18 @@
                                      "the prompt embeds today's date")
              (prompt-tests--contains prompt "Workspace instructions from"
                                      "workspace AGENTS.md is included")
-             (prompt-tests--absent prompt "{{{:"
-                                   "no leftover org-templater slots remain")
-             (prompt-tests--absent prompt "#+TITLE"
-                                   "Org keyword lines are stripped")
-             (prompt-tests--absent prompt "* Commentary"
-                                   "review commentary is omitted")
+             (dolist (rendered (list prompt context))
+               (prompt-tests--absent rendered "{{{:"
+                                     "no leftover org-templater slots remain")
+               (prompt-tests--absent rendered "#+TITLE"
+                                     "Org keyword lines are stripped")
+               (prompt-tests--absent rendered "* Commentary"
+                                     "review commentary is omitted"))
              (prompt-tests--contains prompt "RECURSIVE INFERENCE IS AVAILABLE"
-                                     "RLM guidance rides along with the registered rlm tools")
-             (prompt-tests--absent prompt "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
+                                     "RLM guidance rides with registered rlm tools")
+             (prompt-tests--absent context "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
                                    "STE is omitted when the preference is off")
-             (prompt-tests--absent prompt "HURRY-UP MODE IS ACTIVE"
+             (prompt-tests--absent context "HURRY-UP MODE IS ACTIVE"
                                    "hurry-up is omitted unless requested")
              (prompt-tests--absent prompt "hosted web_search"
                                    "hosted search is omitted unless the request hosts it")
@@ -55,9 +68,10 @@
                                      "hosted search guidance follows the request binding")
              (prompt-tests--absent prompt "Use web.run"
                                    "hosted search takes precedence over web.run"))
-           (let ((prompt (system-prompt configuration :hurry-up-p t)))
-             (prompt-tests--contains prompt "HURRY-UP MODE IS ACTIVE"
-                                     "the hurry-up keyword inserts hurry-up guidance"))
+           (let ((context (request-context-session-state
+                           configuration :hurry-up-p t)))
+             (prompt-tests--contains context "HURRY-UP MODE IS ACTIVE"
+                                     "hurry-up guidance rides in mutable context"))
            (setf (slot-value configuration 'web-search-mode) "disabled")
            (let ((prompt (system-prompt configuration)))
              (prompt-tests--absent prompt "WEB SEARCH IS AVAILABLE"
@@ -65,16 +79,20 @@
            (setf (slot-value configuration 'immutable-p) t)
            (let ((prompt (system-prompt configuration)))
              (prompt-tests--contains prompt "This session was started with --immutable"
-                                     "an immutable session uses the immutable-image section")
+                                     "an immutable session uses its prompt section")
              (prompt-tests--contains prompt "The self namespace is inspection-only"
-                                     "an immutable session uses inspection-only self tools")
+                                     "an immutable session uses inspection-only tools")
              (prompt-tests--absent prompt "Your main power is the live image"
                                    "an immutable session omits live-image guidance"))
            (setf (slot-value configuration 'immutable-p) nil)
-           (preferences-set-simple-technical-english configuration t)
-           (prompt-tests--contains (system-prompt configuration)
-                                   "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
-                                   "STE follows the durable preference"))
+           (let ((stable-prompt (system-prompt configuration)))
+             (preferences-set-simple-technical-english configuration t)
+             (test-assert (string= stable-prompt (system-prompt configuration))
+                          "an STE toggle does not rewrite the stable system prompt")
+             (prompt-tests--contains
+              (request-context-session-state configuration)
+              "SIMPLE TECHNICAL ENGLISH MODE IS ACTIVE"
+              "STE guidance rides in mutable context")))
       (uiop:delete-directory-tree (test-configuration-root configuration)
                                   :validate t
                                   :if-does-not-exist ':ignore)))

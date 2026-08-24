@@ -374,9 +374,9 @@
                     (skill-tests--contribution-identifiers
                      (context-delivery-contributions delivery)))
                   (status (context-status conversation)))
-             (test-assert
-              (equal identifiers '("skill-catalog"))
-              "ordinary context assembly exposes only the native catalog")
+              (test-assert
+               (equal identifiers '("session-state" "skill-catalog"))
+               "ordinary context includes session state and the native catalog")
              (test-assert
               (search "skill-catalog" status)
               "/context makes the skill catalog contribution observable"))

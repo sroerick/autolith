@@ -167,6 +167,104 @@
                     (json-get tool "type")))
         :test #'equal))
 
+(-> provider-tests--search-filter-schemas () vector)
+(defun provider-tests--search-filter-schemas ()
+  "Return one ordinary namespace and the local web namespace."
+  (json-array
+   (json-object
+    "type" "namespace"
+    "name" "resource"
+    "tools" (json-array
+             (json-object "name" "read"
+                          "description" "Read a resource."
+                          "parameters" (json-object "type" "object"))))
+   (json-object
+    "type" "namespace"
+    "name" "web"
+    "tools" (json-array
+             (json-object "name" "run"
+                          "description" "Search the web."
+                          "parameters" (json-object "type" "object"))))))
+
+(-> test-provider-request-tool-filtering () null)
+(defun test-provider-request-tool-filtering ()
+  "Test local web schemas are sent only when the request can execute them."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (disabled-configuration
+           (configuration--clone base-configuration :web-search-mode "disabled"))
+         (schemas (provider-tests--search-filter-schemas)))
+    (unwind-protect
+         (progn
+           (test-assert
+            (= (length (provider-request-tool-namespaces
+                        base-configuration schemas :hosted-web-search-p t))
+               1)
+            "hosted search suppresses the duplicate local web namespace")
+           (test-assert
+            (and (provider-hosted-web-search-tools-p
+                  (list (json-object "type" "web_search_preview")))
+                 (not (provider-hosted-web-search-tools-p
+                       (list (json-object "type" "code_interpreter")))))
+            "only actual hosted search declarations suppress local web tools")
+           (let* ((conversation
+                    (conversation-create disabled-configuration
+                                         :identifier "responses-search-filter"))
+                  (provider (provider-create disabled-configuration))
+                  (request
+                    (progn
+                      (conversation-append-user-message conversation "inspect")
+                      (provider-request-object provider conversation schemas)))
+                  (tools (json-get request "tools")))
+             (test-assert
+              (and (= (length tools) 1)
+                   (string= (json-get (aref tools 0) "description")
+                            "Read a resource."))
+              "Responses omits local web schemas when search is disabled"))
+           (let* ((conversation
+                    (conversation-create disabled-configuration
+                                         :identifier "chat-search-filter"))
+                  (provider
+                    (openai-compatible-provider-create
+                     disabled-configuration
+                     :name "search-filter"
+                     :family ':codex
+                     :headers nil
+                     :reasoning-parameter nil))
+                  (request
+                    (progn
+                      (conversation-append-user-message conversation "inspect")
+                      (provider-request-object provider conversation schemas)))
+                  (tools (json-get request "tools")))
+             (test-assert
+              (and (= (length tools) 1)
+                   (string= (json-get
+                             (json-get (aref tools 0) "function")
+                             "description")
+                            "Read a resource."))
+              "Chat Completions omits local web schemas when search is disabled"))
+           (let* ((configuration
+                    (configuration--clone
+                     (configuration-with-model
+                      disabled-configuration "claude-haiku-4-5-20251001")
+                     :web-search-mode "disabled"))
+                  (conversation
+                    (conversation-create configuration
+                                         :identifier "anthropic-search-filter"))
+                  (provider (anthropic-provider-create configuration))
+                  (request
+                    (progn
+                      (conversation-append-user-message conversation "inspect")
+                      (provider-request-object provider conversation schemas)))
+                  (tools (json-get request "tools")))
+             (test-assert
+              (and (= (length tools) 1)
+                   (string= (json-get (aref tools 0) "description")
+                            "Read a resource."))
+              "Anthropic omits local web schemas when search is disabled")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-provider-request () null)
 (defun test-provider-request ()
   "Test the standard Codex Responses request shape without network access."
@@ -256,24 +354,51 @@
                                (json-get wire-fields name)))
                      field-names)
               "Codex's generic Responses fields match the concrete request"))
-           (let ((input (json-get request "input")))
-             (test-assert
-              (and (= (length input) 1)
-                   (string= (json-get (aref input 0) "role") "user"))
-              "standard Responses input begins with conversation history"))
-           (test-assert
-            (non-empty-string-p (json-get request "instructions"))
-            "standard Responses uses top-level instructions")
-           (let* ((goal-request
-                    (provider-request-object
-                     provider conversation schemas
-                     :goal-context "<goal_context>persist</goal_context>"))
-                  (goal-input (json-get goal-request "input")))
-             (test-assert (= (length goal-input) 1)
-                          "goal context stays outside durable conversation input")
-             (test-assert
-              (search "<goal_context>" (json-get goal-request "instructions"))
-              "goal context joins the top-level instructions"))
+            (let ((input (json-get request "input")))
+              (test-assert
+               (and (= (length input) 2)
+                    (string= (json-get (aref input 0) "role") "user")
+                    (string= (json-get (aref input 1) "role") "developer")
+                    (search "Current workspace agenda"
+                            (context--message-text (aref input 1))))
+               "standard Responses input ends with mutable request context"))
+            (test-assert
+             (non-empty-string-p (json-get request "instructions"))
+             "standard Responses uses top-level stable instructions")
+            (let* ((goal-text "<goal_context>persist</goal_context>")
+                   (goal-request
+                     (provider-request-object
+                      provider conversation schemas :goal-context goal-text))
+                   (goal-input (json-get goal-request "input")))
+              (test-assert
+               (and (= (length goal-input) 3)
+                    (search goal-text
+                            (context--message-text (aref goal-input 1)))
+                    (search "Current workspace agenda"
+                            (context--message-text (aref goal-input 2))))
+               "goal and mutable context follow durable conversation input")
+              (test-assert
+               (not (search goal-text (json-get goal-request "instructions")))
+               "goal context stays outside the stable instructions"))
+            (with-recursive-lock-held (*agenda-lock*)
+              (let ((state (agenda-load configuration)))
+                (agenda-add :configuration configuration
+                            :state state
+                            :text "cache-prefix mutation"
+                            :status ':doing
+                            :memory-identifiers nil)))
+            (let* ((mutated-request
+                     (provider-request-object provider conversation schemas))
+                   (mutated-input (json-get mutated-request "input")))
+              (test-assert
+               (string= (json-get request "instructions")
+                        (json-get mutated-request "instructions"))
+               "an agenda mutation preserves byte-identical stable instructions")
+              (test-assert
+               (search "cache-prefix mutation"
+                       (context--message-text
+                        (aref mutated-input (1- (length mutated-input)))))
+               "an agenda mutation appears in trailing request context"))
            (test-assert
             (null (provider-web-search-tool configuration))
             "the nonfunctional native web search tool stays disabled")

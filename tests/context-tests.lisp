@@ -199,6 +199,54 @@
                    "the waiting request invokes its contributor exactly once")))
   nil)
 
+(-> test-session-state-context-contributor () null)
+(defun test-session-state-context-contributor ()
+  "Test the protected built-in mutable session-state contribution."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "session-state-context")))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "inspect session state")
+           (let* ((*request-context-hurry-up-p* t)
+                  (delivery
+                    (context-resolve-request configuration conversation #()))
+                  (contribution
+                    (find "session-state"
+                          (context-delivery-contributions delivery)
+                          :test #'string=
+                          :key #'context-contribution-identifier)))
+             (test-assert
+              (and contribution
+                   (search "HURRY-UP MODE IS ACTIVE"
+                           (context-contribution-instruction contribution)))
+              "the built-in contributor delivers current mutable session state"))
+           (let* ((*system-prompt-override* "compact frame prompt")
+                  (delivery
+                    (context-resolve-request configuration conversation #())))
+             (test-assert
+              (not (find "session-state"
+                         (context-delivery-contributions delivery)
+                         :test #'string=
+                         :key #'context-contribution-identifier))
+              "a compact prompt override suppresses full session-state context"))
+           (test-assert
+            (handler-case
+                (progn
+                  (register-context-contributor
+                   "session-state" 'context-tests--mandatory
+                   :source ':built-in)
+                  nil)
+              (configuration-error ()
+                t))
+            "another function cannot replace built-in context")
+           (test-assert
+            (not (unregister-context-contributor "session-state"))
+            "built-in context cannot be unregistered"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-request-local-context () null)
 (defun test-request-local-context ()
   "Test contributor stacking, lifecycle, budgeting, failures, and projection."
@@ -425,11 +473,15 @@
                   (request (provider-request-object provider conversation #()))
                   (input (json-get request "input")))
              (test-assert
-              (= (length input) (length before))
-              "request-local context stays outside durable provider input")
+              (and (= (length input) (1+ (length before)))
+                   (string= (json-get (aref input (1- (length input))) "role")
+                            "developer"))
+              "request-local context appends one developer input")
              (test-assert
-              (search "Temporary context" (json-get request "instructions"))
-              "request-local context joins the top-level instructions")
+              (search "Temporary context"
+                      (context--message-text
+                       (aref input (1- (length input)))))
+              "request-local context follows durable provider input")
              (test-assert
               (equal before (conversation-input-items conversation))
               "context request assembly never mutates durable conversation input"))

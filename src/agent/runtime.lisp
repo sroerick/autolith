@@ -1090,7 +1090,7 @@ The summarization request remains a side channel. Its durable text is the
 portable handoff for another provider family, while a supported native
 checkpoint preserves the current model's opaque reasoning state."
   (let ((conversation (agent-conversation agent))
-        (*system-prompt-hurry-up-p* (agent-hurry-up-p agent)))
+        (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
     (agent-observer-status
      observer
      :compaction-started
@@ -1180,7 +1180,7 @@ checkpoint preserves the current model's opaque reasoning state."
                (handler-case
                    (let ((*provider-hosted-tools-enabled-p*
                             (not tool-restriction-p))
-                          (*system-prompt-hurry-up-p*
+                          (*request-context-hurry-up-p*
                             (agent-hurry-up-p agent))
                           (*context-request-contributions*
                            (and

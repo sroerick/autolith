@@ -2,7 +2,7 @@
 
 ;;;; -- System Prompt --
 
-(defvar *system-prompt-hurry-up-p* nil
+(defvar *request-context-hurry-up-p* nil
   "Whether the current provider request uses hurry-up guidance.")
 
 (defvar *system-prompt-hosted-web-search-p* nil
@@ -18,6 +18,10 @@ prompt instead of the full Autolith persona.")
   #p"docs/system-prompt.org"
   "The Org template rendered for each provider request.")
 
+(defparameter *request-context-template-relative-path*
+  #p"docs/request-context.org"
+  "The Org template for mutable state delivered behind conversation history.")
+
 (defparameter *workspace-instructions-limit* 16000
   "The characters of workspace AGENTS.md included in the prompt.")
 
@@ -26,6 +30,12 @@ prompt instead of the full Autolith persona.")
 
 (defparameter *system-prompt-context-truncation-marker* "... [truncated]"
   "The suffix identifying a bounded dynamic system-prompt value.")
+
+(defparameter *request-context-lisp-image-limit* 12000
+  "The maximum characters of complete saved-image rows in request context.")
+
+(defparameter *request-context-agenda-limit* 64000
+  "The maximum characters of complete agenda rows in request context.")
 
 (-> system-prompt--instruction-paths (pathname) list)
 (defun system-prompt--instruction-paths (working-directory)
@@ -114,6 +124,15 @@ prompt instead of the full Autolith persona.")
       (error "Autolith system prompt template is missing: ~A" path))
     path))
 
+(-> request-context--template-path () pathname)
+(defun request-context--template-path ()
+  "Return the Org mutable request-context template shipped with Autolith."
+  (let ((path (asdf:system-relative-pathname
+               :autolith *request-context-template-relative-path*)))
+    (unless (probe-file path)
+      (error "Autolith request-context template is missing: ~A" path))
+    path))
+
 (-> system-prompt--org-keyword-line-p (string) boolean)
 (defun system-prompt--org-keyword-line-p (line)
   "Return true when LINE is an Org keyword such as #+TITLE."
@@ -141,51 +160,91 @@ prompt instead of the full Autolith persona.")
                  emittedp)
         (terpri out)))))
 
-(-> system-prompt--lisp-image-entries (configuration) string)
-(defun system-prompt--lisp-image-entries (configuration)
-  "Return bounded IMAGE=/INVALID= rows for the Org template."
-  (bounded-string (lisp-image-prompt-entries configuration) :limit 12000))
+(-> system-prompt--config (configuration) hash-table)
+(defun system-prompt--config (configuration)
+  "Return the stable org-templater bindings for CONFIGURATION."
+  (dict 'eq
+        :hosted-web-search-p *system-prompt-hosted-web-search-p*
+        :web-run-p (system-prompt--web-run-p configuration)
+        :rlm-available t
+        :user (system-prompt--environment-value "USER")
+        :os (system-prompt--context-value (software-type))
+        :os-version (system-prompt--context-value (software-version))
+        :arch (system-prompt--context-value (string-downcase (machine-type)))
+        :shell (system-prompt--environment-value "SHELL")
+        :term (system-prompt--environment-value "TERM")
+        :lisp (system-prompt--context-value (lisp-implementation-type))
+        :lisp-version (system-prompt--context-value (lisp-implementation-version))
+        :lang (system-prompt--environment-value "LANG")
+        :immutable-p (configuration-immutable-p configuration)
+        :source-root (system-prompt--context-value
+                      (namestring (configuration-source-root configuration)))
+        :workspace (system-prompt--context-value
+                    (namestring (configuration-working-directory configuration)))
+        :current-date (system-prompt--current-date)
+        :workspace-instructions
+        (system-prompt--workspace-instructions configuration)))
 
-(-> system-prompt--config
+(-> request-context--bounded-complete-lines (string integer) string)
+(defun request-context--bounded-complete-lines (text limit)
+  "Bound TEXT to LIMIT without splitting a line, adding a truncation marker."
+  (if (<= (length text) limit)
+      text
+      (let* ((marker *system-prompt-context-truncation-marker*)
+             (prefix-limit (- limit (length marker) 1))
+             (boundary
+               (and (plusp prefix-limit)
+                    (position #\Newline text
+                              :from-end t
+                              :end (1+ prefix-limit)))))
+        (if boundary
+            (concatenate 'string
+                         (subseq text 0 boundary)
+                         (string #\Newline)
+                         marker)
+            marker))))
+
+(-> request-context--config
     (configuration &key (:hurry-up-p boolean))
     hash-table)
-(defun system-prompt--config (configuration &key hurry-up-p)
-  "Return the org-templater bindings for CONFIGURATION."
-  (let ((agenda (or (agenda-prompt-item-lines configuration) "")))
+(defun request-context--config (configuration &key hurry-up-p)
+  "Return mutable request-local org-templater bindings for CONFIGURATION."
+  (let* ((agenda (or (agenda-prompt-item-lines configuration) ""))
+         (image-entries
+           (request-context--bounded-complete-lines
+            (lisp-image-prompt-entries configuration)
+            *request-context-lisp-image-limit*)))
     (dict 'eq
           :simple-technical-english-p
           (preferences-simple-technical-english-p configuration)
-          :hosted-web-search-p *system-prompt-hosted-web-search-p*
-          :web-run-p (system-prompt--web-run-p configuration)
           :hurry-up-p hurry-up-p
-          :rlm-available t
-          :user (system-prompt--environment-value "USER")
-          :os (system-prompt--context-value (software-type))
-          :os-version (system-prompt--context-value (software-version))
-          :arch (system-prompt--context-value (string-downcase (machine-type)))
-          :shell (system-prompt--environment-value "SHELL")
-          :term (system-prompt--environment-value "TERM")
-          :lisp (system-prompt--context-value (lisp-implementation-type))
-          :lisp-version (system-prompt--context-value (lisp-implementation-version))
-          :lang (system-prompt--environment-value "LANG")
-          :lisp-image-entries (system-prompt--lisp-image-entries configuration)
-          :agenda agenda
-          :agenda-p (plusp (length agenda))
-          :immutable-p (configuration-immutable-p configuration)
-          :source-root (system-prompt--context-value
-                        (namestring (configuration-source-root configuration)))
-          :workspace (system-prompt--context-value
-                      (namestring (configuration-working-directory configuration)))
-          :current-date (system-prompt--current-date)
-          :workspace-instructions
-          (system-prompt--workspace-instructions configuration))))
+          :lisp-image-entries image-entries
+          :agenda
+          (request-context--bounded-complete-lines
+           agenda *request-context-agenda-limit*)
+          :agenda-p (plusp (length agenda)))))
 
-(-> system-prompt (configuration &key (:hurry-up-p boolean)) string)
-(defun system-prompt (configuration &key (hurry-up-p *system-prompt-hurry-up-p*))
+(-> request-context-session-state
+    (configuration &key (:hurry-up-p boolean))
+    string)
+(defun request-context-session-state
+    (configuration &key (hurry-up-p *request-context-hurry-up-p*))
+  "Render mutable session state for delivery behind conversation history."
+  (string-left-trim
+   '(#\Newline)
+   (system-prompt--drop-org-keyword-lines
+    (org-templater:render
+     :template-path (request-context--template-path)
+     :config (request-context--config configuration :hurry-up-p hurry-up-p)))))
+
+(-> system-prompt (configuration) string)
+(defun system-prompt (configuration)
   "Return the Autolith system prompt specialized for CONFIGURATION and today.
 
-The prompt is rebuilt for every provider request, so the embedded date,
-environment, and urgent execution profile reflect the moment it is made."
+The prompt is rebuilt for every provider request so its stable configuration,
+environment, workspace instructions, and date reflect the moment it is made.
+Mutable agenda, worker-image, STE, and hurry-up state is delivered separately
+behind conversation history."
   (when *system-prompt-override*
     (return-from system-prompt *system-prompt-override*))
   (string-left-trim
@@ -193,4 +252,4 @@ environment, and urgent execution profile reflect the moment it is made."
    (system-prompt--drop-org-keyword-lines
     (org-templater:render
      :template-path (system-prompt--template-path)
-     :config (system-prompt--config configuration :hurry-up-p hurry-up-p)))))
+     :config (system-prompt--config configuration)))))

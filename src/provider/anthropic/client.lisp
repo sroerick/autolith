@@ -10,7 +10,7 @@
 ;;; message_delta, and message_stop events. Tool calls are assistant
 ;;; tool_use content blocks and results are user tool_result blocks. The
 ;;; wire namespace accepts only letters, digits, hyphens, and underscores,
-;;; so this provider shares the Chat Completions Base64 tool-name encoding.
+;;; so this provider shares the readable Chat Completions tool-name encoding.
 ;;; Conversations therefore persist in the same namespaced shape regardless
 ;;; of the serving provider.
 
@@ -239,16 +239,14 @@
                "content" (coerce (nreverse (anthropic--message-state-blocks state))
                                  'vector)))
 
-(-> anthropic--input-messages (list) (values list list))
+(-> anthropic--input-messages (list) list)
 (defun anthropic--input-messages (items)
   "Translate portable Responses ITEMS into alternating Anthropic messages.
 
-Returns the message list and the developer/system texts that Anthropic
-carries as top-level system blocks rather than as a message role. The inherited
-reference boundary remains at its transcript position as user content because
-moving it into the top-level system field would reverse its positional scope."
+Developer and system items retain their transcript position as user content.
+Hoisting them into the top-level system field would invalidate the stable
+system cache prefix when mid-conversation guidance changes."
   (let ((messages        nil)
-        (system-texts    nil)
         (state           nil)
         (tool-use-states (make-hash-table :test #'equal)))
     (labels ((flush ()
@@ -295,21 +293,7 @@ moving it into the top-level system field would reverse its positional scope."
                    ((conversation--inherited-reference-boundary-p item)
                     (append-message "user" (json-get item "content")))
                    ((json-string-member-p role '("developer" "system"))
-                    (multiple-value-bind (blocks complete-p)
-                        (anthropic--content-blocks (json-get item "content"))
-                      (unless (and complete-p
-                                   blocks
-                                   (every (lambda (block)
-                                            (json-string= (json-get block "type")
-                                                          "text"))
-                                          blocks))
-                        (anthropic--signal-request-conversion-failure
-                         "A system message contains unsupported Anthropic content."))
-                      (push (format nil "~{~A~^~2%~}"
-                                    (mapcar (lambda (block)
-                                              (json-get block "text"))
-                                            blocks))
-                            system-texts)))
+                    (append-message "user" (json-get item "content")))
                    ((json-string-member-p role '("user" "assistant"))
                     (append-message role (json-get item "content")))
                    (t
@@ -338,7 +322,7 @@ moving it into the top-level system field would reverse its positional scope."
               (t
                nil)))))
       (flush)
-      (values (nreverse messages) (nreverse system-texts)))))
+      (nreverse messages))))
 
 
 ;;;; -- Anthropic Requests --
@@ -346,15 +330,90 @@ moving it into the top-level system field would reverse its positional scope."
 (defparameter *anthropic-maximum-output-tokens* 32000
   "The output token budget requested for Anthropic streaming turns.")
 
-(-> anthropic--system-blocks (list) (option vector))
-(defun anthropic--system-blocks (texts)
-  "Return Anthropic system blocks for the nonempty TEXTS, or NIL."
+(-> anthropic--cache-control () json-object)
+(defun anthropic--cache-control ()
+  "Return one explicit ephemeral Anthropic cache breakpoint declaration."
+  (json-object "type" "ephemeral"))
+
+(-> anthropic--mark-cache-breakpoint (json-object) json-object)
+(defun anthropic--mark-cache-breakpoint (object)
+  "Add an explicit ephemeral cache breakpoint to OBJECT and return it."
+  (setf (gethash "cache_control" object) (anthropic--cache-control))
+  object)
+
+(-> anthropic--system-blocks (list &key (:cache-p boolean)) (option vector))
+(defun anthropic--system-blocks (texts &key cache-p)
+  "Return Anthropic system blocks for nonempty TEXTS, optionally cache-marked."
   (let ((kept (remove-if-not #'non-empty-string-p texts)))
     (when kept
-      (coerce (mapcar (lambda (text)
-                        (json-object "type" "text" "text" text))
-                      kept)
-              'vector))))
+      (let ((blocks
+              (coerce (mapcar (lambda (text)
+                                (json-object "type" "text" "text" text))
+                              kept)
+                      'vector)))
+        (when cache-p
+          (anthropic--mark-cache-breakpoint
+           (aref blocks (1- (length blocks)))))
+        blocks))))
+
+(-> anthropic--mark-tool-cache-breakpoint (vector) vector)
+(defun anthropic--mark-tool-cache-breakpoint (tools)
+  "Mark the final tool declaration as an explicit Anthropic cache breakpoint."
+  (when (plusp (length tools))
+    (anthropic--mark-cache-breakpoint (aref tools (1- (length tools)))))
+  tools)
+
+(-> anthropic--mark-history-cache-breakpoint (list) list)
+(defun anthropic--mark-history-cache-breakpoint (messages)
+  "Mark the final content block of chronological MESSAGES as cacheable."
+  (when messages
+    (let ((content (json-get (first (last messages)) "content")))
+      (when (and (vectorp content) (plusp (length content)))
+        (anthropic--mark-cache-breakpoint
+         (aref content (1- (length content)))))))
+  messages)
+
+(-> anthropic--append-messages (list list) list)
+(defun anthropic--append-messages (messages trailing-messages)
+  "Append TRAILING-MESSAGES, merging an equal-role boundary when necessary."
+  (cond
+    ((null trailing-messages)
+     messages)
+    ((null messages)
+     trailing-messages)
+    ((json-string= (json-get (first (last messages)) "role")
+                   (json-get (first trailing-messages) "role"))
+     (let ((message (first (last messages))))
+       (setf (gethash "content" message)
+             (concatenate 'vector
+                          (json-get message "content")
+                          (json-get (first trailing-messages) "content")))
+       (append messages (rest trailing-messages))))
+    (t
+     (append messages trailing-messages))))
+
+(-> anthropic--append-user-texts (list list) list)
+(defun anthropic--append-user-texts (messages texts)
+  "Append nonempty TEXTS as trailing user blocks without disturbing history."
+  (let ((blocks
+          (mapcar (lambda (text)
+                    (json-object "type" "text" "text" text))
+                  (remove-if-not #'non-empty-string-p texts))))
+    (cond
+      ((null blocks)
+       messages)
+      ((and messages
+            (json-string= (json-get (first (last messages)) "role") "user"))
+       (let ((message (first (last messages))))
+         (setf (gethash "content" message)
+               (concatenate 'vector
+                            (json-get message "content")
+                            (coerce blocks 'vector)))
+         messages))
+      (t
+       (append messages
+               (list (json-object "role" "user"
+                                  "content" (coerce blocks 'vector))))))))
 
 (defmethod provider-request-object
     ((provider anthropic-api-key-provider)
@@ -363,14 +422,18 @@ moving it into the top-level system field would reverse its positional scope."
      &key goal-context compaction-p)
   "Build the complete stateless Anthropic Messages request for CONVERSATION.
 
-The system prompt, GOAL-CONTEXT, and resolved context contributions ride as
-top-level system blocks. COMPACTION-P builds a tool-free summarization
-request whose trailing system block asks for a context checkpoint handoff.
-The second value is the context delivery that the transport consumes only
-after a completed response."
+The stable system prompt, tools, and durable message history receive explicit
+cache breakpoints. GOAL-CONTEXT and resolved context contributions follow the
+history as uncached user blocks. COMPACTION-P builds a tool-free summarization
+request whose trailing system block asks for a context checkpoint handoff. The
+second value is consumed only after a completed response."
   (let* ((configuration (provider-configuration provider))
          (effective-tools
-           (if compaction-p #() (anthropic--wire-tools tool-namespaces)))
+           (if compaction-p
+               #()
+               (anthropic--wire-tools
+                (provider-request-tool-namespaces
+                 configuration tool-namespaces))))
          (delivery
            (unless compaction-p
              (context-resolve-request
@@ -378,43 +441,66 @@ after a completed response."
               conversation
               effective-tools
               :goal-context goal-context)))
-         (input-items
+         (durable-items
            (conversation-input-items-for-family
             conversation
             (provider-family provider)
-            :include-ephemeral-p (not compaction-p))))
-    (multiple-value-bind (messages system-texts)
-        (anthropic--input-messages input-items)
-      (let ((request
-              (json-object
-               "model" (configuration-model configuration)
-               "max_tokens" (if *provider-maximum-output-tokens*
-                                (min *provider-maximum-output-tokens*
-                                     *anthropic-maximum-output-tokens*)
-                                *anthropic-maximum-output-tokens*)
-               "messages" (coerce messages 'vector)
-               "stream" t)))
-        (let ((system
-                (anthropic--system-blocks
-                 (append
-                  (list (let ((*system-prompt-hosted-web-search-p* nil))
-                          (system-prompt configuration)))
-                  (when (and goal-context (not compaction-p))
-                    (list goal-context))
-                  system-texts
-                  (when (and delivery
-                             (non-empty-string-p
-                              (context-delivery-rendered delivery)))
-                    (list (context-delivery-rendered delivery)))
-                  (when compaction-p
-                    (list *compaction-instructions*))))))
-          (when system
-            (setf (gethash "system" request) system)))
-        (when (plusp (length effective-tools))
-          (setf (gethash "tools" request) effective-tools
-                (gethash "tool_choice" request)
-                (json-object "type" "auto")))
-        (values request delivery)))))
+            :include-ephemeral-p nil))
+         (input-items
+           (if compaction-p
+               durable-items
+               (conversation-input-items-for-family
+                conversation
+                (provider-family provider)
+                :include-ephemeral-p t)))
+         (ephemeral-items
+           (unless compaction-p
+             (remove-if (lambda (item)
+                          (member item durable-items :test #'eq))
+                        input-items))))
+    (let* ((history-messages (anthropic--input-messages durable-items))
+           (messages
+             (if compaction-p
+                 history-messages
+                 (anthropic--append-messages
+                  (anthropic--mark-history-cache-breakpoint history-messages)
+                  (anthropic--input-messages ephemeral-items))))
+           (messages
+             (anthropic--append-user-texts
+              messages
+              (append
+               (when (and goal-context (not compaction-p))
+                 (list goal-context))
+               (when (and delivery
+                          (non-empty-string-p
+                           (context-delivery-rendered delivery)))
+                 (list (context-delivery-rendered delivery))))))
+           (request
+             (json-object
+              "model" (configuration-model configuration)
+              "max_tokens" (if *provider-maximum-output-tokens*
+                               (min *provider-maximum-output-tokens*
+                                    *anthropic-maximum-output-tokens*)
+                               *anthropic-maximum-output-tokens*)
+              "messages" (coerce messages 'vector)
+              "stream" t))
+           (system
+             (anthropic--system-blocks
+              (append
+               (list (let ((*system-prompt-hosted-web-search-p* nil))
+                       (system-prompt configuration)))
+               (when compaction-p
+                 (list *compaction-instructions*)))
+              :cache-p (not compaction-p))))
+      (when system
+        (setf (gethash "system" request) system))
+      (when (plusp (length effective-tools))
+        (unless compaction-p
+          (anthropic--mark-tool-cache-breakpoint effective-tools))
+        (setf (gethash "tools" request) effective-tools
+              (gethash "tool_choice" request)
+              (json-object "type" "auto")))
+      (values request delivery))))
 
 
 ;;;; -- Anthropic Transport --
