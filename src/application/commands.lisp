@@ -1715,7 +1715,9 @@ are forwarded to TERMINAL-UI-SELECT."
            (let ((*standard-input* input)
                  (*standard-output* output)
                  (*api-key-input-echo-disabled-p* input-echo-disabled-p)
-                 (*api-key-input-file-descriptor* input-file-descriptor))
+                 (*api-key-input-file-descriptor* input-file-descriptor)
+                 (*api-key-output-styled-p*
+                   (terminal-styled-p (terminal-ui-terminal ui))))
              (setf message
                    (provider-authenticate provider
                                           :stream output

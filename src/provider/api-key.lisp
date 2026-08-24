@@ -198,6 +198,9 @@
 (defparameter *api-key-input-file-descriptor* nil
   "The known descriptor for dynamically bound standard API-key input.")
 
+(defparameter *api-key-output-styled-p* nil
+  "Whether API-key prompts use trusted semantic terminal styling.")
+
 (-> api-key--strip-bracketed-paste (string) string)
 (defun api-key--strip-bracketed-paste (text)
   "Remove one terminal bracketed-paste wrapper from TEXT."
@@ -255,6 +258,18 @@
                       (rest saved-mode))
   nil)
 
+(-> api-key--write-prompt-span (stream terminal-style string) null)
+(defun api-key--write-prompt-span (stream style text)
+  "Write sanitized API-key prompt TEXT to STREAM in STYLE when enabled."
+  (let ((sequence (and *api-key-output-styled-p*
+                       (terminal-style-sequence style))))
+    (when sequence
+      (write-string sequence stream))
+    (write-string (sanitize-text text :single-line-p t) stream)
+    (when sequence
+      (write-string *terminal-style-reset* stream)))
+  nil)
+
 (-> api-key-read-hidden
     (string &key
             (:input stream)
@@ -272,14 +287,25 @@
        (stream *standard-output*)
        note)
   "Clearly prompt for PROVIDER-NAME's API key and read it without terminal echo."
-  (format stream
-          "~&╭─ ~A authentication~%~
-             │ Paste the ~A API key below, then press Enter.~%~
-             │ Input is hidden. Nothing will appear while you type or paste.~%"
-          provider-name provider-name)
+  (fresh-line stream)
+  (api-key--write-prompt-span
+   stream ':brand (format nil "╭─ ~A authentication" provider-name))
+  (terpri stream)
+  (api-key--write-prompt-span stream ':brand "│ ")
+  (api-key--write-prompt-span
+   stream ':dim
+   (format nil "Paste the ~A API key below, then press Enter." provider-name))
+  (terpri stream)
+  (api-key--write-prompt-span stream ':brand "│ ")
+  (api-key--write-prompt-span
+   stream ':dim "Input is hidden. Nothing will appear while you type or paste.")
+  (terpri stream)
   (when (non-empty-string-p note)
-    (format stream "│ ~A~%" note))
-  (write-string "╰─ API key › " stream)
+    (api-key--write-prompt-span stream ':brand "│ ")
+    (api-key--write-prompt-span stream ':hint note)
+    (terpri stream))
+  (api-key--write-prompt-span stream ':brand "╰─ ")
+  (api-key--write-prompt-span stream ':user "API key › ")
   (finish-output stream)
   (let ((saved-mode
           (api-key--hidden-input-mode input input-file-descriptor)))

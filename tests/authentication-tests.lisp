@@ -150,6 +150,31 @@
           (search "API key" text)
           (not (search key text)))
      "API-key entry clearly labels the hidden field without echoing its value"))
+  (let ((input (make-string-input-stream (format nil "styled-key~%")))
+        (output (make-string-output-stream))
+        (*api-key-output-styled-p* t)
+        (*terminal-style-reset* "<reset>"))
+    (test-call-with-function-replacements
+     (list
+      (list 'terminal-style-sequence
+            (lambda (style &optional indexed-color-p)
+              (declare (ignore indexed-color-p))
+              (format nil "<~A>" style))))
+     (lambda ()
+       (api-key-read-hidden
+        "Styled"
+        :input input
+        :input-file-descriptor -1
+        :stream output
+        :note "Credential note.")))
+    (let ((text (get-output-stream-string output)))
+      (test-assert
+       (and (search "<BRAND>" text)
+            (search "<DIM>" text)
+            (search "<HINT>" text)
+            (search "<USER>" text)
+            (search "<reset>" text))
+       "interactive API-key prompts use semantic terminal styles")))
   nil)
 
 (defclass authentication-test-error-input-stream
@@ -431,31 +456,50 @@
 
 (-> authentication-tests--test-main-input-descriptor () null)
 (defun authentication-tests--test-main-input-descriptor ()
-  "Test command-line authentication identifies the standard-input descriptor."
+  "Test command-line authentication supplies terminal input and styling state."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (observed-descriptor nil))
+         (observed-descriptor nil)
+         (observed-styled-p ':unset)
+         (provider-function
+           (lambda (candidate selection)
+             (declare (ignore candidate selection))
+             ':test-provider))
+         (authenticator
+           (lambda (provider &key stream open-browser-p)
+             (declare (ignore stream))
+             (test-assert (and (eq provider ':test-provider)
+                               open-browser-p)
+                          "command-line auth invokes the selected provider")
+             (setf observed-descriptor *api-key-input-file-descriptor*
+                   observed-styled-p *api-key-output-styled-p*)
+             "Provider authentication was saved.")))
     (unwind-protect
-         (test-call-with-function-replacements
-          (list
-           (list 'main--authentication-provider
-                 (lambda (candidate selection)
-                   (declare (ignore candidate selection))
-                   ':test-provider))
-           (list 'provider-authenticate
-                 (lambda (provider &key stream open-browser-p)
-                   (declare (ignore stream))
-                   (test-assert (and (eq provider ':test-provider)
-                                     open-browser-p)
-                                "command-line auth invokes the selected provider")
-                   (setf observed-descriptor *api-key-input-file-descriptor*)
-                   "Provider authentication was saved.")))
-          (lambda ()
-            (let ((*standard-output* (make-string-output-stream)))
-              (main-authenticate configuration "example"))))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
-    (test-assert (= observed-descriptor 0)
-                 "command-line auth supplies the POSIX stdin descriptor"))
+         (progn
+           (test-call-with-function-replacements
+            (list (list 'main--authentication-provider provider-function)
+                  (list 'provider-authenticate authenticator))
+            (lambda ()
+              (let ((*standard-output* (make-string-output-stream)))
+                (main-authenticate configuration "example"))))
+           (test-assert
+            (and (= observed-descriptor 0)
+                 (null observed-styled-p))
+            "noninteractive command-line auth supplies stdin without terminal styling")
+           (setf observed-styled-p ':unset)
+           (test-call-with-function-replacements
+            (list (list 'main--authentication-provider provider-function)
+                  (list 'main--authentication-output-styled-p
+                        (lambda (stream)
+                          (declare (ignore stream))
+                          t))
+                  (list 'provider-authenticate authenticator))
+            (lambda ()
+              (let ((*standard-output* (make-string-output-stream)))
+                (main-authenticate configuration "example"))))
+           (test-assert (eq observed-styled-p t)
+                        "interactive command-line auth enables semantic styling"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
 (-> test-authentication-store () null)

@@ -485,12 +485,20 @@
       (provider-authentication-provider configuration selection)
       (provider-create configuration)))
 
+(-> main--authentication-output-styled-p (stream) boolean)
+(defun main--authentication-output-styled-p (stream)
+  "Return true when command-line authentication may style output to STREAM."
+  (and (interactive-stream-p stream)
+       (terminal-environment-styling-p)))
+
 (-> main-authenticate (configuration (option string)) null)
 (defun main-authenticate (configuration selection)
   "Authenticate a registered provider before the conversation UI starts."
   (configuration-ensure-directories configuration)
   (let ((provider (main--authentication-provider configuration selection))
-        (*api-key-input-file-descriptor* 0))
+        (*api-key-input-file-descriptor* 0)
+        (*api-key-output-styled-p*
+          (main--authentication-output-styled-p *standard-output*)))
     (format t "~&~A~%"
             (provider-authenticate provider
                                    :stream *standard-output*

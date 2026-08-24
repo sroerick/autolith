@@ -718,6 +718,11 @@
     :accessor application-authentication-test-provider-input-file-descriptor
     :type (option integer)
     :documentation "The dynamically supplied descriptor for hidden input.")
+   (styled-p
+    :initform nil
+    :accessor application-authentication-test-provider-styled-p
+    :type boolean
+    :documentation "Whether semantic prompt styling was enabled for authentication.")
    (open-browser-p
     :initform nil
     :accessor application-authentication-test-provider-open-browser-p
@@ -749,6 +754,8 @@
   (setf (application-authentication-test-provider-stream provider) stream
         (application-authentication-test-provider-input-file-descriptor provider)
         *api-key-input-file-descriptor*
+        (application-authentication-test-provider-styled-p provider)
+        *api-key-output-styled-p*
         (application-authentication-test-provider-open-browser-p provider)
         open-browser-p)
   (format stream "Open the provider login page now.~%")
@@ -874,6 +881,7 @@
                           :input-stream (make-string-input-stream "")
                           :output-stream terminal-output
                           :input-file-descriptor -1
+                          :styled-p t
                           :columns 80))
          (ui (terminal-ui-create :terminal terminal))
          (application (make-instance 'application :ui ui))
@@ -910,11 +918,12 @@
        (and stopped-p started-p
             (eq (application-authentication-test-provider-stream provider)
                 terminal-output)
+            (application-authentication-test-provider-styled-p provider)
             (application-authentication-test-provider-open-browser-p provider)
             (= (application-authentication-test-provider-input-file-descriptor
                 provider)
                -1))
-       "auth uses the direct terminal stream and restores terminal ownership")
+       "auth uses the direct styled terminal and restores terminal ownership")
       (test-assert
        (and (search "Authenticating provider grok." terminal-text)
             (search "Open the provider login page now." terminal-text)
@@ -1004,8 +1013,9 @@
               (and (not stopped-p)
                    (not started-p)
                    (terminal-ui-started-p ui)
-                   (eq (localgroup-terminal-controller terminal) controller))
-              "localgroup auth preserves the attached terminal transport")
+                   (eq (localgroup-terminal-controller terminal) controller)
+                   (not (application-authentication-test-provider-styled-p provider)))
+              "localgroup auth preserves the attached plain terminal transport")
              (test-assert
               (and suspended-during-authentication-p
                    (not repaint-during-authentication-p)
