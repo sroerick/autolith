@@ -34,8 +34,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-llm-provider-api";
-      rev = "ee1eb5bfdc92e62ec63f834dfff419b760cabf9d";
-      hash = "sha256-8GDbbu/WMrv5Ugl2HnVnqBrxVAjEsbIN4AbOMC/Iwwk=";
+      rev = "af49d9d99fbf82ed0d91fa7c352cc2489845b015";
+      hash = "sha256-2ayWg2QKXvr44epQLvQJmf3ArMv7LsGhWOZZMFRI0Mg=";
     };
     lispLibs = with pkgs.sbclPackages; [
       babel

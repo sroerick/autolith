@@ -64,8 +64,8 @@
   :version "git-ee2e2eb0bd5080c52db55036f853c00671962178"))
 ("cl-llm-provider-api" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "ee1eb5bfdc92e62ec63f834dfff419b760cabf9d")
-  :version "git-ee1eb5bfdc92e62ec63f834dfff419b760cabf9d"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-llm-provider-api.git" :ref "af49d9d99fbf82ed0d91fa7c352cc2489845b015")
+  :version "git-af49d9d99fbf82ed0d91fa7c352cc2489845b015"))
 ("cl-skills" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-skills.git" :ref "a34b85a3aabca9530c5f9772ea988a6399a57963")
