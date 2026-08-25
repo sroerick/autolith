@@ -1966,7 +1966,10 @@ are forwarded to TERMINAL-UI-SELECT."
   (let ((mode (and argument (string-downcase argument))))
     (cond
       ((null mode)
-       (application-set-hurry-up application t))
+       (application-present
+        application
+        (format nil "Hurry-up mode is ~:[disabled~;enabled~]."
+                (application-hurry-up-p application))))
       ((string= mode "on")
        (application-set-hurry-up application t))
       ((string= mode "off")
@@ -2115,14 +2118,14 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-working-directory-command
     (:name "/cwd"
-     :argument "PATH"
-     :description "change the active workspace"
-     :tip "moves the active workspace without restarting Autolith."
+     :argument "[PATH]"
+     :description "show or change the active workspace"
+     :tip "shows or moves the active workspace without restarting Autolith."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list (pathname)
+     :call-lambda-list (&optional (pathname ""))
      :slash-argument-mode :remainder)
-    (application pathname)
+    (application &optional (pathname ""))
   (application-working-directory-command
    application
    (etypecase pathname
@@ -2232,66 +2235,66 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-trace-command
     (:name "/trace"
-     :argument "on|off"
+     :argument "[on|off]"
      :description "show visible reasoning summaries"
      :tip "toggles visible reasoning summaries with on or off."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (mode)
+     :call-lambda-list (&optional mode)
      :slash-argument-mode :first)
-    (application mode)
+    (application &optional mode)
   (application-trace-command application mode)
   ':continue)
 
 (define-application-command application--builtin-turn-timestamps-command
     (:name "/timestamps"
-     :argument "on|off"
+     :argument "[on|off]"
      :description "show local timestamps beside user and assistant turns"
      :tip "toggles dim local timestamps beside user and assistant turns."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (mode)
+     :call-lambda-list (&optional mode)
      :slash-argument-mode :first)
-    (application mode)
+    (application &optional mode)
   (application-turn-timestamps-command application mode)
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
     (:name "/ste"
-     :argument "on|off"
+     :argument "[on|off]"
      :description "use Simple Technical English for replies"
      :tip "toggles short, direct Simple Technical English replies."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (mode)
+     :call-lambda-list (&optional mode)
      :slash-argument-mode :first)
-    (application mode)
+    (application &optional mode)
   (application-simple-technical-english-command application mode)
   ':continue)
 
 (define-application-command application--builtin-session-titles-command
     (:name "/titles"
-     :argument "on|off"
+     :argument "[on|off]"
      :description "allow provider-generated session-title refreshes"
      :tip "toggles automatic provider-generated session-title refreshes."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (mode)
+     :call-lambda-list (&optional mode)
      :slash-argument-mode :first)
-    (application mode)
+    (application &optional mode)
   (application-session-titles-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
     (:name "/hurry-up"
-     :argument "on|off"
-     :description "prioritize speed and cap child-agent spawning"
-     :tip "acts directly and admits at most two child agents until disabled."
+     :argument "[on|off]"
+     :description "show or change hurry-up mode"
+     :tip "enables direct execution and admits at most two child agents."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (mode)
+     :call-lambda-list (&optional mode)
      :slash-argument-mode :first)
-    (application mode)
+    (application &optional mode)
   (application-hurry-up-command application mode)
   ':continue)
 
@@ -2320,14 +2323,14 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-later-command
     (:name "/later"
-     :argument "INPUT"
+     :argument "[INPUT]"
      :description "run input after rate limits reset"
      :tip "queues a prompt for the next known rate-limit reset."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (input)
+     :call-lambda-list (&optional (input ""))
      :slash-argument-mode :remainder)
-    (application input)
+    (application &optional (input ""))
   (application-later-command application input)
   ':continue)
 
@@ -2372,14 +2375,14 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-papercut-command
     (:name "/papercut"
-     :argument "ID"
+     :argument "[ID]"
      :description "show one complete papercut report"
      :tip "opens the full report named by (papercuts)."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list (identifier)
+     :call-lambda-list (&optional identifier)
      :slash-argument-mode :first)
-    (application identifier)
+    (application &optional identifier)
   (if identifier
       (application-present
        application
@@ -2391,14 +2394,14 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-papercut-close-command
     (:name "/papercut-close"
-     :argument "ID"
+     :argument "[ID]"
      :description "close one resolved papercut report"
      :tip "removes a fixed or obsolete report from (papercuts)."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (identifier)
+     :call-lambda-list (&optional identifier)
      :slash-argument-mode :first)
-    (application identifier)
+    (application &optional identifier)
   (if identifier
       (application-present
        application

@@ -454,7 +454,15 @@
       (case
        '(("/help" () :none)
          ("/resume" (&optional (identifier nil identifier-supplied-p)) :first)
-         ("/cwd" (pathname) :remainder)))
+         ("/cwd" (&optional (pathname "")) :remainder)
+         ("/trace" (&optional mode) :first)
+         ("/timestamps" (&optional mode) :first)
+         ("/ste" (&optional mode) :first)
+         ("/titles" (&optional mode) :first)
+         ("/hurry-up" (&optional mode) :first)
+         ("/later" (&optional (input "")) :remainder)
+         ("/papercut" (&optional identifier) :first)
+         ("/papercut-close" (&optional identifier) :first)))
     (destructuring-bind (name lambda-list slash-mode) case
       (let ((command (application-command-find name)))
         (test-assert
@@ -462,6 +470,27 @@
               (equal (application-command-call-lambda-list command) lambda-list)
               (eq (application-command-slash-argument-mode command) slash-mode))
          (format nil "~A retains its ordinary call and slash semantics" name)))))
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (application   (make-instance 'application :configuration configuration)))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'application-present
+                 (lambda (candidate entry)
+                   (declare (ignore candidate entry))
+                   t)))
+          (lambda ()
+            (dolist (name '("cwd" "trace" "timestamps" "ste" "titles"
+                            "hurry-up" "papercut" "papercut-close"))
+              (test-assert
+               (eq (application-command application (format nil "/~A" name))
+                   ':continue)
+               (format nil "/~A accepts its omitted optional argument" name))
+              (test-assert
+               (null (application-operation-call application name))
+               (format nil "(~A) accepts its omitted optional argument" name)))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   (dolist
       (case
        '(("/auth grok typo" ("grok typo"))
@@ -481,14 +510,6 @@
        (program-error ()
          t))
      "an argument-free built-in rejects extra Lisp arguments")
-    (test-assert
-     (handler-case
-         (progn
-           (application--builtin-working-directory-command application)
-           nil)
-       (program-error ()
-         t))
-     "required built-in arguments use ordinary Common Lisp arity errors")
     (setf (application-project-adaptation-offer-p application) t)
     (let ((*application-command-interactive-p* t))
       (test-assert

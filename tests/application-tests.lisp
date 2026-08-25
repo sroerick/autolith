@@ -6683,7 +6683,7 @@
 
 (-> test-working-directory-command () null)
 (defun test-working-directory-command ()
-  "Test /cwd completion, full-path parsing, and required-argument semantics."
+  "Test /cwd completion, status, and full-path parsing."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (workspace (merge-pathnames "command workspace/" root))
@@ -6719,10 +6719,10 @@
                     (application-command-find "/cwd"))))
              (test-assert
               (and entry
-                   (string= (terminal-completion-label entry) "/cwd PATH"))
-              "the command table offers /cwd with its path argument")
-             (test-assert (search "/cwd PATH" (application-help))
-                          "the command reference includes /cwd"))
+                   (string= (terminal-completion-label entry) "/cwd [PATH]"))
+              "the command table offers /cwd with its optional path argument")
+             (test-assert (search "/cwd [PATH]" (application-help))
+                          "the command reference includes optional /cwd syntax"))
            (test-assert
             (string= (application--command-remainder
                       "/cwd directory name with spaces")
@@ -6745,19 +6745,16 @@
                     (recording-terminal-output terminal))
             "/cwd presents the selected workspace")
            (test-assert
-            (handler-case
-                (progn
-                  (application-command application "/cwd")
-                  nil)
-              (program-error ()
-                t))
-            "/cwd omission signals its ordinary required-argument error")
-           (application--builtin-working-directory-command application "")
+            (eq (application-command application "/cwd") ':continue)
+            "/cwd without a path reports status")
+           (test-assert
+            (null (application-operation-call application "cwd"))
+            "(cwd) without a path reports status")
            (test-assert
             (search (format nil "Working directory: ~A"
                             (namestring (truename workspace)))
                     (recording-terminal-output terminal))
-            "an explicit empty path preserves the status operation")
+            "omitted /cwd paths preserve the status operation")
            (let ((evaluation
                    (application-lisp-evaluate
                     (format nil "(cwd #P~S)" (namestring lisp-workspace))
@@ -7480,6 +7477,10 @@
                                (string= (later-entry-input entry)
                                         "prepare the release"))
                           "/later schedules its complete input durably")
+             (test-assert
+              (and (eq (application-command application "/later") ':continue)
+                   (null (application-operation-call application "later")))
+              "/later and (later) list scheduled inputs without arguments")
              (test-assert (search "prepare the release"
                                   (application--later-list application))
                           "/later without input lists scheduled previews")
@@ -7563,6 +7564,12 @@
     (unwind-protect
          (progn
            (terminal-ui-start ui)
+           (application-command application "/hurry-up")
+           (test-assert
+            (and (not (application-hurry-up-p application))
+                 (search "Hurry-up mode is disabled"
+                         (recording-terminal-output terminal)))
+            "/hurry-up without a mode reports status without changing policy")
            (application-command application "/hurry-up on")
            (test-assert (and (application-hurry-up-p application)
                              (agent-hurry-up-p agent)

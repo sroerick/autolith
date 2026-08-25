@@ -565,7 +565,25 @@
   "Test terminal command abort, expected failure, and quit capture."
   (let ((snapshot (application-command--registry-snapshot)))
     (unwind-protect
-         (let ((failure-command
+         (let ((abort-command
+                 (application-command-create
+                  :definition-name
+                  'user-operation-context-tests--aborting-command
+                  :name "/operation-abort"
+                  :aliases nil
+                  :argument "VALUE"
+                  :description "abort for user-operation capture tests"
+                  :tip "tests aborted command capture."
+                  :busy-behavior ':execute
+                  :terminal-behavior ':shared
+                  :call-lambda-list '(value)
+                  :semantic-handler-p t
+                  :slash-argument-mode ':first
+                  :handler
+                  (lambda (application value)
+                    (declare (ignore application value))
+                    ':continue)))
+               (failure-command
                  (application-command-create
                   :definition-name
                   'user-operation-context-tests--failing-command
@@ -584,6 +602,7 @@
                     (declare (ignore application))
                     (error 'configuration-error
                            :message "synthetic command failure")))))
+           (register-application-command abort-command)
            (register-application-command failure-command)
            (multiple-value-bind (application root)
                (lisp-machine-tests--application)
@@ -593,14 +612,16 @@
                     (progn
                       (terminal-ui-start ui)
                       (test-assert
-                       (eq (application--run-command-input application "/cwd")
+                       (eq (application--run-command-input
+                            application "/operation-abort")
                            ':aborted)
                        "idle command cancellation returns its debugger outcome")
-                      (let* ((cwd-invocation
-                               (application-command-invocation-parse "/cwd"))
-                             (cwd-command
+                      (let* ((abort-invocation
+                               (application-command-invocation-parse
+                                "/operation-abort"))
+                             (abort-command
                                (application-command-invocation-command
-                                cwd-invocation))
+                                abort-invocation))
                              (failure-invocation
                                (application-command-invocation-parse
                                 "/operation-failure"))
@@ -620,7 +641,7 @@
                            (test-assert
                             (eq
                              (application-input-controller--run-responsive-command
-                              controller cwd-command cwd-invocation)
+                              controller abort-command abort-invocation)
                              ':aborted)
                             "responsive command cancellation returns its debugger outcome")
                            (test-assert
@@ -645,7 +666,8 @@
                                (mapcar (lambda (record)
                                          (getf record :source))
                                        properties)
-                               '("/cwd" "/cwd" "/operation-failure" "/quit"))
+                               '("/operation-abort" "/operation-abort"
+                                 "/operation-failure" "/quit"))
                               (equal
                                (mapcar (lambda (record)
                                          (getf record :status))
