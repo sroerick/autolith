@@ -468,6 +468,9 @@
        '(("/help" :execute)
          ("/cwd /tmp" :hold)
          ("/model gpt-5.6-sol" :apply)
+         ;; Detaching exists to leave while work runs; it must never wait
+         ;; for the idle queue.
+         ("/detach" :execute)
          ("/quit" :cancel)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))

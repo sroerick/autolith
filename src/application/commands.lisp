@@ -2553,7 +2553,9 @@ are forwarded to TERMINAL-UI-SELECT."
      :argument nil
      :description "detach Autolith from the current terminal"
      :tip "keeps the session running and returns the foreground shell."
-     :busy-behavior :hold
+     ;; Detaching exists precisely to leave while work is running; the
+     ;; handoff path schedules foreground release safely mid-turn.
+     :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)
     (application)
@@ -2562,7 +2564,13 @@ are forwarded to TERMINAL-UI-SELECT."
       (error 'localgroup-error
              :message "The localgroup session is not ready to detach."
              :operation ':detach))
-    (localgroup--detach-terminal session))
+    (let ((result (localgroup--detach-terminal session)))
+      (when (getf (rest result) :scheduled-p)
+        (application-present
+         application
+         (list (terminal-span
+                ':notice
+                "Detach scheduled; the terminal releases once current work reaches a safe stop."))))))
   ':continue)
 
 (define-application-command application--builtin-quit-command
