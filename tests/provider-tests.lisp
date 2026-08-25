@@ -171,12 +171,15 @@
                     (progn
                       (conversation-append-user-message conversation "inspect")
                       (provider-request-object provider conversation schemas)))
-                  (tools (json-get request "tools")))
-             (test-assert
-              (and (= (length tools) 1)
-                   (string= (json-get (aref tools 0) "description")
-                            "Read a resource."))
-              "Responses omits local web schemas when search is disabled"))
+                   (tools (json-get request "tools"))
+                   (namespace (aref tools 0)))
+              (test-assert
+               (and (= (length tools) 2)
+                    (json-string= (json-get namespace "type") "namespace")
+                    (json-string= (json-get namespace "name") "resource")
+                    (json-string= (json-get (aref tools 1) "type")
+                                  "tool_search"))
+               "Responses omits the local web namespace when search is disabled"))
            (let* ((conversation
                     (conversation-create disabled-configuration
                                          :identifier "chat-search-filter"))
