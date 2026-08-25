@@ -67,6 +67,14 @@ exit \"$status\""
 (defvar *localgroup-handoff-setsid-function* #'sb-posix:setsid
   "The session-detachment boundary used during replacement startup.")
 
+(defvar *localgroup-fresh-launch-function*
+  (lambda (configuration session-id handoff-pathname permission-argument
+           immutable-p)
+    (localgroup-handoff--launch-for
+     configuration session-id handoff-pathname permission-argument
+     immutable-p))
+  "The detached launch boundary used by client-first session starts.")
+
 
 ;;;; -- Private Records --
 
@@ -321,7 +329,13 @@ exit \"$status\""
 (-> localgroup-handoff--permission-argument (application) string)
 (defun localgroup-handoff--permission-argument (application)
   "Return APPLICATION's command-line permission mode."
-  (ecase (application-permission-mode application)
+  (localgroup-handoff-permission-string
+   (application-permission-mode application)))
+
+(-> localgroup-handoff-permission-string (keyword) string)
+(defun localgroup-handoff-permission-string (mode)
+  "Return permission MODE as the launcher --permissions argument."
+  (ecase mode
     (:ask "ask")
     (:auto "auto")
     (:sandboxed "sandbox")
@@ -374,33 +388,96 @@ exit \"$status\""
 (-> localgroup-handoff--launch (application pathname) t)
 (defun localgroup-handoff--launch (application handoff-pathname)
   "Launch APPLICATION's detached replacement from HANDOFF-PATHNAME."
-  (let* ((configuration (application-configuration application))
-         (launcher (localgroup-handoff--launcher-pathname configuration))
-         (log-pathname
-           (localgroup-handoff-log-pathname
-            configuration
-            (localgroup-session-identifier
-             (application-localgroup-session application))))
-         (arguments
-           (append
-            (list (namestring launcher)
-                  "--permissions"
-                  (localgroup-handoff--permission-argument application))
-            (when (configuration-immutable-p configuration)
-              (list "--immutable"))
-            (list "--localgroup-handoff" (namestring handoff-pathname)))))
-    (ensure-directories-exist log-pathname)
-    (with-open-file (output log-pathname
-                            :direction ':output
-                            :if-exists ':append
-                            :if-does-not-exist ':create
-                            :external-format ':utf-8)
-      (sb-posix:chmod (namestring log-pathname) #o600)
-      (localgroup-handoff--launch-supervised
-       :arguments arguments
-       :handoff-pathname handoff-pathname
-       :directory (configuration-working-directory configuration)
-       :output output))))
+  (localgroup-handoff--launch-for
+   (application-configuration application)
+   (localgroup-session-identifier
+    (application-localgroup-session application))
+   handoff-pathname
+   (localgroup-handoff--permission-argument application)
+   (configuration-immutable-p (application-configuration application))))
+
+(-> localgroup-handoff--launch-for
+    (configuration string pathname string boolean)
+    t)
+(defun localgroup-handoff--launch-for
+    (configuration session-id handoff-pathname permission-argument immutable-p)
+  "Launch one detached session process from HANDOFF-PATHNAME."
+  (let ((launcher (localgroup-handoff--launcher-pathname configuration))
+        (log-pathname
+          (localgroup-handoff-log-pathname configuration session-id)))
+    (let ((arguments
+            (append
+             (list (namestring launcher)
+                   "--permissions" permission-argument)
+             (when immutable-p
+               (list "--immutable"))
+             (list "--localgroup-handoff" (namestring handoff-pathname)))))
+      (ensure-directories-exist log-pathname)
+      (with-open-file (output log-pathname
+                              :direction ':output
+                              :if-exists ':append
+                              :if-does-not-exist ':create
+                              :external-format ':utf-8)
+        (sb-posix:chmod (namestring log-pathname) #o600)
+        (localgroup-handoff--launch-supervised
+         :arguments arguments
+         :handoff-pathname handoff-pathname
+         :directory (configuration-working-directory configuration)
+         :output output)))))
+
+(-> localgroup-handoff-spawn-fresh
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean))
+    string)
+(defun localgroup-handoff-spawn-fresh
+    (configuration &key (permission-mode ':ask) immutable-p)
+  "Launch a fresh detached session and return its ready identifier.
+
+The session process starts shell-independent from the outset, so the
+calling terminal can attach as a thin relay whose detach is immediate
+and never interrupts session work."
+  (let* ((created-at (get-universal-time))
+         (session-id
+           (localgroup-session-identifier-normalize
+            (localgroup-session-identifier-generate configuration created-at)))
+         (token (localgroup-random-token))
+         (pathname (localgroup-handoff--pathname configuration session-id))
+         (record
+           (list :localgroup-handoff
+                 :version *localgroup-handoff-version*
+                 :session-id session-id
+                 :token token
+                 :created-at created-at
+                 :mode ':detach
+                 :state ':pending
+                 :fresh-conversation-p t
+                 :old-pid (sb-posix:getpid)
+                 :replacement-pid nil
+                 :conversation-id nil
+                 :draft ""))
+         (completed-p nil))
+    (localgroup-handoff--write-record pathname record)
+    (unwind-protect
+         (progn
+           (funcall *localgroup-fresh-launch-function*
+                    configuration session-id pathname
+                    (localgroup-handoff-permission-string permission-mode)
+                    immutable-p)
+           (unless (funcall *localgroup-handoff-wait-function*
+                            configuration session-id token (sb-posix:getpid))
+             (error 'localgroup-error
+                    :message
+                    (format nil
+                            "The detached session did not start within ~D seconds. See ~A."
+                            *localgroup-handoff-start-timeout-seconds*
+                            (namestring
+                             (localgroup-handoff-log-pathname
+                              configuration session-id)))
+                    :operation ':spawn
+                    :session-id session-id))
+           (setf completed-p t)
+           session-id)
+      (unless completed-p
+        (localgroup-handoff--delete-state-pathnames pathname)))))
 
 (-> localgroup-handoff--replacement-ready-p
     (configuration string string integer)

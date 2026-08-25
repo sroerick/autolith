@@ -608,6 +608,25 @@
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
+    (when (main--client-session-p
+           :handoff-record handoff-record
+           :authenticate-p authenticate-p
+           :resume-requested-p effective-resume-requested-p
+           :resume-id effective-resume-id
+           :recovery-conversation-id recovery-conversation-id
+           :recovery-diagnosis recovery-diagnosis
+           :image-values image-values
+           :simulate-crash-p (not (null (getopt* command ':simulate-crash))))
+      (let ((session-id (main--spawn-client-session
+                         configuration
+                         :permission-mode permission-mode
+                         :immutable-p immutable-p)))
+        (when session-id
+          (localgroup-attach-record
+           configuration
+           (localgroup--find-record configuration session-id)
+           ':control)
+          (return-from main--start-session nil))))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*
             (main--connect-application
@@ -655,6 +674,54 @@
                   (fatal-control-path-error-capsule-pathname condition))
           (uiop:quit *main-fatal-recovery-status*)))))
   nil)
+
+(-> main--client-session-p
+    (&key (:handoff-record (option list))
+          (:authenticate-p boolean)
+          (:resume-requested-p boolean)
+          (:resume-id (option string))
+          (:recovery-conversation-id (option string))
+          (:recovery-diagnosis t)
+          (:image-values t)
+          (:simulate-crash-p boolean))
+    boolean)
+(defun main--client-session-p
+    (&key handoff-record authenticate-p resume-requested-p resume-id
+          recovery-conversation-id recovery-diagnosis image-values
+          simulate-crash-p)
+  "Return true when this start should spawn a detached session and attach.
+
+A client-first start keeps this terminal a thin relay whose detach is
+immediate and never interrupts session work. Replacements, authentication,
+resumes, crash recovery, startup images, crash simulation, non-interactive
+terminals, and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
+  (and (null handoff-record)
+       (not authenticate-p)
+       (not resume-requested-p)
+       (null resume-id)
+       (null recovery-conversation-id)
+       (null recovery-diagnosis)
+       (null image-values)
+       (not simulate-crash-p)
+       (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
+                     "direct"))
+       (not (null (interactive-stream-p *standard-input*)))))
+
+(-> main--spawn-client-session
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean))
+    (option string))
+(defun main--spawn-client-session
+    (configuration &key (permission-mode ':ask) immutable-p)
+  "Spawn the detached session for a client-first start, or NIL to run direct."
+  (handler-case
+      (localgroup-handoff-spawn-fresh configuration
+                                      :permission-mode permission-mode
+                                      :immutable-p immutable-p)
+    (error (condition)
+      (format *error-output*
+              "Autolith is starting directly in this terminal: ~A~%"
+              (bounded-string condition :limit 400))
+      nil)))
 
 (-> main--session-options () list)
 (defun main--session-options ()

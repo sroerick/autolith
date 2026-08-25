@@ -312,6 +312,7 @@
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)
     (test-localgroup-handoff-scheduling)
+    (test-localgroup-fresh-session-spawn)
     (test-localgroup-process-handoff)
     (test-localgroup-handoff-cancellation)
     (test-localgroup-fresh-startup-selection)

@@ -201,6 +201,69 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-localgroup-fresh-session-spawn () null)
+(defun test-localgroup-fresh-session-spawn ()
+  "Test client-first spawn records, launch options, and start-failure cleanup."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (launches nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (let* ((*localgroup-fresh-launch-function*
+                    (lambda (launch-configuration session-id pathname
+                             permission-argument immutable-p)
+                      (declare (ignore launch-configuration))
+                      (push (list session-id pathname permission-argument
+                                  immutable-p)
+                            launches)))
+                  (*localgroup-handoff-wait-function*
+                    (lambda (configuration session-id token old-pid)
+                      (declare (ignore configuration session-id token old-pid))
+                      t))
+                  (session-id
+                    (localgroup-handoff-spawn-fresh
+                     configuration
+                     :permission-mode ':sandboxed
+                     :immutable-p t)))
+             (destructuring-bind (launched-id pathname permission immutable-p)
+                 (first launches)
+               (test-assert (and (= (length launches) 1)
+                                 (string= launched-id session-id)
+                                 (string= permission "sandbox")
+                                 immutable-p)
+                            "a fresh spawn launches one replacement with its options")
+               (let ((record (localgroup-handoff--read configuration pathname)))
+                 (test-assert
+                  (and (eq (getf (rest record) :state) ':pending)
+                       (getf (rest record) :fresh-conversation-p)
+                       (null (getf (rest record) :conversation-id))
+                       (string= (getf (rest record) :session-id) session-id))
+                  "a fresh spawn record is pending, fresh, and session-scoped"))))
+           (let ((*localgroup-fresh-launch-function*
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))))
+                 (*localgroup-handoff-wait-function*
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     nil)))
+             (test-assert
+              (handler-case
+                  (progn (localgroup-handoff-spawn-fresh configuration) nil)
+                (localgroup-error (condition)
+                  (search "did not start"
+                          (autolith-error-message condition))))
+              "a replacement that never starts signals instead of attaching")
+             (test-assert
+              (= (length (directory
+                          (merge-pathnames
+                           "*.sexp"
+                           (localgroup-handoff-directory configuration))))
+                 1)
+              "a failed fresh spawn removes its own pending record")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-process-handoff () null)
 (defun test-localgroup-process-handoff ()
   "Test successful and failed process handoff lease and snapshot behavior."
