@@ -161,6 +161,26 @@ Measured composition (wire form, encoded names):
   child, since every child conversation carries its own copy of the prefix,
   so fan-outs multiply whatever the prefix costs.
 
+Implemented after this measurement: capable GPT-5.4+ Codex subscription models
+now receive native namespace entries whose functions use =defer_loading=true=,
+plus hosted =tool_search=. Unsupported routes retain the byte-for-byte eager
+fallback. In the protocol fixture, model-visible tool metadata falls from 169
+to 122 JSON characters (28%); the full registry keeps only namespace names and
+descriptions visible initially instead of the measured 48,924 schema
+characters. Reviewed references: OpenAI's
+=https://developers.openai.com/api/docs/guides/tools-tool-search=; Codex
+=https://github.com/openai/codex= at =ba6cf9c69277caec51a4c12c5b7401a9920930e0=,
+notably =codex-rs/core/src/tools/handlers/tool_search.rs=,
+=codex-rs/core/src/tools/context.rs=, and
+=codex-rs/core/tests/suite/search_tool.rs=; pi
+=https://github.com/badlogic/pi-mono= at
+=8fa7eebd235355522c8104166b4f1f959b4e2f10=, notably
+=packages/ai/src/api/openai-responses-shared.ts= and
+=packages/ai/test/deferred-tools.test.ts=. OpenCode
+=https://github.com/anomalyco/opencode= at
+=ac1c048e6420eb4c728fd3e343a1ba7b076cba92= was reviewed; its code-mode
+catalog is a textual fallback and was intentionally not adopted.
+
 ** 5. Base64 wire names cost more than they need to (small, everywhere)
 
 =provider-wire-function-name--encode= (=wire-protocol.lisp:22=) renders

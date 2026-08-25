@@ -219,6 +219,70 @@
 
 
 ;;;; -- Responses Protocol --
+
+(-> provider-deferred-tool-loading-p (model-provider) boolean)
+(defgeneric provider-deferred-tool-loading-p (provider)
+  (:documentation
+   "Return true when PROVIDER supports native deferred namespace discovery."))
+
+(defmethod provider-deferred-tool-loading-p ((provider model-provider))
+  "Disable deferred discovery for providers without an explicit capability."
+  (declare (ignore provider))
+  nil)
+
+(-> provider-deferred-tool-model-p (string) boolean)
+(defun provider-deferred-tool-model-p (model)
+  "Return true when MODEL names documented GPT-5.4 or later."
+  (handler-case
+      (let* ((major-start 4)
+             (major-end (and (uiop:string-prefix-p "gpt-" model)
+                             (position #\. model :start major-start)))
+             (minor-start (and major-end (1+ major-end)))
+             (minor-end (and minor-start
+                             (position-if-not #'digit-char-p model
+                                              :start minor-start)))
+             (major (and major-end
+                         (parse-integer model
+                                        :start major-start
+                                        :end major-end)))
+             (minor (and minor-start
+                         (> (or minor-end (length model)) minor-start)
+                         (parse-integer model
+                                        :start minor-start
+                                        :end minor-end))))
+        (and major minor
+             (or (> major 5)
+                 (and (= major 5) (>= minor 4)))
+             t))
+    (error ()
+      nil)))
+
+(defmethod provider-deferred-tool-loading-p
+    ((provider codex-subscription-provider))
+  "Enable native tool search on documented GPT-5.4 and later Codex models."
+  (provider-deferred-tool-model-p
+   (configuration-model (provider-configuration provider))))
+
+(-> provider-deferred-namespace-tool (json-object) json-object)
+(defun provider-deferred-namespace-tool (tool)
+  "Convert one local TOOL schema to a deferred native namespace child."
+  (json-object
+   "type" "function"
+   "name" (json-get tool "name")
+   "description" (json-get tool "description")
+   "strict" false
+   "defer_loading" t
+   "parameters" (json-get tool "parameters")))
+
+(-> provider-deferred-namespace (json-object) json-object)
+(defun provider-deferred-namespace (namespace)
+  "Convert one local NAMESPACE to native deferred Responses wire form."
+  (json-object
+   "type" "namespace"
+   "name" (json-get namespace "name")
+   "description" (json-get namespace "description")
+   "tools" (map 'vector #'provider-deferred-namespace-tool
+                (json-get namespace "tools"))))
 (defmethod provider-wire-tool-name
     ((provider codex-subscription-provider) (namespace string) (name string))
   "Encode one Codex tool name with the shared grammar-safe wire codec."
@@ -256,6 +320,27 @@
            collect entry)
    'vector))
 
+(defmethod provider-wire-tools
+    ((provider codex-subscription-provider) (tool-namespaces vector))
+  "Use native deferred namespaces on capable Codex models, else eager tools."
+  (if (provider-deferred-tool-loading-p provider)
+      (let ((deferred-p nil))
+        (concatenate
+         'vector
+         (map 'vector
+              (lambda (entry)
+                (if (and (json-object-p entry)
+                         (json-string= (json-get entry "type") "namespace"))
+                    (progn
+                      (setf deferred-p t)
+                      (provider-deferred-namespace entry))
+                    entry))
+              tool-namespaces)
+         (if deferred-p
+             (json-array (json-object "type" "tool_search"))
+             #())))
+      (call-next-method)))
+
 (defmethod provider-wire-input-item ((provider responses-api-provider) item)
   "Flatten a namespaced function-call ITEM for a standard Responses request."
   (if (and (json-object-p item)
@@ -271,6 +356,16 @@
         (remhash "namespace" copy)
         copy)
       item))
+
+(defmethod provider-wire-input-item
+    ((provider codex-subscription-provider) item)
+  "Preserve native namespace calls on capable Codex models during replay."
+  (if (and (provider-deferred-tool-loading-p provider)
+           (json-object-p item)
+           (function-call-item-p item)
+           (non-empty-string-p (json-get item "namespace")))
+      item
+      (call-next-method)))
 
 (defmethod provider-normalize-output-item
     ((provider responses-api-provider) (item hash-table))

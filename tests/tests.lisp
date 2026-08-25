@@ -195,6 +195,7 @@
     (test-authentication-bootstrap-and-refresh)
     (test-grok-authentication)
     (run-nous-authentication-tests)
+     (test-provider-deferred-tool-loading)
     (test-provider-request)
     (test-provider-request-tool-filtering)
     (test-provider-native-compaction)

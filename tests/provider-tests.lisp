@@ -221,6 +221,103 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-deferred-tool-loading () null)
+(defun test-provider-deferred-tool-loading ()
+  "Test Codex native namespace discovery and exact eager fallback."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (schemas
+           (json-array
+            (json-object
+             "type" "namespace"
+             "name" "resource"
+             "description" "Read and edit model-addressable resources."
+             "tools"
+             (json-array
+              (json-object
+               "name" "read"
+               "description" "Read one resource."
+               "parameters"
+               (json-object
+                "type" "object"
+                 "properties" (json-object
+                               "uri" (json-object "type" "string")))))))))
+    (unwind-protect
+         (let* ((configuration
+                  (configuration--clone base-configuration
+                                        :model "gpt-5.6-terra"
+                                        :working-directory root))
+                (provider (provider-create configuration))
+                (conversation
+                  (conversation-create configuration
+                                       :identifier "deferred-tools"))
+                (request (provider-request-object provider conversation schemas))
+                (tools (json-get request "tools"))
+                (namespace (aref tools 0))
+                (child (aref (json-get namespace "tools") 0))
+                (call (json-object "type" "function_call"
+                                   "call_id" "call-1"
+                                   "namespace" "resource"
+                                   "name" "read"
+                                   "arguments" "{}")))
+           (test-assert
+            (and (provider-deferred-tool-loading-p provider)
+                 (= (length tools) 2)
+                 (json-string= (json-get namespace "type") "namespace")
+                 (json-string= (json-get namespace "name") "resource")
+                 (json-string= (json-get child "name") "read")
+                 (eq (json-get child "defer_loading") t)
+                 (json-string= (json-get (aref tools 1) "type") "tool_search"))
+            "capable Codex requests defer tools inside native namespaces")
+           (test-assert
+            (eq (provider-wire-input-item provider call) call)
+            "native namespaced calls replay without flattening")
+            (let* ((future-configuration
+                     (configuration--clone configuration
+                                           :model "gpt-5.7-codex"))
+                   (future-provider (provider-create future-configuration)))
+              (test-assert
+               (provider-deferred-tool-loading-p future-provider)
+               "future GPT models retain documented deferred-tool support"))
+           (let* ((fallback-configuration
+                    (configuration--clone configuration :model "gpt-5.3-codex"))
+                  (fallback-provider (provider-create fallback-configuration))
+                  (fallback-tools (provider-wire-tools fallback-provider schemas))
+                  (fallback-call
+                    (provider-wire-input-item fallback-provider call)))
+             (test-assert
+              (and (not (provider-deferred-tool-loading-p fallback-provider))
+                   (= (length fallback-tools) 1)
+                   (json-string= (json-get (aref fallback-tools 0) "type")
+                                 "function")
+                   (null (find "tool_search" fallback-tools
+                               :key (lambda (tool) (json-get tool "type"))
+                               :test #'string=))
+                   (null (json-get fallback-call "namespace"))
+                   (not (string= (json-get fallback-call "name") "read")))
+              "unsupported Codex models retain the exact eager wire fallback"))
+           (let* ((eager-characters
+                    (length (json-encode
+                             (provider-wire-tools
+                              (provider-create
+                               (configuration--clone configuration
+                                                     :model "gpt-5.3-codex"))
+                              schemas))))
+                  (visible-characters
+                    (length
+                     (json-encode
+                      (json-array
+                       (json-object "type" "namespace"
+                                    "name" (json-get namespace "name")
+                                    "description"
+                                    (json-get namespace "description"))
+                       (json-object "type" "tool_search"))))))
+             (test-assert
+              (< visible-characters eager-characters)
+              "deferred discovery reduces model-visible schema characters")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-provider-request () null)
 (defun test-provider-request ()
   "Test the standard Codex Responses request shape without network access."
@@ -426,14 +523,17 @@
            (test-assert
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
-           (let* ((tools (provider-tests--request-tools request))
-                  (wire-name
-                    (provider-wire-tool-name provider "test" "inspect")))
-             (test-assert
-              (and (= (length tools) 1)
-                   (string= (json-get (aref tools 0) "name") wire-name)
-                   (provider-wire-function-name--valid-p wire-name))
-              "standard Responses uses the shared grammar-safe tool codec"))
+            (let* ((fallback-configuration
+                     (configuration--clone configuration :model "gpt-5.3-codex"))
+                   (fallback-provider (provider-create fallback-configuration))
+                   (tools (provider-wire-tools fallback-provider schemas))
+                   (wire-name
+                     (provider-wire-tool-name fallback-provider "test" "inspect")))
+              (test-assert
+               (and (= (length tools) 1)
+                    (string= (json-get (aref tools 0) "name") wire-name)
+                    (provider-wire-function-name--valid-p wire-name))
+               "eager Responses fallback uses the shared grammar-safe tool codec"))
            (let ((compaction-request
                    (provider-request-object
                     provider conversation schemas :compaction-p t)))
@@ -443,23 +543,27 @@
                    (search "context checkpoint compaction"
                            (json-get compaction-request "instructions")))
               "portable compaction fallback is tool-free and serial"))
-           (let* ((local-call
-                    (json-object
-                     "type" "function_call"
-                     "namespace" "test"
-                     "name" "inspect"
-                     "call_id" "call-standard"))
-                  (wire-call (provider-wire-input-item provider local-call))
-                  (normalized
-                    (provider-normalize-output-item
-                     provider (json-object-copy wire-call))))
-             (test-assert
-              (and (null (json-get wire-call "namespace"))
-                   (provider-wire-function-name--valid-p
-                    (json-get wire-call "name"))
-                   (string= (json-get normalized "namespace") "test")
-                   (string= (json-get normalized "name") "inspect"))
-              "Codex wire hooks round-trip the local tool namespace")))
+            (let* ((fallback-configuration
+                     (configuration--clone configuration :model "gpt-5.3-codex"))
+                   (fallback-provider (provider-create fallback-configuration))
+                   (local-call
+                     (json-object
+                      "type" "function_call"
+                      "namespace" "test"
+                      "name" "inspect"
+                      "call_id" "call-standard"))
+                   (wire-call
+                     (provider-wire-input-item fallback-provider local-call))
+                   (normalized
+                     (provider-normalize-output-item
+                      fallback-provider (json-object-copy wire-call))))
+              (test-assert
+               (and (null (json-get wire-call "namespace"))
+                    (provider-wire-function-name--valid-p
+                     (json-get wire-call "name"))
+                    (string= (json-get normalized "namespace") "test")
+                    (string= (json-get normalized "name") "inspect"))
+               "eager Codex wire hooks round-trip the local tool namespace")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

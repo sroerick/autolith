@@ -300,6 +300,11 @@ calls concurrently, then records their results in provider wire order. Calls
 requiring a provider round trip, exclusive tools, and calls sharing one mutable
 runtime execute in separate ordered waves.
 
+GPT-5.4 and later Codex models use native Responses tool search. Autolith sends
+stable namespace names and descriptions up front, marks each function
+=defer_loading=true=, and lets the provider expose matching schemas only when
+needed. Other models and providers receive the complete eager tool array.
+
 #+BEGIN_SRC sh
 autolith auth nous
 #+END_SRC
