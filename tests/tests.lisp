@@ -239,6 +239,7 @@
     (test-search-tools)
     (test-lisp-image-manifests)
     (test-system-prompt)
+    (test-request-context-agenda-selection)
     (test-lisp-worker-protocol)
     (test-lisp-execution-jobs)
     (test-lisp-scratchpad-tools)

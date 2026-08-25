@@ -358,13 +358,22 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                (json-encode
                 (coerce (agenda-item-memory-identifiers item) 'vector)))))
 
+(-> agenda--prompt-visible-item-p (agenda-item) boolean)
+(defun agenda--prompt-visible-item-p (item)
+  "Return true when ITEM is active state worth injecting into request context."
+  (not (null (member (agenda-item-status item)
+                     '(:todo :doing :blocked :note)))))
+
 (-> agenda-prompt-item-lines (configuration) (option string))
 (defun agenda-prompt-item-lines (configuration)
-  "Return agenda item lines without the lead-in, or NIL when empty."
+  "Return active agenda item lines without the lead-in, or NIL when empty."
   (with-recursive-lock-held (*agenda-lock*)
     (let* ((state (agenda-load configuration))
            (record (agenda-current configuration state))
-           (items (and record (workspace-agenda-items record))))
+           (items
+             (and record
+                  (remove-if-not #'agenda--prompt-visible-item-p
+                                 (workspace-agenda-items record)))))
       (when items
         (format nil "~{~A~^~%~}" (mapcar #'agenda--prompt-item-line items))))))
 

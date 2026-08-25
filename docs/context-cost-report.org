@@ -127,6 +127,15 @@ model performs when it cares. This ordering matters: fixing 1 and 2 without
 3 buys little, because agenda flips would keep rewriting the top of the
 prompt anyway.
 
+Implemented after this measurement: request-local agenda rendering now includes
+only =todo=, =doing=, =blocked=, and =note= items. Completed history remains
+available through =resource.read agenda:current= without paying to inject it on
+every provider request. The existing complete-line character bound still limits
+unusually large active agendas.
+On the same frob workspace, this reduced the live =session-state= contribution
+from 48,291 to 3,153 instruction characters, or about 12,079 to 795 tokens in
+=context-status=.
+
 ** 4. The tool bill: 46 tools, ~12.2k tokens, with cheap trims available
 
 Measured composition (wire form, encoded names):

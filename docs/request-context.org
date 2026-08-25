@@ -16,8 +16,8 @@ do not invalidate the stable provider cache prefix.
 | =:simple-technical-english-p= | boolean | =preferences-simple-technical-english-p=       |
 | =:hurry-up-p=                 | boolean | =*request-context-hurry-up-p*=                  |
 | =:lisp-image-entries=         | text    | bounded rows from =lisp-image-prompt-entries=   |
-| =:agenda=                     | text    | item lines from =agenda-prompt-item-lines=      |
-| =:agenda-p=                   | boolean | current workspace agenda has items             |
+| =:agenda=                     | text    | bounded active rows from =agenda-prompt-item-lines= |
+| =:agenda-p=                   | boolean | current workspace agenda has active items          |
 
 * Simple Technical English
 :PROPERTIES:

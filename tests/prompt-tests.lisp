@@ -97,3 +97,41 @@
                                   :validate t
                                   :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-request-context-agenda-selection () null)
+(defun test-request-context-agenda-selection ()
+  "Test request context includes active agenda work but omits completed history."
+  (let ((configuration (test-configuration)))
+    (unwind-protect
+         (let ((state (agenda-load configuration)))
+           (agenda-add :configuration configuration
+                       :state         state
+                       :text          "completed-history-marker"
+                       :status        ':done)
+           (dolist (status '(:todo :doing :blocked :note))
+             (agenda-add :configuration configuration
+                         :state         state
+                         :text          (format nil "active-~(~A~)-marker" status)
+                         :status        status))
+           (let ((lines (agenda-prompt-item-lines configuration)))
+             (test-assert
+              (every (lambda (status)
+                       (search (format nil "active-~(~A~)-marker" status)
+                               lines))
+                     '(:todo :doing :blocked :note))
+              "request context carries every active agenda status")
+             (test-assert
+              (not (search "completed-history-marker" lines))
+              "request context omits completed agenda history"))
+           (let* ((*request-context-agenda-limit* 96)
+                  (context (request-context--config configuration))
+                  (agenda (gethash ':agenda context)))
+             (test-assert
+              (and (<= (length agenda) *request-context-agenda-limit*)
+                   (search *system-prompt-context-truncation-marker* agenda))
+              "active agenda rendering obeys the complete-line context bound")))
+      (uiop:delete-directory-tree (test-configuration-root configuration)
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
