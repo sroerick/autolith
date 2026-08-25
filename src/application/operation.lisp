@@ -540,12 +540,27 @@ local-user override."
           :argument argument
           :description (copy-seq (application-operation-description operation)))))
 
+(-> application-operation--command-option-completion-entries () list)
+(defun application-operation--command-option-completion-entries ()
+  "Return canonical Lisp completion entries for finite command options."
+  (loop for command in (application-command-list)
+        for name = (application-operation--command-name command)
+        append
+        (loop for option in (application-command-static-options command)
+              collect
+              (list :name (format nil "(~A ~S)" name option)
+                    :argument nil
+                    :description
+                    (copy-seq (application-command-description command))))))
+
 (-> application-operation-completion-entries (application) list)
 (defun application-operation-completion-entries (application)
-  "Return slash command and canonical Lisp operation completions for APPLICATION."
+  "Return slash, Lisp operation, and finite-option completions for APPLICATION."
   (append (application-command-completion-entries)
+          (application-command-option-completion-entries)
           (mapcar #'application-operation-completion-entry
-                  (application-operation-list application))))
+                  (application-operation-list application))
+          (application-operation--command-option-completion-entries)))
 
 (-> application-operation--help-group (string list) string)
 (defun application-operation--help-group (title operations)
@@ -599,10 +614,13 @@ local-user override."
   "Return INVOCATION's preferred canonical Lisp spelling."
   (let* ((command (application-command-invocation-command invocation))
          (name (application-operation--command-name command))
+         (arguments (application-command-invocation-arguments invocation))
          (remainder (application-command-invocation-remainder invocation)))
-    (if (non-empty-string-p remainder)
-        (format nil "(~A ~S)" name remainder)
-        (format nil "(~A)" name))))
+    (if (application-command-callable-p command)
+        (format nil "(~A~{ ~S~})" name arguments)
+        (if (non-empty-string-p remainder)
+            (format nil "(~A ~S)" name remainder)
+            (format nil "(~A)" name)))))
 
 (-> application-operation-present-command-hint
     (application application-command-invocation) null)

@@ -140,8 +140,11 @@ Start a message with =(= to evaluate it as Common Lisp in the active image:
 (eval-now (setf *print-pretty* nil))
 #+END_SRC
 
-Parenthetical (commands) are the canonical form now, but there is a
-/command syntactic sugar to help you with the transition.
+Parenthetical commands are canonical. Slash-command syntax is syntactic sugar
+for the same Lisp calls: arguments are whitespace-delimited strings, with
+double quotes around strings containing whitespace. For example,
+=/cwd "/tmp/work tree"= is equivalent to =(cwd "/tmp/work tree")=. Commands
+with finite static options offer those values as interactive completions.
 
 Use =//= to send a message beginning with a literal slash.
 
@@ -327,22 +330,22 @@ independently.
 
 #+BEGIN_SRC lisp
 (define-application-command my-version-command
-    (:name                "/my-version"
-     :argument            "[LABEL]"
-     :description         "show a labeled local integration version"
-     :tip                 "shows the version supplied by init.lisp."
-     :busy-behavior       :inspect
-     :terminal-behavior   :shared
-     :call-lambda-list    (&optional (label "integration"))
-     :slash-argument-mode :first)
+    (:name              "/my-version"
+     :argument          "[LABEL]"
+     :description       "show a labeled local integration version"
+     :tip               "shows the version supplied by init.lisp."
+     :busy-behavior     :inspect
+     :terminal-behavior :shared
+     :callable          t)
     (application &optional (label "integration"))
   (application-present application (format nil "~A 3" label))
   :continue)
 #+END_SRC
 
-- Interactive arity errors open the restart debugger. =supply-arguments=
-  takes one Lisp form of replacement arguments.
-- Programmatic calls keep ordinary Common Lisp arity rules.
+- Missing interactive arguments open the restart debugger. =supply-arguments=
+  takes one Lisp form of replacement arguments. Excess slash arguments are
+  rejected before dispatch. Programmatic calls keep ordinary Common Lisp arity
+  rules.
 - Busy behavior is =:inspect=, =:execute=, =:apply=, =:hold=, or =:cancel=.
   During active work, =:execute= runs immediately, =:apply= applies its
   change at the turn's next safe provider boundary, and =:hold= waits for
@@ -351,6 +354,8 @@ independently.
   error immediately instead of being scheduled.
 - Terminal behavior is =:shared=, =:exclusive=, or
   =:exclusive-without-arguments=.
+- =:static-options= replaces =:argument= for one finite positional parameter.
+  It derives the help hint and both slash and parenthesized completions.
 
 ** Child roles
 

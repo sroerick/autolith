@@ -576,9 +576,8 @@
                   :tip "tests aborted command capture."
                   :busy-behavior ':execute
                   :terminal-behavior ':shared
-                  :call-lambda-list '(value)
-                  :semantic-handler-p t
-                  :slash-argument-mode ':first
+                   :lambda-list '(value)
+                   :callable-p t
                   :handler
                   (lambda (application value)
                     (declare (ignore application value))
@@ -594,9 +593,8 @@
                   :tip "tests failed command capture."
                   :busy-behavior ':execute
                   :terminal-behavior ':shared
-                  :call-lambda-list '()
-                  :semantic-handler-p t
-                  :slash-argument-mode ':none
+                   :lambda-list '()
+                   :callable-p t
                   :handler
                   (lambda (application)
                     (declare (ignore application))

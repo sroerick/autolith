@@ -538,7 +538,7 @@
            #:application-command-argument
            #:application-command-busy-action
            #:application-command-busy-behavior
-           #:application-command-call-lambda-list
+           #:application-command-callable-p
            #:application-command-completion-entries
            #:application-command-completion-entry
            #:application-command-create
@@ -556,10 +556,10 @@
            #:application-command-invocation-parse
            #:application-command-invocation-supplied-argument-count
            #:application-command-invocation-remainder
+           #:application-command-lambda-list
            #:application-command-list
            #:application-command-name
-           #:application-command-semantic-handler-p
-           #:application-command-slash-argument-mode
+           #:application-command-static-options
            #:application-command-terminal-behavior
            #:application-command-terminal-owner-p
            #:application-command-tip

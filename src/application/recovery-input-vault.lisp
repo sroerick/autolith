@@ -1126,8 +1126,7 @@ The caller must hold CONTROLLER's lock."
      :tip "shows input preserved after an active-image crash."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-recovery-input-vault-present application)
   ':continue)
@@ -1139,8 +1138,7 @@ The caller must hold CONTROLLER's lock."
      :tip "queues all vaulted input in its original order without automatic submission."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)
@@ -1163,8 +1161,7 @@ The caller must hold CONTROLLER's lock."
      :tip "deletes only this conversation's recovery vault and blocked pending state."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (let ((controller (application-input-controller application)))
     (unless (typep controller 'application-input-controller)

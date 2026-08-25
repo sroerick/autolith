@@ -2034,8 +2034,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows every registered command and tool operation."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application (application-operation-help application))
   ':continue)
@@ -2047,8 +2046,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "starts fresh without deleting the current conversation."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-install-conversation
    application
@@ -2068,8 +2066,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "returns to a saved conversation from this workspace or another one."
      :busy-behavior :hold
      :terminal-behavior :exclusive-without-arguments
-     :call-lambda-list (&optional (identifier nil identifier-supplied-p))
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional (identifier nil identifier-supplied-p))
   (let* ((picker-p
            (and *application-command-interactive-p*
@@ -2096,8 +2093,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "lists saved conversations from newest to oldest."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application
                        (application-list-conversations application))
@@ -2110,8 +2106,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "loads one configured page of earlier transcript entries."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-render-history application)
   ':continue)
@@ -2123,8 +2118,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows or moves the active workspace without restarting Autolith."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list (&optional (pathname ""))
-     :slash-argument-mode :remainder)
+     :callable t)
     (application &optional (pathname ""))
   (application-working-directory-command
    application
@@ -2140,8 +2134,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "starts direct authentication for an explicitly selected provider."
      :busy-behavior :hold
      :terminal-behavior :exclusive
-     :call-lambda-list (&optional (provider-name nil provider-name-supplied-p))
-     :slash-argument-mode :remainder)
+     :callable t)
     (application &optional (provider-name nil provider-name-supplied-p))
   (let ((provider-name
           (if provider-name-supplied-p
@@ -2159,8 +2152,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "changes both the model and its reasoning effort."
      :busy-behavior :apply
      :terminal-behavior :exclusive
-     :call-lambda-list (&optional (model nil model-supplied-p))
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional (model nil model-supplied-p))
   (let ((model
           (if model-supplied-p
@@ -2190,8 +2182,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows every effective provider registration and its models."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-models-command application)
   ':continue)
@@ -2203,8 +2194,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "changes reasoning effort without switching models."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
-     :call-lambda-list (&optional (effort nil effort-supplied-p))
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional (effort nil effort-supplied-p))
   (let ((effort
           (if effort-supplied-p
@@ -2222,91 +2212,84 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-fast-command
     (:name "/fast"
-     :argument "[on|off|status]"
      :description "show or change Codex Fast mode"
      :tip "uses service_tier=priority at 2x plan usage for future Codex requests."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off" "status"))
     (application &optional mode)
   (application-codex-fast-mode-command application mode)
   ':continue)
 
 (define-application-command application--builtin-trace-command
     (:name "/trace"
-     :argument "[on|off]"
      :description "show visible reasoning summaries"
      :tip "toggles visible reasoning summaries with on or off."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (application-trace-command application mode)
   ':continue)
 
 (define-application-command application--builtin-turn-timestamps-command
     (:name "/timestamps"
-     :argument "[on|off]"
      :description "show local timestamps beside user and assistant turns"
      :tip "toggles dim local timestamps beside user and assistant turns."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (application-turn-timestamps-command application mode)
   ':continue)
 
 (define-application-command application--builtin-simple-technical-english-command
     (:name "/ste"
-     :argument "[on|off]"
      :description "use Simple Technical English for replies"
      :tip "toggles short, direct Simple Technical English replies."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (application-simple-technical-english-command application mode)
   ':continue)
 
 (define-application-command application--builtin-session-titles-command
     (:name "/titles"
-     :argument "[on|off]"
      :description "allow provider-generated session-title refreshes"
      :tip "toggles automatic provider-generated session-title refreshes."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (application-session-titles-command application mode)
   ':continue)
 
 (define-application-command application--builtin-hurry-up-command
     (:name "/hurry-up"
-     :argument "[on|off]"
      :description "show or change hurry-up mode"
      :tip "enables direct execution and admits at most two child agents."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (application-hurry-up-command application mode)
   ':continue)
 
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
-     :argument "[ask|auto|sandbox|full|list|clear]"
      :description "choose command access for this session"
      :tip "chooses how shell commands are authorized, including pick-for-me auto mode."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
-     :call-lambda-list (&optional (choice nil choice-supplied-p))
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("ask" "auto" "sandbox" "full" "list" "clear"))
     (application &optional (choice nil choice-supplied-p))
   (let ((choice
           (if choice-supplied-p
@@ -2328,8 +2311,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "queues a prompt for the next known rate-limit reset."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional (input ""))
-     :slash-argument-mode :remainder)
+     :callable t)
     (application &optional (input ""))
   (application-later-command application input)
   ':continue)
@@ -2341,8 +2323,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "sets the objective Autolith should pursue across continuations."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional (remainder ""))
-     :slash-argument-mode :remainder)
+     :callable t)
     (application &optional (remainder ""))
   (application-goal-command application remainder)
   ':continue)
@@ -2354,8 +2335,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows durable commitments and notes for the current workspace."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application (application-agenda-entry application))
   ':continue)
@@ -2367,8 +2347,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows problems Autolith recorded when something was not working."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application (application-papercuts-entry application))
   ':continue)
@@ -2380,8 +2359,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "opens the full report named by (papercuts)."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list (&optional identifier)
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional identifier)
   (if identifier
       (application-present
@@ -2399,8 +2377,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "removes a fixed or obsolete report from (papercuts)."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional identifier)
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional identifier)
   (if identifier
       (application-present
@@ -2418,8 +2395,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows request-local skills and any discovery problems."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present
    application
@@ -2428,13 +2404,12 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
-     :argument "[refresh|reload]"
      :description "show or refresh configured MCP servers"
      :tip "shows MCP connections; refresh rediscovers, reload rereads configuration."
      :busy-behavior :apply
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :remainder)
+     :callable t
+     :static-options ("refresh" "reload"))
     (application &optional mode)
   (let ((mode (and mode (string-downcase mode))))
     (cond
@@ -2465,8 +2440,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "saves the current live state as a retained generation."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-checkpoint application)
   ':continue)
@@ -2478,8 +2452,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows live generations available for recovery."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present
    application
@@ -2493,8 +2466,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "selects a retained generation for the next recovery start."
      :busy-behavior :hold
      :terminal-behavior :exclusive-without-arguments
-     :call-lambda-list (&optional (identifier nil identifier-supplied-p))
-     :slash-argument-mode :first)
+     :callable t)
     (application &optional (identifier nil identifier-supplied-p))
   (let ((identifier
           (if identifier-supplied-p
@@ -2518,8 +2490,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "prints the current settings without changing them."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application (application-info-entry application))
   ':continue)
@@ -2532,8 +2503,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "shows the model, context usage, and subscription rate limits."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present application (application-status-entry application))
   ':continue)
@@ -2545,8 +2515,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "updates curl-installed Autolith and explains source or Nix updates."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-update application)
   ':continue)
@@ -2558,8 +2527,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "reveals the ephemeral context prepared for provider requests."
      :busy-behavior :inspect
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (application-present
    application
@@ -2568,13 +2536,12 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-compact-command
     (:name "/compact"
-     :argument "[on|off]"
      :description "condense tool details, or summarize context with no argument"
      :tip "toggles compact tool presentation; with no argument it compacts context."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list (&optional mode)
-     :slash-argument-mode :first)
+     :callable t
+     :static-options ("on" "off"))
     (application &optional mode)
   (if mode
       (application-compact-view-command application mode)
@@ -2588,8 +2555,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "keeps the session running and returns the foreground shell."
      :busy-behavior :hold
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (let ((session (application-localgroup-session application)))
     (unless session
@@ -2607,8 +2573,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :tip "exits cleanly; Ctrl-C also prints the exact resume command."
      :busy-behavior :cancel
      :terminal-behavior :shared
-     :call-lambda-list ()
-     :slash-argument-mode :none)
+     :callable t)
     (application)
   (declare (ignore application))
   ':quit)

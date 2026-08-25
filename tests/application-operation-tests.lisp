@@ -539,6 +539,14 @@
                           "slash compatibility completion retains canonical commands")
              (test-assert (member "(help)" entry-names :test #'string=)
                           "completion offers a canonical no-argument Lisp command")
+              (test-assert
+               (and (member "/ste on" entry-names :test #'string=)
+                    (member "/ste off" entry-names :test #'string=))
+               "slash completion offers every finite command option")
+              (test-assert
+               (and (member "(ste \"on\")" entry-names :test #'string=)
+                    (member "(ste \"off\")" entry-names :test #'string=))
+               "Lisp completion offers every finite command option")
              (test-assert (member "(update)" entry-names :test #'string=)
                           "completion offers the explicit release update operation")
              (test-assert (member "(eval-now" entry-names :test #'string=)

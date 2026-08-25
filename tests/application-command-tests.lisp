@@ -96,35 +96,66 @@
                 (application invocation)
               (declare (ignore application invocation))
               :continue)
-            (define-application-command application-command-tests--missing-slash-mode
-                (:name "/missing-slash-mode"
-                 :argument "VALUE"
-                 :description "missing slash mode"
-                 :tip "has incomplete callable metadata."
-                 :busy-behavior :inspect
-                 :terminal-behavior :shared
-                 :call-lambda-list (value))
-                (application value)
-              (declare (ignore application value))
-              :continue)
-            (define-application-command application-command-tests--mismatched-call
-                (:name "/mismatched-call"
-                 :argument "VALUE"
-                 :description "mismatched call lambda list"
-                 :tip "has inconsistent callable metadata."
-                 :busy-behavior :inspect
-                 :terminal-behavior :shared
-                 :call-lambda-list (value)
-                 :slash-argument-mode :first)
-                (application other)
-              (declare (ignore application other))
-              :continue)))
+             (define-application-command application-command-tests--bad-callable
+                 (:name "/bad-callable"
+                  :argument "VALUE"
+                  :description "invalid callable marker"
+                  :tip "has invalid callable metadata."
+                  :busy-behavior :inspect
+                  :terminal-behavior :shared
+                  :callable :yes)
+                 (application value)
+               (declare (ignore application value))
+               :continue)
+             (define-application-command application-command-tests--legacy-options
+                 (:name "/legacy-options"
+                  :description "invalid legacy static options"
+                  :tip "has incompatible static option metadata."
+                  :busy-behavior :inspect
+                  :terminal-behavior :shared
+                  :static-options ("on" "off"))
+                 (application invocation)
+               (declare (ignore application invocation))
+               :continue)
+             (define-application-command application-command-tests--duplicate-options
+                 (:name "/duplicate-options"
+                  :argument "[on|off]"
+                  :description "duplicated finite options"
+                  :tip "has duplicated option metadata."
+                  :busy-behavior :inspect
+                  :terminal-behavior :shared
+                  :callable t
+                  :static-options ("on" "off"))
+                 (application &optional value)
+               (declare (ignore application value))
+               :continue)))
       (test-assert
        (application-command-tests--macroexpand-error-p form)
        "invalid command metadata fails during macro expansion"))
     (test-assert
      (equal snapshot (application-command--registry-snapshot))
      "macro expansion never mutates the live command registry"))
+    (test-assert
+     (handler-case
+         (progn
+           (application-command-create
+            :definition-name 'application-command-tests--invalid-static-constructor
+            :name "/invalid-static-constructor"
+            :aliases nil
+            :description "invalid static constructor"
+            :tip "tests constructor validation."
+            :busy-behavior ':inspect
+            :terminal-behavior ':shared
+            :lambda-list '()
+            :callable-p t
+            :static-options '("on" "off")
+            :handler (lambda (application)
+                       (declare (ignore application))
+                       ':continue))
+           nil)
+       (configuration-error ()
+         t))
+     "programmatic construction enforces the finite-option arity invariant")
   nil)
 
 (-> test-application-command-semantic-calls () null)
@@ -134,16 +165,15 @@
     (unwind-protect
          (progn
            (eval
-             '(define-application-command application-command-tests--semantic
-                  (:name "/semantic"
-                   :argument "REQUIRED [OPTIONAL]"
-                   :description "exercise semantic command arguments"
-                   :tip "exists for semantic argument tests."
-                   :busy-behavior :inspect
-                   :terminal-behavior :exclusive-without-arguments
-                   :call-lambda-list (required &optional (optional "default"))
-                   :slash-argument-mode :tokens)
-                  (application required &optional (optional "default"))
+              '(define-application-command application-command-tests--semantic
+                   (:name "/semantic"
+                    :argument "REQUIRED [OPTIONAL]"
+                    :description "exercise semantic command arguments"
+                    :tip "exists for semantic argument tests."
+                    :busy-behavior :inspect
+                    :terminal-behavior :exclusive-without-arguments
+                    :callable t)
+                   (application required &optional (optional "default"))
                 (declare (ignore application))
                 (setf *application-command-tests-semantic-call*
                       (list required optional)
@@ -153,10 +183,10 @@
             (let ((command (application-command-find "/semantic")))
               (test-assert
                (and command
-                    (application-command-semantic-handler-p command)
-                    (equal (application-command-call-lambda-list command)
+                    (application-command-callable-p command)
+                    (equal (application-command-lambda-list command)
                            '(required &optional (optional "default"))))
-               "callable command metadata retains the ordinary lambda list")
+               "callable command derives its contract from the handler lambda list")
               (let ((invocation
                       (application-operation--command-invocation command nil)))
                 (test-assert
@@ -183,16 +213,35 @@
                          (application-command-terminal-owner-p command invocation)))
                    "canonical explicit NIL and empty strings count as supplied")))
              (let ((invocation
-                     (application-command-invocation-parse "/semantic alpha")))
+                     (application-command-invocation-parse
+                      "/semantic \"alpha beta\"")))
                (test-assert
                 (equal (application-command-invocation-arguments invocation)
-                       '("alpha"))
-                "slash compatibility projects token arguments")
+                       '("alpha beta"))
+                "slash parsing preserves whitespace inside double quotes")
                (application-command-execute command nil invocation)
                (test-assert
                 (equal *application-command-tests-semantic-call*
-                       '("alpha" "default"))
-                "omitted optional arguments receive their Common Lisp defaults"))
+                       '("alpha beta" "default"))
+                "quoted slash arguments reach the canonical Lisp handler"))
+             (let ((invocation
+                     (application-command-invocation-parse
+                      "/semantic \"C:\\temp\\new file\"")))
+               (test-assert
+                (equal (application-command-invocation-arguments invocation)
+                       '("C:\\temp\\new file"))
+                "slash parsing preserves literal backslashes inside quotes")
+               (application-command-execute command nil invocation)
+               (test-assert
+                (equal *application-command-tests-semantic-call*
+                       '("C:\\temp\\new file" "default"))
+                "quoted backslashes reach the canonical Lisp handler"))
+             (dolist (option '("alpha beta" "a\"b" "C:\\temp"))
+               (test-assert
+                (equal (application-command--tokens
+                        (application-command--slash-option-token option))
+                       (list option))
+                "slash option rendering round-trips parser-significant characters"))
              (test-assert
               (not *application-command-tests-interactive-p*)
               "direct command execution remains noninteractive by default")
@@ -447,29 +496,34 @@
 (defun test-built-in-application-command-calls ()
   "Test built-ins expose ordinary lambda lists without implicit picker calls."
   (test-assert
-   (every #'application-command-semantic-handler-p
+   (every #'application-command-callable-p
           (application-command-list))
    "every built-in command uses ordinary Common Lisp call semantics")
   (dolist
       (case
-       '(("/help" () :none)
-         ("/resume" (&optional (identifier nil identifier-supplied-p)) :first)
-         ("/cwd" (&optional (pathname "")) :remainder)
-         ("/trace" (&optional mode) :first)
-         ("/timestamps" (&optional mode) :first)
-         ("/ste" (&optional mode) :first)
-         ("/titles" (&optional mode) :first)
-         ("/hurry-up" (&optional mode) :first)
-         ("/later" (&optional (input "")) :remainder)
-         ("/papercut" (&optional identifier) :first)
-         ("/papercut-close" (&optional identifier) :first)))
-    (destructuring-bind (name lambda-list slash-mode) case
+       '(("/help" ())
+         ("/resume" (&optional (identifier nil identifier-supplied-p)))
+         ("/cwd" (&optional (pathname "")))
+         ("/trace" (&optional mode))
+         ("/timestamps" (&optional mode))
+         ("/ste" (&optional mode))
+         ("/titles" (&optional mode))
+         ("/hurry-up" (&optional mode))
+         ("/later" (&optional (input "")))
+         ("/papercut" (&optional identifier))
+         ("/papercut-close" (&optional identifier))))
+    (destructuring-bind (name lambda-list) case
       (let ((command (application-command-find name)))
         (test-assert
          (and command
-              (equal (application-command-call-lambda-list command) lambda-list)
-              (eq (application-command-slash-argument-mode command) slash-mode))
-         (format nil "~A retains its ordinary call and slash semantics" name)))))
+              (equal (application-command-lambda-list command) lambda-list))
+         (format nil "~A derives its slash contract from its Lisp lambda list"
+                 name)))))
+  (let ((command (application-command-find "/ste")))
+    (test-assert
+     (and (equal (application-command-static-options command) '("on" "off"))
+          (string= (application-command-argument command) "[on|off]"))
+     "finite options derive the optional argument hint from one metadata list"))
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (application   (make-instance 'application :configuration configuration)))
@@ -491,16 +545,28 @@
                (null (application-operation-call application name))
                (format nil "(~A) accepts its omitted optional argument" name)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  (dolist
-      (case
-       '(("/auth grok typo" ("grok typo"))
-         ("/mcp refresh typo" ("refresh typo"))))
-    (destructuring-bind (input expected) case
-      (test-assert
-       (equal (application-command-invocation-arguments
-               (application-command-invocation-parse input))
-              expected)
-       (format nil "~A preserves trailing slash input for validation" input))))
+  (dolist (input '("/auth grok typo"
+                   "/mcp refresh typo"
+                   "/permissions auto garbage"))
+    (test-assert
+     (= (length (application-command--tokens input)) 3)
+     (format nil "~A tokenizes every supplied slash argument" input))
+    (test-assert
+     (handler-case
+         (progn
+           (application-command-invocation-parse input)
+           nil)
+       (configuration-error ()
+         t))
+     (format nil "~A rejects excess slash arguments before dispatch" input)))
+  (test-assert
+   (handler-case
+       (progn
+         (application-command-invocation-parse "/cwd \"unfinished")
+         nil)
+     (configuration-error ()
+       t))
+   "slash parsing rejects unterminated quoted arguments")
   (let ((application (make-instance 'application)))
     (test-assert
      (handler-case

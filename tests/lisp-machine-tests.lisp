@@ -280,9 +280,8 @@
                      :tip "tests required command recovery."
                      :busy-behavior ':execute
                      :terminal-behavior ':shared
-                     :call-lambda-list '(value)
-                     :semantic-handler-p t
-                     :slash-argument-mode ':first
+                      :lambda-list '(value)
+                      :callable-p t
                      :handler
                      (lambda (application value)
                        (declare (ignore application))

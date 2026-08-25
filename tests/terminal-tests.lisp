@@ -1834,11 +1834,15 @@
 (defun test-terminal-lisp-operation-completion ()
   "Test registered parenthesized operation suggestions and acceptance."
   (let* ((terminal (make-instance 'recording-terminal :columns 72))
-         (completions
-           '((:name "/help" :argument nil :description "show this reference")
-             (:name "(help)" :argument nil :description "show this reference")
-             (:name "(resource.read" :argument ":uri URI)"
-              :description "read one resource")))
+          (completions
+            '((:name "/help" :argument nil :description "show this reference")
+              (:name "/ste on" :argument nil :description "enable STE")
+              (:name "/ste off" :argument nil :description "disable STE")
+              (:name "(help)" :argument nil :description "show this reference")
+              (:name "(ste \"on\")" :argument nil :description "enable STE")
+              (:name "(ste \"off\")" :argument nil :description "disable STE")
+              (:name "(resource.read" :argument ":uri URI)"
+               :description "read one resource")))
          (ui (terminal-ui-create :terminal terminal :completions completions)))
     (with-terminal-ui (active-ui ui)
       (let ((editor (terminal-ui-editor active-ui)))
@@ -1865,7 +1869,19 @@
                      "leading whitespace preserves prose without Lisp completion")
         (terminal-ui-set-input active-ui "(resource.read :uri")
         (test-assert (null (terminal-ui--matching-completions active-ui))
-                     "operation completion stops after the function name"))))
+                     "operation completion stops after the function name")
+        (terminal-ui-set-input active-ui "/ste ")
+        (test-assert
+         (equal (mapcar (lambda (entry) (getf entry :name))
+                        (terminal-ui--matching-completions active-ui))
+                '("/ste on" "/ste off"))
+         "slash argument prefixes offer finite command options")
+        (terminal-ui-set-input active-ui "(ste ")
+        (test-assert
+         (equal (mapcar (lambda (entry) (getf entry :name))
+                        (terminal-ui--matching-completions active-ui))
+                '("(ste \"on\")" "(ste \"off\")"))
+         "Lisp argument prefixes offer the same finite command options"))))
   nil)
 
 (-> test-terminal-modal-selection () null)

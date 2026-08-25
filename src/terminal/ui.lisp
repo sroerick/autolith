@@ -556,11 +556,11 @@ the draft is exact."
 
 (-> terminal-ui--operation-completion-prefix-p (string) boolean)
 (defun terminal-ui--operation-completion-prefix-p (text)
-  "Return whether TEXT is a slash or parenthesized operation name prefix."
+  "Return whether TEXT can prefix a slash or parenthesized completion."
   (and (non-empty-string-p text)
        (member (char text 0) '(#\/ #\() :test #'char=)
        (not (find-if (lambda (character)
-                       (find character '(#\Space #\Tab #\Newline #\Return)))
+                       (find character '(#\Newline #\Return)))
                      text))
        (or (char= (char text 0) #\/)
            (not (find #\) text)))))

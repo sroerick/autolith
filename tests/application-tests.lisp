@@ -6723,16 +6723,17 @@
               "the command table offers /cwd with its optional path argument")
              (test-assert (search "/cwd [PATH]" (application-help))
                           "the command reference includes optional /cwd syntax"))
-           (test-assert
-            (string= (application--command-remainder
-                      "/cwd directory name with spaces")
-                     "directory name with spaces")
-            "slash-command remainders retain embedded spaces")
-           (test-assert
-            (eq (application-command
-                 application
-                 (format nil "/cwd ~A" (namestring workspace)))
-                ':continue)
+            (test-assert
+             (equal (application-command-invocation-arguments
+                     (application-command-invocation-parse
+                      "/cwd \"directory name with spaces\""))
+                    '("directory name with spaces"))
+             "slash-command quotes preserve embedded spaces in one argument")
+            (test-assert
+             (eq (application-command
+                  application
+                  (format nil "/cwd ~S" (namestring workspace)))
+                 ':continue)
             "/cwd continues the application loop")
            (test-assert
             (equal (configuration-working-directory
