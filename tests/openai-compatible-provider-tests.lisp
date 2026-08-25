@@ -927,17 +927,20 @@
                     (and (vectorp messages)
                          (search "Read the file" (json-encode messages)))
                     "Chat Completions requests carry projected conversation messages")
-                   (test-assert
-                    (and delivery
-                         (string= (json-get
-                                   (aref messages (- (length messages) 2))
-                                   "content")
-                                  "keep the active goal")
-                         (search "Temporary context"
-                                 (json-get
-                                  (aref messages (1- (length messages)))
-                                  "content")))
-                    "goal and mutable context follow durable Chat Completions history")
+                    (test-assert
+                     (let ((system-messages
+                             (remove-if-not
+                              (lambda (message)
+                                (string= (json-get message "role") "system"))
+                              (coerce messages 'list))))
+                       (and delivery
+                            (= (length system-messages) 1)
+                            (eq (aref messages 0) (first system-messages))
+                            (search "keep the active goal"
+                                    (json-get (first system-messages) "content"))
+                            (search "Temporary context"
+                                    (json-get (first system-messages) "content"))))
+                     "goal and mutable context share one leading system message")
                    (test-assert
                     (null (json-get request "prompt_cache_key"))
                     "generic OpenAI-compatible requests omit unsupported cache fields")
@@ -948,6 +951,26 @@
                          (not (find #\. (json-get wire-function "name")))
                          (json-object-p (json-get wire-function "parameters")))
                     "namespaced tools use a grammar-safe Chat Completions function wrapper"))))
+              (let ((conversation
+                      (conversation-create provider-configuration
+                                           :identifier "openai-compatible-compaction")))
+                (conversation-append-user-message conversation "Compact this history.")
+                (multiple-value-bind (request delivery)
+                    (provider-request-object provider conversation #()
+                                             :compaction-p t)
+                  (let* ((messages (json-get request "messages"))
+                         (system-message (aref messages 0)))
+                    (test-assert
+                     (and (null delivery)
+                          (string= (json-get system-message "role") "system")
+                          (search *compaction-instructions*
+                                  (json-get system-message "content"))
+                          (= 1
+                             (count "system" messages
+                                    :key (lambda (message)
+                                           (json-get message "role"))
+                                    :test #'string=)))
+                     "compaction also uses one leading system message"))))
              (let* ((call-a
                       (json-object
                        "type" "function_call"

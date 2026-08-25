@@ -553,10 +553,13 @@ message, which thinking-mode providers require passed back."
       (flush-function-calls)
       (nreverse messages))))
 
-(-> openai-compatible--chat-system-message (string) json-object)
-(defun openai-compatible--chat-system-message (text)
-  "Return one Chat Completions system message containing TEXT."
-  (json-object "role" "system" "content" text))
+(-> openai-compatible--chat-system-message (list) json-object)
+(defun openai-compatible--chat-system-message (texts)
+  "Return one leading Chat Completions system message joining nonempty TEXTS."
+  (json-object
+   "role" "system"
+   "content" (format nil "~{~A~^~%~%~}"
+                     (remove-if-not #'non-empty-string-p texts))))
 
 
 ;;;; -- Chat Completions Requests --
@@ -587,21 +590,14 @@ message, which thinking-mode providers require passed back."
             conversation
             (provider-family provider)
             :include-ephemeral-p (not compaction-p)))
-         (messages
-           (append
-            (list (openai-compatible--chat-system-message
-                   (system-prompt configuration)))
-            (openai-compatible--chat-input-messages input-items)
-            (when (and goal-context (not compaction-p))
-              (list (openai-compatible--chat-system-message goal-context)))
-            (when (and delivery
-                       (non-empty-string-p
-                        (context-delivery-rendered delivery)))
-              (list (openai-compatible--chat-system-message
-                     (context-delivery-rendered delivery))))
-            (when compaction-p
-              (list (openai-compatible--chat-system-message
-                     *compaction-instructions*)))))
+          (messages
+            (cons
+             (openai-compatible--chat-system-message
+              (list (system-prompt configuration)
+                    (and (not compaction-p) goal-context)
+                    (and delivery (context-delivery-rendered delivery))
+                    (and compaction-p *compaction-instructions*)))
+             (openai-compatible--chat-input-messages input-items)))
          (request
            (json-object
             "model" (configuration-model configuration)
