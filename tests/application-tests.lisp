@@ -6152,9 +6152,10 @@
                      (list
                       (list
                        'configuration-create
-                       (lambda (&key source-root working-directory model
-                                    reasoning-effort codex-fast-mode-p
-                                    immutable-p defer-provider-validation-p)
+                        (lambda (&key source-root working-directory model
+                                     reasoning-effort codex-fast-mode-p
+                                     immutable-p defer-provider-validation-p
+                                     &allow-other-keys)
                          (declare (ignore source-root
                                     defer-provider-validation-p))
                          (configuration--clone

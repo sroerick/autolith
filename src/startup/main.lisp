@@ -324,6 +324,7 @@
     (labels ((close-runtime-resources ()
                "Close APPLICATION's external runtimes at most once."
                (ignore-errors (localgroup-stop application))
+               (ignore-errors (management-repl-stop application))
                (unless tool-runtimes-closed-p
                  (unwind-protect
                       (ignore-errors
@@ -408,6 +409,7 @@
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)
+                    (management-repl-start application)
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
                     (application-input-controller--start-reader
@@ -421,7 +423,10 @@
                                (lambda ()
                                  (application--quiesce-update-check application)
                                  (application-call-with-localgroup-quiesced
-                                  application function)))))
+                                  application
+                                  (lambda ()
+                                    (application-call-with-management-repl-quiesced
+                                     application function)))))))
                           (*debugger-hook*
                             (lambda (condition hook)
                               (declare (ignore hook))

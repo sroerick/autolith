@@ -227,6 +227,108 @@ The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
 image.
 
+** Active-image management endpoint
+
+The management REPL is a separate opt-in subsystem for trusted programs that
+must evaluate Common Lisp in the running =AUTOLITH= image. It does not use the
+localgroup protocol, Swank, or Slynk. It is disabled unless
+=AUTOLITH_MANAGEMENT_REPL= is set to =on=.
+
+Every connection authenticates with a fresh random nonce and HMAC-SHA-256. The
+client never sends the reusable token. Put a nonempty token in a regular file
+owned by the current uid with mode =0600=. Autolith opens that file without
+following symbolic links only while checking a proof, wipes the token octets,
+and retains only the token-file pathname.
+
+The following environment variables configure newly created applications:
+
+| Variable | Default | Meaning |
+|-
+| =AUTOLITH_MANAGEMENT_REPL= | =off= | Enable the endpoint. |
+| =AUTOLITH_MANAGEMENT_REPL_TRANSPORT= | =unix= | =unix= or =tcp=. |
+| =AUTOLITH_MANAGEMENT_REPL_UNIX_SOCKET= | =${XDG_STATE_HOME:-~/.local/state}/autolith/management/repl.sock= | Unix socket pathname. |
+| =AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS= | =127.0.0.1= | IPv4 loopback listener address. |
+| =AUTOLITH_MANAGEMENT_REPL_TCP_PORT= | =4141= | TCP listener port. |
+| =AUTOLITH_MANAGEMENT_REPL_TOKEN_FILE= | =${XDG_CONFIG_HOME:-~/.config}/autolith/management-repl.token= | Mode-0600 token file. |
+| =AUTOLITH_MANAGEMENT_REPL_TIMEOUT= | =10= | Evaluation deadline in seconds. |
+| =AUTOLITH_MANAGEMENT_REPL_MAX_FRAME= | =1048576= | Maximum wire-frame octets. |
+| =AUTOLITH_MANAGEMENT_REPL_MAX_SOURCE= | =262144= | Maximum UTF-8 source octets. |
+| =AUTOLITH_MANAGEMENT_REPL_MAX_OUTPUT= | =262144= | Maximum captured output and value text. |
+| =AUTOLITH_MANAGEMENT_REPL_QUEUE_CAPACITY= | =8= | Maximum queued evaluations. |
+| =AUTOLITH_MANAGEMENT_REPL_MAX_CLIENTS= | =8= | Maximum accepted clients, including authentication. |
+| =AUTOLITH_MANAGEMENT_REPL_AUTH_TIMEOUT= | =10= | Absolute authentication deadline in seconds. |
+
+TCP accepts IPv4 loopback addresses only. This endpoint does not provide server
+TLS, and arbitrary Lisp results may contain secrets. Challenge-response prevents
+bearer-token replay, but an unauthenticated local process can relay a challenge
+and proof between trusted local clients. Treat loopback TCP clients as locally
+trusted. Unix transport creates a
+mode-0700 private directory and a mode-0600 socket. Startup refuses an active
+socket and any alien or non-socket path; it removes a socket only after proving
+that it is a stale current-user endpoint.
+
+*** Wire protocol
+
+Each message is a four-octet unsigned big-endian length followed by exactly that
+many UTF-8 octets containing one readable S-expression. Length zero, oversized
+or truncated frames, invalid UTF-8, malformed syntax, and trailing forms are
+rejected. Readers use standard I/O syntax, a fresh standard readtable, and
+=*read-eval*= =nil=.
+
+The server starts each connection with:
+
+#+BEGIN_SRC lisp
+(:challenge :version 1 :algorithm :hmac-sha-256 :nonce HEX)
+#+END_SRC
+
+=HEX= encodes 32 random nonce octets as 64 lowercase hexadecimal characters.
+The client reads its token file, computes =HMAC-SHA-256(token, nonce)=, and
+replies:
+
+#+BEGIN_SRC lisp
+(:authenticate :proof HEX)
+#+END_SRC
+
+A valid proof receives =(:authenticated :version 1)=. A proof is valid only for
+that connection's nonce. Authentication failure closes the connection without
+a reusable credential or detailed oracle response.
+
+After authentication, send one request at a time:
+
+#+BEGIN_SRC lisp
+(:evaluate :source "(values (+ 20 22) *package*)")
+#+END_SRC
+
+The source string must contain exactly one form. A dedicated serial evaluator
+thread reads it in package =AUTOLITH=, applies the configured deadline, prevents
+interactive debugger entry, and captures standard, error, trace, query, debug,
+and terminal output in a bounded Gray stream. Successful responses have this
+shape:
+
+#+BEGIN_SRC lisp
+(:evaluation-result
+ :status :ok
+ :values ("42" "#<PACKAGE \"AUTOLITH\">")
+ :values-truncated-p nil
+ :output ""
+ :output-truncated-p nil)
+#+END_SRC
+
+=:values= contains one bounded readable string for every multiple value.
+Conditions return =:status :condition=, a bounded =:condition-type= and
+=:report=, captured output, and truncation flags. Deadline expiry returns
+=:status :timeout=. The client may submit further requests on the authenticated
+connection.
+
+Evaluation deadlines use in-process interrupts and are best effort for trusted
+forms; a form that suppresses interrupts may outlive its deadline. Checkpointing
+stops the listener, clients, evaluator, and queue before saving the image and
+restarts the endpoint afterward. If an evaluator cannot quiesce within the
+documented two-second shutdown bound, checkpointing aborts with a typed
+management quiescence condition rather than saving live management threads.
+Normal shutdown is idempotent and
+removes only the exact Unix socket created by that runtime.
+
 ** Context
 
 Autolith has a concept of *ephemeral notes*, which can be used to

@@ -277,6 +277,24 @@ configuration can be created before executable user initialization loads."
                             value)))))
         fallback)))
 
+(-> environment-positive-integer (string (integer 1)) (integer 1))
+(defun environment-positive-integer (variable fallback)
+  "Return positive integer VARIABLE, or FALLBACK when it is unset."
+  (let ((value (uiop:getenv variable)))
+    (if (non-empty-string-p value)
+        (handler-case
+            (let ((parsed (parse-integer value :junk-allowed nil)))
+              (unless (plusp parsed)
+                (error 'configuration-error
+                       :message (format nil "~A must be a positive integer." variable)))
+              parsed)
+          (configuration-error (condition)
+            (error condition))
+          (error ()
+            (error 'configuration-error
+                   :message (format nil "~A must be a positive integer." variable))))
+        fallback)))
+
 (-> configuration--default-config-root () pathname)
 (defun configuration--default-config-root ()
   "Return Autolith's default XDG configuration directory."
@@ -363,6 +381,84 @@ configuration can be created before executable user initialization loads."
     :reader configuration-immutable-p
     :type boolean
     :documentation "Whether mutation-capable active-image tools are disabled.")
+   (management-repl-enabled-p
+    :initarg :management-repl-enabled-p
+    :initform nil
+    :reader configuration-management-repl-enabled-p
+    :type boolean
+    :documentation "Whether the authenticated active-image management endpoint starts.")
+   (management-repl-transport
+    :initarg :management-repl-transport
+    :initform ':unix
+    :reader configuration-management-repl-transport
+    :type (member :unix :tcp)
+    :documentation "The management endpoint transport.")
+   (management-repl-unix-socket-path
+    :initarg :management-repl-unix-socket-path
+    :initform #P"management/repl.sock"
+    :reader configuration-management-repl-unix-socket-path
+    :type pathname
+    :documentation "The private Unix management socket pathname.")
+   (management-repl-tcp-address
+    :initarg :management-repl-tcp-address
+    :initform "127.0.0.1"
+    :reader configuration-management-repl-tcp-address
+    :type non-empty-string
+    :documentation "The IPv4 loopback management listener address.")
+   (management-repl-tcp-port
+    :initarg :management-repl-tcp-port
+    :initform 4141
+    :reader configuration-management-repl-tcp-port
+    :type (integer 1 65535)
+    :documentation "The management TCP listener port.")
+   (management-repl-token-file-path
+    :initarg :management-repl-token-file-path
+    :initform #P"management-repl.token"
+    :reader configuration-management-repl-token-file-path
+    :type pathname
+    :documentation "The external owner-only authentication token file pathname.")
+   (management-repl-evaluation-timeout
+    :initarg :management-repl-evaluation-timeout
+    :initform 10
+    :reader configuration-management-repl-evaluation-timeout
+    :type (integer 1)
+    :documentation "The management request deadline in seconds.")
+   (management-repl-maximum-frame-size
+    :initarg :management-repl-maximum-frame-size
+    :initform 1048576
+    :reader configuration-management-repl-maximum-frame-size
+    :type (integer 1)
+    :documentation "The maximum management wire frame size in octets.")
+   (management-repl-maximum-source-size
+    :initarg :management-repl-maximum-source-size
+    :initform 262144
+    :reader configuration-management-repl-maximum-source-size
+    :type (integer 1)
+    :documentation "The maximum evaluation source size in UTF-8 octets.")
+   (management-repl-maximum-output-size
+    :initarg :management-repl-maximum-output-size
+    :initform 262144
+    :reader configuration-management-repl-maximum-output-size
+    :type (integer 1)
+    :documentation "The maximum captured output and value text size.")
+   (management-repl-queue-capacity
+    :initarg :management-repl-queue-capacity
+    :initform 8
+    :reader configuration-management-repl-queue-capacity
+    :type (integer 1)
+    :documentation "The maximum queued management evaluations.")
+   (management-repl-maximum-clients
+    :initarg :management-repl-maximum-clients
+    :initform 8
+    :reader configuration-management-repl-maximum-clients
+    :type (integer 1)
+    :documentation "The maximum accepted management clients, including authentication.")
+   (management-repl-authentication-timeout
+    :initarg :management-repl-authentication-timeout
+    :initform 10
+    :reader configuration-management-repl-authentication-timeout
+    :type (integer 1)
+    :documentation "The absolute authentication deadline in seconds.")
    (web-search-mode
     :initarg :web-search-mode
     :initform "cached"
@@ -499,19 +595,46 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
             (configuration-compaction-threshold-percent configuration))
          100))
 
-(-> configuration-create (&key
-                           (:source-root (option pathname))
-                           (:working-directory (option pathname))
-                           (:model (option string))
-                           (:reasoning-effort (option string))
-                           (:codex-fast-mode-p boolean)
-                           (:immutable-p boolean)
-                           (:defer-provider-validation-p boolean))
+(-> configuration--absolute-file-pathname (pathname) pathname)
+(defun configuration--absolute-file-pathname (pathname)
+  "Anchor PATHNAME to the process directory captured during configuration."
+  (if (uiop:absolute-pathname-p pathname)
+      pathname
+      (merge-pathnames pathname (uiop:getcwd))))
+
+(-> configuration-create
+    (&key (:source-root (option pathname))
+          (:working-directory (option pathname))
+          (:model (option string))
+          (:reasoning-effort (option string))
+          (:codex-fast-mode-p boolean)
+          (:immutable-p boolean)
+          (:defer-provider-validation-p boolean)
+          (:management-repl-enabled-p boolean)
+          (:management-repl-transport (option keyword))
+          (:management-repl-unix-socket-path (option pathname))
+          (:management-repl-tcp-address (option string))
+          (:management-repl-tcp-port (option integer))
+          (:management-repl-token-file-path (option pathname))
+          (:management-repl-evaluation-timeout (option integer))
+          (:management-repl-maximum-frame-size (option integer))
+          (:management-repl-maximum-source-size (option integer))
+          (:management-repl-maximum-output-size (option integer))
+          (:management-repl-queue-capacity (option integer))
+          (:management-repl-maximum-clients (option integer))
+          (:management-repl-authentication-timeout (option integer)))
     configuration)
 (defun configuration-create
     (&key source-root working-directory model reasoning-effort
       (codex-fast-mode-p nil codex-fast-mode-p-supplied-p)
-      immutable-p defer-provider-validation-p)
+      immutable-p defer-provider-validation-p
+      (management-repl-enabled-p nil management-repl-enabled-p-supplied-p)
+      management-repl-transport management-repl-unix-socket-path
+      management-repl-tcp-address management-repl-tcp-port
+      management-repl-token-file-path management-repl-evaluation-timeout
+      management-repl-maximum-frame-size management-repl-maximum-source-size
+      management-repl-maximum-output-size management-repl-queue-capacity
+      management-repl-maximum-clients management-repl-authentication-timeout)
   "Create runtime configuration from explicit values and the environment.
 
 Provider-specific validation can be deferred until executable user
@@ -544,7 +667,21 @@ initialization registers the selected model."
          (selected-web-search (let ((mode (uiop:getenv "AUTOLITH_WEB_SEARCH")))
                                 (if (non-empty-string-p mode)
                                     (string-downcase mode)
-                                    "cached"))))
+                                    "cached")))
+         (selected-management-enabled-p
+           (if management-repl-enabled-p-supplied-p
+               management-repl-enabled-p
+               (environment-boolean "AUTOLITH_MANAGEMENT_REPL" nil)))
+         (selected-management-transport
+           (or management-repl-transport
+               (let ((value (uiop:getenv "AUTOLITH_MANAGEMENT_REPL_TRANSPORT")))
+                 (if (non-empty-string-p value)
+                     (intern (string-upcase value) '#:keyword)
+                     ':unix))))
+         (selected-management-address
+           (or management-repl-tcp-address
+               (uiop:getenv "AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS")
+               "127.0.0.1")))
     (unless defer-provider-validation-p
       (unless (member selected-effort
                       (configuration--reasoning-efforts-for selected-model)
@@ -556,14 +693,26 @@ initialization registers the selected model."
       (error 'configuration-error
              :message (format nil "Unsupported web search mode ~S."
                               selected-web-search)))
+    (unless (member selected-management-transport '(:unix :tcp))
+      (error 'configuration-error
+             :message "AUTOLITH_MANAGEMENT_REPL_TRANSPORT must be unix or tcp."))
+    (let ((maximum-frame-size
+            (or management-repl-maximum-frame-size
+                (environment-positive-integer
+                 "AUTOLITH_MANAGEMENT_REPL_MAX_FRAME" 1048576))))
+      (when (< maximum-frame-size 128)
+        (error 'configuration-error
+               :message "AUTOLITH_MANAGEMENT_REPL_MAX_FRAME must be at least 128.")))
     (make-instance 'configuration
-                   :source-root (uiop:ensure-directory-pathname
-                                 (or source-root
-                                     (and (non-empty-string-p environment-source-root)
-                                          (pathname environment-source-root))
-                                     (asdf:system-source-directory :autolith)))
-                   :working-directory (uiop:ensure-directory-pathname
-                                       (or working-directory (uiop:getcwd)))
+                   :source-root
+                   (uiop:ensure-directory-pathname
+                    (or source-root
+                        (and (non-empty-string-p environment-source-root)
+                             (pathname environment-source-root))
+                        (asdf:system-source-directory :autolith)))
+                   :working-directory
+                   (uiop:ensure-directory-pathname
+                    (or working-directory (uiop:getcwd)))
                    :config-root (merge-pathnames "autolith/" config-home)
                    :data-root (merge-pathnames "autolith/" data-home)
                    :state-root (merge-pathnames "autolith/" state-home)
@@ -575,13 +724,70 @@ initialization registers the selected model."
                    :reasoning-effort selected-effort
                    :codex-fast-mode-p selected-codex-fast-mode-p
                    :immutable-p immutable-p
+                   :management-repl-enabled-p selected-management-enabled-p
+                   :management-repl-transport selected-management-transport
+                   :management-repl-unix-socket-path
+                   (configuration--absolute-file-pathname
+                    (or management-repl-unix-socket-path
+                        (let ((value
+                                (uiop:getenv
+                                 "AUTOLITH_MANAGEMENT_REPL_UNIX_SOCKET")))
+                          (if (non-empty-string-p value)
+                              (pathname value)
+                              (merge-pathnames
+                               "management/repl.sock"
+                               (merge-pathnames "autolith/" state-home))))))
+                   :management-repl-tcp-address selected-management-address
+                   :management-repl-tcp-port
+                   (or management-repl-tcp-port
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_TCP_PORT" 4141))
+                   :management-repl-token-file-path
+                   (configuration--absolute-file-pathname
+                    (or management-repl-token-file-path
+                        (let ((value
+                                (uiop:getenv
+                                 "AUTOLITH_MANAGEMENT_REPL_TOKEN_FILE")))
+                          (if (non-empty-string-p value)
+                              (pathname value)
+                              (merge-pathnames
+                               "management-repl.token"
+                               (merge-pathnames "autolith/" config-home))))))
+                   :management-repl-evaluation-timeout
+                   (or management-repl-evaluation-timeout
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_TIMEOUT" 10))
+                   :management-repl-maximum-frame-size
+                   (or management-repl-maximum-frame-size
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_MAX_FRAME" 1048576))
+                   :management-repl-maximum-source-size
+                   (or management-repl-maximum-source-size
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_MAX_SOURCE" 262144))
+                   :management-repl-maximum-output-size
+                   (or management-repl-maximum-output-size
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_MAX_OUTPUT" 262144))
+                   :management-repl-queue-capacity
+                   (or management-repl-queue-capacity
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_QUEUE_CAPACITY" 8))
+                   :management-repl-maximum-clients
+                   (or management-repl-maximum-clients
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_MAX_CLIENTS" 8))
+                   :management-repl-authentication-timeout
+                   (or management-repl-authentication-timeout
+                       (environment-positive-integer
+                        "AUTOLITH_MANAGEMENT_REPL_AUTH_TIMEOUT" 10))
                    :web-search-mode selected-web-search
-                   :context-window (configuration--context-window-for
-                                    selected-model)
+                   :context-window
+                   (configuration--context-window-for selected-model)
                    :compaction-threshold-percent
                    (configuration--compaction-threshold)
-                   :provider-endpoint (configuration--provider-endpoint-for
-                                       selected-model))))
+                   :provider-endpoint
+                   (configuration--provider-endpoint-for selected-model))))
 
 (-> configuration--clone
     (configuration &key (:working-directory (option pathname))
@@ -624,6 +830,32 @@ reasoning effort only when that effort is supported by the selected model."
                    :data-root (configuration-data-root configuration)
                    :state-root (configuration-state-root configuration)
                    :cache-root (configuration-cache-root configuration)
+                   :management-repl-enabled-p
+                   (configuration-management-repl-enabled-p configuration)
+                   :management-repl-transport
+                   (configuration-management-repl-transport configuration)
+                   :management-repl-unix-socket-path
+                   (configuration-management-repl-unix-socket-path configuration)
+                   :management-repl-tcp-address
+                   (configuration-management-repl-tcp-address configuration)
+                   :management-repl-tcp-port
+                   (configuration-management-repl-tcp-port configuration)
+                   :management-repl-token-file-path
+                   (configuration-management-repl-token-file-path configuration)
+                   :management-repl-evaluation-timeout
+                   (configuration-management-repl-evaluation-timeout configuration)
+                   :management-repl-maximum-frame-size
+                   (configuration-management-repl-maximum-frame-size configuration)
+                   :management-repl-maximum-source-size
+                   (configuration-management-repl-maximum-source-size configuration)
+                   :management-repl-maximum-output-size
+                   (configuration-management-repl-maximum-output-size configuration)
+                   :management-repl-queue-capacity
+                   (configuration-management-repl-queue-capacity configuration)
+                   :management-repl-maximum-clients
+                   (configuration-management-repl-maximum-clients configuration)
+                   :management-repl-authentication-timeout
+                   (configuration-management-repl-authentication-timeout configuration)
                    :codex-auth-path (configuration-codex-auth-path configuration)
                    :grok-bootstrap-auth-path
                    (configuration-grok-bootstrap-auth-path configuration)

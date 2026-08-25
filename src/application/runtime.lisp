@@ -154,6 +154,11 @@
     :accessor application-localgroup-session
     :type t
     :documentation "The process-local discovery and control endpoint, when running.")
+   (management-repl-runtime
+    :initform nil
+    :accessor application-management-repl-runtime
+    :type t
+    :documentation "The isolated authenticated active-image management runtime.")
    (mutation-replay-failures
     :initform nil
     :accessor application-mutation-replay-failures
@@ -1035,6 +1040,43 @@ newly acquired lease."
                 history-floor-sequence)))
     (values rendered history-floor)))
 
+(-> application--reconnect-configuration (configuration boolean) configuration)
+(defun application--reconnect-configuration (previous immutable-p)
+  "Recreate PREVIOUS for reconnect while preserving explicit management settings."
+  (configuration-create
+   :working-directory (uiop:getcwd)
+   :model (configuration-model previous)
+   :reasoning-effort (configuration-reasoning-effort previous)
+   :codex-fast-mode-p (configuration-codex-fast-mode-p previous)
+   :immutable-p immutable-p
+   :management-repl-enabled-p
+   (configuration-management-repl-enabled-p previous)
+   :management-repl-transport
+   (configuration-management-repl-transport previous)
+   :management-repl-unix-socket-path
+   (configuration-management-repl-unix-socket-path previous)
+   :management-repl-tcp-address
+   (configuration-management-repl-tcp-address previous)
+   :management-repl-tcp-port
+   (configuration-management-repl-tcp-port previous)
+   :management-repl-token-file-path
+   (configuration-management-repl-token-file-path previous)
+   :management-repl-evaluation-timeout
+   (configuration-management-repl-evaluation-timeout previous)
+   :management-repl-maximum-frame-size
+   (configuration-management-repl-maximum-frame-size previous)
+   :management-repl-maximum-source-size
+   (configuration-management-repl-maximum-source-size previous)
+   :management-repl-maximum-output-size
+   (configuration-management-repl-maximum-output-size previous)
+   :management-repl-queue-capacity
+   (configuration-management-repl-queue-capacity previous)
+   :management-repl-maximum-clients
+   (configuration-management-repl-maximum-clients previous)
+   :management-repl-authentication-timeout
+   (configuration-management-repl-authentication-timeout previous)
+   :defer-provider-validation-p t))
+
 (-> application-reconnect
     (application &key (:conversation-id (option string))
                       (:immutable-p boolean)
@@ -1070,172 +1112,166 @@ newly acquired lease."
     (handler-case
         (unwind-protect
              (with-extension-registry-transaction
-           (setf extension-registry-snapshot
-                 (application--extension-registry-snapshot))
-           (unwind-protect
-                (let* ((retained-configuration
-                  (configuration-create
-                   :working-directory (uiop:getcwd)
-                   :model (configuration-model previous)
-                   :reasoning-effort
-                   (configuration-reasoning-effort previous)
-                    :codex-fast-mode-p
-                    (configuration-codex-fast-mode-p previous)
-                   :immutable-p effective-immutable-p
-                   :defer-provider-validation-p t))
-                (prepared-configuration
-                  (progn
-                    (configuration-ensure-directories retained-configuration)
-                    (conversation-identifier-migrate retained-configuration)
-                    (mcp-configuration-load retained-configuration)
-                    (user-init-load retained-configuration)
-                    (setf retained-configuration
-                          (provider-bootstrap-configuration
-                           retained-configuration))
-                    retained-configuration))
-                (reasoning-traces-p
-                  (preferences-reasoning-traces-p prepared-configuration))
-                (compact-view-p
-                  (preferences-compact-view-p prepared-configuration))
-                (turn-timestamps-p
-                  (preferences-turn-timestamps-p prepared-configuration))
-                (permission-state (permissions-load prepared-configuration))
-                (recovery-state
-                  (multiple-value-list
-                   (application-recovery-state prepared-configuration)))
-                (recovery-conversation-id (first recovery-state))
-                (selected-conversation-id
-                  (application--selected-conversation-id
-                   conversation-id recovery-conversation-id))
-                (conversation
-                  (multiple-value-bind
-                      (owned-conversation lease acquired-p)
-                      (cond
-                        (selected-conversation-id
-                         (application--conversation-load-owned
-                          application
-                          prepared-configuration
-                          selected-conversation-id))
-                        ((conversation-persisted-p retained-conversation)
-                         (application--conversation-load-owned
-                          application
-                          prepared-configuration
-                          (conversation-identifier retained-conversation)))
-                        (t
-                         (application--conversation-create-owned
-                          application prepared-configuration)))
-                    (setf selected-conversation-lease lease
-                          selected-conversation-lease-acquired-p acquired-p)
-                    owned-conversation))
-                (configuration
-                  (application--configuration-for-conversation
-                   prepared-configuration
-                   conversation))
-                (installation-provenance
-                  (installation-provenance-detect configuration))
-                (update-availability
-                  (update-availability-current
-                   configuration installation-provenance))
-                (provider
-                  (progn
-                    (when (and (slot-boundp application 'provider)
-                               (application-provider application))
-                      (application--validate-provider-registration
-                       (application-provider application)
-                       configuration))
-                    (provider-create
-                     configuration
-                     :reasoning-summaries-p reasoning-traces-p)))
-                (recovery-rendered-sequence (second recovery-state))
-                (recovery-history-floor-sequence (third recovery-state))
-                (recovering-conversation-p
-                  (and
-                   (null conversation-id)
-                   recovery-conversation-id
-                   (string=
-                    (conversation-identifier conversation)
-                    (conversation-identifier-migration-resolve
-                     prepared-configuration
-                     recovery-conversation-id)))))
-           (setf worker (lisp-worker-pool-create configuration)
-                 registry (application--create-tool-registry configuration))
-           (let* ((agent
-                    (agent-create :configuration configuration
-                                  :provider provider
-                                  :conversation conversation
-                                  :tool-registry registry
-                                  :worker worker))
-                  (ui (application-terminal-ui-create)))
-             (setf new-application
-                   (make-instance
-                    'application
-                    :configuration configuration
-                    :conversation conversation
-                    :conversation-lease selected-conversation-lease
-                    :provider provider
-                    :tool-registry registry
-                    :worker worker
-                    :agent agent
-                    :ui ui
-                    :permission-state permission-state
-                    :permission-mode permission-mode
-                    :reasoning-traces-p reasoning-traces-p
-                    :compact-view-p compact-view-p
-                    :turn-timestamps-p turn-timestamps-p
-                    :installation-provenance installation-provenance
-                    :update-availability update-availability
-                    :recovery-startup-p
-                    (not (null recovering-conversation-p))))
-             (multiple-value-bind
-                 (restored-rendered-sequence
-                  restored-history-floor-sequence)
-                 (application--normalize-recovery-cursors
-                  conversation
-                  (not (null recovering-conversation-p))
-                  recovery-rendered-sequence
-                  recovery-history-floor-sequence)
-               (setf
-                (application-rendered-sequence new-application)
-                restored-rendered-sequence
-                (application-render-position new-application) 0
-                (application-render-generation new-application)
-                (conversation-log-generation conversation)
-                (application-transcript-synchronized-p new-application) nil
-                (application-history-floor-sequence new-application)
-                restored-history-floor-sequence
-                (application-mutation-replay-failures new-application) nil))
-              (application-refresh-context-meter new-application)
-             (application--load-goal new-application)
-             (image-state-reconnect)
-             (setf retirement-started-p t
-                   failure-stage ':retire)
-             (application-disconnect-task-presentation application)
-             (setf presentation-disconnected-p t)
-             (multiple-value-bind (completed retirement-failure)
-                 (tool-registry-quiesce-runtime-state old-registry)
-               (setf quiesced-tools completed)
-               (when retirement-failure
-                 (error retirement-failure)))
-             (setf failure-stage ':install)
-             (application-connect-task-presentation new-application)
-             (context-runtime-reset)
-             (application-publish-recovery-session new-application)
-             (setf completed-p t)
-             (when (and retained-conversation-lease
-                        (not
-                         (eq retained-conversation-lease
-                             selected-conversation-lease)))
-               (conversation-lease-release retained-conversation-lease)
-               (setf (application-conversation-lease application) nil))
-             (when (and (slot-boundp application 'worker)
-                        (application-worker application))
-               (ignore-errors
-                 (lisp-worker-manager-stop
-                  (application-worker application))))
-             new-application))
-             (unless completed-p
-               (application--extension-registry-restore
-                extension-registry-snapshot))))
+                 (setf extension-registry-snapshot
+                       (application--extension-registry-snapshot))
+               (unwind-protect
+                    (let* ((retained-configuration
+                            (application--reconnect-configuration
+                             previous effective-immutable-p))
+                           (prepared-configuration
+                            (progn
+                              (configuration-ensure-directories retained-configuration)
+                              (conversation-identifier-migrate retained-configuration)
+                              (mcp-configuration-load retained-configuration)
+                              (user-init-load retained-configuration)
+                              (setf retained-configuration
+                                    (provider-bootstrap-configuration
+                                     retained-configuration))
+                              retained-configuration))
+                           (reasoning-traces-p
+                            (preferences-reasoning-traces-p prepared-configuration))
+                           (compact-view-p
+                            (preferences-compact-view-p prepared-configuration))
+                           (turn-timestamps-p
+                            (preferences-turn-timestamps-p prepared-configuration))
+                           (permission-state (permissions-load prepared-configuration))
+                           (recovery-state
+                            (multiple-value-list
+                             (application-recovery-state prepared-configuration)))
+                           (recovery-conversation-id (first recovery-state))
+                           (selected-conversation-id
+                            (application--selected-conversation-id
+                             conversation-id recovery-conversation-id))
+                           (conversation
+                            (multiple-value-bind
+                                  (owned-conversation lease acquired-p)
+                                (cond
+                                  (selected-conversation-id
+                                   (application--conversation-load-owned
+                                    application
+                                    prepared-configuration
+                                    selected-conversation-id))
+                                  ((conversation-persisted-p retained-conversation)
+                                   (application--conversation-load-owned
+                                    application
+                                    prepared-configuration
+                                    (conversation-identifier retained-conversation)))
+                                  (t
+                                   (application--conversation-create-owned
+                                    application prepared-configuration)))
+                              (setf selected-conversation-lease lease
+                                    selected-conversation-lease-acquired-p acquired-p)
+                              owned-conversation))
+                           (configuration
+                            (application--configuration-for-conversation
+                             prepared-configuration
+                             conversation))
+                           (installation-provenance
+                            (installation-provenance-detect configuration))
+                           (update-availability
+                            (update-availability-current
+                             configuration installation-provenance))
+                           (provider
+                            (progn
+                              (when (and (slot-boundp application 'provider)
+                                         (application-provider application))
+                                (application--validate-provider-registration
+                                 (application-provider application)
+                                 configuration))
+                              (provider-create
+                               configuration
+                               :reasoning-summaries-p reasoning-traces-p)))
+                           (recovery-rendered-sequence (second recovery-state))
+                           (recovery-history-floor-sequence (third recovery-state))
+                           (recovering-conversation-p
+                            (and
+                             (null conversation-id)
+                             recovery-conversation-id
+                             (string=
+                              (conversation-identifier conversation)
+                              (conversation-identifier-migration-resolve
+                               prepared-configuration
+                               recovery-conversation-id)))))
+                      (setf worker (lisp-worker-pool-create configuration)
+                            registry (application--create-tool-registry configuration))
+                      (let* ((agent
+                              (agent-create :configuration configuration
+                                            :provider provider
+                                            :conversation conversation
+                                            :tool-registry registry
+                                            :worker worker))
+                             (ui (application-terminal-ui-create)))
+                        (setf new-application
+                              (make-instance
+                               'application
+                               :configuration configuration
+                               :conversation conversation
+                               :conversation-lease selected-conversation-lease
+                               :provider provider
+                               :tool-registry registry
+                               :worker worker
+                               :agent agent
+                               :ui ui
+                               :permission-state permission-state
+                               :permission-mode permission-mode
+                               :reasoning-traces-p reasoning-traces-p
+                               :compact-view-p compact-view-p
+                               :turn-timestamps-p turn-timestamps-p
+                               :installation-provenance installation-provenance
+                               :update-availability update-availability
+                               :recovery-startup-p
+                               (not (null recovering-conversation-p))))
+                        (multiple-value-bind
+                              (restored-rendered-sequence
+                               restored-history-floor-sequence)
+                            (application--normalize-recovery-cursors
+                             conversation
+                             (not (null recovering-conversation-p))
+                             recovery-rendered-sequence
+                             recovery-history-floor-sequence)
+                          (setf
+                           (application-rendered-sequence new-application)
+                           restored-rendered-sequence
+                           (application-render-position new-application) 0
+                           (application-render-generation new-application)
+                           (conversation-log-generation conversation)
+                           (application-transcript-synchronized-p new-application) nil
+                           (application-history-floor-sequence new-application)
+                           restored-history-floor-sequence
+                           (application-mutation-replay-failures new-application) nil))
+                        (application-refresh-context-meter new-application)
+                        (application--load-goal new-application)
+                        (image-state-reconnect)
+                        (setf retirement-started-p t
+                              failure-stage ':retire)
+                        (application-disconnect-task-presentation application)
+                        (setf presentation-disconnected-p t)
+                        (multiple-value-bind (completed retirement-failure)
+                            (tool-registry-quiesce-runtime-state old-registry)
+                          (setf quiesced-tools completed)
+                          (when retirement-failure
+                            (error retirement-failure)))
+                        (setf failure-stage ':install)
+                        (application-connect-task-presentation new-application)
+                        (context-runtime-reset)
+                        (application-publish-recovery-session new-application)
+                        (management-repl-transfer application new-application)
+                        (setf completed-p t)
+                        (when (and retained-conversation-lease
+                                   (not
+                                    (eq retained-conversation-lease
+                                        selected-conversation-lease)))
+                          (conversation-lease-release retained-conversation-lease)
+                          (setf (application-conversation-lease application) nil))
+                        (when (and (slot-boundp application 'worker)
+                                   (application-worker application))
+                          (ignore-errors
+                            (lisp-worker-manager-stop
+                             (application-worker application))))
+                        new-application))
+                 (unless completed-p
+                   (application--extension-registry-restore
+                    extension-registry-snapshot))))
           (unless completed-p
             (setf rollback-failures
                   (application--discard-connection-resources

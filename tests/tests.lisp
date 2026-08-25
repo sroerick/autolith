@@ -251,6 +251,7 @@
     (test-durable-self-mutation)
     (test-durable-definition-publication-boundary)
     (test-generation-manifest)
+    (run-management-repl-tests)
     (test-active-image-build-record)
     (test-image-commit-replay-probe)
     (test-crash-capsule-correlation)
