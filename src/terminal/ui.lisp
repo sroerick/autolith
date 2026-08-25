@@ -1194,10 +1194,11 @@ columns: name, tally, and description."
 
 (-> terminal-ui--status-row-visible-p (terminal-ui) boolean)
 (defun terminal-ui--status-row-visible-p (ui)
-  "Return whether UI needs its persistent context or animated status row."
+  "Return whether UI needs its static context/details or animated status row."
   (not
    (null
     (or (terminal-ui--animated-status-row-p ui)
+        (terminal-ui-idle-status-details ui)
         (terminal-ui-context-window ui)))))
 
 (-> terminal-ui--activity-row-budget (terminal-ui) (integer 1))
@@ -1782,7 +1783,7 @@ The context meter is right-aligned. Narrow rows reserve their available cells
 for its complete used/window count before showing activity. Total worked time
 joins the meter when every segment fits."
   (let* ((animated-p (terminal-ui--animated-status-row-p ui))
-         (content
+         (activity-content
            (and animated-p
                 (append
                  (terminal-ui--status-spinner-spans-at ui now)
@@ -1790,6 +1791,8 @@ joins the meter when every segment fits."
                        (terminal-span ':status-dim
                                       (terminal-ui--status-text-at ui now)))
                  (terminal-ui-status-details ui))))
+         (content (or activity-content
+                      (terminal-ui-idle-status-details ui)))
          (minimum-activity-width (text-cell-width "READ  ∙ 00:00"))
          (complete-context-width
            (and (terminal-ui-context-window ui)
@@ -2789,6 +2792,22 @@ seen can offer the notice again."
          (setf (terminal-ui-compacting-p ui) nil
                (terminal-ui-compaction-started-at ui) nil)
          (terminal-ui--paint-live ui)))))
+  ui)
+
+(-> terminal-ui-set-idle-status-details
+    (terminal-ui terminal-styled-text)
+    terminal-ui)
+(defun terminal-ui-set-idle-status-details (ui details)
+  "Set UI's static session details shown on the idle modeline."
+  (unless (terminal-styled-text-p details)
+    (error 'terminal-error
+           :message "Terminal idle status details must contain styled spans."
+           :operation ':set-idle-status-details
+           :cause nil))
+  (with-terminal-ui-locked (ui)
+    (unless (equal details (terminal-ui-idle-status-details ui))
+      (setf (terminal-ui-idle-status-details ui) details)
+      (terminal-ui--paint-live ui)))
   ui)
 
 (-> terminal-ui-set-status

@@ -3066,6 +3066,11 @@
                   (= (terminal-ui-context-window ui) 272000)
                   (= (terminal-ui-context-compaction-limit ui) 217600))
             "application refresh projects current provider usage into the idle meter")
+            (test-assert
+             (search (configuration-model configuration)
+                     (terminal-ui--raw-spans-text
+                      (terminal-ui-idle-status-details ui)))
+             "application refresh projects static model details into the idle row")
            (let* ((observer (application-agent-observer application))
                   (send-status
                     (callback-agent-observer-status-callback observer)))

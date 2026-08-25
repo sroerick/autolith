@@ -852,6 +852,16 @@
          (search "ctx [..........|..] 0 / 1.05M used"
                  (row-text active-ui 120))
          "an empty context meter shows its full window and compaction marker")
+         (terminal-ui-set-idle-status-details
+          active-ui
+          (list (terminal-span ':status-model "gpt-5.6-sol")
+                (terminal-span ':status-dim " · high · git ")
+                (terminal-span ':status-branch "master")))
+         (let ((idle (row-text active-ui 120)))
+           (test-assert
+            (and (search "gpt-5.6-sol · high · git master" idle)
+                 (search "ctx [..........|..] 0 / 1.05M used" idle))
+            "the idle context row fills its left side with static runtime details"))
         (terminal-ui-set-context-usage active-ui
                                        :used 262500
                                        :window 1050000

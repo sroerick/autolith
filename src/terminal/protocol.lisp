@@ -216,6 +216,11 @@
     :accessor terminal-ui-selector-hint
     :type (option string)
     :documentation "Optional modal picker hint text after the title.")
+   (idle-status-details
+    :initform nil
+    :accessor terminal-ui-idle-status-details
+    :type list
+    :documentation "Static session, model, effort, and repository details shown while idle.")
    (status
     :initform nil
     :accessor terminal-ui-status

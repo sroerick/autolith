@@ -1302,6 +1302,8 @@ newly acquired lease."
              (slot-boundp application 'conversation))
     (let ((ui (application-ui application)))
       (when ui
+        (terminal-ui-set-idle-status-details
+         ui (application--status-details application))
         (let ((configuration (application-configuration application)))
           (terminal-ui-set-context-usage
            ui
@@ -2739,11 +2741,6 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
              (application--git-branch
               (configuration-working-directory configuration))))
       (append
-       (list (terminal-span ':status-dim "  "))
-       (when session-label
-         (list (terminal-span (if title ':status-accent ':status-dim)
-                              session-label)
-               (terminal-span ':status-dim " · ")))
        (list (terminal-span ':status-model
                             (configuration-model configuration))
              (terminal-span ':status-dim " · ")
@@ -2754,7 +2751,11 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                (terminal-span ':status-accent "FAST")))
        (when branch
          (list (terminal-span ':status-dim " · git ")
-               (terminal-span ':status-branch branch)))))))
+               (terminal-span ':status-branch branch)))
+       (when session-label
+         (list (terminal-span ':status-dim " · ")
+               (terminal-span (if title ':status-accent ':status-dim)
+                              session-label)))))))
 
 (-> application--worked-seconds (application) (option (integer 0)))
 (defun application--worked-seconds (application)
@@ -2770,7 +2771,9 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   (terminal-ui-set-status
    (application-ui application)
    status
-   :details (and status (application--status-details application))
+   :details (and status
+                 (append (list (terminal-span ':status-dim "  "))
+                         (application--status-details application)))
    :worked-seconds (and status (application--worked-seconds application))))
 
 (-> application-set-local-activity
