@@ -279,7 +279,8 @@ if [[ $release_platform != *-linux-musl ]]; then
 fi
 command -v git >/dev/null 2>&1 || fail "Git is required."
 if [[ $release_platform == *-linux* ]]; then
-  command -v bwrap >/dev/null 2>&1 || fail "Bubblewrap is required."
+  command -v bwrap >/dev/null 2>&1 ||
+    fail "Bubblewrap (bwrap) is required on Linux for filesystem and network isolation during sandboxed and safe automatic command execution. Install your distribution's bubblewrap package."
 fi
 
 releases_root=$(CDPATH= cd -P -- "$release_root/.." && pwd)

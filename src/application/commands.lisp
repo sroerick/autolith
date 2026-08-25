@@ -1840,7 +1840,7 @@ are forwarded to TERMINAL-UI-SELECT."
       ((string= choice "sandbox")
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error
-                :message "The workspace sandbox is unavailable."))
+                :message (application--command-sandbox-unavailable-message)))
        (setf (application-permission-mode application) ':sandboxed)
        (application-present
         application

@@ -55,6 +55,13 @@ and ask, ask. Keep the reason to one clause of at most twelve words."
     (error ()
       nil)))
 
+(-> application--command-sandbox-unavailable-message () string)
+(defun application--command-sandbox-unavailable-message ()
+  "Return an actionable platform-specific command sandbox diagnostic."
+  (if (string-equal (software-type) "Linux")
+      "The workspace command sandbox is unavailable. On Linux, install Bubblewrap (the bwrap executable) to provide filesystem and network isolation. Until it is available, sandbox mode is disabled and command approval choices run with full user privileges."
+      "The workspace command sandbox is unavailable on this platform. Sandbox mode is disabled and command approval choices run with full user privileges."))
+
 (-> permissions--model-decision-keyword (t) (option keyword))
 (defun permissions--model-decision-keyword (decision)
   "Return the permission keyword DECISION names, or NIL when unknown."

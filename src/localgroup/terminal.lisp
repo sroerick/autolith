@@ -167,6 +167,11 @@
     :accessor localgroup-terminal-observers
     :type list
     :documentation "Read-only attachments receiving rendered terminal output.")
+   (input-condition-variable
+    :initform (make-condition-variable :name "Autolith localgroup terminal input")
+    :reader localgroup-terminal-input-condition-variable
+    :type t
+    :documentation "The condition waking a blocking semantic input read.")
    (input-events
     :initform (make-deque)
     :reader localgroup-terminal-input-events
@@ -287,7 +292,9 @@
             (terminal-interactive-p terminal) nil
             (terminal-styled-p terminal) nil
             (terminal-started-p terminal) nil)
-      (deque-clear (localgroup-terminal-input-events terminal)))
+      (deque-clear (localgroup-terminal-input-events terminal))
+      (sb-thread:condition-broadcast
+       (localgroup-terminal-input-condition-variable terminal)))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (dolist (attachment attachments)
@@ -332,17 +339,25 @@
         (and direct (terminal-input-ready-p direct)))))
 
 (defmethod terminal-read-event ((terminal localgroup-terminal))
-  "Read one queued attachment event or delegate to the direct terminal."
+  "Block for one attachment event, or delegate to the direct terminal."
   (let ((event nil)
         (direct nil))
     (with-lock-held ((localgroup-terminal-lock terminal))
+      (loop while (and (deque-empty-p
+                        (localgroup-terminal-input-events terminal))
+                       (null (localgroup-terminal-direct-terminal terminal))
+                       (localgroup-terminal-controller terminal)
+                       (terminal-started-p terminal))
+            do (condition-wait
+                (localgroup-terminal-input-condition-variable terminal)
+                (localgroup-terminal-lock terminal)))
       (if (deque-empty-p (localgroup-terminal-input-events terminal))
           (setf direct (localgroup-terminal-direct-terminal terminal))
           (setf event
                 (deque-pop-front (localgroup-terminal-input-events terminal)))))
     (cond (event event)
           (direct (terminal-read-event direct))
-          (t ':end-of-input))))
+          (t ':stream-end))))
 
 (-> localgroup-terminal-enqueue-event
     (localgroup-terminal localgroup-attachment t)
@@ -354,6 +369,8 @@
       (unless (eq attachment (localgroup-terminal-controller terminal))
         (return-from localgroup-terminal-enqueue-event nil))
       (deque-push-back (localgroup-terminal-input-events terminal) event)
+      (condition-notify
+       (localgroup-terminal-input-condition-variable terminal))
       (setf wake-function (localgroup-terminal-wake-function terminal)))
     (when wake-function
       (funcall wake-function))
@@ -441,6 +458,8 @@
                  (localgroup-terminal-direct-terminal terminal) nil
                  (localgroup-terminal-controller terminal) attachment
                  released-direct-p (not (null direct)))))
+         (sb-thread:condition-broadcast
+          (localgroup-terminal-input-condition-variable terminal))
         (when (not (eq mode ':read-only))
           (setf (terminal-rows terminal) next-rows
                 (terminal-columns terminal) next-columns
@@ -467,7 +486,9 @@
               controlled-p t)
         (deque-clear (localgroup-terminal-input-events terminal))
         (unless (localgroup-terminal-direct-terminal terminal)
-          (setf (terminal-interactive-p terminal) nil))))
+          (setf (terminal-interactive-p terminal) nil)))
+      (sb-thread:condition-broadcast
+       (localgroup-terminal-input-condition-variable terminal)))
     controlled-p))
 
 (-> localgroup-terminal-release-control (localgroup-terminal) boolean)
@@ -481,7 +502,9 @@
             (localgroup-terminal-direct-terminal terminal) nil
             (localgroup-terminal-controller terminal) nil
             (terminal-interactive-p terminal) nil)
-      (deque-clear (localgroup-terminal-input-events terminal)))
+      (deque-clear (localgroup-terminal-input-events terminal))
+      (sb-thread:condition-broadcast
+       (localgroup-terminal-input-condition-variable terminal)))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (when controller

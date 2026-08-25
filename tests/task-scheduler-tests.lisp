@@ -1448,6 +1448,21 @@ exactly that race."
             (lambda (command directory)
               (declare (ignore command directory))
               ':deny)))
+          (unavailable-context
+            (make-instance
+             'tool-context
+             :configuration configuration
+             :worker nil
+             :conversation (agent-conversation primary)
+             :registry registry
+             :agent primary
+             :call-id "shell-execution-unavailable-test"
+             :command-authorization-function
+             (lambda (command directory)
+               (error 'command-authorization-unavailable
+                      :message "Command approval requires an interactive terminal."
+                      :command command
+                      :directory directory))))
          (slow-path (merge-pathnames "shell-execution-once.txt" root))
          (started-path (merge-pathnames "shell-execution-started.txt" root))
          (finished-path (merge-pathnames "shell-execution-finished.txt" root)))
@@ -1502,6 +1517,20 @@ exactly that race."
                      (= (execution-count) before)
                      (not (probe-file slow-path)))
                 "shell authorization denial occurs before execution-job admission"))
+              (let ((before (execution-count))
+                    (result
+                      (run-shell unavailable-context
+                                 "command"
+                                 (format nil "printf unavailable > ~A"
+                                         (uiop:escape-shell-token
+                                          (namestring slow-path))))))
+                (test-assert
+                 (and (not (tool-result-success-p result))
+                      (search "interactive terminal"
+                              (tool-result-content result))
+                      (= (execution-count) before)
+                      (not (probe-file slow-path)))
+                 "unavailable interactive authorization becomes a failed tool result before subprocess admission"))
              (let* ((*tool-execution-blocking-grace-seconds* 2)
                     (before (execution-count))
                     (result

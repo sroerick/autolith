@@ -355,6 +355,20 @@
     :documentation "The underlying persistence failure, when available."))
   (:documentation "Persistent command permissions could not be read or written."))
 
+(define-condition command-authorization-unavailable (autolith-error)
+  ((command
+    :initarg :command
+    :reader command-authorization-unavailable-command
+    :type string
+    :documentation "The shell command that could not be presented for approval.")
+   (directory
+    :initarg :directory
+    :reader command-authorization-unavailable-directory
+    :type pathname
+    :documentation "The command working directory."))
+  (:documentation
+   "A command requiring user approval had no interactive terminal owner."))
+
 (define-condition permissions-load-warning (warning)
   ((pathname
     :initarg :pathname

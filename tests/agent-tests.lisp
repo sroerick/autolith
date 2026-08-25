@@ -2201,10 +2201,79 @@
            root :validate t :if-does-not-exist ':ignore)))))
   nil)
 
+(-> test-agent-shell-authorization-unavailable () null)
+(defun test-agent-shell-authorization-unavailable ()
+  "Test unavailable shell approval returns a failed tool result and continues the turn."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (marker (merge-pathnames "unavailable-shell-ran" root))
+         (conversation
+           (conversation-create configuration :identifier "shell-authorization"))
+         (call
+           (json-object
+            "type" "function_call"
+            "call_id" "shell-authorization-call"
+            "namespace" "shell"
+            "name" "run"
+            "arguments"
+            (json-encode
+             (json-object
+              "command"
+              (format nil "printf ran > ~A"
+                      (uiop:escape-shell-token (namestring marker)))
+              "directory" (namestring root)))))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result "shell-authorization-1" (list call))
+             (agent-test-result
+              "shell-authorization-2"
+              (list (agent-test-message "approval failure handled"))))))
+         (agent nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (setf agent
+                 (agent-create
+                  :configuration configuration
+                  :provider provider
+                  :conversation conversation
+                  :tool-registry (make-default-tool-registry)
+                  :worker ':unused))
+           (let* ((observer
+                    (callback-agent-observer-create
+                     :command-authorization-callback
+                     (lambda (command directory)
+                       (error 'command-authorization-unavailable
+                              :message
+                              "Command approval requires an interactive terminal."
+                              :command command
+                              :directory directory))))
+                  (result
+                    (agent-run-user-turn
+                     agent "run a command" :observer observer))
+                  (outputs (agent-test-tool-outputs conversation)))
+             (test-assert
+              (string= (provider-result-response-id result)
+                       "shell-authorization-2")
+              "the agent performs the provider round after unavailable approval")
+             (test-assert
+              (and (= (length outputs) 1)
+                   (search "interactive terminal" (first outputs)))
+              "the next provider round receives the failed shell tool result")
+             (test-assert (not (probe-file marker))
+                          "unavailable approval never starts the subprocess")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))
+  nil))
+
+
 (-> run-agent-tests () boolean)
 (defun run-agent-tests ()
   "Run focused agent-loop tests and return true on success."
   (test-agent-tool-loop)
+  (test-agent-shell-authorization-unavailable)
   (test-agent-tool-free-turn)
   (test-agent-read-only-tool-allowlist)
   (test-agent-restricted-resource-schemes)

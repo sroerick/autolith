@@ -655,10 +655,10 @@
                                   "classify-4"
                                   "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
                                   20)
-                                 (rlm-inference-test-result
-                                  "classify-5"
-                                  "{\"decision\": \"full\", \"reason\": \"sandbox unavailable\"}"
-                                  20)
+                                  (rlm-inference-test-result
+                                   "classify-5"
+                                   "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
+                                   20)
                                  (rlm-inference-test-result
                                   "classify-6"
                                   "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
@@ -666,20 +666,28 @@
     (unwind-protect
          (progn
            (terminal-ui-start ui)
-           (test-assert
-            (eq (application-authorize-command
-                 application "printf unknown" root)
-                ':deny)
-            "ask mode denies an unknown command without an interactive owner")
-           (permissions-allow :configuration configuration
-                              :state         state
-                              :command       "printf saved"
-                              :directory     root)
-           (test-assert
-            (eq (application-authorize-command
-                 application "printf saved" root)
-                ':sandboxed)
-            "ask mode accepts an exact saved command inside the sandbox")
+            (let ((condition
+                    (handler-case
+                        (progn
+                          (application-authorize-command
+                           application "printf unknown" root)
+                          nil)
+                      (command-authorization-unavailable (failure)
+                        failure))))
+              (test-assert condition
+                           "ask mode explicitly rejects commands without an approval UI")
+              (test-assert
+               (search "no interactive terminal" (princ-to-string condition))
+               "noninteractive authorization failure explains how to proceed"))
+            (permissions-allow :configuration configuration
+                               :state         state
+                               :command       "printf saved"
+                               :directory     root)
+            (test-assert
+             (eq (application-authorize-command
+                  application "printf saved" root)
+                 ':full-access)
+             "ask mode runs an exact saved approval with full access")
            (application-command application "/permissions sandbox")
            (test-assert
             (eq (application-authorize-command
@@ -693,11 +701,15 @@
                      (declare (ignore capability))
                      nil)))
             (lambda ()
-              (test-assert
-               (eq (application-authorize-command
-                    application "printf any" root)
-                   ':deny)
-               "session sandbox mode fails closed after helper loss")
+               (test-assert
+                (handler-case
+                    (progn
+                      (application-authorize-command
+                       application "printf any" root)
+                      nil)
+                  (command-authorization-unavailable ()
+                    t))
+                "session sandbox mode explicitly rejects after helper loss")
               (test-assert
                (equal (mapcar (lambda (item) (getf item ':name))
                               (application--permission-mode-items application))
@@ -738,11 +750,15 @@
                        (declare (ignore capability))
                        (= (incf capability-checks) 1))))
               (lambda ()
-                (test-assert
-                 (eq (application-authorize-command
-                      application "git diff" root)
-                     ':deny)
-                 "auto mode revalidates containment after classification")
+                 (test-assert
+                  (handler-case
+                      (progn
+                        (application-authorize-command
+                         application "git diff" root)
+                        nil)
+                    (command-authorization-unavailable ()
+                      t))
+                  "auto mode explicitly rejects when containment disappears")
                 (test-assert
                  (= capability-checks 2)
                  "a sandbox grant is checked at the final authorization boundary"))))
@@ -755,8 +771,7 @@
               (test-assert
                (application--command-sandbox-available-p)
                "optional sandbox capabilities do not disable auto containment")))
-           (let ((authorization-item-names nil)
-                 (saved-rule-count (length (permission-state-rules state))))
+            (let ((authorization-item-names nil))
              (test-call-with-function-replacements
               (list
                (list 'sandbox-supported-p
@@ -792,22 +807,31 @@
                       application "printf saved" root)
                      ':full-access)
                  "auto mode reclassifies saved commands without a sandbox")
-                (test-assert
-                 (eq (application-authorize-command
-                      application "git log" root)
-                     ':deny)
-                 "auto mode rejects a stale sandbox picker choice")
-                (test-assert
-                 (equal authorization-item-names '("pick" "full" "deny"))
-                 "the command picker omits unavailable sandbox choices")
-                (test-assert
-                 (eq (application--apply-command-authorization-choice
-                      application "git log" root "always")
-                     ':deny)
-                 "programmatic sandbox choices fail closed when unavailable")
-                (test-assert
-                 (= (length (permission-state-rules state)) saved-rule-count)
-                 "an unavailable always choice saves no permission rule"))))
+                 (test-assert
+                  (eq (application-authorize-command
+                       application "git log" root)
+                      ':full-access)
+                  "interactive once approval grants full access")
+                 (test-assert
+                  (equal authorization-item-names
+                         '("pick" "once" "always" "full" "deny"))
+                  "the command picker retains full-access approvals without a sandbox")
+                 (test-assert
+                  (eq (application--apply-command-authorization-choice
+                       application "git log" root "once")
+                      ':full-access)
+                  "once grants full access without changing session mode")
+                 (test-assert
+                  (eq (application-permission-mode application) ':auto)
+                  "once does not change the session permission mode")
+                 (test-assert
+                  (eq (application--apply-command-authorization-choice
+                       application "git log" root "always")
+                      ':full-access)
+                  "always grants full access when the sandbox is unavailable")
+                 (test-assert
+                  (permissions-allowed-p state "git log" root)
+                  "always persists the exact full-access approval"))))
            (application-command application "/permissions ask")
            (test-assert (eq (application-permission-mode application) ':ask)
                         "/permissions ask restores prompt mode")

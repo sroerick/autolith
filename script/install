@@ -216,13 +216,16 @@ if [ "$detected_libc" = musl ]; then
 fi
 
 required_commands="bash curl git grep openssl tar"
-case $platform in
-  *-linux*) required_commands="$required_commands bwrap" ;;
-esac
 for command in $required_commands; do
   command -v "$command" >/dev/null 2>&1 ||
     fail "$command is required. Nix is the recommended installation path when system dependencies are unavailable."
 done
+case $platform in
+  *-linux*)
+    command -v bwrap >/dev/null 2>&1 ||
+      fail "Bubblewrap (the bwrap executable) is required on Linux because Autolith uses it for filesystem and network isolation during sandboxed and safe automatic command execution. Install your distribution's bubblewrap package, or use the Nix installation that includes it."
+    ;;
+esac
 if ! command -v sha256sum >/dev/null 2>&1 &&
    ! command -v shasum >/dev/null 2>&1 &&
    ! command -v sha256 >/dev/null 2>&1; then

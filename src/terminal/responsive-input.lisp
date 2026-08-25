@@ -2594,17 +2594,17 @@ may execute immediately; other Lisp waits for the idle boundary."
           :description
           (if sandbox-available-p
               "pick for me; the model chooses sandbox, full access, or refusal"
-              "pick for me; the model chooses full access or refusal")))
+              "pick for me; the model chooses full access or refusal"))
+    (list :name "once"
+          :argument nil
+          :description "allow this command once with full user privileges")
+    (list :name "always"
+          :argument nil
+          :description
+          (format nil "always allow this exact command in ~A with full user privileges"
+                  (application--abbreviated-directory (namestring directory)))))
    (when sandbox-available-p
      (list
-      (list :name "once"
-            :argument nil
-            :description "allow once inside the workspace sandbox")
-      (list :name "always"
-            :argument nil
-            :description
-            (format nil "always allow this exact command in ~A"
-                    (application--abbreviated-directory (namestring directory))))
       (list :name "sandbox"
             :argument nil
             :description "allow sandboxed commands for this session")))
@@ -2708,20 +2708,21 @@ sandbox grant is revalidated at this final authorization boundary."
     ((string= (or choice "") "full")
      (setf (application-permission-mode application) ':full-access)
      ':full-access)
-    ((not (application--command-sandbox-available-p))
-     ':deny)
     ((string= (or choice "") "once")
-     ':sandboxed)
+     ':full-access)
     ((string= (or choice "") "always")
      (permissions-allow
       :configuration (application-configuration application)
       :state         (application-permission-state application)
       :command       command
       :directory     directory)
-     ':sandboxed)
+     ':full-access)
     ((string= (or choice "") "sandbox")
-     (setf (application-permission-mode application) ':sandboxed)
-     ':sandboxed)
+     (if (application--command-sandbox-available-p)
+         (progn
+           (setf (application-permission-mode application) ':sandboxed)
+           ':sandboxed)
+         ':deny))
     (t
      ':deny)))
 
@@ -2729,14 +2730,18 @@ sandbox grant is revalidated at this final authorization boundary."
     (application string pathname)
     keyword)
 (defun application--ask-command-permission (application command directory)
-  "Ask interactively how COMMAND may run in DIRECTORY, failing closed otherwise."
+  "Ask interactively how COMMAND may run in DIRECTORY or signal an explicit failure."
   (block nil
     (let* ((controller (application-input-controller application))
            (ui         (application-ui application)))
       (unless (and controller
                    ui
                    (terminal-interactive-p (terminal-ui-terminal ui)))
-        (return ':deny))
+        (error 'command-authorization-unavailable
+               :message
+               "Command approval is required, but no interactive terminal owns this session. Attach a controlling terminal or choose an explicit permission mode; the command was not run."
+               :command command
+               :directory directory))
       (let* ((sandbox-available-p
                (application--command-sandbox-available-p))
              (choice
@@ -2774,10 +2779,7 @@ sandbox grant is revalidated at this final authorization boundary."
             (application-permission-state application)
             command
             directory)
-           (if (application--command-sandbox-available-p)
-               ':sandboxed
-               (application--auto-command-permission
-                application command directory))
+           ':full-access
            (application--auto-command-permission
             application command directory)))
       (:ask
@@ -2785,10 +2787,7 @@ sandbox grant is revalidated at this final authorization boundary."
             (application-permission-state application)
             command
             directory)
-           (if (application--command-sandbox-available-p)
-               ':sandboxed
-               (application--ask-command-permission
-                application command directory))
+           ':full-access
            (application--ask-command-permission
             application command directory))))))
 

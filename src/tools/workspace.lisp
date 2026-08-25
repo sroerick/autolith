@@ -252,7 +252,11 @@ roots after resolving existing symlinks and the nearest existing parent."
              :message "shell.run requires a non-empty command."
              :tool-name "shell.run"))
     (let ((authorization
-            (tool-context-authorize-command context command directory)))
+            (handler-case
+                (tool-context-authorize-command context command directory)
+              (command-authorization-unavailable (condition)
+                (return-from tool-execute
+                  (tool-failure (princ-to-string condition)))))))
       (if (eq authorization ':deny)
           (tool-failure "The user denied this command.")
           (let* ((configuration (tool-context-configuration context))

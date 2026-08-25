@@ -608,6 +608,11 @@
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
+    (when (and (string-equal (software-type) "Linux")
+               (not (application--command-sandbox-available-p)))
+      (format *error-output* "~&Autolith: ~A~%"
+              (application--command-sandbox-unavailable-message))
+      (force-output *error-output*))
     (when (main--client-session-p
            :handoff-record handoff-record
            :authenticate-p authenticate-p

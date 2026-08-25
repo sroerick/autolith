@@ -309,6 +309,8 @@
     (test-task-scheduler)
     (run-terminal-tests)
     (test-localgroup-terminal-restart)
+    (test-localgroup-picker-waits-for-relayed-input)
+    (test-localgroup-blocking-read-lifecycle)
     (test-localgroup-protocol)
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)

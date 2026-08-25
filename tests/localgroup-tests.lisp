@@ -71,6 +71,153 @@
     (terminal-stop relay))
   nil)
 
+(-> test-localgroup-picker-waits-for-relayed-input () null)
+(defun test-localgroup-picker-waits-for-relayed-input ()
+  "Test a modal picker blocks until its controlling relay sends a fresh event."
+  (let* ((terminal (localgroup-terminal-create))
+         (ui (terminal-ui-create :terminal terminal))
+         (attachment
+           (make-instance 'localgroup-attachment
+                          :socket nil
+                          :stream (make-broadcast-stream)
+                          :mode ':control))
+         (result ':pending)
+         (picker-thread nil))
+    (terminal-start terminal)
+    (multiple-value-bind (attached-p released-p)
+        (localgroup-terminal-attach
+         terminal attachment
+         :rows 24 :columns 80 :styled-p nil :session-id "picker-test")
+      (declare (ignore released-p))
+      (test-assert attached-p "the test relay accepts a controlling attachment"))
+    (unwind-protect
+         (progn
+           (setf picker-thread
+                 (make-thread
+                  (lambda ()
+                    (setf result
+                          (terminal-ui-select
+                           ui
+                           :title "pick one"
+                            :items '((:name "default"
+                                      :argument nil
+                                      :description "the default choice")))))
+                  :name "Autolith relayed picker test"))
+           (test-assert
+            (task-tests--wait-until
+             (lambda () (terminal-ui-selector ui)) 2)
+            "the relayed picker opens before receiving input")
+           (sleep 0.05)
+           (test-assert
+            (and (eq result ':pending) (thread-alive-p picker-thread))
+            "an empty attached relay does not submit or cancel the picker")
+           (localgroup-terminal-enqueue-event terminal attachment ':submit)
+           (test-assert
+            (task-tests--wait-until (lambda () (not (eq result ':pending))) 2)
+            "a fresh relayed submit event completes the picker")
+           (test-assert (string= result "default")
+                        "the fresh submit accepts the selected item"))
+      (terminal-stop terminal)
+      (when picker-thread
+        (join-thread picker-thread))))
+  nil)
+
+(-> test-localgroup-blocking-read-lifecycle () null)
+(defun test-localgroup-blocking-read-lifecycle ()
+  "Test relay ownership transitions wake or preserve a blocking semantic read."
+  (labels ((attachment (mode)
+             (make-instance 'localgroup-attachment
+                            :socket nil
+                            :stream (make-broadcast-stream)
+                            :mode mode))
+
+           (attach (terminal client)
+             (multiple-value-bind (attached-p released-p)
+                 (localgroup-terminal-attach
+                  terminal client
+                  :rows 24 :columns 80 :styled-p nil :session-id "read-test")
+               (declare (ignore released-p))
+               (test-assert attached-p "the relay accepts its test controller")))
+
+           (run-ending-transition (transition)
+             (let* ((terminal (localgroup-terminal-create))
+                    (client (attachment ':control))
+                    (result ':pending)
+                    (reader nil))
+               (terminal-start terminal)
+               (attach terminal client)
+               (unwind-protect
+                    (progn
+                      (setf reader
+                            (make-thread
+                             (lambda ()
+                               (setf result (terminal-read-event terminal)))
+                             :name "Autolith relay lifecycle read test"))
+                      (sleep 0.05)
+                      (test-assert
+                       (and (eq result ':pending) (thread-alive-p reader))
+                       "the relay read blocks before ownership changes")
+                      (ecase transition
+                        (:stop
+                         (terminal-stop terminal))
+                        (:detach
+                         (test-assert
+                          (localgroup-terminal-detach terminal client)
+                          "detaching reports released control"))
+                        (:release
+                         (localgroup-terminal-release-control terminal)))
+                      (test-assert
+                       (task-tests--wait-until
+                        (lambda () (not (eq result ':pending))) 2)
+                       "an ending ownership transition wakes the relay read")
+                      (test-assert
+                       (eq result ':stream-end)
+                       "an ownership transition without a controller ends input"))
+                 (terminal-stop terminal)
+                 (localgroup-attachment-close client)
+                 (when reader
+                   (join-thread reader))))))
+    (dolist (transition '(:stop :detach :release))
+      (run-ending-transition transition))
+    (let* ((terminal (localgroup-terminal-create))
+           (first-client (attachment ':control))
+           (next-client (attachment ':take-over))
+           (result ':pending)
+           (reader nil))
+      (terminal-start terminal)
+      (attach terminal first-client)
+      (unwind-protect
+           (progn
+             (setf reader
+                   (make-thread
+                    (lambda ()
+                      (setf result (terminal-read-event terminal)))
+                    :name "Autolith relay takeover read test"))
+             (sleep 0.05)
+             (attach terminal next-client)
+             (sleep 0.05)
+             (test-assert
+              (and (eq result ':pending) (thread-alive-p reader))
+              "controller takeover keeps the empty relay read blocked")
+             (test-assert
+              (localgroup-terminal-enqueue-event
+               terminal next-client ':replacement-event)
+              "the replacement controller can queue input")
+             (test-assert
+              (task-tests--wait-until
+               (lambda () (not (eq result ':pending))) 2)
+              "replacement controller input wakes the relay read")
+             (test-assert
+              (eq result ':replacement-event)
+              "the relay read returns replacement controller input"))
+        (terminal-stop terminal)
+        (localgroup-attachment-close first-client)
+        (localgroup-attachment-close next-client)
+        (when reader
+          (join-thread reader)))))
+  nil)
+
+
 (-> test-localgroup-session-identifiers () null)
 (defun test-localgroup-session-identifiers ()
   "Test canonical timestamp-bearing IDs and retained legacy discovery behavior."
