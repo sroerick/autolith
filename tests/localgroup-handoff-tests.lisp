@@ -151,9 +151,17 @@
               "pending handoff is visible and never reported as strict idle"))
            (test-assert
             (equal (application-input-controller--next-work controller)
-                   (list ':message "first"))
-            "queued primary work runs before process handoff")
+                   (list ':localgroup-handoff ':take-over))
+            "a ready handoff preempts queued follow-up work")
+           (test-assert
+            (equal (deque->list
+                    (application-input-controller-work-items controller))
+                   (list (list ':message "first")))
+            "preempted follow-up work stays queued for the replacement")
            (application-input-controller--finish-work controller)
+           ;; Re-arm the consumed handoff; the child-job gate below must
+           ;; defer it back to the still-queued follow-up.
+           (application-localgroup-request-handoff application ':take-over)
            (let ((orchestrator
                    (make-instance 'task-orchestrator
                                   :pool (make-job-pool :name "Autolith handoff test"

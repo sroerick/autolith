@@ -3036,8 +3036,30 @@ sandbox grant is revalidated at this final authorization boundary."
                  (application-input-controller-active-p controller) t)
            (return))
           ((and (not (application-localgroup-paused-p application))
-                (every #'deque-empty-p
-                       (application-input-controller--queues controller))
+                ;; A ready handoff preempts queued follow-up work: queued
+                ;; items are durably persisted and the detached replacement
+                ;; restores and runs them, so detaching first honors "detach,
+                ;; then carry on" instead of inverting it. Steering, pending
+                ;; boundary applies, an open follow-up edit, and explicitly
+                ;; paused queued work still hold the handoff, because those
+                ;; must resolve in this process.
+                (deque-empty-p
+                 (application-input-controller-initial-work-items controller))
+                (deque-empty-p
+                 (application-input-controller-steering-items controller))
+                (deque-empty-p
+                 (application-input-controller-steering-in-flight-items
+                  controller))
+                (deque-empty-p
+                 (application-input-controller-pending-apply-items controller))
+                (or (deque-empty-p
+                     (application-input-controller-work-items controller))
+                    ;; With queued work the clause must match only when a
+                    ;; handoff is actually takable, or it would starve the
+                    ;; work-dispatch clause below.
+                    (and (not (application-input-controller-queued-work-paused-p
+                               controller))
+                         (application-localgroup-ready-handoff-p application)))
                 (null
                  (application-input-controller-follow-up-edit-index controller)))
            (let ((mode (application-localgroup-take-ready-handoff application)))

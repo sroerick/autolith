@@ -691,6 +691,24 @@ exit \"$status\""
              (or (localgroup-session-handoff-mode session)
                  (localgroup-session-handoff-running-p session))))))))
 
+(-> application-localgroup-ready-handoff-p (application) boolean)
+(defun application-localgroup-ready-handoff-p (application)
+  "Return true when a scheduled handoff could be taken right now.
+
+A non-consuming mirror of APPLICATION-LOCALGROUP-TAKE-READY-HANDOFF for
+scheduler tests that must not disturb the armed mode."
+  (let ((session (application-localgroup-session application)))
+    (and session
+         (multiple-value-bind (live active)
+             (localgroup--task-counts application)
+           (declare (ignore active))
+           (zerop live))
+         (not
+          (null
+           (with-lock-held ((localgroup-session-lock session))
+             (and (not (localgroup-session-handoff-running-p session))
+                  (localgroup-session-handoff-mode session))))))))
+
 (-> application-localgroup-take-ready-handoff (application) (option keyword))
 (defun application-localgroup-take-ready-handoff (application)
   "Consume APPLICATION's pending handoff when no child jobs remain."
@@ -709,9 +727,13 @@ exit \"$status\""
 
 (-> localgroup-handoff--primary-ready-p (application-input-controller) boolean)
 (defun localgroup-handoff--primary-ready-p (controller)
-  "Return true when CONTROLLER has no work that must precede handoff."
-  (and (deque-empty-p (application-input-controller-work-items controller))
-       (deque-empty-p (application-input-controller-steering-items controller))
+  "Return true when CONTROLLER has no work that must precede handoff.
+
+Queued follow-up work does not block a handoff: it is durably persisted
+and the detached replacement restores and runs it. Steering, an open
+follow-up edit, cancellation, failure, and shutdown must still resolve
+in this process."
+  (and (deque-empty-p (application-input-controller-steering-items controller))
        (null (application-input-controller-follow-up-edit-work controller))
        (null (application-input-controller-turn-cancellation-p controller))
        (null (application-input-controller-failure controller))
