@@ -542,8 +542,8 @@ HEADER-P renders field labels rather than status values."
         (ignore-errors
           (localgroup-write-packet socket-stream '(:detach)))
         (ignore-errors (close socket-stream))
-        (when (and receiver (thread-alive-p receiver))
-          (ignore-errors (join-thread receiver))))))
+        (when receiver
+          (localgroup-stop-thread receiver)))))
   nil)
 
 (-> localgroup--wait-for-handoff-entry

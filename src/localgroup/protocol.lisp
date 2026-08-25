@@ -14,6 +14,9 @@
 (defparameter *localgroup-connect-timeout-seconds* 2
   "The maximum seconds allowed for a localgroup connect or required response.")
 
+(defparameter *localgroup-thread-stop-timeout-seconds* 1
+  "The maximum seconds spent waiting for one transport thread to stop.")
+
 (defvar *localgroup-startup-record* nil
   "The validated detached-process handoff record active during startup.")
 
@@ -21,6 +24,21 @@
 (defun localgroup-startup-detached-p ()
   "Return true while startup is reconstructing a detached localgroup process."
   (not (null *localgroup-startup-record*)))
+
+(-> localgroup-stop-thread (t) null)
+(defun localgroup-stop-thread (thread)
+  "Boundedly stop and reap THREAD when it is live and not the caller."
+  (when (and thread
+             (not (eq thread (current-thread)))
+             (thread-alive-p thread))
+    (handler-case
+        (sb-ext:with-timeout *localgroup-thread-stop-timeout-seconds*
+          (join-thread thread))
+      (sb-ext:timeout ()
+        (when (thread-alive-p thread)
+          (ignore-errors (sb-thread:terminate-thread thread)))
+        (ignore-errors (join-thread thread)))))
+  nil)
 
 ;; These runtime functions load after the responsive input implementation.
 (-> application-localgroup-paused-p (t) boolean)

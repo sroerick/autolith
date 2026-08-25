@@ -454,14 +454,16 @@ and never interrupts session work."
                  :replacement-pid nil
                  :conversation-id nil
                  :draft ""))
-         (completed-p nil))
+          (completed-p nil)
+          (process nil))
     (localgroup-handoff--write-record pathname record)
     (unwind-protect
          (progn
-           (funcall *localgroup-fresh-launch-function*
-                    configuration session-id pathname
-                    (localgroup-handoff-permission-string permission-mode)
-                    immutable-p)
+           (setf process
+                 (funcall *localgroup-fresh-launch-function*
+                          configuration session-id pathname
+                          (localgroup-handoff-permission-string permission-mode)
+                          immutable-p))
            (unless (funcall *localgroup-handoff-wait-function*
                             configuration session-id token (sb-posix:getpid))
              (error 'localgroup-error
@@ -477,6 +479,9 @@ and never interrupts session work."
            (setf completed-p t)
            session-id)
       (unless completed-p
+        (when process
+          (ignore-errors
+            (funcall *localgroup-handoff-stop-function* process pathname)))
         (localgroup-handoff--delete-state-pathnames pathname)))))
 
 (-> localgroup-handoff--replacement-ready-p

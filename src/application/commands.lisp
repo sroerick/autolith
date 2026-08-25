@@ -1613,6 +1613,8 @@ are forwarded to TERMINAL-UI-SELECT."
                  (coerce characters 'string)
                  (application-authentication-input-stream-position stream) 0)
            (return t))
+           ((characterp event)
+            (vector-push-extend event characters))
           ((and (consp event)
                 (member (first event) '(:insert :paste) :test #'eq)
                 (stringp (second event)))

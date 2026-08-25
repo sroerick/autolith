@@ -139,10 +139,8 @@
       (condition-notify
        (localgroup-attachment-condition-variable attachment)))
     (localgroup-attachment--close-stream attachment)
-    (when (and writer
-               (not (eq writer (current-thread)))
-               (thread-alive-p writer))
-      (ignore-errors (join-thread writer))))
+    (when writer
+      (localgroup-stop-thread writer)))
   nil)
 
 
