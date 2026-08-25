@@ -189,20 +189,25 @@
     localgroup-terminal)
 (defun localgroup-terminal-create (&optional direct-terminal)
   "Create a relay terminal initially owned by DIRECT-TERMINAL when supplied."
-  (make-instance 'localgroup-terminal
-                 :direct-terminal direct-terminal
-                 :rows (if direct-terminal
-                           (terminal-rows direct-terminal)
-                           *terminal-default-rows*)
-                 :columns (if direct-terminal
-                              (terminal-columns direct-terminal)
-                              *terminal-default-columns*)
-                 :interactive-p
-                 (and direct-terminal
-                      (terminal-interactive-p direct-terminal))
-                 :styled-p
-                 (and direct-terminal
-                      (terminal-styled-p direct-terminal))))
+  (let ((startup-values (and *localgroup-startup-record*
+                             (rest *localgroup-startup-record*))))
+    (make-instance 'localgroup-terminal
+                   :direct-terminal direct-terminal
+                   :rows (if direct-terminal
+                             (terminal-rows direct-terminal)
+                             (or (getf startup-values :rows)
+                                 *terminal-default-rows*))
+                   :columns (if direct-terminal
+                                (terminal-columns direct-terminal)
+                                (or (getf startup-values :columns)
+                                    *terminal-default-columns*))
+                   :interactive-p
+                   (and direct-terminal
+                        (terminal-interactive-p direct-terminal))
+                   :styled-p
+                   (if direct-terminal
+                       (terminal-styled-p direct-terminal)
+                       (not (null (getf startup-values :styled-p)))))))
 
 (-> localgroup-terminal-set-wake-function
     (localgroup-terminal (option function))

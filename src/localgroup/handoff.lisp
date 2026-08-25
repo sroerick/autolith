@@ -435,54 +435,59 @@ exit \"$status\""
 The session process starts shell-independent from the outset, so the
 calling terminal can attach as a thin relay whose detach is immediate
 and never interrupts session work."
-  (let* ((created-at (get-universal-time))
-         (session-id
-           (localgroup-session-identifier-normalize
-            (localgroup-session-identifier-generate configuration created-at)))
-         (token (localgroup-random-token))
-         (pathname (localgroup-handoff--pathname configuration session-id))
-         (record
-           (list :localgroup-handoff
-                 :version *localgroup-handoff-version*
-                 :session-id session-id
-                 :token token
-                 :created-at created-at
-                 :mode ':detach
-                 :state ':pending
-                 :fresh-conversation-p t
-                 :old-pid (sb-posix:getpid)
-                 :replacement-pid nil
-                 :conversation-id nil
-                 :draft ""))
-          (completed-p nil)
-          (process nil))
-    (localgroup-handoff--write-record pathname record)
-    (unwind-protect
-         (progn
-           (setf process
-                 (funcall *localgroup-fresh-launch-function*
-                          configuration session-id pathname
-                          (localgroup-handoff-permission-string permission-mode)
-                          immutable-p))
-           (unless (funcall *localgroup-handoff-wait-function*
-                            configuration session-id token (sb-posix:getpid))
-             (error 'localgroup-error
-                    :message
-                    (format nil
-                            "The detached session did not start within ~D seconds. See ~A."
-                            *localgroup-handoff-start-timeout-seconds*
-                            (namestring
-                             (localgroup-handoff-log-pathname
-                              configuration session-id)))
-                    :operation ':spawn
-                    :session-id session-id))
-           (setf completed-p t)
-           session-id)
-      (unless completed-p
-        (when process
-          (ignore-errors
-            (funcall *localgroup-handoff-stop-function* process pathname)))
-        (localgroup-handoff--delete-state-pathnames pathname)))))
+  (multiple-value-bind (rows columns)
+      (terminal-current-size)
+    (let* ((created-at (get-universal-time))
+           (session-id
+             (localgroup-session-identifier-normalize
+              (localgroup-session-identifier-generate configuration created-at)))
+           (token (localgroup-random-token))
+           (pathname (localgroup-handoff--pathname configuration session-id))
+           (record
+             (list :localgroup-handoff
+                   :version *localgroup-handoff-version*
+                   :session-id session-id
+                   :token token
+                   :created-at created-at
+                   :mode ':detach
+                   :state ':pending
+                   :fresh-conversation-p t
+                   :old-pid (sb-posix:getpid)
+                   :replacement-pid nil
+                   :conversation-id nil
+                   :draft ""
+                   :rows rows
+                   :columns columns
+                   :styled-p (not (null (terminal-environment-styling-p)))))
+           (completed-p nil)
+           (process nil))
+      (localgroup-handoff--write-record pathname record)
+      (unwind-protect
+           (progn
+             (setf process
+                   (funcall *localgroup-fresh-launch-function*
+                            configuration session-id pathname
+                            (localgroup-handoff-permission-string permission-mode)
+                            immutable-p))
+             (unless (funcall *localgroup-handoff-wait-function*
+                              configuration session-id token (sb-posix:getpid))
+               (error 'localgroup-error
+                      :message
+                      (format nil
+                              "The detached session did not start within ~D seconds. See ~A."
+                              *localgroup-handoff-start-timeout-seconds*
+                              (namestring
+                               (localgroup-handoff-log-pathname
+                                configuration session-id)))
+                      :operation ':spawn
+                      :session-id session-id))
+             (setf completed-p t)
+             session-id)
+        (unless completed-p
+          (when process
+            (ignore-errors
+              (funcall *localgroup-handoff-stop-function* process pathname)))
+          (localgroup-handoff--delete-state-pathnames pathname))))))
 
 (-> localgroup-handoff--replacement-ready-p
     (configuration string string integer)

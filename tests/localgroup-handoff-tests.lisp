@@ -238,8 +238,20 @@
                   (and (eq (getf (rest record) :state) ':pending)
                        (getf (rest record) :fresh-conversation-p)
                        (null (getf (rest record) :conversation-id))
+                       (typep (getf (rest record) :rows) '(integer 1))
+                       (typep (getf (rest record) :columns) '(integer 1))
+                       (typep (getf (rest record) :styled-p) 'boolean)
                        (string= (getf (rest record) :session-id) session-id))
-                  "a fresh spawn record is pending, fresh, and session-scoped"))))
+                  "a fresh spawn records terminal presentation and session state"))))
+             (let* ((*localgroup-startup-record*
+                      '(:localgroup-handoff
+                        :rows 41 :columns 93 :styled-p t))
+                    (terminal (localgroup-terminal-create)))
+               (test-assert
+                (and (= (terminal-rows terminal) 41)
+                     (= (terminal-columns terminal) 93)
+                     (terminal-styled-p terminal))
+                "a detached startup inherits dimensions and styling before attachment"))
            (let ((*localgroup-fresh-launch-function*
                    (lambda (&rest arguments)
                      (declare (ignore arguments))))
