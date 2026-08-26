@@ -80,6 +80,55 @@
       (sb-posix:unsetenv name))
   nil)
 
+(-> test-recovery-xdg-directories () null)
+(defun test-recovery-xdg-directories ()
+  "Test recovery ignores empty and relative XDG directory values."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (source-root (asdf:system-source-directory :autolith))
+         (home (user-homedir-pathname))
+         (saved-data (uiop:getenv "XDG_DATA_HOME"))
+         (saved-state (uiop:getenv "XDG_STATE_HOME")))
+    (unwind-protect
+         (progn
+           (dolist (invalid '("" "relative/xdg-home"))
+             (sb-posix:setenv "XDG_DATA_HOME" invalid 1)
+             (sb-posix:setenv "XDG_STATE_HOME" invalid 1)
+             (let ((context (recovery-context-create source-root)))
+               (test-assert
+                (equal (recovery-context-generation-root context)
+                       (merge-pathnames
+                        ".local/share/autolith/generations/" home))
+                "recovery ignores an invalid XDG data home")
+               (test-assert
+                (equal (recovery-context-worktree-root context)
+                       (merge-pathnames
+                        ".local/share/autolith/recovery-worktrees/" home))
+                "recovery worktrees use the default data home")
+               (test-assert
+                (equal (recovery-context-state-root context)
+                       (merge-pathnames ".local/state/autolith/" home))
+                "recovery ignores an invalid XDG state home")))
+           (let ((data-home (merge-pathnames "xdg-data/" root))
+                 (state-home (merge-pathnames "xdg-state/" root)))
+             (sb-posix:setenv "XDG_DATA_HOME" (namestring data-home) 1)
+             (sb-posix:setenv "XDG_STATE_HOME" (namestring state-home) 1)
+             (let ((context (recovery-context-create source-root)))
+               (test-assert
+                (equal (recovery-context-generation-root context)
+                       (merge-pathnames "autolith/generations/" data-home))
+                "recovery accepts an absolute XDG data home")
+               (test-assert
+                (equal (recovery-context-state-root context)
+                       (merge-pathnames "autolith/" state-home))
+                "recovery accepts an absolute XDG state home"))))
+      (recovery-tests--restore-environment "XDG_DATA_HOME" saved-data)
+      (recovery-tests--restore-environment "XDG_STATE_HOME" saved-state)
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> recovery-tests--write-executable (pathname string) pathname)
 (defun recovery-tests--write-executable (pathname content)
   "Write executable CONTENT to PATHNAME and return PATHNAME."
@@ -603,6 +652,7 @@ exit 64
 (-> run-recovery-tests () null)
 (defun run-recovery-tests ()
   "Run recovery runtime regression tests."
+  (test-recovery-xdg-directories)
   (test-recovery-conversation-identifiers)
   (test-recovery-session-handoff)
   (test-recovery-status-boundary)

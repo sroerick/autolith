@@ -24,6 +24,14 @@ resolve_path()
   printf '%s/%s\n' "$directory" "$(basename "$path")"
 }
 
+xdg_base_directory()
+{
+  case ${1:-} in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$2" ;;
+  esac
+}
+
 launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 installation=${1:?usage: build-static-release-runtime INSTALLATION}
@@ -33,7 +41,7 @@ support_root=$(dirname -- "$installation")/static-build
 builder_runtime=$support_root/installation/bin/sbcl
 libsbcl=$support_root/libsbcl.a
 home=${HOME:?HOME is not set}
-data_home=${XDG_DATA_HOME:-$home/.local/share}
+data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$home/.local/share")
 fff_shared=$data_home/autolith/native/fff/libfff_c.so
 fff_archive=$data_home/autolith/native/fff/libfff_c.a
 marker=$installation/lib/autolith-static-musl

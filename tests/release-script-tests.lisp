@@ -439,6 +439,7 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
          (recovery-directory (merge-pathnames "recovery/" fixture-root))
          (data-home (merge-pathnames "data/" fixture-root))
          (state-home (merge-pathnames "state/" fixture-root))
+         (home (merge-pathnames "home/" fixture-root))
          (active-directory (merge-pathnames "autolith/active/" data-home))
          (active-core (merge-pathnames "autolith-active.core" active-directory))
          (active-manifest (merge-pathnames "manifest.sexp" active-directory))
@@ -450,7 +451,7 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
          (log (merge-pathnames "launcher.log" fixture-root)))
     (uiop:ensure-all-directories-exist
      (list bin-directory script-directory recovery-directory
-           data-home state-home))
+           data-home state-home home))
     (uiop:copy-file (merge-pathnames "bin/autolith" source-root) launcher)
     (release-script-tests--write-file active-source "")
     (release-script-tests--write-file recovery-source "")
@@ -509,6 +510,25 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
             (not (search "fast startup image" source-output))
             (not (search "--from-source" (uiop:read-file-string log))))
        "--from-source quietly bypasses images and is not forwarded")
+      (let* ((fallback-environment
+               (list (format nil "HOME=~A" (namestring home))
+                     "XDG_DATA_HOME=relative/data"
+                     "XDG_STATE_HOME=relative/state"
+                     (format nil "AUTOLITH_SBCL=~A" (namestring fake-sbcl))
+                     (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))))
+             (output
+               (release-script-tests--run
+                (list (namestring launcher) "--from-source")
+                :environment fallback-environment)))
+        (test-assert
+         (and (search "SOURCE" output)
+              (uiop:directory-exists-p
+               (merge-pathnames
+                ".local/state/autolith/crash-pointers/" home))
+              (not
+               (uiop:directory-exists-p
+                (merge-pathnames "relative/state/autolith/" fixture-root))))
+         "the source launcher falls back from relative XDG base directories"))
       (multiple-value-bind (output error-output status)
           (release-script-tests--run
            (list (namestring launcher) "--from-source" "fixture-update")
@@ -898,6 +918,32 @@ esac
                 (namestring (merge-pathnames "current/bin/autolith"
                                              install-root)))
        "the installer publishes the user command link")
+      (let* ((fallback-home (merge-pathnames "installer-home/" root))
+             (fallback-root
+               (merge-pathnames
+                ".local/share/autolith/installation/" fallback-home))
+             (fallback-environment
+               (append
+                (remove-if
+                 (lambda (entry)
+                   (or (uiop:string-prefix-p "AUTOLITH_INSTALL_ROOT=" entry)
+                       (uiop:string-prefix-p "AUTOLITH_BIN_DIR=" entry)))
+                 base-environment)
+                (list (format nil "HOME=~A" (namestring fallback-home))
+                      "XDG_DATA_HOME=relative/data"
+                      (format nil "AUTOLITH_BIN_DIR=~A"
+                              (namestring bin-directory))))))
+        (uiop:ensure-all-directories-exist (list fallback-home))
+        (release-script-tests--run
+         (list (namestring installer) "--version" tag)
+         :environment fallback-environment
+         :output nil)
+        (test-assert
+         (probe-file
+          (merge-pathnames
+           (format nil "releases/~A-x86_64-linux/bin/autolith" tag)
+           fallback-root))
+         "the installer falls back from a relative XDG data home"))
       (release-script-tests--run
        (list (namestring installer) "--version" tag)
        :environment base-environment

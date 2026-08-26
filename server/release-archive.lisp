@@ -565,9 +565,9 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                  (merge-pathnames "sbcl.version" source-root)))
               (home (user-homedir-pathname))
               (data-home
-                (uiop:ensure-directory-pathname
-                 (or (uiop:getenv "XDG_DATA_HOME")
-                     (merge-pathnames ".local/share/" home))))
+                (environment-directory
+                 "XDG_DATA_HOME"
+                 (merge-pathnames ".local/share/" home)))
               (runtime-root
                 (merge-pathnames
                  (format nil "autolith/runtimes/~A/" runtime-version)

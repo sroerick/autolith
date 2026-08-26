@@ -24,6 +24,14 @@ resolve_path()
   printf '%s/%s\n' "$directory" "$(basename "$path")"
 }
 
+xdg_base_directory()
+{
+  case ${1:-} in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$2" ;;
+  esac
+}
+
 launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$launcher_path")/.." && pwd)
 source_checksums_path=$source_root/sbcl-source-releases.sha256
@@ -31,8 +39,8 @@ terminal_state=
 recovery_requested=false
 from_source_requested=false
 remaining_arguments=()
-state_home=${XDG_STATE_HOME:-$HOME/.local/state}
-data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+state_home=$(xdg_base_directory "${XDG_STATE_HOME:-}" "$HOME/.local/state")
+data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
 runtime_command_path=$data_home/autolith/runtimes/command
 inherited_runtime_source_root=${AUTOLITH_SBCL_SOURCE_ROOT:-}
 configured_sbcl=${AUTOLITH_SBCL:-}

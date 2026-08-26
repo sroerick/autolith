@@ -28,6 +28,17 @@
     (ignore-errors (uiop:wait-process process)))
   nil)
 
+(defun check--environment-directory (variable fallback)
+  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
+  (let* ((value (uiop:getenv variable))
+         (pathname (and value
+                        (plusp (length value))
+                        (pathname value))))
+    (uiop:ensure-directory-pathname
+     (if (and pathname (uiop:absolute-pathname-p pathname))
+         pathname
+         fallback))))
+
 (let* ((script-path (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root (uiop:pathname-parent-directory-pathname script-directory))
@@ -56,9 +67,9 @@
   (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
   (let* ((home (user-homedir-pathname))
          (data-home
-           (uiop:ensure-directory-pathname
-            (or (uiop:getenv "XDG_DATA_HOME")
-                (merge-pathnames ".local/share/" home))))
+           (check--environment-directory
+            "XDG_DATA_HOME"
+            (merge-pathnames ".local/share/" home)))
          (recovery-core
            (merge-pathnames "autolith/recovery/autolith-recovery.core" data-home))
          (recovery-manifest

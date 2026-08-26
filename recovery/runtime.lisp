@@ -125,18 +125,30 @@ the library that reads a generation owns only the fields every host shares."
     :documentation "The trusted STTY settings captured before a retained core starts."))
   (:documentation "Terminal state restored between retained-generation attempts."))
 
+(serapeum:-> recovery-environment-directory (string pathname) pathname)
+(defun recovery-environment-directory (variable fallback)
+  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
+  (let* ((value (uiop:getenv variable))
+         (pathname (and value
+                        (plusp (length value))
+                        (pathname value))))
+    (uiop:ensure-directory-pathname
+     (if (and pathname (uiop:absolute-pathname-p pathname))
+         pathname
+         fallback))))
+
 (serapeum:-> recovery-context-create (pathname) recovery-context)
 (defun recovery-context-create (source-root)
   "Return recovery context rooted at SOURCE-ROOT and XDG user directories."
   (let* ((home (user-homedir-pathname))
          (data-home
-           (uiop:ensure-directory-pathname
-            (or (uiop:getenv "XDG_DATA_HOME")
-                (merge-pathnames ".local/share/" home))))
+           (recovery-environment-directory
+            "XDG_DATA_HOME"
+            (merge-pathnames ".local/share/" home)))
          (state-home
-           (uiop:ensure-directory-pathname
-            (or (uiop:getenv "XDG_STATE_HOME")
-                (merge-pathnames ".local/state/" home))))
+           (recovery-environment-directory
+            "XDG_STATE_HOME"
+            (merge-pathnames ".local/state/" home)))
          (state-root (merge-pathnames "autolith/" state-home)))
     (make-instance
      'recovery-context

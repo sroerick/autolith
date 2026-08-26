@@ -420,11 +420,13 @@ never retains the resulting credential after this call."
 (-> environment-api-key-credential-source--pathname (string) pathname)
 (defun environment-api-key-credential-source--pathname (account-id)
   "Return the conventional reporting path for ACCOUNT-ID's environment source."
-  (merge-pathnames (format nil "~A-auth.sexp" account-id)
-                   (environment-directory
-                    "XDG_STATE_HOME"
-                    (merge-pathnames ".local/state/autolith/"
-                                     (user-homedir-pathname)))))
+  (merge-pathnames
+   (format nil "~A-auth.sexp" account-id)
+   (merge-pathnames
+    "autolith/"
+    (environment-directory
+     "XDG_STATE_HOME"
+     (merge-pathnames ".local/state/" (user-homedir-pathname))))))
 
 (defmethod credential-source-pathname
     ((source environment-api-key-credential-source))

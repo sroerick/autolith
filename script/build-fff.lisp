@@ -1,6 +1,17 @@
 (require :asdf)
 (require :sb-posix)
 
+(defun fff--environment-directory (variable fallback)
+  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
+  (let* ((value (uiop:getenv variable))
+         (pathname (and value
+                        (plusp (length value))
+                        (pathname value))))
+    (uiop:ensure-directory-pathname
+     (if (and pathname (uiop:absolute-pathname-p pathname))
+         pathname
+         fallback))))
+
 (defun fff--prepare-build-environment ()
   "Set host-specific compiler flags required to build fff's C dependencies.
 
@@ -26,13 +37,13 @@
                             (uiop:read-file-string commit-pathname)))
        (home (user-homedir-pathname))
        (cache-home
-         (uiop:ensure-directory-pathname
-          (or (uiop:getenv "XDG_CACHE_HOME")
-              (merge-pathnames ".cache/" home))))
+         (fff--environment-directory
+          "XDG_CACHE_HOME"
+          (merge-pathnames ".cache/" home)))
        (data-home
-         (uiop:ensure-directory-pathname
-          (or (uiop:getenv "XDG_DATA_HOME")
-              (merge-pathnames ".local/share/" home))))
+         (fff--environment-directory
+          "XDG_DATA_HOME"
+          (merge-pathnames ".local/share/" home)))
        (checkout
          (merge-pathnames (format nil "autolith/build/fff/~A/" commit)
                           cache-home))

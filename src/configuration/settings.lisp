@@ -250,11 +250,13 @@ configuration can be created before executable user initialization loads."
 
 (-> environment-directory (string pathname) pathname)
 (defun environment-directory (variable fallback)
-  "Return directory VARIABLE as a pathname, or FALLBACK when it is unset."
-  (let ((value (uiop:getenv variable)))
+  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
+  (let* ((value (uiop:getenv variable))
+         (pathname (and (non-empty-string-p value)
+                        (pathname value))))
     (uiop:ensure-directory-pathname
-     (if (non-empty-string-p value)
-         (pathname value)
+     (if (and pathname (uiop:absolute-pathname-p pathname))
+         pathname
          fallback))))
 
 (-> environment-boolean (string boolean) boolean)
@@ -979,7 +981,10 @@ reasoning effort only when that effort is supported by the selected model."
                             (configuration-data-root configuration)
                             (configuration-state-root configuration)
                             (configuration-cache-root configuration)))
-    (ensure-directories-exist directory))
+    (multiple-value-bind (pathname created-p)
+        (ensure-directories-exist directory)
+      (when created-p
+        (sb-posix:chmod (namestring pathname) #o700))))
   configuration)
 
 (-> configuration-conversation-root (configuration) pathname)

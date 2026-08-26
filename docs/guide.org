@@ -216,6 +216,21 @@ autolith localgroup kill   SESSION-ID
 =pause= cancels active work and holds queued primary work.
 =kill= requests graceful shutdown.
 
+Autolith stores configuration, durable data, process state, and replaceable
+caches below =${XDG_CONFIG_HOME:-~/.config}/autolith/=,
+=${XDG_DATA_HOME:-~/.local/share}/autolith/=,
+=${XDG_STATE_HOME:-~/.local/state}/autolith/=, and
+=${XDG_CACHE_HOME:-~/.cache}/autolith/=. XDG base-directory values must be
+nonempty absolute paths; invalid values use these defaults. Newly created
+Autolith roots have mode =0700=.
+
+Conversation leases, Localgroup endpoint records, and recovery state live under
+=${XDG_STATE_HOME:-~/.local/state}/autolith/= rather than =XDG_RUNTIME_DIR=.
+They must survive logout so detached sessions, handoffs, and crash recovery can
+continue across login sessions. Autolith uses authenticated loopback TCP rather
+than filesystem sockets for its inference and Localgroup protocols, and cleans
+stale Localgroup records itself.
+
 * Configure Autolith
 
 Autolith loads optional

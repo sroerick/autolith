@@ -304,6 +304,23 @@
     "SSL_CERT_FILE" "SSL_CERT_DIR")
   "Non-secret parent environment names inherited by MCP standard-input servers.")
 
+(-> mcp-tools--xdg-base-environment-name-p (string) boolean)
+(defun mcp-tools--xdg-base-environment-name-p (name)
+  "Return true when NAME denotes one of the four XDG base directories."
+  (not
+   (null
+    (member name
+            '("XDG_CONFIG_HOME" "XDG_CACHE_HOME"
+              "XDG_DATA_HOME" "XDG_STATE_HOME")
+            :test #'string=))))
+
+(-> mcp-tools--inherited-environment-value-p (string string) boolean)
+(defun mcp-tools--inherited-environment-value-p (name value)
+  "Return true when inherited NAME=VALUE is safe to forward to a child."
+  (or (not (mcp-tools--xdg-base-environment-name-p name))
+      (and (plusp (length value))
+           (char= (char value 0) #\/))))
+
 (-> mcp-tools--environment-value
     (mcp-server-configuration mcp-environment-binding)
     string)
@@ -343,7 +360,8 @@
             (mapped-environment nil))
         (dolist (name *mcp-stdio-inherited-environment-names*)
           (let ((value (uiop:getenv name)))
-            (when value
+            (when (and value
+                       (mcp-tools--inherited-environment-value-p name value))
               (push (format nil "~A=~A" name value) environment))))
         (dolist (binding bindings)
           (let ((target (mcp-environment-binding-target binding)))

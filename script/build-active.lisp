@@ -8,6 +8,17 @@
 (pushnew ".qlot" asdf::*default-source-registry-exclusions* :test #'string=)
 (asdf:initialize-source-registry)
 
+(defun build-active--environment-directory (variable fallback)
+  "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
+  (let* ((value (uiop:getenv variable))
+         (pathname (and value
+                        (plusp (length value))
+                        (pathname value))))
+    (uiop:ensure-directory-pathname
+     (if (and pathname (uiop:absolute-pathname-p pathname))
+         pathname
+         fallback))))
+
 (let* ((script-path (truename *load-truename*))
        (script-directory (uiop:pathname-directory-pathname script-path))
        (source-root (uiop:pathname-parent-directory-pathname script-directory))
@@ -15,9 +26,9 @@
        (project-setup (merge-pathnames ".qlot/setup.lisp" source-root))
        (home (user-homedir-pathname))
        (data-home
-         (uiop:ensure-directory-pathname
-          (or (uiop:getenv "XDG_DATA_HOME")
-              (merge-pathnames ".local/share/" home))))
+         (build-active--environment-directory
+          "XDG_DATA_HOME"
+          (merge-pathnames ".local/share/" home)))
        (default-core
          (merge-pathnames "autolith/active/autolith-active.core" data-home))
        (arguments (uiop:command-line-arguments))

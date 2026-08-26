@@ -33,10 +33,103 @@
   nil)
 
 
+(-> tests--restore-environment (string (or null string)) null)
+(defun tests--restore-environment (name value)
+  "Restore environment variable NAME to VALUE."
+  (if value
+      (sb-posix:setenv name value 1)
+      (sb-posix:unsetenv name))
+  nil)
+
+(-> test-xdg-directory-selection () null)
+(defun test-xdg-directory-selection ()
+  "Test XDG roots reject invalid values, report state, and use private modes."
+  (let* ((source-root (asdf:system-source-directory :autolith))
+         (home (user-homedir-pathname))
+         (direct-variable "AUTOLITH_TEST_XDG_DIRECTORY")
+         (cases
+           (list
+            (list "XDG_CONFIG_HOME"
+                  #'configuration-config-root
+                  (merge-pathnames ".config/autolith/" home))
+            (list "XDG_DATA_HOME"
+                  #'configuration-data-root
+                  (merge-pathnames ".local/share/autolith/" home))
+            (list "XDG_STATE_HOME"
+                  #'configuration-state-root
+                  (merge-pathnames ".local/state/autolith/" home))
+            (list "XDG_CACHE_HOME"
+                  #'configuration-cache-root
+                  (merge-pathnames ".cache/autolith/" home))))
+         (saved
+           (mapcar (lambda (name) (cons name (uiop:getenv name)))
+                   (cons direct-variable (mapcar #'first cases)))))
+    (unwind-protect
+         (progn
+           (let* ((absolute (merge-pathnames "xdg-home/" source-root))
+                  (fallback (merge-pathnames "xdg-fallback/" source-root)))
+             (sb-posix:setenv direct-variable (namestring absolute) 1)
+             (test-assert
+              (equal (environment-directory direct-variable fallback) absolute)
+              "environment-directory accepts an absolute directory")
+             (dolist (invalid '("" "relative/xdg-home"))
+               (sb-posix:setenv direct-variable invalid 1)
+               (test-assert
+                (equal (environment-directory direct-variable fallback) fallback)
+                "environment-directory rejects empty and relative directories"))
+             (sb-posix:unsetenv direct-variable)
+             (test-assert
+              (equal (environment-directory direct-variable fallback) fallback)
+              "environment-directory uses its fallback when the variable is absent"))
+           (dolist (case cases)
+             (destructuring-bind (variable accessor fallback) case
+               (dolist (invalid '("" "relative/xdg-home"))
+                 (sb-posix:setenv variable invalid 1)
+                 (let ((configuration
+                         (configuration-create
+                          :source-root source-root
+                          :working-directory source-root
+                          :defer-provider-validation-p t)))
+                   (test-assert
+                    (equal (funcall accessor configuration) fallback)
+                    (format nil "~A ignores empty and relative values" variable))))))
+           (let ((state-home (merge-pathnames "xdg-state/" source-root)))
+             (sb-posix:setenv "XDG_STATE_HOME" (namestring state-home) 1)
+             (test-assert
+              (equal
+               (environment-api-key-credential-source--pathname "fixture")
+               (merge-pathnames "autolith/fixture-auth.sexp" state-home))
+              "environment API-key reporting includes one autolith state component")))
+           (let* ((configuration (test-configuration))
+                  (root (test-configuration-root configuration)))
+             (unwind-protect
+                  (progn
+                    (configuration-ensure-directories configuration)
+                    (test-assert
+                     (every
+                      (lambda (directory)
+                        (= (logand
+                            (sb-posix:stat-mode
+                             (sb-posix:stat (namestring directory)))
+                            #o777)
+                           #o700))
+                      (list (configuration-config-root configuration)
+                            (configuration-data-root configuration)
+                            (configuration-state-root configuration)
+                            (configuration-cache-root configuration)))
+                     "new XDG application roots have mode 0700"))
+               (uiop:delete-directory-tree
+                root :validate t :if-does-not-exist ':ignore)))
+      (dolist (entry saved)
+        (tests--restore-environment (first entry) (rest entry)))))
+  nil)
+
+
 (-> run-tests () boolean)
 (defun run-tests ()
   "Run Autolith's dependency-free unit tests and return true on success."
   (setf *test-count* 0)
+  (test-xdg-directory-selection)
   (let ((configuration (configuration-create
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith))))

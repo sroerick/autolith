@@ -655,9 +655,17 @@ pkgs.writeShellApplication {
     pkgs.perl
     runtime
   ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
-  text = ''
-    home="''${HOME:-/home/user}"
-    data_home="''${XDG_DATA_HOME:-$home/.local/share}"
+    text = ''
+      xdg_base_directory()
+      {
+        case ''${1:-} in
+          /*) printf '%s\n' "$1" ;;
+          *) printf '%s\n' "$2" ;;
+        esac
+      }
+
+      home="''${HOME:-/home/user}"
+      data_home=$(xdg_base_directory "''${XDG_DATA_HOME:-}" "$home/.local/share")
     export AUTOLITH_SBCL="${runtime}/bin/sbcl"
     export AUTOLITH_SBCL_SOURCE_ROOT="${sbclSource}"
     export COLORLISP_NATIVE_LIBRARY="${colorlispNativeLibrary}/lib/libcolorlisp-tree-sitter${sharedLibrary}"

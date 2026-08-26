@@ -29,11 +29,19 @@ resolve_path()
   printf '%s/%s\n' "$directory" "$(basename "$path")"
 }
 
+xdg_base_directory()
+{
+  case ${1:-} in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$2" ;;
+  esac
+}
+
 adapter_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$adapter_path")/.." && pwd)
 minimum_version=$(tr -d '[:space:]' < "$source_root/sbcl.version")
 source_checksums_path=$source_root/sbcl-source-releases.sha256
-data_home=${XDG_DATA_HOME:-$HOME/.local/share}
+data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
 runtimes_root=$data_home/autolith/runtimes
 runtime_command_path=$runtimes_root/command
 managed_prefix=$runtimes_root/$runtime_release/installation

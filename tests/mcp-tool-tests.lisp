@@ -3431,10 +3431,74 @@
 
 ;;;; -- Integration Tests --
 
+(-> test-mcp-stdio-xdg-environment () null)
+(defun test-mcp-stdio-xdg-environment ()
+  "Test inherited XDG bases are absolute while explicit bindings keep precedence."
+  (let* ((xdg-name "XDG_DATA_HOME")
+         (source-name "AUTOLITH_MCP_TEST_XDG_SOURCE")
+         (saved-xdg (uiop:getenv xdg-name))
+         (saved-source (uiop:getenv source-name))
+         (server
+           (mcp-server-configuration-create
+            :name "xdg-environment"
+            :transport '(:type :stdio :command "/bin/true")))
+         (transport (mcp-server-configuration-transport server)))
+    (flet ((environment ()
+             (mcp-tools--call-with-server-secret-use
+              server
+              (lambda ()
+                (funcall
+                 (mcp-tools--stdio-environment-function server transport))))))
+      (unwind-protect
+           (progn
+             (dolist (invalid '("" "relative/xdg-home"))
+               (sb-posix:setenv xdg-name invalid 1)
+               (test-assert
+                (notany
+                 (lambda (entry)
+                   (string= (mcp-tools--environment-entry-name entry) xdg-name))
+                 (environment))
+                "stdio MCP children omit invalid inherited XDG bases"))
+             (sb-posix:setenv xdg-name "/absolute/xdg-home" 1)
+             (test-assert
+              (member "XDG_DATA_HOME=/absolute/xdg-home"
+                      (environment)
+                      :test #'string=)
+              "stdio MCP children inherit absolute XDG bases")
+             (sb-posix:setenv xdg-name "relative/inherited" 1)
+             (sb-posix:setenv source-name "relative/explicit" 1)
+             (let* ((mapped-server
+                      (mcp-server-configuration-create
+                       :name "explicit-xdg-environment"
+                       :transport
+                       `(:type :stdio
+                         :command "/bin/true"
+                         :environment
+                         ((,xdg-name :environment ,source-name)))))
+                    (mapped-transport
+                      (mcp-server-configuration-transport mapped-server))
+                    (mapped-environment
+                      (mcp-tools--call-with-server-secret-use
+                       mapped-server
+                       (lambda ()
+                         (funcall
+                          (mcp-tools--stdio-environment-function
+                           mapped-server mapped-transport))))))
+               (test-assert
+                (member "XDG_DATA_HOME=relative/explicit"
+                        mapped-environment
+                        :test #'string=)
+                "explicit MCP environment bindings override inherited XDG filtering")))
+        (tests--restore-environment xdg-name saved-xdg)
+        (tests--restore-environment source-name saved-source))))
+  nil)
+
+
 (-> test-mcp-tools () null)
 (defun test-mcp-tools ()
   "Test MCP tool projection, authorization, resources, and lifecycle behavior."
   (test-mcp-provider-schema-json-fidelity)
+  (test-mcp-stdio-xdg-environment)
   (test-mcp-credential-stdio-ingress-projection)
   (test-mcp-environment-fingerprint-lifecycle)
   (test-mcp-cleanup-without-credential-availability)

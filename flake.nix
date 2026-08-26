@@ -154,6 +154,15 @@
               ! grep -F 'Installed preloaded active image' "$second_output"
               ! grep -F 'Installed pristine recovery image' "$second_output"
 
+              # Relative XDG bases are invalid and must use the HOME fallback.
+              fallback_output="$TMPDIR/fallback-output"
+              XDG_DATA_HOME=relative/data autolith --version > "$fallback_output"
+              test "$(tail -n 1 "$fallback_output")" = \
+                "autolith version ${autolith.autolithSystem.version}"
+              fallback_image="$HOME/.local/share/autolith/nix/images/${imageIdentity}"
+              test -f "$fallback_image/active/autolith-active.core"
+              test ! -e "$TMPDIR/relative/data/autolith/nix"
+
               # A second package identity sharing the same XDG roots must build
               # and select its own complete pair without touching package A or
               # the user's private state.
