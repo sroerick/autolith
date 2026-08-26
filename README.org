@@ -70,7 +70,7 @@ curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 Nix also supplies the complete runtime:
 
 #+BEGIN_SRC sh
-nix run github:luciusmagn/autolith
+nix run github:lambda-symbolics/autolith
 #+END_SRC
 
 To build from a source checkout instead, follow the
