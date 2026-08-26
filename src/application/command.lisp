@@ -795,26 +795,51 @@ without changing the registry."
       (finish-argument)
       (nreverse arguments))))
 
+(-> application-command--raw-remainder-p (application-command) boolean)
+(defun application-command--raw-remainder-p (command)
+  "Return whether COMMAND receives its complete slash remainder as one argument."
+  (not
+   (null
+    (member (application-command-definition-name command)
+            '(application--builtin-goal-command
+              application--builtin-later-command)
+            :test #'eq))))
+
 (-> application-command--slash-arguments
-    ((option application-command) list)
+    ((option application-command) list string)
     list)
-(defun application-command--slash-arguments (command parsed-arguments)
-  "Validate and return PARSED-ARGUMENTS for a callable COMMAND."
+(defun application-command--slash-arguments (command parsed-arguments remainder)
+  "Return semantic slash arguments for callable COMMAND and REMAINDER."
   (unless (and command (application-command-callable-p command))
     (return-from application-command--slash-arguments nil))
   (multiple-value-bind (minimum maximum)
       (application-command--lambda-list-arity
        (application-command-lambda-list command))
     (declare (ignore minimum))
-    (when (and maximum (> (length parsed-arguments) maximum))
+    (if (and maximum
+             (= maximum 1)
+             (application-command--raw-remainder-p command))
+        (if (zerop (length remainder)) nil (list remainder))
+        parsed-arguments)))
+
+(-> application-command--validate-invocation-arity
+    (application-command list)
+    list)
+(defun application-command--validate-invocation-arity (command arguments)
+  "Validate and return semantic ARGUMENTS before invoking COMMAND."
+  (multiple-value-bind (minimum maximum)
+      (application-command--lambda-list-arity
+       (application-command-lambda-list command))
+    (declare (ignore minimum))
+    (when (and maximum (> (length arguments) maximum))
       (error 'configuration-error
              :message
              (format nil
                      "Command ~A accepts at most ~D argument~:P; received ~D."
                      (application-command-name command)
                      maximum
-                     (length parsed-arguments)))))
-  parsed-arguments)
+                     (length arguments)))))
+  arguments)
 
 (-> application-command--call-with-presentation
     (application-command-invocation function)
@@ -846,10 +871,14 @@ without changing the registry."
                             (subseq trimmed separator))
                ""))
          (parsed-arguments (application-command--tokens remainder))
-         (argument (first parsed-arguments))
          (command (application-command-find submitted-name))
          (arguments
-           (application-command--slash-arguments command parsed-arguments)))
+           (application-command--slash-arguments
+            command parsed-arguments remainder))
+         (argument
+           (if (and command (application-command-callable-p command))
+               (first arguments)
+               (first parsed-arguments))))
     (make-instance
      'application-command-invocation
      :input (copy-seq input)
@@ -886,6 +915,10 @@ without changing the registry."
 
            (invoke ()
              "Invoke COMMAND's handler and validate its result."
+              (when (application-command-callable-p command)
+                (application-command--validate-invocation-arity
+                 command
+                 (application-command-invocation-arguments invocation)))
              (let ((result
                      (if (application-command-callable-p command)
                          (invoke-callable-handler

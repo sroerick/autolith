@@ -527,6 +527,42 @@
      (and (equal (application-command-static-options command) '("on" "off"))
           (string= (application-command-argument command) "[on|off]"))
      "finite options derive the optional argument hint from one metadata list"))
+  (let* ((objective "fix argument mismatches without crashing the application")
+         (invocation
+           (application-command-invocation-parse
+            (format nil "/goal ~A" objective))))
+    (test-assert
+     (and (equal (application-command-invocation-arguments invocation)
+                 (list objective))
+          (string= (application-command-invocation-argument invocation)
+                   objective))
+     "single-argument free-form commands preserve their complete remainder"))
+  (let ((application (make-instance 'application))
+        (objective "fix argument mismatches without crashing the application"))
+    (test-call-with-function-replacements
+     (list
+      (list 'application-present
+            (lambda (candidate entry)
+              (declare (ignore candidate entry))
+              t))
+      (list 'application--record-goal
+            (lambda (candidate)
+              (declare (ignore candidate))
+              nil))
+      (list 'application--start-goal-work
+            (lambda (candidate)
+              (declare (ignore candidate))
+              nil)))
+     (lambda ()
+       (test-assert
+        (eq (application-command
+             application
+             (format nil "/goal ~A" objective))
+            ':continue)
+        "a multiword goal executes as one free-form command argument")
+       (test-assert
+        (string= (getf (application-goal application) :objective) objective)
+        "the complete multiword goal becomes the session objective"))))
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (application   (make-instance 'application :configuration configuration)))
@@ -554,14 +590,17 @@
     (test-assert
      (= (length (application-command--tokens input)) 3)
      (format nil "~A tokenizes every supplied slash argument" input))
-    (test-assert
-     (handler-case
-         (progn
-           (application-command-invocation-parse input)
-           nil)
-       (configuration-error ()
-         t))
-     (format nil "~A rejects excess slash arguments before dispatch" input)))
+    (let* ((invocation (application-command-invocation-parse input))
+           (command (application-command-invocation-command invocation)))
+      (test-assert
+       (handler-case
+           (progn
+             (application-command-execute command nil invocation)
+             nil)
+         (configuration-error ()
+           t))
+       (format nil "~A reports excess slash arguments during guarded dispatch"
+               input))))
   (test-assert
    (handler-case
        (progn
