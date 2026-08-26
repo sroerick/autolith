@@ -359,13 +359,27 @@
 
 (defmethod provider-wire-input-item
     ((provider codex-subscription-provider) item)
-  "Preserve native namespace calls on capable Codex models during replay."
-  (if (and (provider-deferred-tool-loading-p provider)
-           (json-object-p item)
-           (function-call-item-p item)
-           (non-empty-string-p (json-get item "namespace")))
-      item
-      (call-next-method)))
+  "Preserve namespace calls and strip invalid tool search expansions.
+
+The server emits tool_search_output items whose deferred functions carry
+null parameters and output_schema fields, and its own input validator
+rejects that shape verbatim (invalid_function_parameters on the first
+child). The Codex reference replays these items with an empty tools
+vector when trimming, which the server accepts; doing so on every replay
+also keeps the already-consumed expansion from re-entering the prompt."
+  (cond
+    ((and (json-object-p item)
+          (json-string= (json-get item "type") "tool_search_output"))
+     (let ((copy (json-object-copy item)))
+       (setf (gethash "tools" copy) (json-array))
+       copy))
+    ((and (provider-deferred-tool-loading-p provider)
+          (json-object-p item)
+          (function-call-item-p item)
+          (non-empty-string-p (json-get item "namespace")))
+     item)
+    (t
+     (call-next-method))))
 
 (defmethod provider-normalize-output-item
     ((provider responses-api-provider) (item hash-table))

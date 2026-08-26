@@ -1480,6 +1480,17 @@ because durable configuration records are projected in order."
                                  :test #'string=)))))
        t))
 
+(-> tool-search-item-p (t) boolean)
+(defun tool-search-item-p (item)
+  "Return true when ITEM is a server-executed tool search call or result."
+  (and (json-object-p item)
+       (let ((type (json-get item "type")))
+         (and (stringp type)
+              (not (null (member type '("tool_search_call"
+                                        "tool_search_output")
+                                 :test #'string=)))))
+       t))
+
 (-> conversation-family-private-item-p (t) boolean)
 (defun conversation-family-private-item-p (item)
   "Return true when ITEM can only be read by its producing model family.
@@ -1489,7 +1500,8 @@ that only the executing family accepts on replay."
   (or (reasoning-item-p item)
       (chat-reasoning-item-p item)
       (native-compaction-item-p item)
-      (backend-search-call-item-p item)))
+      (backend-search-call-item-p item)
+      (tool-search-item-p item)))
 
 (-> conversation-input-item-family (conversation json-object) (option keyword))
 (defun conversation-input-item-family (conversation item)

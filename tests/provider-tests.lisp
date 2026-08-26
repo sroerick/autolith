@@ -317,7 +317,39 @@
                        (json-object "type" "tool_search"))))))
              (test-assert
               (< visible-characters eager-characters)
-              "deferred discovery reduces model-visible schema characters")))
+              "deferred discovery reduces model-visible schema characters"))
+           ;; The server's tool_search_output embeds deferred functions with
+           ;; null parameters, which its own input validator refuses.
+           (let* ((search-output
+                    (json-object
+                     "type" "tool_search_output"
+                     "status" "completed"
+                     "call_id" nil
+                     "execution" "server"
+                     "tools" (json-array
+                              (json-object
+                               "type" "namespace"
+                               "name" "plan"
+                               "tools" (json-array
+                                        (json-object
+                                         "type" "function"
+                                         "name" "update"
+                                         "defer_loading" t
+                                         "parameters" nil
+                                         "output_schema" nil))))))
+                  (replayed (provider-wire-input-item provider search-output)))
+             (test-assert
+              (and (json-string= (json-get replayed "type")
+                                 "tool_search_output")
+                   (zerop (length (json-get replayed "tools")))
+                   (plusp (length (json-get search-output "tools"))))
+              "tool search results replay without their invalid expansions")
+             (test-assert
+              (and (conversation-family-private-item-p search-output)
+                   (conversation-family-private-item-p
+                    (json-object "type" "tool_search_call"
+                                 "status" "completed")))
+              "tool search items never replay into another provider family")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
