@@ -18,6 +18,26 @@ For each adaptation, record its problem, behavior, scope and location,
 verification, and removal condition. State whether it is tracked project work,
 a user-local init.lisp change, or a private image commit.
 
+** GitHub workflow waiter
+
+- Problem: Waiting for GitHub Actions repeatedly required model-driven API polls,
+  consuming turns and tokens for a simple blocking operation.
+- Behavior: =github.wait-workflows= polls Actions runs for one repository and
+  commit through Dexador, optionally filters by workflow and event, uses
+  =GH_TOKEN= or =GITHUB_TOKEN= when available, requires two stable completed
+  observations, and returns one compact terminal summary. Its bounded timeout
+  retries transient request failures without exposing credentials.
+- Scope and location: private image commit
+  =2dcb8218-a80b-4672-aa6e-b34dbeaf5086=, private Git commit
+  =6a4f8aba7233789473990582a51b6c1bae7463fe=. The same commit sanitizes
+  multiline mutation targets when writing reconstruction-script comments.
+- Verification: clean-process replay passed. The model-visible tool waited for
+  commit =7784b3841d2522b5b9ee10f9030d8599ac199045= and returned the successful
+  Nix push run after two requests and two seconds.
+- Removal condition: tracked Autolith provides equivalent workflow waiting and
+  safe multiline reconstruction comments, or GitHub workflow waits cease to be
+  recurring work.
+
 ** NetBSD amd64 source bootstrap
 
 - Problem: Autolith's supported source targets were Linux x86-64 and macOS
