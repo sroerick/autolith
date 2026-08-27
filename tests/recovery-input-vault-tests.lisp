@@ -1181,6 +1181,8 @@
          (observed-steering :unset)
          (ingress-blocked-p nil)
          (vault-inspect-executed-p nil)
+         (observed-failure nil)
+         (bytes-preserved-p nil)
          (vault-controls-admitted-p nil))
     (unwind-protect
          (progn
@@ -1255,13 +1257,33 @@
                          (null
                           (search "Recovery input vault could not be read"
                                   (recording-terminal-output terminal)))))
+                  (setf observed-failure
+                        (application-recovery-input-vault-failure application))
+                  ;; Startup itself must not have touched the corrupt bytes
+                  ;; before any vault control runs.
+                  (setf bytes-preserved-p
+                        (and (probe-file pending-pathname)
+                             (probe-file vault-pathname)
+                             (equalp pending-octets
+                                     (recovery-input-vault-tests--octets
+                                      pending-pathname))
+                             (equalp vault-octets
+                                     (recovery-input-vault-tests--octets
+                                      vault-pathname))
+                             t))
                   (submit "/vault-restore")
                   (submit "/vault-discard")
+                  ;; Vault controls manage the blocked queue itself, so they
+                  ;; execute immediately instead of joining that queue; the
+                  ;; executed discard resolves the corrupt vault state.
                   (setf vault-controls-admitted-p
-                        (equal (application-input-controller--state
-                                controller :work-items)
-                               '((:command "/vault-restore")
-                                 (:command "/vault-discard")))))
+                        (and (null (application-input-controller--state
+                                    controller :work-items))
+                             (search "Discarded this conversation's recovered input."
+                                     (recording-terminal-output terminal))
+                             (null (application-recovery-input-vault-failure
+                                    application))
+                             t)))
                 (with-lock-held ((application-input-controller-lock controller))
                   (setf (application-input-controller-stopping-p controller) t)
                   (sb-thread:condition-broadcast
@@ -1283,8 +1305,7 @@
               (and (null observed-load-pending-p)
                    (null observed-persistence-p)
                    (null observed-start-reader-p)
-                   (typep (application-recovery-input-vault-failure application)
-                          'recovery-input-vault-error)
+                   (typep observed-failure 'recovery-input-vault-error)
                    ingress-blocked-p
                    vault-inspect-executed-p
                    vault-controls-admitted-p)
@@ -1296,13 +1317,12 @@
                    (null observed-steering))
               "corrupt pending input remains outside the real startup scheduler")
              (test-assert
-              (and (probe-file pending-pathname)
-                   (probe-file vault-pathname)
-                   (equalp pending-octets
-                           (recovery-input-vault-tests--octets pending-pathname))
-                   (equalp vault-octets
-                           (recovery-input-vault-tests--octets vault-pathname)))
+              bytes-preserved-p
               "corrupt startup preserves exact pending and vault bytes")
+             (test-assert
+              (and (not (probe-file vault-pathname))
+                   (not (probe-file pending-pathname)))
+              "the executed vault discard removes the corrupt storage")
              (test-assert
               (and (search "New submissions are blocked" output)
                    (search "Nothing was submitted automatically." output)

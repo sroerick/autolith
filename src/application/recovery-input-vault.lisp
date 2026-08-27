@@ -1136,7 +1136,9 @@ The caller must hold CONTROLLER's lock."
      :argument nil
      :description "restore recovered queued input"
      :tip "queues all vaulted input in its original order without automatic submission."
-     :busy-behavior :hold
+     ;; Restoring only reorders the follow-up queue, so it must act while
+     ;; the agent works instead of waiting behind the queue it manages.
+     :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)
     (application)
@@ -1159,7 +1161,7 @@ The caller must hold CONTROLLER's lock."
      :argument nil
      :description "discard recovered queued input"
      :tip "deletes only this conversation's recovery vault and blocked pending state."
-     :busy-behavior :hold
+     :busy-behavior :execute
      :terminal-behavior :shared
      :callable t)
     (application)

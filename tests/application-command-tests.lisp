@@ -471,6 +471,10 @@
          ;; Detaching exists to leave while work runs; it must never wait
          ;; for the idle queue.
          ("/detach" :execute)
+         ;; Vault commands manage the follow-up queue itself, so they act
+         ;; immediately rather than waiting behind that queue.
+         ("/vault-restore" :execute)
+         ("/vault-discard" :execute)
          ("/quit" :cancel)))
     (destructuring-bind (input expected) case
       (let* ((invocation (application-command-invocation-parse input))
