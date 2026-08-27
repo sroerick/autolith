@@ -280,6 +280,100 @@ fi
      "the source release catalog retains the minimum runtime source identity"))
   nil)
 
+(-> release-script-tests--darwin-fff-library-path (pathname pathname) null)
+(defun release-script-tests--darwin-fff-library-path (source-root root)
+  "Exercise Darwin SDK library discovery before the fff Cargo build."
+  (let* ((fixture (merge-pathnames "darwin-fff-library-path/" root))
+         (script-directory (merge-pathnames "script/" fixture))
+         (script (merge-pathnames "build-fff.lisp" script-directory))
+         (native-directory (merge-pathnames "native/fff/" fixture))
+         (commit "0123456789abcdef0123456789abcdef01234567")
+         (home (merge-pathnames "home/" fixture))
+         (cache-home (merge-pathnames "cache/" fixture))
+         (data-home (merge-pathnames "data/" fixture))
+         (checkout
+           (merge-pathnames (format nil "autolith/build/fff/~A/" commit)
+                            cache-home))
+         (fixture-bin (merge-pathnames "bin/" fixture))
+         (xcrun (merge-pathnames "xcrun" fixture-bin))
+         (git (merge-pathnames "git" fixture-bin))
+         (cargo (merge-pathnames "cargo" fixture-bin))
+         (sdk (merge-pathnames "MacOSX.sdk/" fixture))
+         (sdk-library (merge-pathnames "usr/lib/" sdk))
+         (event-log (merge-pathnames "library-path.log" fixture)))
+    (ensure-directories-exist (merge-pathnames "placeholder" sdk-library))
+    (ensure-directories-exist (merge-pathnames ".git/placeholder" checkout))
+    (ensure-directories-exist script)
+    (uiop:copy-file (merge-pathnames "script/build-fff.lisp" source-root)
+                    script)
+    (release-script-tests--write-file
+     (merge-pathnames "commit" native-directory)
+     (format nil "~A~%" commit))
+    (release-script-tests--write-file
+     xcrun
+     "#!/bin/sh
+set -eu
+[ \"$1\" = --show-sdk-path ]
+printf '%s\\n' \"${AUTOLITH_TEST_SDK%/}\"
+")
+    (release-script-tests--write-file
+     git
+     "#!/bin/sh
+set -eu
+case \"$*\" in
+  *\"rev-parse HEAD\") printf '%s\\n' \"${AUTOLITH_TEST_FFF_COMMIT:?}\" ;;
+esac
+")
+    (release-script-tests--write-file
+     cargo
+     "#!/bin/sh
+set -eu
+mkdir -p target/release
+printf '%s\\n' \"${LIBRARY_PATH:-}\" > \"${AUTOLITH_TEST_EVENT_LOG:?}\"
+: > target/release/libfff_c.dylib
+")
+    (dolist (pathname (list xcrun git cargo))
+      (release-script-tests--chmod "755" pathname))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (lisp-worker-sbcl-command)
+               "--noinform"
+               "--no-sysinit"
+               "--no-userinit"
+               "--disable-debugger"
+               "--eval" "(pushnew :darwin *features*)"
+               "--script" (namestring script))
+         :environment
+         (list (format nil "HOME=~A" (namestring home))
+               (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+               (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+               (format nil "PATH=~A:~A"
+                       (string-right-trim "/" (namestring fixture-bin))
+                       (or (uiop:getenv "PATH") ""))
+               (format nil "AUTOLITH_TEST_SDK=~A" (namestring sdk))
+               (format nil "AUTOLITH_TEST_FFF_COMMIT=~A" commit)
+               (format nil "AUTOLITH_TEST_EVENT_LOG=~A"
+                       (namestring event-log))
+               "LIBRARY_PATH=/existing/lib")
+         :ignore-error-status t)
+      (test-assert
+       (zerop status)
+       (format nil "the Darwin fff build fixture succeeds:~%~A~%~A"
+               output error-output)))
+    (let ((library-path
+            (string-trim '(#\Newline #\Return)
+                         (uiop:read-file-string event-log))))
+      (test-assert
+       (string= library-path
+                (format nil "/existing/lib:~A" (namestring sdk-library)))
+       (format nil "the Darwin fff build appends the SDK library directory: ~A"
+               library-path)))
+    (test-assert
+     (probe-file
+      (merge-pathnames "autolith/native/fff/libfff_c.dylib" data-home))
+     "the Darwin fff build publishes its private library")
+    nil))
+
 (-> release-script-tests--bootstrap-dependency-order (pathname pathname) null)
 (defun release-script-tests--bootstrap-dependency-order (source-root root)
   "Exercise project dependency setup before bootstrap CFFI loading."
@@ -2704,6 +2798,8 @@ esac
          (progn
               (release-script-tests--syntax source-root)
               (release-script-tests--bootstrap-dependency-order source-root root)
+              (release-script-tests--darwin-fff-library-path
+               source-root root)
               (release-script-tests--linux-release-validator source-root root)
               (release-script-tests--runtime-adapter source-root root)
               (release-script-tests--runtime-bootstrap source-root root)

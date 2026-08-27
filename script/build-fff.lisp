@@ -23,13 +23,19 @@
                (error ()
                  nil))))
     (when (and sdk (plusp (length sdk)) (probe-file sdk))
-      (let* ((sdk-lib (namestring (uiop:merge-pathnames* "usr/lib/" sdk)))
-             (prev-libpath (or (uiop:getenv "LIBRARY_PATH") ""))
-             (entries (uiop:split-string prev-libpath :separator ":")))
+      (let* ((sdk-directory
+               (uiop:ensure-directory-pathname (pathname sdk)))
+             (sdk-lib
+               (namestring
+                (uiop:merge-pathnames* "usr/lib/" sdk-directory)))
+             (previous-library-path (or (uiop:getenv "LIBRARY_PATH") ""))
+             (entries
+               (uiop:split-string previous-library-path :separator ":")))
         (unless (member sdk-lib entries :test #'string=)
           (sb-posix:setenv "LIBRARY_PATH"
-                           (if (plusp (length prev-libpath))
-                               (format nil "~A:~A" prev-libpath sdk-lib)
+                           (if (plusp (length previous-library-path))
+                               (format nil "~A:~A"
+                                       previous-library-path sdk-lib)
                                sdk-lib)
                            1))))))
 
