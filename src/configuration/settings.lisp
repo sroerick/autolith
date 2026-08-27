@@ -189,7 +189,11 @@
   '("cached" "indexed" "live" "disabled")
   "Standalone web search modes accepted by Autolith configuration.")
 
-(defparameter *supported-models*
+;; DEFVAR, deliberately: the provider registry rewrites this table at
+;; runtime with every registered model, so a self-reload through
+;; ql:quickload must not reset it to the built-in list and invalidate
+;; the very model the image is running on.
+(defvar *supported-models*
   '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5"
     "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
@@ -205,7 +209,9 @@
 ;; confirmed in Codex reference commit 0fb559f0f6e231a88ac02ea002d3ecd248e2b515.
 ;; The Grok window comes from default_models.json in grok-build reference
 ;; commit 47348d13.
-(defparameter *model-context-windows*
+;; DEFVAR for the same reason as *SUPPORTED-MODELS*: the provider
+;; registry rewrites this table at runtime.
+(defvar *model-context-windows*
   '(("gpt-5.6-sol"   . 272000)
     ("gpt-5.6-luna"  . 272000)
     ("gpt-5.6-terra" . 272000)

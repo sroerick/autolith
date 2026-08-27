@@ -36,7 +36,7 @@
   #'application-input-controller--monotonic-seconds
   "The monotonic clock captured by newly created input controllers.")
 
-(defvar *application-forced-exit-function*
+(defparameter *application-forced-exit-function*
   (lambda (status)
     (sb-ext:exit :code status :abort t))
   "The process termination boundary captured by each input controller.")

@@ -784,7 +784,7 @@
              :stage ':replay-probe)))
   nil)
 
-(defvar *image-commit-replay-probe-function* #'image-commit-replay-probe
+(defparameter *image-commit-replay-probe-function* #'image-commit-replay-probe
   "The clean-process replay boundary used before selecting a private commit.")
 
 (-> image-commit--base-source-commit ((option image-commit)) (option string))

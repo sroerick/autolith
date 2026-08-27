@@ -48,26 +48,26 @@ child=
 exit \"$status\""
   "The Bash supervisor that gates and owns the replacement process group.")
 
-(defvar *localgroup-handoff-launch-function*
+(defparameter *localgroup-handoff-launch-function*
   (lambda (application handoff-pathname)
     (localgroup-handoff--launch application handoff-pathname))
   "The detached replacement launch boundary used by process handoff.")
 
-(defvar *localgroup-handoff-stop-function*
+(defparameter *localgroup-handoff-stop-function*
   (lambda (process handoff-pathname)
     (localgroup-handoff--stop-replacement process handoff-pathname))
   "The failed replacement termination boundary used by process handoff.")
 
-(defvar *localgroup-handoff-wait-function*
+(defparameter *localgroup-handoff-wait-function*
   (lambda (configuration session-id token old-pid)
     (localgroup-handoff--wait-for-replacement
      configuration session-id token old-pid))
   "The authenticated replacement readiness boundary used by process handoff.")
 
-(defvar *localgroup-handoff-setsid-function* #'sb-posix:setsid
+(defparameter *localgroup-handoff-setsid-function* #'sb-posix:setsid
   "The session-detachment boundary used during replacement startup.")
 
-(defvar *localgroup-fresh-launch-function*
+(defparameter *localgroup-fresh-launch-function*
   (lambda (configuration session-id handoff-pathname permission-argument
            immutable-p)
     (localgroup-handoff--launch-for
