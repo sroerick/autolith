@@ -75,7 +75,18 @@
                   (image-commit-replay-probe configuration script identifier)
                   nil)
               (image-commit-error (condition)
-                (eq (image-commit-error-stage condition) ':replay-probe)))
-            "a clean Autolith process rejects a failing private replay script"))
+                (and (eq (image-commit-error-stage condition) ':replay-probe)
+                     (search "Broken replay."
+                             (autolith-error-message condition)))))
+            "a rejected replay script carries the probe output in its error")
+           (let ((log-pathname
+                   (merge-pathnames
+                    "replay-probe.log"
+                    (uiop:pathname-directory-pathname script))))
+             (test-assert
+              (and (probe-file log-pathname)
+                   (search "Broken replay."
+                           (uiop:read-file-string log-pathname)))
+              "a rejected replay probe persists its complete output beside the script")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

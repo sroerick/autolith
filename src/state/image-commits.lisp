@@ -745,9 +745,30 @@
   (finish-output *standard-output*)
   nil)
 
+(-> image-commit--output-excerpt (string (integer 2)) string)
+(defun image-commit--output-excerpt (output limit)
+  "Return OUTPUT bounded to LIMIT characters, keeping its head and tail.
+
+A failing probe's condition report leads the output while the disabled
+debugger's backtrace can run to megabytes behind it, so both ends carry
+signal and the middle is the safe part to drop."
+  (let ((trimmed (string-right-trim '(#\Newline #\Return) output)))
+    (if (<= (length trimmed) limit)
+        trimmed
+        (let ((head (ceiling limit 2))
+              (tail (floor limit 2)))
+          (concatenate 'string
+                       (subseq trimmed 0 head)
+                       (format nil "~%[... truncated ...]~%")
+                       (subseq trimmed (- (length trimmed) tail)))))))
+
 (-> image-commit-replay-probe (configuration pathname string) null)
 (defun image-commit-replay-probe (configuration script identifier)
-  "Require SCRIPT to load successfully in a clean pinned Autolith process."
+  "Require SCRIPT to load successfully in a clean pinned Autolith process.
+
+A failing probe keeps its complete output beside SCRIPT in
+replay-probe.log and carries the output tail in the signaled error, so
+the failure stays diagnosable after the tool call ends."
   (let* ((source-root (configuration-source-root configuration))
          (entry (merge-pathnames "bin/autolith-active" source-root))
          (configured-command (uiop:getenv "AUTOLITH_SBCL"))
@@ -755,33 +776,56 @@
                            configured-command
                            "sbcl"))
          (expected (image-commit-replay-probe-output identifier))
-         (output
-           (handler-case
-               (uiop:run-program
-                (list sbcl-command
-                      "--noinform"
-                      "--script"
-                      (namestring entry)
-                      *image-commit-replay-probe-argument*
-                      (namestring script)
-                      identifier)
-                :input nil
-                :output ':string
-                :error-output ':output)
-             (error (condition)
-               (error 'image-commit-error
-                      :message
-                      (format nil "The clean private replay probe failed: ~A"
-                              condition)
-                      :tool-name "self.commit"
-                      :pathname script
-                      :stage ':replay-probe)))))
-    (unless (search expected output :test #'char=)
-      (error 'image-commit-error
-             :message "The clean private replay probe returned no success marker."
-             :tool-name "self.commit"
-             :pathname script
-             :stage ':replay-probe)))
+         (log-pathname (merge-pathnames
+                        "replay-probe.log"
+                        (uiop:pathname-directory-pathname script))))
+    (multiple-value-bind (output error-output exit-code)
+        (handler-case
+            (uiop:run-program
+             (list sbcl-command
+                   "--noinform"
+                   "--script"
+                   (namestring entry)
+                   *image-commit-replay-probe-argument*
+                   (namestring script)
+                   identifier)
+             :input nil
+             :output ':string
+             :error-output ':output
+             :ignore-error-status t)
+          (error (condition)
+            (error 'image-commit-error
+                   :message
+                   (format nil "The clean private replay probe could not run: ~A"
+                           condition)
+                   :tool-name "self.commit"
+                   :pathname script
+                   :stage ':replay-probe)))
+      (declare (ignore error-output))
+      (let ((output (or output "")))
+        (unless (and (eql exit-code 0)
+                     (search expected output :test #'char=))
+          (handler-case
+              (with-open-file (stream log-pathname
+                                      :direction ':output
+                                      :if-exists ':supersede
+                                      :if-does-not-exist ':create
+                                      :external-format ':utf-8)
+                (write-string output stream))
+            (error ()
+              nil))
+          (error 'image-commit-error
+                 :message
+                 (format nil
+                         "The clean private replay probe exited ~A without ~
+                          its success marker.~%Probe output excerpt:~%~A~%~
+                          The script and complete output remain at ~A."
+                         exit-code
+                         (image-commit--output-excerpt output 2000)
+                         (uiop:pathname-directory-pathname script))
+                 :tool-name "self.commit"
+                 :pathname script
+                 :stage ':replay-probe)))))
   nil)
 
 (defparameter *image-commit-replay-probe-function* #'image-commit-replay-probe
@@ -887,10 +931,15 @@
                        *exploratory-undo-actions*))
             commit))
       (image-commit-error (condition)
-        (when (probe-file directory)
-          (uiop:delete-directory-tree directory
-                                      :validate t
-                                      :if-does-not-exist ':ignore))
+        ;; A replay-probe failure keeps its artifacts: the script and the
+        ;; probe log beside it are the only diagnosable evidence, and the
+        ;; directory stays inert because the current-commit pointer is
+        ;; written only after a passing probe.
+        (unless (eq (image-commit-error-stage condition) ':replay-probe)
+          (when (probe-file directory)
+            (uiop:delete-directory-tree directory
+                                        :validate t
+                                        :if-does-not-exist ':ignore)))
         (error condition))
       (error (condition)
         (when (probe-file directory)
