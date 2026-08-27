@@ -257,6 +257,11 @@ SOURCE records how the value was chosen. Returns the stored value."))
   ()
   (:documentation "A directory pathname, always stored in directory form."))
 
+(defclass site-config-directory-setting (directory-setting)
+  ()
+  (:default-initargs :type '(option pathname))
+  (:documentation "An optional existing canonical site configuration directory."))
+
 (defmethod setting-coerce ((setting web-search-mode-setting) (value string) configuration)
   "Read the mode name in lower case."
   (declare (ignore setting configuration))
@@ -267,6 +272,14 @@ SOURCE records how the value was chosen. Returns the stored value."))
   (declare (ignore setting configuration))
   (uiop:ensure-directory-pathname
    (if (stringp value) (parse-namestring value) value)))
+
+(defmethod setting-coerce ((setting site-config-directory-setting) value configuration)
+  "Resolve an existing site configuration directory to its canonical pathname."
+  (declare (ignore setting))
+  (when value
+    (let ((pathname (uiop:ensure-directory-pathname
+                     (if (stringp value) (parse-namestring value) value))))
+      (configuration--resolve-site-config-root pathname))))
 
 (defmethod setting-options ((setting model-setting) configuration)
   "Offer every model the effective provider registry serves."
@@ -380,6 +393,14 @@ exist yet, and is only put in directory form."
   :default (lambda (configuration)
              (declare (ignore configuration))
              (platform-application-root *platform* ':config)))
+
+(define-setting :site-config-root (site-config-directory-setting)
+  :label "Site config root"
+  :group :paths
+  :documentation "The optional site-managed configuration root."
+  :scope :process
+  :environment "AUTOLITH_SITE_CONFIG_ROOT"
+  :default nil)
 
 (define-setting :data-root (directory-setting)
   :label "Data root"
@@ -1131,3 +1152,36 @@ default; an explicit or environment model that fails validation signals."
         (platform-unique-identifier *platform*)
       (error ()
         (fallback)))))
+
+(-> configuration--resolve-site-config-root ((option pathname)) (option pathname))
+(defun configuration--resolve-site-config-root (site-config-root)
+  "Return SITE-CONFIG-ROOT as an existing canonical absolute directory."
+  (when site-config-root
+    (unless (uiop:absolute-pathname-p site-config-root)
+      (error 'configuration-error
+             :message (format nil "Site configuration root ~S must be absolute."
+                              (namestring site-config-root))))
+    (handler-case
+        (let ((directory
+                (uiop:directory-exists-p
+                 (uiop:ensure-pathname site-config-root
+                                       :ensure-directory t
+                                       :want-non-wild t))))
+          (unless directory
+            (error 'configuration-error
+                   :message (format nil "Site configuration root ~S does not exist."
+                                    (namestring site-config-root))))
+          (uiop:ensure-directory-pathname
+           (platform-truename *platform* directory)))
+      (configuration-error (condition)
+        (error condition))
+      (serious-condition (cause)
+        (error 'configuration-error
+               :message (format nil "Could not resolve site configuration root ~S: ~A"
+                                (namestring site-config-root) cause))))))
+
+(-> configuration-site-init-path (configuration) (option pathname))
+(defun configuration-site-init-path (configuration)
+  "Return the site-authored Lisp initialization pathname, when configured."
+  (let ((root (config :site-config-root configuration)))
+    (and root (merge-pathnames "init.lisp" root))))

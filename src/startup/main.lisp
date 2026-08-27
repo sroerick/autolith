@@ -673,6 +673,13 @@ dependencies."
                               :conversation-id conversation-id
                               :permission-mode permission-mode))))
 
+(-> main--site-root-arguments (clingon:command) list)
+(defun main--site-root-arguments (command)
+  "Return an explicit site-root override only when COMMAND supplies one."
+  (let ((value (getopt* command ':site-config-root)))
+    (when (non-empty-string-p value)
+      (list :site-config-root (pathname value)))))
+
 (-> main--start-session
     (clingon:command
      &key (:resume-requested-p boolean)
@@ -692,14 +699,16 @@ dependencies."
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
          (configuration
-           (let ((base (configuration-create
-                        :immutable-p immutable-p :defer-provider-validation-p t)))
-             ;; The command line beats the saved preference; provider
-             ;; validation stays deferred until executable user init.
-             (when (getopt* command ':fullscreen)
-               (configuration-set base (configuration-setting base :fullscreen-p) t
-                                  :source ':override))
-             base))
+            (let ((base (apply #'configuration-create
+                               :immutable-p immutable-p
+                               :defer-provider-validation-p t
+                               (main--site-root-arguments command))))
+              ;; The command line beats the saved preference; provider
+              ;; validation stays deferred until executable user init.
+              (when (getopt* command ':fullscreen)
+                (configuration-set base (configuration-setting base :fullscreen-p) t
+                                   :source ':override))
+              base))
          (permission-mode
            (or explicit-permission-mode
                (config :permission-mode configuration)
@@ -905,6 +914,12 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                 :key ':pristine
                 :persistent t
                 :description "boot tracked source without private mutations or user init")
+   (make-option ':string
+                :long-name "site-config-root"
+                :key ':site-config-root
+                :parameter "DIRECTORY"
+                :persistent t
+                :description "load site configuration before user configuration")
    (make-option ':enum
                 :long-name "permissions"
                 :key ':permissions
@@ -1059,15 +1074,16 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
        (error 'configuration-error
               :message "run-job accepts only --input and --output options."))
      (let ((input (getopt* command ':input))
-           (output (getopt* command ':output)))
+            (output (getopt* command ':output)))
        (unless (non-empty-string-p input)
          (error 'configuration-error :message "run-job requires --input FILE."))
        (unless (non-empty-string-p output)
          (error 'configuration-error :message "run-job requires --output FILE."))
-       (let* ((configuration
-                (configuration-create
-                 :immutable-p (not (null (getopt* command ':immutable)))
-                 :defer-provider-validation-p t))
+        (let* ((configuration
+                 (apply #'configuration-create
+                        :immutable-p (not (null (getopt* command ':immutable)))
+                        :defer-provider-validation-p t
+                        (main--site-root-arguments command)))
               (permission-mode
                 (or (getopt* command ':permissions)
                     (config :permission-mode configuration)
@@ -1093,10 +1109,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
    :description "list known model identifiers and exit"
    :handler
    (lambda (command)
-     (declare (ignore command))
-     (let ((configuration
-             (configuration-create :immutable-p t
-                                    :defer-provider-validation-p t)))
+      (let ((configuration
+              (apply #'configuration-create
+                     :immutable-p t
+                     :defer-provider-validation-p t
+                     (main--site-root-arguments command))))
        (user-init-load configuration)
        (provider-bootstrap-configuration configuration)
        (dolist (model (main--known-model-identifiers))

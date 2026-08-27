@@ -69,6 +69,8 @@
   test-update-state-and-installation-provenance)
 
 (define-test-suite user-init
+  test-site-configuration-root
+  test-site-configuration-noninteractive-commands
   test-user-init
   test-user-init-settings
   test-local-source-tree-registration
@@ -568,6 +570,7 @@
   test-localgroup-attachments)
 
 (define-test-suite localgroup-handoff
+  test-localgroup-handoff-site-arguments
   test-localgroup-handoff-records
   test-localgroup-handoff-scheduling
   test-localgroup-detach-preempts-active-work
@@ -740,4 +743,3 @@
   test-check-command-selection
   test-check-result-validation
   test-check-process-lifecycle)
-

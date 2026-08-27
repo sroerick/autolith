@@ -185,11 +185,21 @@ Anchors are ordered from the outermost directory to the nearest directory."
                     :source source))
    definitions))
 
+(-> configuration-site-mcp-path (configuration) (option pathname))
+(defun configuration-site-mcp-path (configuration)
+  "Return the site MCP configuration pathname, when a site root is configured."
+  (let ((root (config :site-config-root configuration)))
+    (and root (merge-pathnames "mcp.sexp" root))))
+
 (-> mcp-configuration-load (configuration) list)
 (defun mcp-configuration-load (configuration)
-  "Atomically replace global and inherited native MCP registrations."
+  "Atomically replace site, global, and inherited native MCP registrations."
   (with-extension-registry-transaction
-    (let ((global-definitions (mcp-configuration-read configuration))
+    (let ((site-definitions
+            (let ((pathname (configuration-site-mcp-path configuration)))
+              (when pathname
+                (mcp-configuration-read-path pathname))))
+          (global-definitions (mcp-configuration-read configuration))
           (directory-definitions (directory-configuration-read-mcp configuration)))
       (with-lock-held (*mcp-server-registry-lock*)
         (let ((candidate
@@ -197,15 +207,17 @@ Anchors are ordered from the outermost directory to the nearest directory."
                  (lambda (registration)
                    (member
                     (mcp-server-registration-source registration)
-                    '(:config :directory)))
+                    '(:site-config :config :directory)))
                  *mcp-server-registrations*)))
           (setf candidate
                 (append
                  candidate
                  (mcp-configuration--registrations
-                  global-definitions :config)
+                  site-definitions ':site-config)
                  (mcp-configuration--registrations
-                  directory-definitions :directory)))
+                  global-definitions ':config)
+                 (mcp-configuration--registrations
+                  directory-definitions ':directory)))
           (mcp--validate-registration-list candidate)
           (setf *mcp-server-registrations* candidate))))
     (mcp-server-registrations)))

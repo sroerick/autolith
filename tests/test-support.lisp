@@ -119,8 +119,8 @@ process-global fixture parent on exit; parallel runs need separate processes."
       (setf (sb-ext:symbol-global-value '*test-temporary-root*) previous)
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore))))
 
-(-> test-configuration () configuration)
-(defun test-configuration ()
+(-> test-configuration (&key (:site-config-root (option pathname))) configuration)
+(defun test-configuration (&key site-config-root)
   "Return an isolated configuration rooted in a fresh temporary directory."
   (let* ((parent (sb-ext:symbol-global-value '*test-temporary-root*))
          (root (uiop:ensure-directory-pathname
@@ -138,6 +138,7 @@ process-global fixture parent on exit; parallel runs need separate processes."
      :source-root source-root
      :working-directory source-root
      :config-root (merge-pathnames "config/" root)
+     :site-config-root site-config-root
      :data-root (merge-pathnames "data/" root)
      :state-root (merge-pathnames "state/" root)
      :cache-root (merge-pathnames "cache/" root)
