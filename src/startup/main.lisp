@@ -802,6 +802,28 @@ terminals, and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
       :resume-id (main--single-selection command
                                          "conversation identifier")))))
 
+(-> main--replay-command () clingon:command)
+(defun main--replay-command ()
+  "Return the read-only conversation replay sub-command definition."
+  (make-command
+   :name "replay"
+   :description "inspect a saved conversation as a read-only event stream"
+   :usage "ID [turn N | date YYYY-MM-DD | time TIME | sequence N]"
+   :handler
+   (lambda (command)
+     (let ((arguments (command-arguments command)))
+       (unless arguments
+         (error 'configuration-error
+                :message "Replay requires a conversation identifier."))
+       (when (> (length arguments) 3)
+         (error 'configuration-error
+                :message "Replay accepts an ID and at most one selector."))
+       (conversation-replay-run
+        (configuration-create :immutable-p t
+                              :defer-provider-validation-p t)
+        (first arguments)
+        (rest arguments))))))
+
 (-> main--auth-command () clingon:command)
 (defun main--auth-command ()
   "Return the auth sub-command definition."
@@ -829,6 +851,7 @@ select how Autolith starts before this command line is parsed."
    :version *autolith-version*
    :options (main--session-options)
    :sub-commands (list (main--resume-command)
+                       (main--replay-command)
                        (main--auth-command)
                        (main-localgroup-command))
    :handler

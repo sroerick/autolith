@@ -188,6 +188,22 @@ preference.
 terminal status bar and local session status display the title when one is
 available and otherwise show the conversation ID.
 
+Inspect a saved conversation without resuming or locking it with:
+
+#+BEGIN_SRC sh
+autolith replay ID
+autolith replay ID turn 12
+autolith replay ID date 2026-08-28
+autolith replay ID time 2026-08-28T10:30:00
+autolith replay ID sequence 1200
+#+END_SRC
+
+On an interactive terminal, replay behaves like a small debugger over durable
+conversation events. =next= and =previous= step records; =turn=, =date=, =time=,
+and =sequence= jump to a location; =raw= shows the selected replay form; and
+=quit= exits. Replay reads complete persisted forms without acquiring the
+conversation lease or repairing, appending, or resuming the conversation.
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.
