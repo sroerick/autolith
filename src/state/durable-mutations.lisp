@@ -8,7 +8,21 @@
 
 (defclass standard-mutation-checker (mutation-checker)
   ()
-  (:documentation "The production checker backed by ASDF and the repository check command."))
+  (:documentation
+   "The production checker validating the rendered pending definitions.
+
+Behavioral validation of a commit lives in the clean-process replay probe
+that IMAGE-COMMIT-PUBLISH always runs, plus any self.exercise records; the
+in-image gate only has to prove the rendered source is structurally sound."))
+
+(defclass full-suite-mutation-checker (mutation-checker)
+  ()
+  (:documentation
+   "A checker running the complete in-image Autolith test suite.
+
+This is minutes of silent work, needs the test system loadable beside the
+active image, and inherits whatever dynamic state the live session holds,
+so it is opt-in rather than the default commit gate."))
 
 (defclass callback-mutation-checker (mutation-checker)
   ((active-callback
@@ -29,14 +43,38 @@
     ((checker standard-mutation-checker)
      (configuration configuration)
      (definition-source string))
+  "Require every rendered pending definition to read as one complete form."
+  (declare (ignore checker))
+  (handler-case
+      (with-input-from-string (stream definition-source)
+        (let ((*package* (find-package '#:autolith))
+              (*read-eval* nil)
+              (end-marker (cons nil nil)))
+          (loop for form = (read stream nil end-marker)
+                until (eq form end-marker)
+                count t into forms
+                finally (return (format nil "Read ~D pending form~:P." forms)))))
+    (error (condition)
+      (error 'image-commit-error
+             :message
+             (format nil "The rendered pending definitions do not read: ~A"
+                     condition)
+             :tool-name "self.commit"
+             :pathname (configuration-image-commit-root configuration)
+             :stage ':validation))))
+
+(defmethod mutation-checker-check-active
+    ((checker full-suite-mutation-checker)
+     (configuration configuration)
+     (definition-source string))
   "Run Autolith's ASDF tests against the installed active-image definition."
   (declare (ignore checker configuration definition-source))
   (with-output-to-string (stream)
     (let ((*standard-output* stream)
           (*error-output* stream)
           (*trace-output* stream)
-            (*skill-logical-turn-active-p* nil)
-            (*skill-logical-turn-selection-names* nil))
+          (*skill-logical-turn-active-p* nil)
+          (*skill-logical-turn-selection-names* nil))
       (asdf:test-system :autolith))))
 
 (defmethod mutation-checker-check-active

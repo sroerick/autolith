@@ -938,6 +938,41 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-standard-mutation-checker () null)
+(defun test-standard-mutation-checker ()
+  "Test the default commit gate reads pending definitions without the suite."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (checker (make-instance 'standard-mutation-checker)))
+    (unwind-protect
+         (progn
+           (test-assert
+            (search "2 pending forms"
+                    (mutation-checker-check-active
+                     checker configuration
+                     "(defun mutation-checker-test-a () 1)
+                      (defun mutation-checker-test-b () 2)"))
+            "the standard checker reads every rendered pending form")
+           (test-assert
+            (handler-case
+                (progn (mutation-checker-check-active
+                        checker configuration
+                        "(defun broken (")
+                       nil)
+              (image-commit-error (condition)
+                (eq (image-commit-error-stage condition) ':validation)))
+            "unreadable pending definitions fail commit validation")
+           (test-assert
+            (handler-case
+                (progn (mutation-checker-check-active
+                        checker configuration
+                        "#.(error \"never evaluated\")")
+                       nil)
+              (image-commit-error () t))
+            "the structural gate never evaluates reader forms"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-durable-self-mutation () null)
 (defun test-durable-self-mutation ()
   "Test private live-mutation commits, replay, and recovery."
