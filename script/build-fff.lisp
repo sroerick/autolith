@@ -12,8 +12,29 @@
          pathname
          fallback))))
 
+#+darwin
+(defun fff--prepare-darwin-build-environment ()
+  "Ensure Darwin SDK library paths are available in LIBRARY_PATH."
+  (let ((sdk (handler-case
+                 (string-trim '(#\Space #\Tab #\Newline #\Return)
+                              (uiop:run-program '("xcrun" "--show-sdk-path")
+                                                :output ':string
+                                                :ignore-error-status t))
+               (error ()
+                 nil))))
+    (when (and sdk (plusp (length sdk)) (probe-file sdk))
+      (let* ((sdk-lib (namestring (uiop:merge-pathnames* "usr/lib/" sdk)))
+             (prev-libpath (or (uiop:getenv "LIBRARY_PATH") ""))
+             (entries (uiop:split-string prev-libpath :separator ":")))
+        (unless (member sdk-lib entries :test #'string=)
+          (sb-posix:setenv "LIBRARY_PATH"
+                           (if (plusp (length prev-libpath))
+                               (format nil "~A:~A" prev-libpath sdk-lib)
+                               sdk-lib)
+                           1))))))
+
 (defun fff--prepare-build-environment ()
-  "Set host-specific compiler flags required to build fff's C dependencies.
+  "Prepare the build environment for host-specific C dependency quirks.
 
   LMDB uses SysV semaphores on BSD and only defines union semun when
   _SEM_SEMUN_UNDEFINED is set. glibc defines that macro. NetBSD does
@@ -27,6 +48,8 @@
                         '(#\Space)
                         (format nil "~A -D_SEM_SEMUN_UNDEFINED" previous))
                        1)))
+  #+darwin
+  (fff--prepare-darwin-build-environment)
   nil)
 
 (let* ((script-path (truename *load-truename*))
