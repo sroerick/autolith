@@ -940,37 +940,41 @@
 
 (-> test-standard-mutation-checker () null)
 (defun test-standard-mutation-checker ()
-  "Test the default commit gate reads pending definitions without the suite."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (checker (make-instance 'standard-mutation-checker)))
-    (unwind-protect
-         (progn
-           (test-assert
-            (search "2 pending forms"
-                    (mutation-checker-check-active
-                     checker configuration
-                     "(defun mutation-checker-test-a () 1)
-                      (defun mutation-checker-test-b () 2)"))
-            "the standard checker reads every rendered pending form")
-           (test-assert
-            (handler-case
-                (progn (mutation-checker-check-active
-                        checker configuration
-                        "(defun broken (")
-                       nil)
-              (image-commit-error (condition)
-                (eq (image-commit-error-stage condition) ':validation)))
-            "unreadable pending definitions fail commit validation")
-           (test-assert
-            (handler-case
-                (progn (mutation-checker-check-active
-                        checker configuration
-                        "#.(error \"never evaluated\")")
-                       nil)
-              (image-commit-error () t))
-            "the structural gate never evaluates reader forms"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  "Test the default commit gate reads proposed definitions without the suite."
+  (flet ((record (identifier proposed)
+           (list :mutation :id identifier :kind :durable-definition
+                 :target identifier :proposed proposed)))
+    (test-assert
+     (search "2 proposed forms"
+             (image-commit-proposed-forms-check
+              (list (record "a" "(defun mutation-checker-test-a () 1)")
+                    (record "b" "(defun mutation-checker-test-b () 2)"))
+              nil))
+     "the structural gate reads every proposed definition form")
+    (test-assert
+     (search "0 proposed forms"
+             (image-commit-proposed-forms-check
+              (list (record "removal" nil))
+              nil))
+     "records without proposed sources pass the structural gate")
+    (test-assert
+     (handler-case
+         (progn (image-commit-proposed-forms-check
+                 (list (record "broken" "(defun broken ("))
+                 nil)
+                nil)
+       (image-commit-error (condition)
+         (and (eq (image-commit-error-stage condition) ':validation)
+              (search "broken" (autolith-error-message condition)))))
+     "unreadable proposed definitions fail commit validation")
+    (test-assert
+     (handler-case
+         (progn (image-commit-proposed-forms-check
+                 (list (record "hostile" "#.(error \"never evaluated\")"))
+                 nil)
+                nil)
+       (image-commit-error () t))
+     "the structural gate never evaluates reader forms"))
   nil)
 
 (-> test-durable-self-mutation () null)

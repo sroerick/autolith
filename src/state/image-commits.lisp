@@ -1028,6 +1028,49 @@
    :entries (and commit (image-commit-entries commit))))
 
 
+(-> image-commit-proposed-forms-check (list (option pathname)) string)
+(defun image-commit-proposed-forms-check (records pathname)
+  "Require every RECORD's proposed definition to read as complete forms.
+
+The rendered pending summary is prose, so the structural commit gate reads
+the actual proposed sources instead. PATHNAME only labels failures."
+  (let ((forms 0))
+    (dolist (record records)
+      (let* ((properties (rest record))
+             (identifier (getf properties :id))
+             (proposed (getf properties :proposed)))
+        (when (non-empty-string-p proposed)
+          (handler-case
+              (with-input-from-string (stream proposed)
+                (let ((*package* (find-package '#:autolith))
+                      (*read-eval* nil)
+                      (end-marker (cons nil nil)))
+                  (loop for form = (read stream nil end-marker)
+                        until (eq form end-marker)
+                        do (incf forms))))
+            (error (condition)
+              (error 'image-commit-error
+                     :message
+                     (format nil
+                             "Mutation ~A's proposed definition does not read: ~A"
+                             (or identifier "unknown")
+                             condition)
+                     :tool-name "self.commit"
+                     :pathname pathname
+                     :stage ':validation))))))
+    (format nil "Read ~D proposed form~:P." forms)))
+
+(defmethod mutation-checker-check-active
+    ((checker standard-mutation-checker)
+     (configuration configuration)
+     (definition-source string))
+  "Require every effective proposed definition to read as complete forms."
+  (declare (ignore checker definition-source))
+  (image-commit-proposed-forms-check
+   (image-commit-effective-diff-records configuration)
+   (configuration-image-commit-root configuration)))
+
+
 ;;;; -- Image Commit Tools --
 
 (-> image-commit-render-pending (configuration) string)

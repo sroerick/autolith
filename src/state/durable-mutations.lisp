@@ -40,30 +40,6 @@ so it is opt-in rather than the default commit gate."))
    "Check installed DEFINITION-SOURCE in the active image and return captured output."))
 
 (defmethod mutation-checker-check-active
-    ((checker standard-mutation-checker)
-     (configuration configuration)
-     (definition-source string))
-  "Require every rendered pending definition to read as one complete form."
-  (declare (ignore checker))
-  (handler-case
-      (with-input-from-string (stream definition-source)
-        (let ((*package* (find-package '#:autolith))
-              (*read-eval* nil)
-              (end-marker (cons nil nil)))
-          (loop for form = (read stream nil end-marker)
-                until (eq form end-marker)
-                count t into forms
-                finally (return (format nil "Read ~D pending form~:P." forms)))))
-    (error (condition)
-      (error 'image-commit-error
-             :message
-             (format nil "The rendered pending definitions do not read: ~A"
-                     condition)
-             :tool-name "self.commit"
-             :pathname (configuration-image-commit-root configuration)
-             :stage ':validation))))
-
-(defmethod mutation-checker-check-active
     ((checker full-suite-mutation-checker)
      (configuration configuration)
      (definition-source string))
