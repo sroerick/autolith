@@ -467,13 +467,18 @@
                    (application-input-controller-call-with-reader-paused
                     controller
                     (lambda ()
-                      (localgroup-terminal-attach
-                       terminal attachment
-                       :rows rows
-                       :columns columns
-                       :styled-p styled-p
-                       :session-id
-                       (localgroup-session-identifier session)))))
+                      (multiple-value-bind (attached-p released-direct-p)
+                          (localgroup-terminal-attach
+                           terminal attachment
+                           :rows rows
+                           :columns columns
+                           :styled-p styled-p
+                           :session-id
+                           (localgroup-session-identifier session))
+                        (when attached-p
+                          (application-input-controller--open-prompt-if-ready
+                           controller))
+                        (values attached-p released-direct-p)))))
              (declare (ignore released-direct-p))
              (unless attached-p
                (return-from localgroup--serve-attachment nil))
@@ -768,18 +773,16 @@ Optional identity values preserve one session across quiescence or process hando
         (when listener
           (localgroup--wake-server session))
         (dolist (socket client-sockets)
+          (ignore-errors
+            (sb-bsd-sockets:socket-shutdown socket :direction ':io))
           (ignore-errors (sb-bsd-sockets:socket-close socket)))
-        (when (and server-thread
-                   (not (eq server-thread (current-thread))))
-          (ignore-errors (join-thread server-thread)))
+        (localgroup-stop-thread server-thread)
         (when listener
           (ignore-errors (sb-bsd-sockets:socket-close listener))
           (with-lock-held ((localgroup-session-lock session))
             (when (eq listener (localgroup-session-listener session))
               (setf (localgroup-session-listener session) nil))))
         (dolist (thread client-threads)
-          (when (and (thread-alive-p thread)
-                     (not (eq thread (current-thread))))
-            (ignore-errors (join-thread thread))))
+          (localgroup-stop-thread thread))
         (localgroup--delete-owned-registry session))))
   nil)

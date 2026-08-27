@@ -593,6 +593,96 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-localgroup-detached-terminal-lifecycle () null)
+(defun test-localgroup-detached-terminal-lifecycle ()
+  "Test detached prompt handoff and bounded shutdown with idle clients."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (terminal      (localgroup-terminal-create))
+         (conversation  (conversation-create configuration))
+         (ui            (terminal-ui-create :terminal terminal))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (controller
+           (make-instance 'application-input-controller
+                          :application application
+                          :later-state (make-instance 'later-state)
+                          :main-thread (current-thread)))
+         (session nil)
+         (socket nil)
+         (stream nil)
+         (stop-thread nil)
+         (wedged-thread nil)
+         (stopped-p nil)
+         (stop-failure nil))
+    (setf (application-input-controller application) controller)
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (terminal-ui-start ui)
+           (test-assert
+            (not (application-input-controller--open-prompt-if-ready controller))
+            "a detached terminal cannot draw its prompt before control attaches")
+           (setf session (localgroup-start application))
+           (multiple-value-bind (attached-socket attached-stream response)
+               (test-localgroup--attach session ':control)
+             (setf socket attached-socket
+                   stream attached-stream)
+             (test-assert
+              (eq (first response) ':attached)
+              "a detached terminal accepts its first controlling attachment")
+             (test-assert
+              (task-tests--wait-until
+               (lambda ()
+                 (eq (terminal-ui-prompt-marker-state ui) ':input))
+               2)
+              "control attachment draws the initial prompt without a keypress")
+             (setf wedged-thread
+                   (make-thread
+                    (lambda ()
+                      (loop (sleep 60)))
+                    :name "Autolith wedged localgroup test client"))
+             (with-lock-held ((localgroup-session-lock session))
+               (push wedged-thread
+                     (localgroup-session-client-threads session)))
+             (setf stop-thread
+                   (make-thread
+                    (lambda ()
+                      (handler-case
+                          (localgroup-stop application)
+                        (error (condition)
+                          (setf stop-failure condition)))
+                      (setf stopped-p t))
+                    :name "Autolith localgroup stop test"))
+             (test-assert
+              (task-tests--wait-until (lambda () stopped-p) 3)
+              "localgroup shutdown never waits indefinitely for idle clients")
+             (test-assert
+              (and (null stop-failure)
+                   (not (thread-alive-p wedged-thread))
+                   (null (application-localgroup-session application))
+                   (not (probe-file
+                         (localgroup-session-registry-pathname session))))
+              "bounded shutdown reaps clients and unpublishes the session")))
+      (when stream
+        (ignore-errors (close stream)))
+      (when (and socket (null stream))
+        (ignore-errors (sb-bsd-sockets:socket-close socket)))
+      (localgroup-stop-thread stop-thread)
+      (localgroup-stop-thread wedged-thread)
+      (when (application-localgroup-session application)
+        (localgroup-stop application))
+      (application-input-controller-stop controller)
+      (ignore-errors (terminal-ui-stop ui))
+      (application-release-conversation-lease application)
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-attachments () null)
 (defun test-localgroup-attachments ()
   "Test read-only observation and controlling terminal handoff over the endpoint."

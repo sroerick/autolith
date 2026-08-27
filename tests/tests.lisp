@@ -406,6 +406,7 @@
     (test-localgroup-terminal-restart)
     (test-localgroup-picker-waits-for-relayed-input)
     (test-localgroup-blocking-read-lifecycle)
+    (test-localgroup-detached-terminal-lifecycle)
     (test-localgroup-protocol)
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)
