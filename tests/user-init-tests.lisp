@@ -155,6 +155,56 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-local-source-tree-registration () null)
+(defun test-local-source-tree-registration ()
+  "Test user tree lookups resolve new systems without shadowing loaded ones."
+  (let* ((root (uiop:ensure-directory-pathname
+                (merge-pathnames
+                 (format nil "autolith-source-tree-~A/" (make-identifier))
+                 (uiop:temporary-directory))))
+         (checkout (merge-pathnames "fresh-system/" root))
+         (buried (merge-pathnames "fresh-system/_build/decoy/" root)))
+    (unwind-protect
+         (flet ((write-definition (pathname content)
+                  (with-open-file (stream pathname
+                                          :direction ':output
+                                          :if-exists ':supersede
+                                          :if-does-not-exist ':create)
+                    (write-string content stream))))
+           (ensure-directories-exist checkout)
+           (ensure-directories-exist buried)
+           (write-definition (merge-pathnames "fresh-system.asd" checkout)
+                             "(asdf:defsystem #:fresh-system)")
+           (write-definition (merge-pathnames "skipped-system.asd" buried)
+                             "(asdf:defsystem #:skipped-system)")
+           (write-definition (merge-pathnames "autolith.asd" checkout)
+                             "(asdf:defsystem #:autolith :version \"0.0.0\")")
+           (let ((version-before (asdf:component-version
+                                  (asdf:find-system "autolith"))))
+             (test-assert (equal (main--locate-user-tree-system
+                                  "fresh-system" (list root))
+                                 (merge-pathnames "fresh-system.asd" checkout))
+                          "user tree lookups find unregistered systems")
+             (test-assert (null (main--locate-user-tree-system
+                                 "skipped-system" (list root)))
+                          "user tree lookups skip build directories")
+             (test-assert (null (main--locate-user-tree-system
+                                 "autolith" (list root)))
+                          "user tree lookups never shadow registered systems")
+             (main--register-local-source-trees)
+             (test-assert (null (main--register-local-source-trees))
+                          "source tree registration is idempotent and quiet")
+             (test-assert (eq (first
+                               (last asdf:*system-definition-search-functions*))
+                              'main--locate-user-tree-system)
+                          "user tree lookups run after every other ASDF search")
+             (test-assert (string= (asdf:component-version
+                                    (asdf:find-system "autolith"))
+                                   version-before)
+                          "registration keeps the loaded system authoritative")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-directory-user-init () null)
 (defun test-directory-user-init ()
   "Test trusted executable inheritance and sticky full-power mutations."

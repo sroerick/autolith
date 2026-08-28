@@ -234,6 +234,7 @@
     (test-papercuts)
     (test-update-state-and-installation-provenance)
     (test-user-init)
+    (test-local-source-tree-registration)
     (test-directory-user-init)
     (test-agenda-persistence-and-transport)
     (test-agenda-unbounded-item-count)

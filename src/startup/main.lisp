@@ -496,6 +496,70 @@
   (and (interactive-stream-p stream)
        (terminal-environment-styling-p)))
 
+(defparameter *user-source-tree-skipped-directories*
+  '("_build" "dist" "node_modules")
+  "Directory leaves never searched for system definitions in user trees.
+Dot-prefixed directories such as .git and .qlot are always skipped.")
+
+(-> main--user-source-trees () list)
+(defun main--user-source-trees ()
+  "Return the conventional user source trees present on this host."
+  (remove-if-not
+   #'uiop:directory-exists-p
+   (list (merge-pathnames "common-lisp/" (user-homedir-pathname))
+         (merge-pathnames "quicklisp/local-projects/"
+                          (user-homedir-pathname)))))
+
+(-> main--find-system-definition-under (string pathname) (option pathname))
+(defun main--find-system-definition-under (name root)
+  "Return the first NAME.asd at or beneath directory ROOT, or NIL."
+  (let ((definition (make-pathname :name name :type "asd")))
+    (labels ((walk (directory)
+               (let ((candidate (merge-pathnames definition directory)))
+                 (when (uiop:file-exists-p candidate)
+                   (return-from main--find-system-definition-under
+                     candidate)))
+               (dolist (subdirectory (uiop:subdirectories directory))
+                 (let ((leaf (first (last (pathname-directory subdirectory)))))
+                   (unless (or (not (stringp leaf))
+                               (zerop (length leaf))
+                               (char= (char leaf 0) #\.)
+                               (member leaf *user-source-tree-skipped-directories*
+                                       :test #'string=))
+                     (walk subdirectory))))))
+      (walk root)
+      nil)))
+
+(-> main--locate-user-tree-system (t &optional list) (option pathname))
+(defun main--locate-user-tree-system
+    (name &optional (trees (main--user-source-trees)))
+  "Locate NAME's system definition in the user source TREES.
+
+The locked dependency environment replaces ASDF's default configuration,
+so ~/common-lisp and ~/quicklisp/local-projects would otherwise be
+invisible to REPL forms like (ql:quickload ...). This locator runs after
+every other ASDF search and never resolves a system that is already
+registered, so user trees cannot shadow Autolith or its locked
+dependencies."
+  (handler-case
+      (let ((primary (asdf:primary-system-name
+                      (string-downcase (string name)))))
+        (unless (asdf:registered-system primary)
+          (loop for tree in trees
+                  thereis (main--find-system-definition-under primary tree))))
+    (error ()
+      nil)))
+
+(-> main--register-local-source-trees () null)
+(defun main--register-local-source-trees ()
+  "Let REPL system lookups fall back to the conventional user source trees."
+  (unless (member 'main--locate-user-tree-system
+                  asdf:*system-definition-search-functions*)
+    (setf asdf:*system-definition-search-functions*
+          (append asdf:*system-definition-search-functions*
+                  (list 'main--locate-user-tree-system))))
+  nil)
+
 (-> main-authenticate (configuration (option string)) null)
 (defun main-authenticate (configuration selection)
   "Authenticate a registered provider before the conversation UI starts."
@@ -566,6 +630,7 @@
     (command &key resume-requested-p resume-id authenticate-p
                   authentication-selection)
   "Start one interactive Autolith session from COMMAND's parsed options."
+  (main--register-local-source-trees)
   (let* ((immutable-p (not (null (getopt* command ':immutable))))
          (explicit-permission-mode (getopt* command ':permissions))
          (image-values (getopt* command ':images))
