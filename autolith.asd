@@ -10,6 +10,7 @@
                #:cl-exec-sandbox
                #:cl-jobpond
                #:cl-rfc8628
+               #:clinker-transcript
                #:cl-llm-provider-api
                #:cl-skills
                #:cl-termdown

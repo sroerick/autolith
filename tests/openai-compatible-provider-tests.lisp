@@ -1007,7 +1007,7 @@
                          "let me think")
                 "captured thinking rides on the same round's tool-call message")
                (test-assert
-                (conversation-family-private-item-p reasoning-item)
+                (family-private-item-p reasoning-item)
                 "thinking items stay private to their producing family")
                (test-assert
                 (string= (json-get (second messages) "role") "tool")

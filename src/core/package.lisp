@@ -333,6 +333,17 @@
                 #:language
                 #:language-find
                 #:native-library-path)
+  (:import-from #:clinker-transcript
+                #:backend-search-call-item-p
+                #:chat-reasoning-item-p
+                #:family-private-item-p
+                #:function-call-item-p
+                #:function-call-output-item
+                #:item-assistant-text
+                #:native-compaction-item-canonicalize
+                #:native-compaction-item-p
+                #:reasoning-item-p
+                #:tool-search-item-p)
   (:import-from #:closer-mop
                 #:class-slots
                 #:slot-definition-name)

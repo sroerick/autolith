@@ -345,8 +345,8 @@
                    (plusp (length (json-get search-output "tools"))))
               "tool search results replay without their invalid expansions")
              (test-assert
-              (and (conversation-family-private-item-p search-output)
-                   (conversation-family-private-item-p
+              (and (family-private-item-p search-output)
+                   (family-private-item-p
                     (json-object "type" "tool_search_call"
                                  "status" "completed")))
               "tool search items never replay into another provider family")))

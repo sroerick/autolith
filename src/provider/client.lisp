@@ -1034,11 +1034,6 @@ are decoded as UTF-8."
   (declare (ignore provider))
   (normalize-response-item item))
 
-(-> function-call-item-p (json-object) boolean)
-(defun function-call-item-p (item)
-  "Return true when ITEM is a Responses function call."
-  (json-string= (json-get item "type") "function_call"))
-
 (-> provider-note-doom-loop-event (model-provider json-object) null)
 (defgeneric provider-note-doom-loop-event (provider event)
   (:documentation
