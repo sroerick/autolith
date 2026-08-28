@@ -166,6 +166,7 @@
                              (:file "application/commands")
                              (:file "application/operation")
                              (:file "application/user-operation-context")
+                             (:file "application/debugger")
                              (:file "application/lisp-machine")
                              (:file "terminal/responsive-input")
                              (:file "application/recovery-input-vault")

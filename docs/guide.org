@@ -157,6 +157,19 @@ Use =//= to send a message beginning with a literal slash.
 The clanker sees both your source input and its evaluated result apart
 from any other effects it may have.
 
+When local Lisp or an interactive command signals a serious condition, the
+restart debugger keeps the signaling stack and its live restarts available. Use
+=Ask Autolith why this failed= to run an independent diagnosis while the failed
+operation remains suspended. Diagnosis can offer up to three explicitly selected
+recoveries that invoke a live restart, run repair source first, retry the whole
+operation, return replacement values when supported, or abort the operation.
+Retry does not roll back effects completed before the failure.
+
+Escape during diagnosis cancels only the diagnosis and returns to the live
+restarts. Escape at the ordinary restart picker aborts the failed operation.
+During an active provider turn, Ctrl-C keeps the existing cancellation and
+second-interrupt force-exit behavior.
+
 ** Managed resources
 
 =resource.read= observes durable state and returns an opaque revision.

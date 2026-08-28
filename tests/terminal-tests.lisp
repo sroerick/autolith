@@ -2338,6 +2338,37 @@
          "picker replacements accept an explicit NIL hint")
         (test-assert (null replacement-hint)
                      "an explicit NIL replacement clears the previous hint"))))
+  (let* ((terminal
+           (make-instance 'scripted-terminal
+                          :columns 60
+                          :events (list :submit)))
+         (ui (terminal-ui-create :terminal terminal))
+         (poll-count 0))
+    (with-terminal-ui (active-ui ui)
+      (test-call-with-function-replacements
+       (list
+        (list 'terminal-input-ready-p
+              (lambda (ignored)
+                (declare (ignore ignored))
+                nil)))
+       (lambda ()
+         (test-assert
+          (string=
+           (terminal-ui-select
+            active-ui
+            :title "polling picker"
+            :items '((:name "alpha" :argument nil :description "first"))
+            :poll-interval 0
+            :on-event
+            (lambda (event selector)
+              (declare (ignore selector))
+              (when (eq event ':poll)
+                (incf poll-count)
+                (list ':accept "alpha"))))
+           "alpha")
+          "bounded picker polling can accept without terminal input")))
+      (test-assert (= poll-count 1)
+                   "picker polling dispatches one synthetic poll event")))
   (let* ((terminal (make-instance 'scripted-terminal :columns 60))
          (ui (terminal-ui-create :terminal terminal)))
     (test-assert (null (terminal-ui-select

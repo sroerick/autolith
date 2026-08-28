@@ -2296,14 +2296,15 @@ removes it."
                  (:search-p boolean)
                  (:search-key function)
                  (:resize-callback (option function))
-                 (:on-event (option function)))
+                 (:on-event (option function))
+                 (:poll-interval (option real)))
     (option string))
 (defun terminal-ui-select
     (ui &key (title "select") items hint
              (visible-count *terminal-ui-visible-completions*)
              initial-name initial-value search-p
              (search-key #'terminal-ui--picker-default-search-text)
-             resize-callback on-event)
+             resize-callback on-event poll-interval)
   "Run a modal picker over ITEMS and return the selected value, or NIL on cancel.
 
 Items follow the completion entry shape and may carry a :VALUE distinct from
@@ -2331,7 +2332,9 @@ handling and may return:
 
 RESIZE-CALLBACK is queried before each blocking read and immediately after the
 read returns. It returns positive pending rows and columns as a cons, or NIL
-when no resize needs to be applied."
+when no resize needs to be applied. POLL-INTERVAL, when non-NIL, replaces the
+blocking read with bounded readiness checks and delivers :POLL to ON-EVENT while
+no terminal input is ready."
   (block nil
     (let ((source-items items)
           (base-title title)
@@ -2475,7 +2478,15 @@ when no resize needs to be applied."
                (with-terminal-ui-locked (ui)
                  (unless (terminal-ui-refresh-size ui resize-callback)
                    (terminal-ui--repaint-live ui)))
-               (let ((event (terminal-read-event (terminal-ui-terminal ui))))
+                (let ((event
+                        (if (and poll-interval
+                                 (not (terminal-input-ready-p
+                                       (terminal-ui-terminal ui))))
+                            (progn
+                              (sleep poll-interval)
+                              ':poll)
+                            (terminal-read-event
+                             (terminal-ui-terminal ui)))))
                  (when (eq event ':stream-end)
                    (return nil))
                  (with-terminal-ui-locked (ui)

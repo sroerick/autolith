@@ -17,6 +17,60 @@
 (defvar *lisp-machine-test-interactive-p* nil
   "Whether explicit terminal Lisp observed interactive command context.")
 
+(defvar *lisp-machine-test-repair-value* nil
+  "Active-image value used to verify synthetic repair source execution.")
+
+(-> lisp-machine-tests--recovery
+    (keyword &key (:restart-id (option string))
+                  (:preparation-source (option string))
+                  (:argument-source (option string))
+                  (:return-source (option string)))
+    application-debugger-recovery)
+(defun lisp-machine-tests--recovery
+    (kind &key restart-id preparation-source argument-source return-source)
+  "Return one executable debugger recovery proposal of KIND."
+  (make-instance 'application-debugger-recovery
+                 :kind kind
+                 :report (format nil "test ~(~A~) recovery" kind)
+                 :restart-id restart-id
+                 :preparation-source preparation-source
+                 :argument-source argument-source
+                 :return-source return-source))
+
+(-> lisp-machine-tests--debugger-session
+    (&key (:retry-p boolean) (:return-values-p boolean))
+    application-debugger-session)
+(defun lisp-machine-tests--debugger-session
+    (&key (retry-p t) (return-values-p t))
+  "Return a portable debugger session with one diagnostic restart."
+  (make-instance
+   'application-debugger-session
+   :condition-type "simple-error"
+   :condition-report "test failure"
+   :source "(error \"test failure\")"
+   :operation-kind ':lisp
+   :owner-thread (current-thread)
+   :restarts '((:id "restart-1" :report "Use the supplied value."))
+   :capabilities (list :invoke-restart t
+                       :repair-and-invoke t
+                       :retry-operation retry-p
+                       :repair-and-retry retry-p
+                       :return-values return-values-p
+                       :abort-operation t)
+   :backtrace '("frame one" "frame two")))
+
+(-> lisp-machine-tests--recovery-invalid-p
+    (application-debugger-session application-debugger-recovery)
+    boolean)
+(defun lisp-machine-tests--recovery-invalid-p (session recovery)
+  "Return true when RECOVERY is rejected for SESSION."
+  (handler-case
+      (progn
+        (application-debugger--validate-recovery session recovery)
+        nil)
+    (application-debugger-recovery-error ()
+      t)))
+
 (-> lisp-machine-tests--application
     (&key (:terminal (option terminal)))
     (values application pathname))
@@ -544,6 +598,398 @@
     nil))
 
 
+(-> test-application-debugger-recoveries () null)
+(defun test-application-debugger-recoveries ()
+  "Test typed synthetic recovery validation, execution, and metadata."
+  (let* ((session (lisp-machine-tests--debugger-session))
+         (snapshot (application-debugger-portable-snapshot session))
+         (valid-recoveries
+           (list
+            (lisp-machine-tests--recovery
+             ':invoke-restart :restart-id "restart-1" :argument-source "41")
+            (lisp-machine-tests--recovery
+             ':repair-and-invoke
+             :restart-id "restart-1"
+             :preparation-source "(setf *lisp-machine-test-repair-value* :ready)"
+             :argument-source "*lisp-machine-test-repair-value*")
+            (lisp-machine-tests--recovery ':retry-operation)
+            (lisp-machine-tests--recovery
+             ':repair-and-retry
+             :preparation-source "(setf *lisp-machine-test-repair-value* :ready)")
+            (lisp-machine-tests--recovery
+             ':return-values :return-source "(values :replacement 7)")
+            (lisp-machine-tests--recovery ':abort-operation))))
+    (test-assert
+     (and (application-debugger--portable-p snapshot)
+          (string= (getf snapshot :source) "(error \"test failure\")")
+          (eq (getf snapshot :operation-kind) ':lisp)
+          (equal (getf snapshot :backtrace) '("frame one" "frame two"))
+          (equal (getf snapshot :restarts)
+                 '((:id "restart-1" :report "Use the supplied value."))))
+     "debugger snapshots contain bounded portable condition and operation data")
+    (test-assert
+     (every (lambda (recovery)
+              (eq (application-debugger--validate-recovery session recovery)
+                  recovery))
+            valid-recoveries)
+     "every supported synthetic recovery validates against its capability set")
+    (test-assert
+     (every
+      (lambda (recovery)
+        (lisp-machine-tests--recovery-invalid-p session recovery))
+      (list
+       (lisp-machine-tests--recovery
+        ':invoke-restart
+        :restart-id "restart-1"
+        :preparation-source "(values)")
+       (lisp-machine-tests--recovery
+        ':repair-and-invoke :restart-id "restart-1")
+       (lisp-machine-tests--recovery
+        ':retry-operation :argument-source "1")
+       (lisp-machine-tests--recovery
+        ':repair-and-retry
+        :restart-id "restart-1"
+        :preparation-source "(values)")
+       (lisp-machine-tests--recovery ':return-values)
+       (lisp-machine-tests--recovery
+        ':abort-operation :return-source "nil")
+       (lisp-machine-tests--recovery ':unsupported)))
+     "recovery validation rejects forbidden fields and incomplete proposal kinds")
+    (let ((restricted
+            (lisp-machine-tests--debugger-session
+             :retry-p nil :return-values-p nil)))
+      (test-assert
+       (and
+        (lisp-machine-tests--recovery-invalid-p
+         restricted (lisp-machine-tests--recovery ':retry-operation))
+        (lisp-machine-tests--recovery-invalid-p
+         restricted
+         (lisp-machine-tests--recovery
+          ':return-values :return-source "1")))
+       "retry and replacement values require explicit operation capabilities")))
+  (multiple-value-bind
+        (values status condition restart-names selected-restart-name)
+      (application-lisp-call-with-debugger
+       (lambda ()
+         (restart-case
+             (error "invoke")
+           (use-value (value)
+             value)))
+       :restart-selector
+       (lambda (condition restarts)
+         (declare (ignore condition restarts))
+         (values
+          (lisp-machine-tests--recovery
+           ':invoke-restart :restart-id "restart-1" :argument-source "41")
+          nil)))
+    (declare (ignore condition restart-names))
+    (test-assert
+     (and (eq status ':ok)
+          (equal values '(41))
+          (string= selected-restart-name "USE-VALUE"))
+     "an invoke recovery executes its source arguments against a live restart"))
+  (setf *lisp-machine-test-repair-value* nil)
+  (multiple-value-bind
+        (values status condition restart-names selected-restart-name)
+      (application-lisp-call-with-debugger
+       (lambda ()
+         (restart-case
+             (error "repair and invoke")
+           (use-value (value)
+             value)))
+       :restart-selector
+       (lambda (condition restarts)
+         (declare (ignore condition restarts))
+         (values
+          (lisp-machine-tests--recovery
+           ':repair-and-invoke
+           :restart-id "restart-1"
+           :preparation-source
+           "(setf *lisp-machine-test-repair-value* :prepared)"
+           :argument-source "*lisp-machine-test-repair-value*")
+          nil)))
+    (declare (ignore condition restart-names))
+    (test-assert
+     (and (eq status ':ok)
+          (equal values '(:prepared))
+          (eq *lisp-machine-test-repair-value* ':prepared)
+          (string= selected-restart-name "USE-VALUE"))
+     "repair-and-invoke runs preparation before invoking the live restart"))
+  (let ((calls 0))
+    (multiple-value-bind
+          (values status condition restart-names selected-restart-name)
+        (application-lisp-call-with-debugger
+         (lambda ()
+           (if (= (incf calls) 1)
+               (error "retry")
+               :retried))
+         :retry-p t
+         :restart-selector
+         (lambda (condition restarts)
+           (declare (ignore condition restarts))
+           (values (lisp-machine-tests--recovery ':retry-operation) nil)))
+      (declare (ignore condition restart-names))
+      (test-assert
+       (and (= calls 2)
+            (eq status ':ok)
+            (equal values '(:retried))
+            (string= selected-restart-name "RETRY-OPERATION"))
+       "retry recovery reruns the explicit operation boundary")))
+  (setf *lisp-machine-test-repair-value* nil)
+  (let ((calls 0))
+    (multiple-value-bind
+          (values status condition restart-names selected-restart-name)
+        (application-lisp-call-with-debugger
+         (lambda ()
+           (incf calls)
+           (if *lisp-machine-test-repair-value*
+               *lisp-machine-test-repair-value*
+               (error "repair and retry")))
+         :retry-p t
+         :restart-selector
+         (lambda (condition restarts)
+           (declare (ignore condition restarts))
+           (values
+            (lisp-machine-tests--recovery
+             ':repair-and-retry
+             :preparation-source
+             "(setf *lisp-machine-test-repair-value* :repaired)")
+            nil)))
+      (declare (ignore condition restart-names))
+      (test-assert
+       (and (= calls 2)
+            (eq status ':ok)
+            (equal values '(:repaired))
+            (string= selected-restart-name "REPAIR-AND-RETRY"))
+       "repair-and-retry applies source before rerunning the operation")))
+  (multiple-value-bind
+        (values status condition restart-names selected-restart-name)
+      (application-lisp-call-with-debugger
+       (lambda ()
+         (error "replace values"))
+       :return-values-p t
+       :restart-selector
+       (lambda (condition restarts)
+         (declare (ignore condition restarts))
+         (values
+          (lisp-machine-tests--recovery
+           ':return-values :return-source "(values :replacement 7)")
+          nil)))
+    (declare (ignore condition restart-names))
+    (test-assert
+     (and (eq status ':ok)
+          (equal values '(:replacement 7))
+          (string= selected-restart-name "RETURN-VALUES"))
+     "return-values recovery supplies replacement multiple values"))
+  (multiple-value-bind
+        (values status condition restart-names selected-restart-name)
+      (application-lisp-call-with-debugger
+       (lambda ()
+         (error "abort"))
+       :restart-selector
+       (lambda (condition restarts)
+         (declare (ignore condition restarts))
+         (values (lisp-machine-tests--recovery ':abort-operation) nil)))
+    (declare (ignore values condition restart-names))
+    (test-assert
+     (and (eq status ':aborted)
+          (string= selected-restart-name "ABORT-USER-OPERATION"))
+     "abort recovery selects the explicit user-operation abort boundary"))
+  (let ((metadata nil))
+    (application-lisp-call-with-debugger
+     (lambda ()
+       (error "metadata"))
+     :source nil
+     :operation-kind ':command
+     :retry-p nil
+     :return-values-p t
+     :restart-selector
+     (lambda (condition restarts)
+       (declare (ignore condition restarts))
+       (setf metadata
+             (list *application-debugger-source*
+                   *application-debugger-operation-kind*
+                   *application-debugger-retry-p*
+                   *application-debugger-return-values-p*))
+       (values nil nil)))
+    (test-assert
+     (equal metadata '("" :command nil t))
+     "debugger metadata normalizes absent source and reaches the live selector"))
+  nil)
+
+(-> test-application-debugger-modal-recoveries () null)
+(defun test-application-debugger-modal-recoveries ()
+  "Test stable modal recovery choices and diagnosis cancellation."
+  (let ((terminal (make-instance 'scripted-terminal :columns 100 :styled-p t)))
+    (multiple-value-bind (application root)
+        (lisp-machine-tests--application :terminal terminal)
+      (let ((ui (application-ui application)))
+        (unwind-protect
+             (progn
+               (terminal-ui-start ui)
+               (let ((choices (list "ask-autolith" "AUTOLITH-RECOVERY-1"))
+                     (cancel-count 0)
+                     (all-items-valid-p t)
+                     (proposal
+                       (lisp-machine-tests--recovery
+                        ':return-values
+                        :return-source "(values :modal-recovery 9)")))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'terminal-ui-select
+                         (lambda (ignored &key items &allow-other-keys)
+                           (declare (ignore ignored))
+                           (setf all-items-valid-p
+                                 (and all-items-valid-p
+                                      (every #'terminal-completion-p items)
+                                      (every (lambda (item)
+                                               (typep (getf item :value)
+                                                      '(option string)))
+                                             items)))
+                           (pop choices)))
+                   (list 'application-debugger-start-diagnosis
+                         (lambda (session configuration)
+                           (declare (ignore configuration))
+                           (setf (application-debugger-diagnosis-state session)
+                                 ':complete
+                                 (application-debugger-explanation session)
+                                 "Use replacement values."
+                                 (application-debugger-proposals session)
+                                 (list proposal))
+                           session))
+                   (list 'application-debugger-cancel-diagnosis
+                         (lambda (session)
+                           (incf cancel-count)
+                           (setf (application-debugger-diagnosis-state session)
+                                 ':cancelled)
+                           session)))
+                  (lambda ()
+                    (multiple-value-bind
+                          (values status condition restart-names
+                                  selected-restart-name)
+                        (application-lisp-call-with-ui-debugger
+                         application
+                         (lambda ()
+                           (error "modal recovery"))
+                         :source nil
+                         :operation-kind ':command
+                         :retry-p t
+                         :return-values-p t)
+                      (declare (ignore condition restart-names))
+                      (test-assert all-items-valid-p
+                                   "diagnosis modal rows remain valid completions")
+                      (test-assert (null choices)
+                                   "diagnosis consumes the selected recovery choice")
+                      (test-assert (zerop cancel-count)
+                                   "completed diagnosis does not require cancellation")
+                      (test-assert (eq status ':ok)
+                                   "selected diagnosis recovery completes successfully")
+                      (test-assert (equal values '(:modal-recovery 9))
+                                   "selected diagnosis recovery returns replacement values")
+                      (test-assert (string= selected-restart-name "RETURN-VALUES")
+                                   "diagnosis resolves a stable name to its recovery object")))))
+               (let ((choices (list "ask-autolith" "0"))
+                     (cancel-count 0))
+                 (test-call-with-function-replacements
+                  (list
+                   (list 'terminal-ui-select
+                         (lambda (ignored &key &allow-other-keys)
+                           (declare (ignore ignored))
+                           (pop choices)))
+                   (list 'application-debugger-start-diagnosis
+                         (lambda (session configuration)
+                           (declare (ignore configuration))
+                           (setf (application-debugger-diagnosis-state session)
+                                 ':running)
+                           session))
+                   (list 'application-debugger-cancel-diagnosis
+                         (lambda (session)
+                           (incf cancel-count)
+                           (setf (application-debugger-diagnosis-state session)
+                                 ':cancelled)
+                           session)))
+                  (lambda ()
+                    (multiple-value-bind
+                          (values status condition restart-names
+                                  selected-restart-name)
+                        (application-lisp-call-with-ui-debugger
+                         application
+                         (lambda ()
+                           (restart-case
+                               (error "live restart")
+                             (continue ()
+                               :continued))))
+                      (declare (ignore condition restart-names))
+                      (test-assert
+                       (and (null choices)
+                            (= cancel-count 1)
+                            (eq status ':ok)
+                            (equal values '(:continued))
+                            (string= selected-restart-name "CONTINUE"))
+                      "selecting a live restart cancels an active diagnosis"))))))
+                (let ((choices (list "ask-autolith" "diagnosis-info" "0"))
+                      (cancel-count 0)
+                      (explanation-visible-p nil))
+                  (test-call-with-function-replacements
+                   (list
+                    (list 'terminal-ui-select
+                          (lambda (ignored &key items on-event poll-interval
+                                             &allow-other-keys)
+                            (declare (ignore ignored items))
+                            (when poll-interval
+                              (let* ((replacement (funcall on-event ':poll nil))
+                                     (replacement-items (third replacement)))
+                                (setf explanation-visible-p
+                                      (some (lambda (item)
+                                              (and (string= (getf item :value)
+                                                            "diagnosis-info")
+                                                   (search "The failure is understood."
+                                                           (getf item :description))))
+                                            replacement-items))))
+                            (pop choices)))
+                    (list 'application-debugger-start-diagnosis
+                          (lambda (session configuration)
+                            (declare (ignore configuration))
+                            (setf (application-debugger-diagnosis-state session)
+                                  ':complete
+                                  (application-debugger-explanation session)
+                                  "The failure is understood.")
+                            session))
+                    (list 'application-debugger-cancel-diagnosis
+                          (lambda (session)
+                            (incf cancel-count)
+                            (setf (application-debugger-diagnosis-state session)
+                                  ':cancelled)
+                            session)))
+                   (lambda ()
+                     (multiple-value-bind
+                           (values status condition restart-names
+                                   selected-restart-name)
+                         (application-lisp-call-with-ui-debugger
+                          application
+                          (lambda ()
+                            (restart-case
+                                (error "explain and return")
+                              (continue ()
+                                :continued-after-explanation))))
+                       (declare (ignore condition restart-names))
+                       (test-assert
+                        (and (null choices)
+                             explanation-visible-p
+                             (zerop cancel-count)
+                             (eq status ':ok)
+                             (equal values '(:continued-after-explanation))
+                             (string= selected-restart-name "CONTINUE"))
+                        "diagnosis explanation returns to the same live restart selector")))))
+          (ignore-errors (terminal-ui-stop ui))
+          (ignore-errors
+            (tool-registry-close-runtime-state
+             (application-tool-registry application)))
+          (uiop:delete-directory-tree root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))))
+  nil)
+
 (-> test-application-lisp-activity () null)
 (defun test-application-lisp-activity ()
   "Test local evaluation remains visible without replacing provider activity."
@@ -972,6 +1418,8 @@
   "Run direct local Lisp evaluation and responsive routing tests."
   (test-application-lisp-evaluation)
   (test-application-restart-debugger)
+  (test-application-debugger-recoveries)
+  (test-application-debugger-modal-recoveries)
   (test-application-lisp-activity)
   (test-application-lisp-input-routing)
   (test-application-prompt-marker-reader-order)

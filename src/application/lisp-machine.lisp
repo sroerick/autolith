@@ -89,105 +89,221 @@ are presented by the evaluator."
     (multiple-value-list (eval (self-read-form source)))))
 
 (-> application-lisp-call-with-debugger
-    (function &key (:restart-selector (option function))
+    (function &key (:application (option application))
+                   (:source (option string))
+                   (:operation-kind keyword)
+                   (:retry-p boolean)
+                   (:return-values-p boolean)
+                   (:restart-selector (option function))
                    (:debug-condition-p function))
     (values list (member :ok :aborted) (option string) list (option string)))
 (defun application-lisp-call-with-debugger
-    (function &key restart-selector (debug-condition-p (constantly t)))
+    (function &key application (source "") (operation-kind ':lisp)
+      (retry-p t) (return-values-p nil) restart-selector
+      (debug-condition-p (constantly t)))
   "Call FUNCTION under live restart selection without entering SBCL's debugger.
 
 RESTART-SELECTOR receives each signaling condition accepted by DEBUG-CONDITION-P
-and its selectable live restarts. It returns a selected restart and optional
-Lisp source whose multiple values become restart arguments. Returning NIL
-invokes ABORT-USER-OPERATION. Autolith control and corruption conditions remain
-outside this user boundary. Return captured values, status, condition text,
-available restart names, and the selected restart name."
+and its selectable live restarts. It returns either a selected live restart and
+optional Lisp argument source, or a validated APPLICATION-DEBUGGER-RECOVERY.
+Returning NIL invokes ABORT-USER-OPERATION. Retry recoveries rerun FUNCTION from
+its explicit operation boundary; effects completed before the failure are not
+rolled back. Autolith control and corruption conditions remain outside this
+user boundary. Return captured values, status, condition text, available restart
+names, and the selected restart name."
   (let ((raw-values nil)
         (status ':ok)
         (condition-text nil)
         (restart-names nil)
         (selected-restart-name nil)
-        (handling-condition-p nil))
-    (labels ((abort-operation ()
+        (handling-condition-p nil)
+        (retry-tag (gensym "APPLICATION-LISP-RETRY"))
+        (return-tag (gensym "APPLICATION-LISP-RETURN")))
+    (labels ((record-recovery-failure (condition)
+               "Record and present one recoverable debugger action failure."
+               (setf condition-text (princ-to-string condition)
+                     selected-restart-name nil)
+               (when application
+                 (application-present
+                  application
+                  (list (terminal-span ':failure "Autolith recovery failed: ")
+                        (terminal-span ':plain condition-text))))
+               nil)
+
+             (abort-operation ()
+               "Abort only the current user operation."
                (let ((restart (find-restart 'abort-user-operation)))
                  (if restart
                      (progn
                        (setf selected-restart-name
                              (symbol-name (restart-name restart)))
                        (invoke-restart restart))
-                     (setf status ':aborted
-                           raw-values nil))))
+                     (progn
+                       (setf status ':aborted
+                             raw-values nil)
+                       (throw return-tag ':return)))))
+
+             (restart-for-id (restarts restart-id)
+               "Return the live restart identified by portable RESTART-ID."
+               (loop for restart in restarts
+                     for index from 1
+                     when (and (stringp restart-id)
+                               (string= restart-id
+                                        (format nil "restart-~D" index)))
+                       return restart))
+
+             (evaluate-source-values (recovery-source)
+               "Evaluate one recovery source form and return all values."
+               (unless (non-empty-string-p recovery-source)
+                 (error 'application-debugger-recovery-error
+                        :proposal nil
+                        :kind nil
+                        :reason "recovery source is empty"))
+               (application-lisp--restart-arguments recovery-source))
 
              (invoke-selected (selected argument-source)
+               "Invoke SELECTED with optional evaluated ARGUMENT-SOURCE."
                (setf selected-restart-name
                      (symbol-name (restart-name selected)))
                (handler-case
-                   (if (non-empty-string-p argument-source)
-                       (apply #'invoke-restart
-                              selected
-                              (application-lisp--restart-arguments
-                               argument-source))
-                       (invoke-restart selected))
+                   (progn
+                     (if (non-empty-string-p argument-source)
+                         (apply #'invoke-restart
+                                selected
+                                (evaluate-source-values argument-source))
+                         (invoke-restart selected))
+                     nil)
                  (serious-condition (condition)
                    (if (application-lisp--control-condition-p condition)
                        (error condition)
-                       (progn
-                         (setf condition-text (princ-to-string condition))
-                         (abort-operation))))))
+                       (record-recovery-failure condition)))))
+
+             (execute-recovery (recovery restarts)
+               "Execute validated RECOVERY against live RESTARTS on this thread."
+               (let ((kind (application-debugger-recovery-kind recovery)))
+                 (setf selected-restart-name
+                       (string-upcase (symbol-name kind)))
+                 (case kind
+                   ((:invoke-restart :repair-and-invoke)
+                    (let ((restart
+                            (restart-for-id
+                             restarts
+                             (application-debugger-recovery-restart-id recovery))))
+                      (unless restart
+                        (error 'application-debugger-recovery-error
+                               :proposal recovery
+                               :kind kind
+                               :reason "target restart is no longer live"))
+                      (when (eq kind ':repair-and-invoke)
+                        (evaluate-source-values
+                         (application-debugger-recovery-preparation-source recovery)))
+                      (invoke-selected
+                       restart
+                       (application-debugger-recovery-argument-source recovery))))
+                   ((:retry-operation :repair-and-retry)
+                    (unless retry-p
+                      (error 'application-debugger-recovery-error
+                             :proposal recovery
+                             :kind kind
+                             :reason "operation does not support retry"))
+                    (when (eq kind ':repair-and-retry)
+                      (evaluate-source-values
+                       (application-debugger-recovery-preparation-source recovery)))
+                    (throw retry-tag ':retry))
+                   (:return-values
+                    (unless return-values-p
+                      (error 'application-debugger-recovery-error
+                             :proposal recovery
+                             :kind kind
+                             :reason "operation does not support returning values"))
+                    (setf raw-values
+                          (evaluate-source-values
+                           (application-debugger-recovery-return-source recovery)))
+                    (throw return-tag ':return))
+                   (:abort-operation
+                    (abort-operation))
+                   (otherwise
+                    (error 'application-debugger-recovery-error
+                           :proposal recovery
+                           :kind kind
+                           :reason "unsupported recovery kind")))))
 
              (handle-condition (condition)
-               (unless (or handling-condition-p
-                           (application-lisp--control-condition-p condition))
+               "Keep CONDITION's stack live until the user resolves or aborts it."
+               (when (and (not handling-condition-p)
+                          (not (application-lisp--control-condition-p condition))
+                          (funcall debug-condition-p condition))
                  (setf handling-condition-p t)
                  (unwind-protect
-                      (when (funcall debug-condition-p condition)
-                        (let ((restarts
-                                (application-lisp--selectable-restarts condition)))
-                          (setf condition-text (princ-to-string condition)
-                                restart-names
-                                (mapcar (lambda (restart)
-                                          (symbol-name (restart-name restart)))
-                                        restarts))
+                      (let ((restarts
+                              (application-lisp--selectable-restarts condition)))
+                        (setf condition-text (princ-to-string condition)
+                              restart-names
+                              (mapcar (lambda (restart)
+                                        (symbol-name (restart-name restart)))
+                                      restarts))
+                        (loop
                           (multiple-value-bind (selected argument-source)
                               (and restart-selector
                                    (funcall restart-selector condition restarts))
-                            (if (and selected
-                                     (member selected restarts :test #'eq))
-                                (invoke-selected selected argument-source)
+                            (cond
+                              ((and selected
+                                    (member selected restarts :test #'eq))
+                               (invoke-selected selected argument-source))
+                              ((typep selected 'application-debugger-recovery)
+                               (handler-case
+                                   (execute-recovery selected restarts)
+                                 (serious-condition (recovery-condition)
+                                   (if (application-lisp--control-condition-p
+                                        recovery-condition)
+                                       (error recovery-condition)
+                                       (record-recovery-failure
+                                        recovery-condition)))))
+                              (t
+                               (abort-operation))))))
+                   (setf handling-condition-p nil))))
+
+             (run-operation ()
+               "Run FUNCTION with serious and debugger-hook condition capture."
+               (let* ((outer-invoke-hook sb-ext:*invoke-debugger-hook*)
+                      (outer-debugger-hook *debugger-hook*)
+                      (report-to-prompt
+                        (lambda (condition hook)
+                          (if (application-lisp--control-condition-p condition)
+                              (let ((outer
+                                      (or outer-invoke-hook outer-debugger-hook)))
+                                (when outer
+                                  (funcall outer condition hook)))
+                              (progn
+                                (handle-condition condition)
+                                (unless condition-text
+                                  (setf condition-text
+                                        (princ-to-string condition)))
                                 (abort-operation)))))
-                   (setf handling-condition-p nil)))))
+                      (sb-ext:*invoke-debugger-hook* report-to-prompt)
+                      (*debugger-hook* report-to-prompt))
+                  (let ((*application-debugger-source* (or source ""))
+                        (*application-debugger-operation-kind* operation-kind)
+                        (*application-debugger-retry-p* retry-p)
+                        (*application-debugger-return-values-p* return-values-p))
+                    (handler-bind ((serious-condition #'handle-condition))
+                      (setf raw-values
+                            (multiple-value-list (funcall function))))))))
       (restart-case
-          ;; CL:ERROR accepts conditions outside SERIOUS-CONDITION, and callers
-          ;; do exactly that: asdf/source-registry:invalid-source-registry is a
-          ;; WARNING signaled through ERROR whenever a source-registry form
-          ;; omits its terminating :INHERIT-CONFIGURATION. Such a condition
-          ;; passes the handler below untouched and reaches the debugger, which
-          ;; SB-EXT:DISABLE-DEBUGGER has turned into an immediate process exit,
-          ;; so one malformed user form would kill the image. Report it at this
-          ;; boundary and leave control conditions to the outer hooks.
-          (let* ((outer-invoke-hook sb-ext:*invoke-debugger-hook*)
-                 (outer-debugger-hook *debugger-hook*)
-                 (report-to-prompt
-                   (lambda (condition hook)
-                     (if (application-lisp--control-condition-p condition)
-                         (let ((outer (or outer-invoke-hook outer-debugger-hook)))
-                           (when outer
-                             (funcall outer condition hook)))
-                         (progn
-                           (handle-condition condition)
-                           (unless condition-text
-                             (setf condition-text (princ-to-string condition)))
-                           (abort-operation)))))
-                 (sb-ext:*invoke-debugger-hook* report-to-prompt)
-                 (*debugger-hook* report-to-prompt))
-            (handler-bind ((serious-condition #'handle-condition))
-              (setf raw-values (multiple-value-list (funcall function)))))
+          (loop
+            (let ((outcome
+                    (catch retry-tag
+                      (catch return-tag
+                        (run-operation)
+                        ':done))))
+              (unless (eq outcome ':retry)
+                (return))))
         (abort-user-operation ()
           :report "Return to the Autolith prompt."
           (setf status ':aborted
-                raw-values nil))))
-    (values raw-values status condition-text restart-names
-            selected-restart-name)))
+                raw-values nil)))
+      (values raw-values status condition-text restart-names
+              selected-restart-name))))
 
 (-> application-lisp-evaluate
     (string &key (:restart-selector (option function))
@@ -218,12 +334,17 @@ journaling or provider conversation projection."
           (multiple-value-bind
                 (values debugger-status debugger-condition debugger-restart-names
                         debugger-selected-restart-name)
-              (application-lisp-call-with-debugger
-               (lambda ()
-                 (when application
-                   (application-operation-install-bindings application))
-                 (eval (self-read-form source)))
-               :restart-selector restart-selector)
+                (application-lisp-call-with-debugger
+                 (lambda ()
+                   (when application
+                     (application-operation-install-bindings application))
+                   (eval (self-read-form source)))
+                 :application application
+                 :source source
+                 :operation-kind ':lisp
+                 :retry-p t
+                 :return-values-p t
+                 :restart-selector restart-selector)
             (setf raw-values values
                   status debugger-status
                   condition-text debugger-condition
@@ -398,9 +519,12 @@ journaling or provider conversation projection."
 
 (-> application-lisp--select-restart
     (application serious-condition list)
-    (values (option restart) (option string)))
+    (values (option (or restart application-debugger-recovery)) (option string)))
 (defun application-lisp--select-restart (application condition restarts)
-  "Present CONDITION and let the local user choose one live RESTART."
+  "Present CONDITION in a stack-preserving live debugger modal loop.
+
+The owner thread remains inside its dynamic restart binding while an independent
+Autolith diagnosis may propose validated executable recoveries."
   (let* ((ui (application-ui application))
          (terminal (and ui (terminal-ui-terminal ui))))
     (when ui
@@ -409,40 +533,249 @@ journaling or provider conversation projection."
        (application-lisp--debugger-condition-entry condition)))
     (unless (and ui terminal (terminal-interactive-p terminal))
       (return-from application-lisp--select-restart (values nil nil)))
-    (let* ((items (application-lisp--restart-items restarts))
-           (preferred-index
-             (application-lisp--preferred-restart-index restarts))
-           (choice
-             (terminal-ui-select
-              ui
-              :title "restart debugger"
-              :items items
-              :initial-name (format nil "~D" preferred-index)
-              :resize-callback #'application-pending-terminal-size))
-           (index (and choice (parse-integer choice :junk-allowed t)))
-           (restart (and index (nth index restarts))))
-      (if (and restart
-               (member (restart-name restart)
-                       *application-lisp-value-restart-names*
-                       :test #'eq))
-          (let ((source (application-lisp--read-restart-value application)))
-            (if (non-empty-string-p source)
-                (values restart source)
-                (values nil nil)))
-          (values restart nil)))))
+    (let* ((live-items (application-lisp--restart-items restarts))
+           (preferred-index (application-lisp--preferred-restart-index restarts))
+           (session
+             (make-instance
+              'application-debugger-session
+              :condition-type (string-downcase (symbol-name (type-of condition)))
+              :condition-report (bounded-string (princ-to-string condition)
+                                                :limit 512)
+              :source *application-debugger-source*
+              :operation-kind *application-debugger-operation-kind*
+              :owner-thread (current-thread)
+              :application application
+              :restarts
+              (loop for restart in restarts
+                    for index from 1
+                    collect (list :id (format nil "restart-~D" index)
+                                  :report (application-lisp--restart-report restart)))
+              :capabilities
+              (list :invoke-restart t
+                    :repair-and-invoke t
+                    :retry-operation *application-debugger-retry-p*
+                    :repair-and-retry *application-debugger-retry-p*
+                    :return-values *application-debugger-return-values-p*
+                    :abort-operation t)
+              :backtrace (application-safe-backtrace))))
+      (labels ((live-choice (choice)
+                 "Resolve CHOICE to a live restart and optional argument source."
+                 (let* ((index (and (stringp choice)
+                                    (parse-integer choice :junk-allowed t)))
+                        (restart (and index (nth index restarts))))
+                   (if (and restart
+                            (member (restart-name restart)
+                                    *application-lisp-value-restart-names*
+                                    :test #'eq))
+                       (let ((source (application-lisp--read-restart-value application)))
+                         (if (non-empty-string-p source)
+                             (values restart source)
+                             (values nil nil)))
+                       (values restart nil))))
+
+               (diagnosis-info-item (snapshot)
+                 "Build the bounded explanation or failure entry for SNAPSHOT."
+                 (let* ((text
+                          (or (getf snapshot :explanation)
+                              (getf snapshot :failure)
+                              "Diagnosis completed without an explanation."))
+                        (bounded-text (bounded-string text :limit 512))
+                        (description (format nil "diagnosis  ~A" bounded-text)))
+                   (list :name "diagnosis"
+                         :argument nil
+                         :value "diagnosis-info"
+                         :group "Autolith diagnosis"
+                         :description description
+                         :description-spans
+                         (list (terminal-span ':notice "diagnosis")
+                               (terminal-span ':dim
+                                              (format nil "  ~A" bounded-text))))))
+
+               (diagnosis-items (snapshot running-p)
+                 "Build the diagnosis modal items while preserving live RESTARTS."
+                 (let ((proposals (getf snapshot :proposals)))
+                   (append
+                    live-items
+                    (if running-p
+                        (list (list :name "cancel-diagnosis"
+                                    :argument nil
+                                    :value "cancel-diagnosis"
+                                    :group "Autolith diagnosis"
+                                    :description "cancel diagnosis"
+                                    :description-spans
+                                    (list (terminal-span ':failure
+                                                         "cancel diagnosis"))))
+                        (list (diagnosis-info-item snapshot)))
+                    (loop for proposal in (subseq (reverse proposals) 0
+                                                   (min 3 (length proposals)))
+                          for name in *application-debugger-recovery-names*
+                          for report = (bounded-string
+                                        (application-debugger-recovery-report proposal)
+                                        :limit 512)
+                          for description = (format nil "~A  ~A" name report)
+                          collect
+                          (list :name name
+                                :argument nil
+                                :value name
+                                :group "Autolith recoveries"
+                                :description description
+                                :description-spans
+                                (list (terminal-span ':success name)
+                                      (terminal-span ':dim
+                                                     (format nil "  ~A" report))))))))
+
+               (normal-items ()
+                 "Build the ordinary live-restart selector items."
+                 (append live-items
+                         (list (list :name "ask-autolith"
+                                     :argument nil
+                                     :value "ask-autolith"
+                                     :group "Autolith diagnosis"
+                                     :description "Ask Autolith why this failed"
+                                     :description-spans
+                                     (list (terminal-span
+                                            ':brand
+                                            "Ask Autolith why this failed"))))))
+
+               (recovery-choice (choice)
+                 "Resolve a fixed recovery CHOICE to the current proposal object."
+                 (let ((index
+                         (and (stringp choice)
+                              (position choice
+                                        *application-debugger-recovery-names*
+                                        :test #'string=))))
+                   (and index
+                        (nth index
+                             (reverse
+                              (getf (application-debugger-poll session)
+                                    :proposals))))))
+
+               (interrupt-event ()
+                 "Handle an interrupt without losing a live debugger modal."
+                 (let* ((controller (application-input-controller application))
+                        (active-p (and controller
+                                       (application-input-controller-turn-active-p
+                                        controller))))
+                   (if (not active-p)
+                       '(:cancel)
+                       (case (application-input-controller--active-turn-interrupt-action
+                              controller)
+                         (:force
+                          (application-input-controller--force-interrupt-exit controller)
+                          '(:cancel))
+                         (:hint
+                          nil)
+                         (otherwise
+                          (application-input-controller--request-active-turn-cancellation
+                           controller
+                           :force-exit-window-p t
+                           :pause-queued-work-p t)
+                          nil)))))
+
+               (normal-event (event selector)
+                 "Handle ordinary debugger picker events."
+                 (declare (ignore selector))
+                 (case event
+                   (:interrupt (interrupt-event))
+                   ((:escape :stream-end) '(:cancel))
+                   (otherwise nil)))
+
+               (diagnose ()
+                 "Run the independent diagnosis modal and return its selection."
+                 (application-debugger-start-diagnosis
+                  session (application-configuration application))
+                 (unwind-protect
+                      (let* ((running-items
+                               (diagnosis-items
+                                (application-debugger-poll session) t))
+                             (choice
+                               (terminal-ui-select
+                                ui
+                                :title "restart debugger"
+                                :items running-items
+                                :initial-name (format nil "~D" preferred-index)
+                                :resize-callback #'application-pending-terminal-size
+                                :poll-interval 0.1
+                                :on-event
+                                (lambda (event selector)
+                                  (declare (ignore selector))
+                                  (cond
+                                    ((eq event ':escape)
+                                     '(:cancel))
+                                    ((eq event ':interrupt)
+                                     (interrupt-event))
+                                    ((eq event ':stream-end)
+                                     '(:cancel))
+                                    ((eq event ':poll)
+                                     (let* ((snapshot
+                                              (application-debugger-poll session))
+                                            (state (getf snapshot :state)))
+                                       (list ':replace "restart debugger"
+                                             (diagnosis-items
+                                              snapshot
+                                              (eq state ':running))))))))))
+                        (or (recovery-choice choice) choice))
+                   (when (eq (getf (application-debugger-poll session) :state)
+                             ':running)
+                     (application-debugger-cancel-diagnosis session)))))
+      (loop
+        (let ((choice
+                (terminal-ui-select
+                 ui
+                 :title "restart debugger"
+                 :items (normal-items)
+                 :initial-name (format nil "~D" preferred-index)
+                 :resize-callback #'application-pending-terminal-size
+                 :on-event #'normal-event)))
+          (cond
+            ((null choice)
+             (return (values nil nil)))
+            ((string= choice "ask-autolith")
+               (let ((diagnosis-choice (diagnose)))
+                 (cond
+                   ((or (null diagnosis-choice)
+                        (and (stringp diagnosis-choice)
+                             (member diagnosis-choice
+                                     '("cancel-diagnosis" "diagnosis-info")
+                                     :test #'string=)))
+                    nil)
+                   ((typep diagnosis-choice 'application-debugger-recovery)
+                    (return (values diagnosis-choice nil)))
+                   ((member diagnosis-choice
+                            (mapcar (lambda (item) (getf item :name)) live-items)
+                            :test #'string=)
+                    (multiple-value-bind (restart source)
+                        (live-choice diagnosis-choice)
+                      (return (values restart source)))))))
+            (t
+             (multiple-value-bind (restart source) (live-choice choice)
+               (return (values restart source)))))))))))
 
 (-> application-lisp-call-with-ui-debugger
-    (application function &key (:debug-condition-p function))
+    (application function
+     &key (:debug-condition-p function)
+          (:source (option string))
+          (:operation-kind keyword)
+          (:retry-p boolean)
+          (:return-values-p boolean))
     (values list (member :ok :aborted) (option string) list (option string)))
 (defun application-lisp-call-with-ui-debugger
-    (application function &key (debug-condition-p (constantly t)))
+    (application function
+     &key (debug-condition-p (constantly t)) source
+       (operation-kind ':command) (retry-p t) (return-values-p nil))
   "Call FUNCTION under APPLICATION's styled local restart debugger."
-  (application-lisp-call-with-debugger
-   function
-   :restart-selector
-   (lambda (condition restarts)
-     (application-lisp--select-restart application condition restarts))
-   :debug-condition-p debug-condition-p))
+  (let ((effective-source (or source "")))
+    (application-lisp-call-with-debugger
+     function
+     :application application
+     :source effective-source
+     :operation-kind operation-kind
+     :retry-p retry-p
+     :return-values-p return-values-p
+     :restart-selector
+     (lambda (condition restarts)
+       (application-lisp--select-restart application condition restarts))
+     :debug-condition-p debug-condition-p)))
 
 (-> application-lisp--user-operation-result
     (application-lisp-evaluation list)

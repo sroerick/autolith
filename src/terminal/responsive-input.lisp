@@ -1874,11 +1874,17 @@ reaches the very next provider request."
           (application-input-controller--open-prompt-if-ready controller))))))
 
 (-> application--call-with-command-debugger
-    (application function &key (:expected-error-function function))
+    (application function
+     &key (:expected-error-function function)
+          (:source (option string))
+          (:operation-kind keyword)
+          (:retry-p boolean)
+          (:return-values-p boolean))
     (values keyword (option string)))
 (defun application--call-with-command-debugger
     (application function
-     &key (expected-error-function #'application-handle-expected-error))
+     &key (expected-error-function #'application-handle-expected-error)
+       source (operation-kind ':command) retry-p (return-values-p nil))
   "Call FUNCTION under the user restart debugger and fatal condition boundary."
   (let ((signal-backtrace nil))
     (handler-bind
@@ -1892,6 +1898,10 @@ reaches the very next provider request."
                         selected-restart-name)
               (application-lisp-call-with-ui-debugger
                application function
+               :source source
+               :operation-kind operation-kind
+               :retry-p retry-p
+               :return-values-p return-values-p
                :debug-condition-p
                (lambda (condition)
                  (not (typep condition 'autolith-error))))
@@ -1961,6 +1971,10 @@ reaches the very next provider request."
                 application
                 (lambda ()
                   (application-command-execute command application invocation))
+                :source (application-command-invocation-input invocation)
+                :operation-kind ':command
+                :retry-p t
+                :return-values-p nil
                 :expected-error-function
                 (lambda (observed-application observed-condition)
                   (application-present
@@ -3241,7 +3255,11 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
            (application--call-with-command-debugger
             application
             (lambda ()
-              (application-handle-input application input)))
+              (application-handle-input application input))
+            :source input
+            :operation-kind ':command
+            :retry-p t
+            :return-values-p nil)
          (application-user-operation-record-command-outcome
           application invocation :action result :condition condition)
          (application-operation-present-command-hint application invocation)

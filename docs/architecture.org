@@ -64,6 +64,10 @@ terminal prompt          local Lisp result       finalized scrollback
 - The reader classifies prose, explicit Lisp, and callable operations
 - The application evaluates one top-level form and shows values, output,
   conditions, and restarts
+- =src/application/debugger.lisp= snapshots only portable condition, source,
+  restart, capability, and backtrace data for an independent diagnosis thread
+- The owner thread retains restart dynamic extent; selected synthetic recoveries
+  execute on that owner thread and never transfer restart objects across threads
 - =src/agent/runtime.lisp= runs one model turn at a time
 - User input is persisted first before we do anything else
 - Context pressure triggers inline durable compaction
