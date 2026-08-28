@@ -5,10 +5,6 @@
 (defparameter *api-key-store-version* 1
   "The portable version of Autolith's OpenAI-compatible API-key store.")
 
-(defvar *api-key-store-lock*
-  (make-lock "Autolith API-key store")
-  "The lock protecting in-process API-key store updates and reads.")
-
 (defclass api-key-credential-source (autolith-credential-source)
   ((provider-name
     :initarg :provider-name
@@ -29,24 +25,9 @@
   (let ((lock-pathname
           (merge-pathnames
            "api-keys.lock"
-           (uiop:pathname-directory-pathname pathname)))
-        (descriptor nil))
+           (uiop:pathname-directory-pathname pathname))))
     (handler-case
-        (progn
-          (ensure-directories-exist lock-pathname)
-          (with-lock-held (*api-key-store-lock*)
-            (setf descriptor
-                  (sb-posix:open
-                   (namestring lock-pathname)
-                   (logior sb-posix:o-creat sb-posix:o-rdwr)
-                   #o600))
-            (unwind-protect
-                 (progn
-                   (sb-posix:lockf descriptor sb-posix:f-lock 0)
-                   (funcall function))
-              (ignore-errors (sb-posix:lockf descriptor sb-posix:f-ulock 0))
-              (ignore-errors (sb-posix:close descriptor))
-              (setf descriptor nil))))
+        (call-with-file-lock lock-pathname function)
       (authentication-error (condition)
         (error condition))
       (error (cause)

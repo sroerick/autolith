@@ -25,6 +25,7 @@
                #:idsmall
                #:image-daemon
                #:ironclad/mac/siphash
+               #:ls-flock
                #:bordeaux-threads
                #:mcparen
                #:opticl

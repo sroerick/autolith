@@ -130,6 +130,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/ls-compat.git" :ref "b3b8557a133b7410ddb2a2244139a5097e8d4b9d")
   :version "git-b3b8557a133b7410ddb2a2244139a5097e8d4b9d"))
+("ls-flock" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/ls-flock.git" :ref "8c8476c8b3bed17bd748dbce4deeccbf668ca1ef")
+  :version "git-8c8476c8b3bed17bd748dbce4deeccbf668ca1ef"))
 ("sexp-store" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "815ef23b48b9bd9ef974ada28b9e8c1b5cf11b1f")

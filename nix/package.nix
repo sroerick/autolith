@@ -107,6 +107,21 @@ let
     ];
   };
 
+  lsFlock = pkgs.sbcl.buildASDFSystem {
+    pname = "ls-flock";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "ls-flock";
+      rev = "8c8476c8b3bed17bd748dbce4deeccbf668ca1ef";
+      hash = "sha256-rZfobPB3+h5IWjlXPzJFsiPWkvebQQLhPhyd/j1I3s8=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      bordeaux-threads
+      osicat
+    ];
+  };
+
   clSkills = pkgs.sbcl.buildASDFSystem {
     pname = "cl-skills";
     version = "0.1.0";
@@ -445,6 +460,7 @@ let
       clSkills
       idsmall
       imageDaemon
+      lsFlock
       mcparen
       sbclGenerations
       sbclWorkers

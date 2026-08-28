@@ -592,6 +592,13 @@
                 #:sbcl-worker-start
                 #:sbcl-worker-stop
                 #:sbcl-worker-used-image-identifier)
+  (:import-from #:ls-flock
+                #:call-with-file-lock
+                #:file-lock-busy
+                #:file-lock-error
+                #:lease-acquire
+                #:lease-held-p
+                #:lease-release)
   (:import-from #:sexp-store
                 #:log-append
                 #:log-map

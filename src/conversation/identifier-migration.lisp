@@ -5,10 +5,6 @@
 (defparameter *conversation-identifier-migration-version* 1
   "The readable migration record version for conversation identifiers.")
 
-(defvar *conversation-identifier-migration-lock*
-  (make-lock "conversation identifier migration")
-  "Serialize legacy identifier migration within one Autolith process.")
-
 (-> conversation-identifier-migration--legacy-identifier-p (t) boolean)
 (defun conversation-identifier-migration--legacy-identifier-p (value)
   "Return true when VALUE has the historical UUID conversation ID shape."
@@ -699,36 +695,23 @@ large conversations that contain no legacy reference."
 (defun conversation-identifier-migration--call-with-file-lock
     (configuration function)
   "Call FUNCTION while holding CONFIGURATION's process-shared migration lock."
-  (let* ((pathname
-           (merge-pathnames "conversation-identifier-migration.lock"
-                            (configuration-state-root configuration)))
-         (descriptor nil))
-    (ensure-directories-exist pathname)
-    (unwind-protect
-         (handler-case
-             (progn
-               (setf descriptor
-                     (sb-posix:open
-                      (namestring pathname)
-                      (logior sb-posix:o-creat sb-posix:o-rdwr)
-                      #o600))
-               (sb-posix:lockf descriptor sb-posix:f-lock 0)
-               (funcall function))
-           (conversation-identifier-migration-error (condition)
-             (error condition))
-           (conversation-identifier-space-exhausted (condition)
-             (error condition))
-           (error (cause)
-             (conversation-identifier-migration--signal
-              configuration
-              ':planning
-              (format nil "Could not lock conversation identifier migration: ~A"
-                      cause)
-              :pathname pathname
-              :cause cause)))
-      (when descriptor
-        (ignore-errors (sb-posix:lockf descriptor sb-posix:f-ulock 0))
-        (ignore-errors (sb-posix:close descriptor))))))
+  (let ((pathname
+          (merge-pathnames "conversation-identifier-migration.lock"
+                           (configuration-state-root configuration))))
+    (handler-case
+        (call-with-file-lock pathname function)
+      (conversation-identifier-migration-error (condition)
+        (error condition))
+      (conversation-identifier-space-exhausted (condition)
+        (error condition))
+      (error (cause)
+        (conversation-identifier-migration--signal
+         configuration
+         ':planning
+         (format nil "Could not lock conversation identifier migration: ~A"
+                 cause)
+         :pathname pathname
+         :cause cause)))))
 
 (-> conversation-identifier-migrate (configuration) list)
 (defun conversation-identifier-migrate (configuration)
@@ -737,9 +720,8 @@ large conversations that contain no legacy reference."
 The durable phase record makes every atomic file replacement and directory
 rename idempotent after interruption. A completed record remains as the alias
 map for old resume commands and retained generations."
-  (with-lock-held (*conversation-identifier-migration-lock*)
-    (conversation-identifier-migration--call-with-file-lock
-     configuration
+  (conversation-identifier-migration--call-with-file-lock
+   configuration
      (lambda ()
        (let* ((record (conversation-identifier-migration--read configuration))
               (legacy-files
@@ -781,7 +763,7 @@ map for old resume commands and retained generations."
                     (format nil "Conversation identifier migration failed: ~A"
                             cause)
                     :cause cause)))))
-           entries))))))
+          entries)))))
 
 (-> conversation-identifier-migration-resolve
     (configuration string)

@@ -7,10 +7,6 @@
 ;;; one state root, and always reloads the latest credential record while the
 ;;; filesystem lock is held.
 
-(defvar *nous-auth-store-lock*
-  (make-lock "Autolith Nous OAuth store")
-  "The in-process lock protecting Nous credential publication and rotation.")
-
 (defclass nous-credential-manager (credential-manager)
   ((refresh-request-function
     :initarg :refresh-request-function
@@ -33,24 +29,9 @@
 (defun nous-authentication--call-with-store-lock (credential-pathname function)
   "Call FUNCTION while holding the process and filesystem Nous OAuth locks."
   (let ((lock-pathname
-          (nous-authentication--lock-pathname credential-pathname))
-        (descriptor nil))
+          (nous-authentication--lock-pathname credential-pathname)))
     (handler-case
-        (progn
-          (ensure-directories-exist lock-pathname)
-          (with-lock-held (*nous-auth-store-lock*)
-            (setf descriptor
-                  (sb-posix:open
-                   (namestring lock-pathname)
-                   (logior sb-posix:o-creat sb-posix:o-rdwr)
-                   #o600))
-            (unwind-protect
-                 (progn
-                   (sb-posix:lockf descriptor sb-posix:f-lock 0)
-                   (funcall function))
-              (ignore-errors (sb-posix:lockf descriptor sb-posix:f-ulock 0))
-              (ignore-errors (sb-posix:close descriptor))
-              (setf descriptor nil))))
+        (call-with-file-lock lock-pathname function)
       (authentication-error (condition)
         (error condition))
       (error (cause)

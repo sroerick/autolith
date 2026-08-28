@@ -441,26 +441,13 @@ discarded items are pruned here rather than retained for the session."
     :reader conversation-lease-identifier
     :type non-empty-string
     :documentation "The normalized conversation identifier held by this lease.")
-   (pathname
-    :initarg :pathname
-    :reader conversation-lease-pathname
-    :type pathname
-    :documentation "The persistent file carrying the process-shared advisory lock.")
-   (descriptor
-    :initarg :descriptor
-    :accessor conversation-lease-descriptor
-    :type (option integer)
-    :documentation "The open descriptor holding the advisory lock, or NIL after release."))
+   (lock-lease
+    :initarg :lock-lease
+    :reader conversation-lease--lock-lease
+    :type ls-flock:lease
+    :documentation "The process-shared exclusive lock lease."))
   (:documentation
    "A process-lifetime exclusive lease on one primary conversation."))
-
-(defvar *conversation-lease-lock*
-  (make-lock "Autolith conversation leases")
-  "Serialize process-local lease registration and descriptor release.")
-
-(defvar *conversation-leases*
-  (make-hash-table :test #'equal)
-  "Map lease pathnames to held primary-conversation leases in this process.")
 
 (-> conversation--lease-pathname (configuration string) pathname)
 (defun conversation--lease-pathname (configuration identifier)
@@ -490,7 +477,7 @@ discarded items are pruned here rather than retained for the session."
 (-> conversation-lease-held-p (conversation-lease) boolean)
 (defun conversation-lease-held-p (lease)
   "Return true when LEASE still owns an open lock descriptor."
-  (not (null (conversation-lease-descriptor lease))))
+  (lease-held-p (conversation-lease--lock-lease lease)))
 
 (-> conversation-lease-matches-p (conversation-lease string) boolean)
 (defun conversation-lease-matches-p (lease identifier)
@@ -511,87 +498,31 @@ owner has exited."
          (conversation-pathname
            (conversation-pathname-for-id configuration normalized))
          (lease-pathname
-           (conversation--lease-pathname configuration normalized))
-         (lease-key (namestring lease-pathname))
-         (descriptor nil)
-         (acquired-p nil))
-    (with-lock-held (*conversation-lease-lock*)
-      (let ((existing (gethash lease-key *conversation-leases*)))
-        (when (and existing (conversation-lease-held-p existing))
-          (conversation--lease-in-use
-           normalized conversation-pathname lease-pathname))
-        (when existing
-          (remhash lease-key *conversation-leases*)))
-      (unwind-protect
-           (handler-case
-               (progn
-                 (ensure-directories-exist lease-pathname)
-                 (setf descriptor
-                       (sb-posix:open
-                        (namestring lease-pathname)
-                        (logior sb-posix:o-creat sb-posix:o-rdwr)
-                        #o600))
-                 (sb-posix:lockf descriptor sb-posix:f-tlock 0)
-                 (let ((lease
-                         (make-instance
-                          'conversation-lease
-                          :identifier normalized
-                          :pathname lease-pathname
-                          :descriptor descriptor)))
-                   (setf acquired-p t
-                         (gethash lease-key *conversation-leases*) lease)
-                   lease))
-             (sb-posix:syscall-error (condition)
-               (if (and
-                    descriptor
-                    (member
-                     (sb-posix:syscall-errno condition)
-                     (list sb-posix:eacces sb-posix:eagain)))
-                   (conversation--lease-in-use
-                    normalized conversation-pathname lease-pathname)
-                   (error
-                    'conversation-invariant-error
-                    :message
-                    (format nil
-                            "Could not claim conversation ~A: ~A"
-                            (conversation-identifier-display normalized)
-                            condition)
-                    :pathname conversation-pathname
-                    :sequence nil)))
-             (conversation-error (condition)
-               (error condition))
-             (error (condition)
-               (error
-                'conversation-invariant-error
-                :message
-                (format nil
-                        "Could not claim conversation ~A: ~A"
-                        (conversation-identifier-display normalized)
-                        condition)
-                :pathname conversation-pathname
-                :sequence nil)))
-        (unless acquired-p
-          (when descriptor
-            (ignore-errors
-              (sb-posix:close descriptor))))))))
+           (conversation--lease-pathname configuration normalized)))
+    (handler-case
+        (make-instance 'conversation-lease
+                       :identifier normalized
+                       :lock-lease (lease-acquire lease-pathname))
+      (file-lock-busy ()
+        (conversation--lease-in-use
+         normalized conversation-pathname lease-pathname))
+      (conversation-error (condition)
+        (error condition))
+      (error (condition)
+        (error
+         'conversation-invariant-error
+         :message
+         (format nil
+                 "Could not claim conversation ~A: ~A"
+                 (conversation-identifier-display normalized)
+                 condition)
+         :pathname conversation-pathname
+         :sequence nil)))))
 
 (-> conversation-lease-release (conversation-lease) null)
 (defun conversation-lease-release (lease)
-  "Release LEASE idempotently.
-
-Closing the descriptor is the final authority even when an explicit unlock
-reports an operating-system failure."
-  (with-lock-held (*conversation-lease-lock*)
-    (let ((descriptor (conversation-lease-descriptor lease))
-          (lease-key (namestring (conversation-lease-pathname lease))))
-      (when descriptor
-        (when (eq (gethash lease-key *conversation-leases*) lease)
-          (remhash lease-key *conversation-leases*))
-        (setf (conversation-lease-descriptor lease) nil)
-        (ignore-errors
-          (sb-posix:lockf descriptor sb-posix:f-ulock 0))
-        (ignore-errors
-          (sb-posix:close descriptor)))))
+  "Release LEASE idempotently."
+  (lease-release (conversation-lease--lock-lease lease))
   nil)
 
 

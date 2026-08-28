@@ -14,10 +14,6 @@
 (defparameter *project-adaptation-fallback-user-turns* 12
   "The substantial-conversation fallback when durable times are unavailable.")
 
-(defvar *project-adaptation-offer-state-lock*
-  (make-lock "Autolith project adaptation offer state")
-  "The in-process lock serializing project adaptation offer decisions.")
-
 (defparameter *project-adaptation-notes-template*
   "#+title: Autolith project adaptations
 
@@ -192,21 +188,7 @@ discarded or obsolete candidates.
             "project-adaptation-offers.lock"
             (uiop:pathname-directory-pathname state-pathname))))
     (handler-case
-        (progn
-          (ensure-directories-exist lock-pathname)
-          (with-lock-held (*project-adaptation-offer-state-lock*)
-            (with-open-file (stream lock-pathname
-                                    :direction ':output
-                                    :if-exists ':append
-                                    :if-does-not-exist ':create)
-              (let ((file-descriptor (sb-sys:fd-stream-fd stream)))
-                (file-position stream 0)
-                (sb-posix:lockf file-descriptor sb-posix:f-lock 0)
-                (unwind-protect
-                     (funcall function)
-                  (ignore-errors
-                    (sb-posix:lockf
-                     file-descriptor sb-posix:f-ulock 0)))))))
+        (call-with-file-lock lock-pathname function)
       (project-adaptation-error (condition)
         (error condition))
       (error (cause)

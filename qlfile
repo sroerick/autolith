@@ -27,6 +27,7 @@ git parenchek https://github.com/luciusmagn/parenchek.git :ref a7dc0a7e2c6250056
 git org-templater https://github.com/lambda-symbolics/org-templater.git :ref 918d456528474e880014fe8377e4810e4a55e6a9
 git image-daemon https://github.com/lambda-symbolics/image-daemon.git :ref fb530e996ab83f91b79d316b93c98517b7e25bfd
 git ls-compat https://github.com/lambda-symbolics/ls-compat.git :ref b3b8557a133b7410ddb2a2244139a5097e8d4b9d
+git ls-flock https://github.com/lambda-symbolics/ls-flock.git :ref 8c8476c8b3bed17bd748dbce4deeccbf668ca1ef
 git idsmall https://github.com/luciusmagn/idsmall.git :ref 3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9
 git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b7978748c3d453bc3287
 git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref e65e27e9ac969c5a83c3f9c2318ae4237856d53f
