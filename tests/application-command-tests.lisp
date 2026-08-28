@@ -516,7 +516,6 @@
          ("/ste" (&optional mode))
          ("/titles" (&optional mode))
          ("/hurry-up" (&optional mode))
-         ("/later" (&optional (input "")))
          ("/papercut" (&optional identifier))
          ("/papercut-close" (&optional identifier))))
     (destructuring-bind (name lambda-list) case

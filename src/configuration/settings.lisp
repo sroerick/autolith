@@ -1079,11 +1079,6 @@ reasoning effort only when that effort is supported by the selected model."
   "Return the atomic persistent command-permission pathname."
   (merge-pathnames "permissions.sexp" (configuration-state-root configuration)))
 
-(-> configuration-later-path (configuration) pathname)
-(defun configuration-later-path (configuration)
-  "Return the atomic deferred-input queue pathname."
-  (merge-pathnames "later.sexp" (configuration-state-root configuration)))
-
 (-> configuration-pending-inputs-path (configuration pathname) pathname)
 (defun configuration-pending-inputs-path (configuration conversation-pathname)
   "Return one conversation's atomic unprocessed-input pathname."

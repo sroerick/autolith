@@ -48,7 +48,6 @@
   (let ((controller
           (make-instance 'application-input-controller
                          :application application
-                         :later-state (make-instance 'later-state)
                          :main-thread (current-thread))))
     (setf (application-input-controller application) controller)
     controller))

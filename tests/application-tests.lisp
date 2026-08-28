@@ -928,7 +928,6 @@
                   (make-instance
                    'application-input-controller
                    :application application
-                   :later-state (make-instance 'later-state)
                    :main-thread (current-thread)
                    :interrupt-clock-function (lambda () 10)
                    :forced-exit-function
@@ -979,7 +978,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () 10)
             :forced-exit-function
@@ -1072,7 +1070,6 @@
              (make-instance
               'application-input-controller
               :application application
-              :later-state (make-instance 'later-state)
               :main-thread (current-thread)
               :interrupt-clock-function (lambda () now))))
       (setf (application-input-controller application) controller
@@ -1185,7 +1182,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)))
          (interrupt-count 0))
     (setf (application-input-controller application) controller
@@ -1221,7 +1217,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)))
          (interrupt-count 0))
     (setf (application-input-controller application) controller
@@ -1267,7 +1262,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () 10))))
     (setf (application-input-controller application) controller)
@@ -1713,7 +1707,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -1761,7 +1754,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -1802,7 +1794,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now))))
     (setf (application-input-controller application) controller
@@ -1856,7 +1847,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now)
             :forced-exit-function
@@ -1893,7 +1883,6 @@
            (make-instance
             'application-input-controller
             :application application
-            :later-state (make-instance 'later-state)
             :main-thread (current-thread)
             :interrupt-clock-function (lambda () now)
             :forced-exit-function
@@ -7505,193 +7494,6 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-rate-limit-defers-queued-follow-ups () null)
-(defun test-rate-limit-defers-queued-follow-ups ()
-  "Test that a 429 defers remaining follow-ups instead of submitting them."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (terminal (make-instance 'recording-terminal :columns 60))
-         (ui (terminal-ui-create :terminal terminal))
-         (provider (provider-create configuration))
-         (conversation
-           (conversation-create configuration :identifier "rate-limit-queue"))
-         (application
-           (make-instance 'application
-                          :configuration configuration
-                          :conversation conversation
-                          :provider provider
-                          :ui ui))
-         (later-state (make-instance 'later-state))
-         (controller
-           (make-instance 'application-input-controller
-                          :application application
-                          :later-state later-state
-                          :main-thread (bt:current-thread)))
-         (ran-inputs nil)
-         (presented nil)
-         (original-later-schedule (symbol-function 'later-schedule)))
-    (unwind-protect
-         (progn
-           (setf (provider-rate-limits provider)
-                 (list :primary
-                       (list :used-percent 100
-                             :window-minutes 300
-                             :resets-at (+ (get-universal-time) 600)))
-                 (application-input-controller application) controller)
-           (configuration-ensure-directories configuration)
-           (deque-append (application-input-controller-work-items controller)
-                         '((:message "first")
-                           (:message "second")
-                           (:message "third")))
-           (test-call-with-function-replacements
-            (list
-             (list
-              'application--run-message-input
-              (lambda (application input &key steering-function &allow-other-keys)
-                (declare (ignore application steering-function))
-                (push (if (stringp input)
-                          input
-                          (user-message-input-text input))
-                      ran-inputs)
-                ':rate-limited))
-             (list
-              'application-present
-              (lambda (application text)
-                (declare (ignore application))
-                (push text presented)))
-             (list
-              'later-schedule
-              (lambda (&rest arguments)
-                (if (string= (getf arguments :input) "third")
-                    (error 'later-error
-                           :message "forced deferred write failure"
-                           :pathname (configuration-later-path configuration)
-                           :operation ':write
-                           :cause nil)
-                    (apply original-later-schedule arguments)))))
-             (lambda ()
-               (let ((work (application-input-controller--next-work controller)))
-                 (application-input-controller--run-work controller work)
-                 (application-input-controller--finish-work controller))))
-           (test-assert (equal (nreverse ran-inputs) '("first"))
-                        "only the rate-limited turn runs before deferral")
-           (test-assert
-            (equal (application-input-controller--state controller :work-items)
-                   '((:message "third")))
-            "a failed deferred write restores its queued follow-up")
-           (let ((entries (later-state-entries later-state)))
-             (test-assert
-              (and (= (length entries) 1)
-                   (string= (later-entry-input (first entries)) "second"))
-              "successfully persisted follow-ups retain submission order"))
-           (test-assert
-            (some (lambda (entry)
-                    (and (consp entry)
-                         (every #'terminal-span-p entry)
-                         (eq (terminal-span-style (first entry)) ':notice)
-                         (search "Deferred 1 queued follow-up"
-                                 (terminal--spans-text entry))))
-                  presented)
-            "deferred follow-ups are reported as one styled notice"))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
-(-> test-later-scheduler () null)
-(defun test-later-scheduler ()
-  "Test /later scheduling, listing, cancellation, and due-work promotion."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (provider (provider-create configuration))
-         (terminal (make-instance 'waiting-recording-terminal :columns 80))
-         (ui (terminal-ui-create :terminal terminal))
-         (application (make-instance 'application
-                                     :configuration configuration
-                                     :provider provider
-                                     :ui ui))
-         (controller nil))
-    (unwind-protect
-         (with-terminal-ui (active-ui ui)
-           (declare (ignore active-ui))
-           (setf controller (application-input-controller-create application)
-                 (provider-rate-limits provider)
-                 (list :primary
-                       (list :used-percent 100
-                             :window-minutes 300
-                             :resets-at (+ (get-universal-time) 100))))
-           (application-later-command application "prepare the release")
-           (let* ((entry
-                    (first
-                     (later-state-entries
-                      (application-input-controller-later-state controller))))
-                  (identifier (later-entry-identifier entry)))
-             (test-assert (and entry
-                               (string= (later-entry-input entry)
-                                        "prepare the release"))
-                          "/later schedules its complete input durably")
-             (test-assert
-              (and (eq (application-command application "/later") ':continue)
-                   (null (application-operation-call application "later")))
-              "/later and (later) list scheduled inputs without arguments")
-             (test-assert (search "prepare the release"
-                                  (application--later-list application))
-                          "/later without input lists scheduled previews")
-             (application-later-command application
-                                        (format nil "cancel ~A" identifier))
-             (test-assert
-              (null (later-state-entries
-                     (application-input-controller-later-state controller)))
-              "/later cancel removes the exact scheduled input"))
-           (let ((entry
-                   (application-input-controller-schedule-later
-                    controller
-                    "due now"
-                    :due-at (1- (get-universal-time))
-                    :window "test")))
-             (let ((work (application-input-controller--next-work controller)))
-               (test-assert (and (eq (first work) ':later)
-                                 (eq (second work) entry))
-                            "due deferred inputs enter the ordinary work queue"))
-             (test-call-with-function-replacements
-              (list
-               (list
-                'application-set-working-directory
-                (lambda (app directory)
-                  (declare (ignore app directory))
-                  nil))
-               (list
-                'application--run-message-input
-                (lambda (app input &key steering-function &allow-other-keys)
-                  (declare (ignore app input steering-function))
-                  ':rate-limited)))
-              (lambda ()
-                (application-input-controller--run-later controller entry)))
-             (let ((replacement
-                     (first
-                      (later-state-entries
-                       (application-input-controller-later-state controller)))))
-               (test-assert
-                (and replacement
-                     (string= (later-entry-identifier replacement)
-                              (later-entry-identifier entry))
-                     (> (later-entry-due-at replacement) (get-universal-time)))
-                "another rate limit reschedules the same durable input")
-                (test-assert
-                 (member
-                  replacement
-                  (later-state-entries
-                   (application-input-controller-later-state controller))
-                  :test #'eq)
-                 "a rate-limited deferred input returns to the pending scheduler")
-               (application-input-controller--complete-later controller replacement))
-             (application-input-controller--finish-work controller)
-             (test-assert
-              (null (later-state-entries (later-load configuration)))
-              "successful deferred completion removes durable state")))
-      (when controller
-        (application-input-controller-stop controller))
-      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
-
 (-> test-hurry-up-mode () null)
 (defun test-hurry-up-mode ()
   "Test urgent prompt selection, notices, and hard child-agent limits."
@@ -7800,6 +7602,4 @@
   (test-effort-switch)
   (test-session-goal)
   (test-pending-input-persistence)
-  (test-rate-limit-defers-queued-follow-ups)
-  (test-later-scheduler)
   t)

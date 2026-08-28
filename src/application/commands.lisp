@@ -1844,83 +1844,6 @@ are forwarded to TERMINAL-UI-SELECT."
               :message "Usage: /permissions [ask|auto|sandbox|full|list|clear]."))))
   nil)
 
-(-> application--later-list (application) string)
-(defun application--later-list (application)
-  "Return APPLICATION's durable deferred inputs in execution order."
-  (let* ((controller (application-input-controller application))
-         (entries (and controller
-                       (with-lock-held ((application-input-controller-lock controller))
-                         (later-state-entries (application-input-controller-later-state
-                                               controller))))))
-    (if entries
-        (format nil "Deferred inputs:~%~{~A~^~%~}"
-                (loop for entry in entries
-                      collect
-                      (format nil "  ~A  ~A  ~A~%    ~A"
-                              (later-entry-identifier entry)
-                              (application--calendar-description
-                               (later-entry-due-at entry))
-                              (later-entry-window entry)
-                              (text-cell-prefix
-                               (sanitize-text (later-entry-input entry)
-                                              :single-line-p t)
-                               72))))
-        "No deferred inputs are scheduled.")))
-
-(-> application-later-command (application string) null)
-(defun application-later-command (application remainder)
-  "List, cancel, or schedule a deferred input from /later REMAINDER."
-  (let* ((controller (application-input-controller application))
-         (trimmed (string-trim '(#\Space #\Tab) remainder)))
-    (unless controller
-      (error 'configuration-error
-             :message "Deferred scheduling needs the interactive application."))
-    (cond
-      ((zerop (length trimmed))
-       (application-present application (application--later-list application)))
-      ((or (string= (string-downcase trimmed) "cancel")
-           (uiop:string-prefix-p "cancel " (string-downcase trimmed)))
-       (let ((identifier
-               (if (> (length trimmed) (length "cancel"))
-                   (string-trim '(#\Space #\Tab)
-                                (subseq trimmed (length "cancel")))
-                   "")))
-         (unless (non-empty-string-p identifier)
-           (error 'configuration-error
-                  :message "Usage: /later cancel ID"))
-         (if (application-input-controller-cancel-later controller identifier)
-             (application-present application
-                                  (format nil "Cancelled deferred input ~A."
-                                          identifier))
-             (error 'configuration-error
-                    :message (format nil "Deferred input ~A does not exist."
-                                     identifier)))))
-      (t
-       (let ((provider (application-provider application)))
-         (multiple-value-bind (due-at window)
-             (later-reset-deadline
-              (and provider (provider-rate-limits provider)))
-           (unless (and due-at window)
-             (error 'configuration-error
-                    :message
-                    "No usable rate-limit reset is known. Send a message, then inspect /status."))
-           (let ((entry
-                   (application-input-controller-schedule-later
-                    controller
-                    trimmed
-                    :due-at due-at
-                    :window window)))
-             (application-present
-              application
-              (list (terminal-span
-                     ':notice
-                     (format nil
-                             "Scheduled deferred input ~A for ~A after the ~A reset."
-                             (later-entry-identifier entry)
-                             (application--calendar-description due-at)
-                             window))))))))))
-  nil)
-
 (-> application-set-hurry-up (application boolean) null)
 (defun application-set-hurry-up (application enabled-p)
   "Apply ENABLED-P to APPLICATION's prompt and child-agent runtime."
@@ -2285,18 +2208,6 @@ are forwarded to TERMINAL-UI-SELECT."
                     :usage "Usage: /permissions [ask|auto|sandbox|full|list|clear]"
                     :empty-notice "No command permission modes exist.")))))
     (application-permissions-command application choice))
-  ':continue)
-
-(define-application-command application--builtin-later-command
-    (:name "/later"
-     :argument "[INPUT]"
-     :description "run input after rate limits reset"
-     :tip "queues a prompt for the next known rate-limit reset."
-     :busy-behavior :apply
-     :terminal-behavior :shared
-     :callable t)
-    (application &optional (input ""))
-  (application-later-command application input)
   ':continue)
 
 (define-application-command application--builtin-goal-command

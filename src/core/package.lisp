@@ -599,7 +599,6 @@
                 #:deque-maximum-count
                 #:deque-maximum-weight
                 #:deque-move-all
-                #:deque-move-if
                 #:deque-position-if
                 #:deque-prepend
                 #:deque-pop-front

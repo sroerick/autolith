@@ -801,8 +801,7 @@ without changing the registry."
   (not
    (null
     (member (application-command-definition-name command)
-            '(application--builtin-goal-command
-              application--builtin-later-command)
+            '(application--builtin-goal-command)
             :test #'eq))))
 
 (-> application-command--slash-arguments

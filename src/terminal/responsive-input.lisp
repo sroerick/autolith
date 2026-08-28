@@ -96,11 +96,6 @@
     :accessor application-input-controller-follow-up-edit-work
     :type (option list)
     :documentation "The queued work item currently recalled into the draft.")
-   (later-state
-    :initarg :later-state
-    :reader application-input-controller-later-state
-    :type later-state
-    :documentation "The durable deferred inputs owned by this controller.")
    (active-p
     :initform nil
     :accessor application-input-controller-active-p
@@ -1828,7 +1823,7 @@ reaches the very next provider request."
 (-> application-input-controller--prompt-result-failure-p (t) boolean)
 (defun application-input-controller--prompt-result-failure-p (result)
   "Return true when RESULT denotes a failed user interaction."
-  (not (null (member result '(:aborted :failed :rate-limited) :test #'eq))))
+  (not (null (member result '(:aborted :failed) :test #'eq))))
 
 (-> application-input-controller--open-prompt-if-ready
     (application-input-controller)
@@ -2856,108 +2851,6 @@ sandbox grant is revalidated at this final authorization boundary."
   (with-lock-held ((application-command-authorization-lock application))
     (application--ask-tool-permission application tool arguments)))
 
-(-> application-input-controller-schedule-later
-    (application-input-controller string &key (:due-at timestamp) (:window string))
-    later-entry)
-(defun application-input-controller-schedule-later
-    (controller input &key due-at window)
-  "Persist INPUT for DUE-AT and wake CONTROLLER's deferred scheduler."
-  (let ((application (application-input-controller-application controller)))
-    (with-lock-held ((application-input-controller-lock controller))
-      (let ((entry
-              (later-schedule
-               :configuration (application-configuration application)
-               :state (application-input-controller-later-state controller)
-               :input input
-               :directory (configuration-working-directory
-                           (application-configuration application))
-               :due-at due-at
-               :window window
-               :conversation
-               (application-input-controller--conversation-identifier
-                controller))))
-        (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller))
-        entry))))
-
-(-> application-input-controller-cancel-later
-    (application-input-controller string)
-    boolean)
-(defun application-input-controller-cancel-later (controller identifier)
-  "Cancel deferred IDENTIFIER durably and wake CONTROLLER."
-  (let ((application (application-input-controller-application controller)))
-    (with-lock-held ((application-input-controller-lock controller))
-      (let ((cancelled-p
-              (later-cancel
-               (application-configuration application)
-               (application-input-controller-later-state controller)
-               identifier)))
-        (when cancelled-p
-          (sb-thread:condition-broadcast
-           (application-input-controller-condition-variable controller)))
-        cancelled-p))))
-
-
-(-> application-input-controller--conversation-identifier
-    (application-input-controller)
-    (option string))
-(defun application-input-controller--conversation-identifier (controller)
-  "Return the identifier of the conversation CONTROLLER currently serves."
-  (let* ((application (application-input-controller-application controller))
-         (conversation (and application
-                            ;; Startup and tests both run controllers before a
-                            ;; conversation is attached.
-                            (slot-boundp application 'conversation)
-                            (application-conversation application))))
-    (and conversation (conversation-identifier conversation))))
-
-(-> application-input-controller--complete-later
-    (application-input-controller later-entry)
-    null)
-(defun application-input-controller--complete-later (controller entry)
-  "Remove successfully dispatched ENTRY from durable deferred state."
-  (with-lock-held ((application-input-controller-lock controller))
-    (later-cancel
-     (application-configuration
-      (application-input-controller-application controller))
-     (application-input-controller-later-state controller)
-     (later-entry-identifier entry)))
-  nil)
-
-(-> application-input-controller--retry-later
-    (application-input-controller later-entry)
-    null)
-(defun application-input-controller--retry-later (controller entry)
-  "Reschedule failed ENTRY from current rate data or a five-minute fallback."
-  (let* ((application (application-input-controller-application controller))
-         (configuration (application-configuration application))
-         (provider (application-provider application))
-         (now (get-universal-time)))
-    (multiple-value-bind (reset-at window)
-        (later-reset-deadline (and provider (provider-rate-limits provider))
-                              :now now)
-      (let ((replacement
-              (with-lock-held ((application-input-controller-lock controller))
-                (prog1
-                    (later-reschedule
-                     :configuration configuration
-                     :state (application-input-controller-later-state controller)
-                     :entry entry
-                     :due-at (if (and reset-at (> reset-at now))
-                                 reset-at
-                                 (+ now 300))
-                     :window (if (and window reset-at (> reset-at now))
-                                 window
-                                 "5 minute retry"))
-                  (sb-thread:condition-broadcast
-                   (application-input-controller-condition-variable controller))))))
-        (application-present
-         application
-         (format nil "Deferred input ~A was rescheduled after ~A."
-                 (later-entry-identifier replacement)
-                 (later-entry-window replacement))))))
-  nil)
-
 (-> application-input-controller-create
     (application
      &key (:initial-work-items list)
@@ -2970,20 +2863,12 @@ sandbox grant is revalidated at this final authorization boundary."
      &key initial-work-items (load-pending-p t)
           (pending-persistence-enabled-p t) (start-reader-p t))
   "Create CONTROLLER for APPLICATION and optionally start its terminal reader."
-  (let* ((configuration
-           (and (slot-boundp application 'configuration)
-                (application-configuration application)))
-         (later-state
-           (if (typep configuration 'configuration)
-               (later-load configuration)
-               (make-instance 'later-state)))
-         (controller
+  (let* ((controller
            (make-instance 'application-input-controller
                           :application application
                           :initial-work-items
                           (make-deque
                            :initial-contents (copy-tree initial-work-items))
-                          :later-state later-state
                           :pending-persistence-enabled-p
                           pending-persistence-enabled-p
                           :main-thread (current-thread))))
@@ -3007,16 +2892,6 @@ sandbox grant is revalidated at this final authorization boundary."
       (setf (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work-interactive-p controller) nil)
       (loop
-        (let ((entry
-                (later-pop-due
-                 (application-input-controller-later-state controller)
-                 (get-universal-time)
-                 (application-input-controller--conversation-identifier
-                  controller))))
-          (when entry
-            (deque-push-back
-             (application-input-controller-work-items controller)
-             (list ':later entry))))
         (when (or (application-input-controller-failure controller)
                   (application-input-controller-stopping-p controller))
           (return))
@@ -3111,25 +2986,9 @@ sandbox grant is revalidated at this final authorization boundary."
            ;; durably represents it as active work.
            (application-input-controller--persist-pending controller)
            (return)))
-        (let* ((state (application-input-controller-later-state controller))
-                (entry
-                  (unless (later-state-active-entry state)
-                    (later-next-entry
-                     state
-                     (application-input-controller--conversation-identifier
-                      controller))))
-                (later-wait
-                  (and entry
-                       (max 0.01 (- (later-entry-due-at entry)
-                                    (get-universal-time)))))
-               (handoff-wait
-                 (and (application-localgroup-handoff-pending-p application)
-                      1/10))
-               (wait-seconds
-                 (cond ((and later-wait handoff-wait)
-                        (min later-wait handoff-wait))
-                       (later-wait later-wait)
-                       (handoff-wait handoff-wait))))
+        (let ((wait-seconds
+                (and (application-localgroup-handoff-pending-p application)
+                     1/10)))
           (if wait-seconds
               (condition-wait
                (application-input-controller-condition-variable controller)
@@ -3367,9 +3226,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           (application-raise-fatal application condition signal-backtrace))
         (autolith-error (condition)
           (application-handle-expected-error application condition)
-          (if (provider-rate-limit-error-p condition)
-              ':rate-limited
-              ':failed))
+          ':failed)
         (serious-condition (condition)
           (application-raise-fatal application condition signal-backtrace))))))
 
@@ -3389,139 +3246,6 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           application invocation :action result :condition condition)
          (application-operation-present-command-hint application invocation)
          result)))))
-
-(-> application-input-controller--run-later
-    (application-input-controller later-entry)
-    null)
-(defun application-input-controller--run-later (controller entry)
-  "Dispatch due deferred ENTRY and durably complete or retry it."
-  (block nil
-    (let* ((application (application-input-controller-application controller))
-           (input (later-entry-input entry)))
-      (application-present
-       application
-       (list (terminal-span
-              ':notice
-              (format nil "Running deferred input ~A after its ~A reset.~%"
-                      (later-entry-identifier entry)
-                      (later-entry-window entry)))
-             (terminal-span
-              ':dim
-              (format nil "  ~A"
-                      (text-cell-prefix
-                       (sanitize-text input :single-line-p t)
-                       72)))))
-      (handler-case
-          (application-set-working-directory
-           application (later-entry-directory entry))
-        (autolith-error (condition)
-          (application-handle-expected-error application condition)
-          (handler-case
-              (application-input-controller--complete-later controller entry)
-            (later-error (persistence-condition)
-              (application-handle-expected-error application
-                                                 persistence-condition)))
-          (return nil)))
-      (let* ((message (application--message-input input))
-             (result
-              (if message
-                  (application--run-message-input application message)
-                  (application--run-command-input application input))))
-        (handler-case
-            (if (member result '(:failed :rate-limited) :test #'eq)
-                (application-input-controller--retry-later controller entry)
-                (application-input-controller--complete-later controller entry))
-          (later-error (condition)
-            (application-handle-expected-error application condition)))
-        (when (eq result ':quit)
-          (application-input-controller--request-exit controller ':quit)))))
-  nil)
-
-(-> application-input-controller--defer-after-rate-limit
-    (application-input-controller)
-    null)
-(defun application-input-controller--defer-after-rate-limit (controller)
-  "Defer provider-dependent queued work after a 429.
-
-Messages, commands, and unconsumed steering move to the provider reset deadline,
-or a five-minute fallback when no reset is known. Local Lisp stays runnable at
-the next application boundary because it does not depend on the provider."
-  (let* ((application (application-input-controller-application controller))
-         (configuration (application-configuration application))
-         (provider (application-provider application))
-         (directory (configuration-working-directory configuration))
-         (now (get-universal-time))
-         (deferred-count 0))
-    (multiple-value-bind (reset-at window)
-        (later-reset-deadline (and provider (provider-rate-limits provider))
-                              :now now)
-      (let ((due-at (if (and reset-at (> reset-at now))
-                        reset-at
-                        (+ now 300)))
-            (window-label (if (and window reset-at (> reset-at now))
-                              window
-                              "5 minute retry"))
-            (failures nil))
-        (with-lock-held ((application-input-controller-lock controller))
-          (let ((queued-work
-                  (application-input-controller-work-items controller))
-                (pending (make-deque))
-                (in-flight
-                  (application-input-controller-steering-in-flight-items
-                   controller))
-                (steering
-                  (application-input-controller-steering-items controller)))
-            (deque-move-all
-             in-flight pending
-             :key (lambda (entry)
-                    (list ':message (agent-steering-input-content entry))))
-            (deque-move-all
-             steering pending
-             :key (lambda (input) (list ':message input)))
-            (deque-move-if
-             (lambda (item) (not (eq (first item) ':lisp)))
-             queued-work pending)
-            (loop until (deque-empty-p pending)
-                  for item = (deque-pop-front pending)
-                  for input =
-                    (case (first item)
-                      (:message (user-message-input-text (second item)))
-                      (:command (second item))
-                      (t nil))
-                  when (non-empty-string-p input)
-                    do (handler-case
-                           (progn
-                             (later-schedule
-                              :configuration configuration
-                              :state
-                              (application-input-controller-later-state controller)
-                              :input input
-                              :directory directory
-                              :due-at due-at
-                              :window window-label
-                              :conversation
-                              (application-input-controller--conversation-identifier
-                               controller))
-                             (incf deferred-count))
-                         (later-error (condition)
-                           (push condition failures)
-                           (deque-push-back queued-work item))))
-            (when (plusp deferred-count)
-              (sb-thread:condition-broadcast
-               (application-input-controller-condition-variable controller)))))
-        (dolist (condition (nreverse failures))
-          (application-handle-expected-error application condition))
-        (application-input-controller--publish-counts controller)
-        (when (plusp deferred-count)
-          (application-present
-           application
-           (list (terminal-span
-                  ':notice
-                  (format nil
-                          "Deferred ~D queued follow-up~:P until the ~A reset."
-                          deferred-count
-                          window-label))))))))
-  nil)
 
 (-> application-input-controller--interactive-prompt-work-p (list) boolean)
 (defun application-input-controller--interactive-prompt-work-p (work)
@@ -3604,10 +3328,7 @@ the next application boundary because it does not depend on the provider."
                          :agent agent))
                       :pending-input-identifier pending-input-identifier)))
                (application-input-controller--record-prompt-result
-                controller result)
-               (when (eq result ':rate-limited)
-                 (application-input-controller--defer-after-rate-limit
-                  controller))))
+                controller result)))
             (:recovery-diagnosis
              (application--run-message-input
               application
@@ -3655,10 +3376,7 @@ the next application boundary because it does not depend on the provider."
                  (application-localgroup-run-handoff
                   application (second work) controller)
                (localgroup-error (condition)
-                 (application-handle-expected-error application condition))))
-            (:later
-             (application-input-controller--run-later
-              controller (second work)))))
+                 (application-handle-expected-error application condition))))))
       (serious-condition (condition)
         (application-input-controller--record-prompt-condition
          controller condition)

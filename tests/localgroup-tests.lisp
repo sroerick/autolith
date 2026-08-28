@@ -16,7 +16,6 @@
          (controller
            (make-instance 'application-input-controller
                           :application application
-                          :later-state (make-instance 'later-state)
                           :main-thread (current-thread))))
     (setf (application-input-controller application) controller)
     (values application controller)))
@@ -527,7 +526,6 @@
          (controller
            (make-instance 'application-input-controller
                           :application application
-                          :later-state (make-instance 'later-state)
                           :main-thread (current-thread)))
          (session nil)
          (socket nil)
@@ -683,7 +681,6 @@
          (controller
            (make-instance 'application-input-controller
                           :application application
-                          :later-state (make-instance 'later-state)
                           :main-thread (current-thread)))
          (session nil)
          (socket nil)
