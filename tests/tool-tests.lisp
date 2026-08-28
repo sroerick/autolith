@@ -137,6 +137,101 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(defclass tool-test-overflow-tool (tool)
+  ()
+  (:documentation "A tool returning one deliberately oversized result."))
+
+(defmethod tool-execute ((tool tool-test-overflow-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Return a deterministic result far above the bounded result limit."
+  (declare (ignore tool context))
+  (tool-success (tool-tests--overflow-text)))
+
+(-> tool-tests--overflow-text () string)
+(defun tool-tests--overflow-text ()
+  "Return deterministic content larger than the bounded result limit."
+  (with-output-to-string (stream)
+    (loop for line from 1 to 700
+          do (format stream "overflow line ~D~%" line))))
+
+(-> test-tool-result-overflow () null)
+(defun test-tool-result-overflow ()
+  "Test oversized tool results staying readable through context objects."
+  (let* ((registry (make-default-tool-registry))
+         (configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation (conversation-create configuration
+                                                   :identifier "tool-overflow"))
+                (context (make-instance 'tool-context
+                                        :configuration configuration
+                                        :worker nil
+                                        :conversation conversation))
+                (full-text (tool-tests--overflow-text)))
+           (tool-registry-register
+            registry
+            (make-instance 'tool-test-overflow-tool
+                           :namespace "test"
+                           :name "overflow"
+                           :description "Return an oversized test result."
+                           :parameters (json-object
+                                        "type" "object"
+                                        "properties" (json-object)
+                                        "additionalProperties" false)))
+           (let* ((result (tool-registry-execute-call
+                           registry
+                           (json-object "namespace" "test"
+                                        "name" "overflow"
+                                        "arguments" "{}")
+                           context))
+                  (content (tool-result-content result))
+                  (marker "read the complete result at context:")
+                  (marker-start (search marker content)))
+             (test-assert (tool-result-success-p result)
+                          "oversized tool results still succeed")
+             (test-assert (< (length content) (length full-text))
+                          "oversized tool results stay bounded")
+             (test-assert marker-start
+                          "truncation notices name a durable context URI")
+             (let* ((digest-start (+ marker-start (length marker)))
+                    (digest-end (or (position-if-not
+                                     (lambda (character)
+                                       (find character "0123456789abcdef"))
+                                     content
+                                     :start digest-start)
+                                    (length content)))
+                    (digest (subseq content digest-start digest-end)))
+               (multiple-value-bind (object stored)
+                   (rlm-context-object-find configuration digest)
+                 (test-assert (and object (string= stored full-text))
+                              "the spilled context object holds the complete result"))
+               (let ((window (tool-registry-execute-call
+                              registry
+                              (json-object
+                               "namespace" "resource"
+                               "name" "read"
+                               "arguments"
+                               (json-encode
+                                (json-object "uri" (format nil "context:~A" digest)
+                                             "start-line" 695
+                                             "line-count" 10)))
+                              context)))
+                 (test-assert (and (tool-result-success-p window)
+                                   (search "overflow line 700"
+                                           (tool-result-content window)))
+                              "the discarded tail stays readable at the context URI"))))
+           (let ((small (tool-registry-execute-call
+                         registry
+                         (json-object "namespace" "missing"
+                                      "name" "operation"
+                                      "arguments" "{}")
+                         context)))
+             (test-assert (null (search "context:" (tool-result-content small)))
+                          "small results carry no overflow notice")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-tool-registry () null)
 (defun test-tool-registry ()
   "Test tool schemas, dispatch failure handling, and runtime lifecycle cleanup."

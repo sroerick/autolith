@@ -414,16 +414,40 @@
               (typep block 'image-attachment))
             blocks)))
     (make-instance 'tool-result
-                   :content (bounded-string content)
+                   :content (bounded-string
+                             content
+                             :overflow-uri-function
+                             *tool-result-overflow-function*)
                    :image-attachments attachments
                    :content-blocks blocks
                    :success-p t)))
+
+(defvar *tool-result-overflow-function* nil
+  "Function durably spilling one complete oversized tool result, or NIL.
+
+Bound per dispatched call. It receives the full result text and returns
+a resource URI where the complete text stays readable, or NIL when
+spilling is unavailable, in which case the tail is discarded as before.")
+
+(-> tool--spill-result-text (tool-context string string) (option string))
+(defun tool--spill-result-text (context tool-name text)
+  "Intern oversized result TEXT durably and return its context URI, or NIL."
+  (handler-case
+      (format nil "context:~A"
+              (rlm-context-object-digest
+               (rlm-context-intern (tool-context-configuration context)
+                                   text
+                                   :label (format nil "~A result" tool-name))))
+    (error ()
+      nil)))
 
 (-> tool-failure (t &key (:code (option keyword))) tool-result)
 (defun tool-failure (content &key code)
   "Return a failed bounded tool result containing CONTENT and optional CODE."
   (make-instance 'tool-result
-                 :content (bounded-string content)
+                 :content (bounded-string
+                           content
+                           :overflow-uri-function *tool-result-overflow-function*)
                  :success-p nil
                  :error-code code))
 
@@ -949,7 +973,10 @@ signals with the candidate canonical names."
   "Validate and execute one Responses function CALL through REGISTRY."
   (let* ((namespace (json-get call "namespace"))
          (name (json-get call "name"))
-         (canonical-name (function-call-canonical-name call)))
+         (canonical-name (function-call-canonical-name call))
+         (*tool-result-overflow-function*
+           (lambda (text)
+             (tool--spill-result-text context canonical-name text))))
     (handler-case
         (progn
           (unless (non-empty-string-p name)

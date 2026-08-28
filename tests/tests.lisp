@@ -322,6 +322,7 @@
     (test-memory-resource-mutations)
     (test-papercut-resources)
     (test-tool-registry)
+    (test-tool-result-overflow)
     (test-workspace-tools)
     (test-search-tools)
     (test-lisp-image-manifests)
