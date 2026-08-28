@@ -1027,6 +1027,12 @@ The primary blocking field and legacy inverse async field are mutually exclusive
   "Register one session-scoped task orchestrator and its task/job tools."
   (when (tool-registry-find registry "task" "run")
     (return-from task-augment-tool-registry registry))
+  (tool-registry-describe-namespace
+   registry "task"
+   "In-process child-agent delegation with batching and detached jobs.")
+  (tool-registry-describe-namespace
+   registry "job"
+   "Inspection, waiting, and cancellation for task jobs.")
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
            (tool-object-schema

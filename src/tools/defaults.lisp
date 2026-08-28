@@ -206,6 +206,12 @@
 (-> default-tools--register-workspace (tool-registry) tool-registry)
 (defun default-tools--register-workspace (registry)
   "Register the default resource and image-inspection tools in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "resource"
+   "Revision-gated observation and structured editing of model-addressable resources.")
+  (tool-registry-describe-namespace
+   registry "fs"
+   "Workspace file reading, listing, complete writes, and compatibility editing.")
   (let ((resource-registry (tool-registry-resource-registry registry)))
     (resource-registry-register
      resource-registry
@@ -282,6 +288,9 @@
 (-> default-tools--register-shell (tool-registry) tool-registry)
 (defun default-tools--register-shell (registry)
   "Register the workspace command tool in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "shell"
+   "External commands run in the workspace.")
   (default-tools--register
    registry
    (list
@@ -318,6 +327,9 @@
 (-> default-tools--register-search (tool-registry worker) tool-registry)
 (defun default-tools--register-search (registry worker)
   "Register indexed workspace search tools using WORKER in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "search"
+   "Fast indexed workspace path and content discovery through fff.")
   (dolist
       (specification
        (list
@@ -412,6 +424,9 @@
 (-> default-tools--register-agenda (tool-registry) tool-registry)
 (defun default-tools--register-agenda (registry)
   "Register workspace agenda transport in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "agenda"
+   "Short persistent tasks and notes keyed by workspace directory.")
   (default-tools--register
    registry
    (list
@@ -476,6 +491,9 @@
 (-> default-tools--register-lisp (tool-registry) tool-registry)
 (defun default-tools--register-lisp (registry)
   "Register Lisp worker, scratchpad, and source-checking tools in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "lisp"
+   "Named Common Lisp workers, scratchpads, and Lisp-family source checks.")
   (let ((empty-schema (tool-object-schema (json-object) nil)))
     (dolist
         (specification
@@ -612,6 +630,9 @@
 (-> default-tools--register-self (tool-registry) tool-registry)
 (defun default-tools--register-self (registry)
   "Register active-image inspection and mutation tools in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "self"
+   "Operations on the active Autolith Common Lisp image.")
   (let ((empty-schema (tool-object-schema (json-object) nil)))
     (dolist
         (specification

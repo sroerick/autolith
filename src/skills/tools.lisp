@@ -81,6 +81,9 @@
 (defun skill-augment-tool-registry (registry)
   "Register Autolith's native request-local skill selector in REGISTRY."
   (unless (tool-registry-find registry "skill" "load")
+    (tool-registry-describe-namespace
+     registry "skill"
+     "Request-local loading of discovered Autolith Skills.")
     (tool-registry-register
      registry
      (make-instance

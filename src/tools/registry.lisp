@@ -201,40 +201,19 @@
   (tool-string-property
    "A value form passed to a restart that consumes a value, such as use-value or store-value."))
 
-(-> tool-namespace-description (string) string)
-(defun tool-namespace-description (namespace)
-  "Return the model-visible description of tool NAMESPACE."
-  (cond
-    ((string= namespace "resource")
-     "Revision-gated observation and structured editing of model-addressable resources.")
-    ((string= namespace "fs")
-     "Workspace file reading, listing, complete writes, and compatibility editing.")
-    ((string= namespace "search")
-     "Fast indexed workspace path and content discovery through fff.")
-    ((string= namespace "shell")
-     "External commands run in the workspace.")
-    ((string= namespace "memory")
-     "Persistent facts, preferences, decisions, and guidance across conversations.")
-    ((string= namespace "agenda")
-     "Short persistent tasks and notes keyed by workspace directory.")
-    ((string= namespace "lisp")
-     "Named Common Lisp workers, scratchpads, and Lisp-family source checks.")
-    ((string= namespace "self")
-     "Operations on the active Autolith Common Lisp image.")
-    ((string= namespace "task")
-     "In-process child-agent delegation with batching and detached jobs.")
-    ((string= namespace "job")
-     "Inspection, waiting, and cancellation for task jobs.")
-    ((string= namespace "yield")
-     "Required terminal result submission for child agents.")
-    ((string= namespace "skill")
-     "Request-local loading of discovered Autolith Skills.")
-    ((string= namespace "mcp")
-     "MCP server status, discovery refresh, resources, and prompts.")
-    ((uiop:string-prefix-p "mcp__" namespace)
-     "Tools supplied by one configured external MCP server.")
-    (t
-     "Autolith operations.")))
+(-> tool-registry-describe-namespace (tool-registry string string) string)
+(defun tool-registry-describe-namespace (registry namespace description)
+  "Record NAMESPACE's model-visible DESCRIPTION in REGISTRY."
+  (setf (gethash namespace (tool-registry-namespace-descriptions registry))
+        description))
+
+(-> tool-namespace-description (tool-registry string) string)
+(defun tool-namespace-description (registry namespace)
+  "Return the model-visible description NAMESPACE registered in REGISTRY."
+  (or (gethash namespace (tool-registry-namespace-descriptions registry))
+      (if (uiop:string-prefix-p "mcp__" namespace)
+          "Tools supplied by one configured external MCP server."
+          "Autolith operations.")))
 
 (-> tool-provider-schema (tool) json-object)
 (defun tool-provider-schema (tool)
@@ -668,6 +647,12 @@
     :type ordered-map
     :documentation
     "Canonical dotted tool names mapped to tools in presentation order.")
+   (namespace-descriptions
+    :initform (make-hash-table :test #'equal)
+    :reader tool-registry-namespace-descriptions
+    :type hash-table
+    :documentation
+    "Model-visible namespace descriptions recorded at registration.")
    (runtime-bindings
     :initform (make-hash-table :test #'eq)
     :reader tool-registry-runtime-bindings
@@ -913,7 +898,7 @@
         (json-object
          "type" "namespace"
          "name" namespace
-         "description" (tool-namespace-description namespace)
+         "description" (tool-namespace-description registry namespace)
          "tools" (deque->vector tools))))
      namespace-tools)
     (deque->vector schemas)))

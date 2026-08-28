@@ -2953,6 +2953,9 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
     tool-registry)
 (defun mcp-tool-registry-register-manager (registry manager)
   "Register MANAGER's resource helpers and discovered MCP tools in REGISTRY."
+  (tool-registry-describe-namespace
+   registry "mcp"
+   "MCP server status, discovery refresh, resources, and prompts.")
   (let* ((binding
            (mcp-tool-registry-bind-manager
             registry manager (constantly t)))

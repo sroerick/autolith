@@ -82,6 +82,9 @@
       (when (string= (tool-namespace tool) "job")
         (tool-registry-register registry tool)))
     (let ((output (task-agent-definition-output definition)))
+      (tool-registry-describe-namespace
+       registry "yield"
+       "Required terminal result submission for child agents.")
       (tool-registry-register
        registry
        (make-instance
