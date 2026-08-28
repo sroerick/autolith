@@ -30,17 +30,80 @@ let
 
   clLlmProviderApi = pkgs.sbcl.buildASDFSystem {
     pname = "cl-llm-provider-api";
-    version = "0.1.0";
+    version = "0.2.0";
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-llm-provider-api";
-      rev = "af49d9d99fbf82ed0d91fa7c352cc2489845b015";
-      hash = "sha256-2ayWg2QKXvr44epQLvQJmf3ArMv7LsGhWOZZMFRI0Mg=";
+      rev = "a25e9b141628e682933fc9d45fc7cfb00a6dcdd2";
+      hash = "sha256-1bhh/lniQRksPGQp0X9lACgzdHOLo23Ux/J7qRMhwew=";
     };
     lispLibs = with pkgs.sbclPackages; [
       babel
       bordeaux-threads
       ironclad
+    ];
+  };
+
+  clRfc8628 = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-rfc8628";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "cl-rfc8628";
+      rev = "37aaeef092c1212d0886bdd68af6eebecd77a98f";
+      hash = "sha256-VBYhkBkCUXHduMTQQpy15GBAKjRalHp5zT1AV7BAMG8=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      cl-base64
+      dexador
+      quri
+      yason
+    ];
+  };
+
+  clinkerTranscript = pkgs.sbcl.buildASDFSystem {
+    pname = "clinker-transcript";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "clinker-transcript";
+      rev = "73aebf6c498bc6c9b42d2a5fdbe961163feaa933";
+      hash = "sha256-qGMjMofpUw6jIWROTgMKEwfwIjR2joleCPxUMu9EW7I=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      yason
+    ];
+  };
+
+  imageDaemon = pkgs.sbcl.buildASDFSystem {
+    pname = "image-daemon";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "image-daemon";
+      rev = "fb530e996ab83f91b79d316b93c98517b7e25bfd";
+      hash = "sha256-B231xdSn7nuB1zEWricG7lPEx3HeYnrgWDSOuw94YpA=";
+    };
+    lispLibs = [
+      idsmall
+      pkgs.sbclPackages.ironclad
+    ];
+  };
+
+  lsCompat = pkgs.sbcl.buildASDFSystem {
+    pname = "ls-compat";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "ls-compat";
+      rev = "b3b8557a133b7410ddb2a2244139a5097e8d4b9d";
+      hash = "sha256-lKC+UBIIF56LPY7pVQa27XMlB/O4PGVD2d5FseqwES8=";
+    };
+    systems = [ "ls-compat" "ls-compat/posix" ];
+    lispLibs = with pkgs.sbclPackages; [
+      babel
+      osicat
+      serapeum
     ];
   };
 
@@ -50,8 +113,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-skills";
-      rev = "a34b85a3aabca9530c5f9772ea988a6399a57963";
-      hash = "sha256-+DyXQwWJYDBa87gq4/QSkzkhZpe+DbsTGt/d1Ipk468=";
+      rev = "aafcf34e186bf85c8d8e70ab7e86f7259bcbf412";
+      hash = "sha256-wpNxMJeYefW+BhZMx5Sr9Qae3AKeopLWM9aYK4lQBV0=";
     };
     lispLibs = [
       pkgs.sbclPackages.ironclad
@@ -139,10 +202,10 @@ let
     pname = "colordiff";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "colordiff";
-      rev = "929457427d42dc0eebe847b49889c60c5259490f";
-      hash = "sha256-/ui9KeMtE3CcpqgPH9p3cE/3cYjLq20aaqlDdYJ+L8c=";
+      rev = "e224fd4148c399998ba893e71b7da0cc8a2c658a";
+      hash = "sha256-GdjAlug81TLNG6AcwZw/dlLQbep2UtEDAGQY9/pTqKo=";
     };
     lispLibs = [
       clColorist
@@ -220,13 +283,14 @@ let
 
   sexpStore = pkgs.sbcl.buildASDFSystem {
     pname = "sexp-store";
-    version = "0.2.0";
+    version = "0.3.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "sexp-store";
-      rev = "0a586df98c295ca6d2fcd47e33bc5f478075f470";
-      hash = "sha256-Gm8ZBseLNS0M3BIgdacmT97/zWQI3rfNdTL4IFtEna4=";
+      rev = "815ef23b48b9bd9ef974ada28b9e8c1b5cf11b1f";
+      hash = "sha256-ulkpH9fxM+9nobkrBRQwTal6U0gqou6iiR+N38jcf/I=";
     };
+    lispLibs = [ lsCompat ];
   };
 
   sbclWorkers = pkgs.sbcl.buildASDFSystem {
@@ -374,10 +438,13 @@ let
       clinedi
       clExecSandbox
       clifff
+      clinkerTranscript
       clJobpond
       clLlmProviderApi
+      clRfc8628
       clSkills
       idsmall
+      imageDaemon
       mcparen
       sbclGenerations
       sbclWorkers
