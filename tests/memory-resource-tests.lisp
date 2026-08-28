@@ -413,9 +413,22 @@
                                     "start-line" 1)))
                (test-assert
                 (and (not (tool-result-success-p line-window))
-                     (search "do not accept line windows"
-                             (tool-result-content line-window)))
+                     (eq (tool-result-error-code line-window)
+                         ':line-windows-unsupported))
                 "memory resources reject workspace line-window arguments"))
+             (let* ((fresh (read-resource first-context "memory:relevant"))
+                    (read-only-edit
+                      (edit-resource first-context "memory:relevant"
+                                     (revision fresh)
+                                     (json-object
+                                      "op" "memory-remember"
+                                      "title" "Denied"
+                                      "content" "memory:relevant refuses edits."))))
+               (test-assert
+                (and (not (tool-result-success-p read-only-edit))
+                     (eq (tool-result-error-code read-only-edit)
+                         ':operation-unsupported))
+                "memory:relevant refuses mutation operations"))
              (let* ((forgotten
                       (memory-remember
                        configuration
@@ -445,13 +458,12 @@
                       (format nil "memory:~A" (memory-identifier global-memory)))))
                (test-assert
                 (and (not (tool-result-success-p collection-denied))
-                     (search "unavailable under this authority context"
-                             (tool-result-content collection-denied)))
+                     (eq (tool-result-error-code collection-denied)
+                         ':access-denied))
                 "memory collections remain denied to task child agents")
                (test-assert
                 (and (not (tool-result-success-p item-denied))
-                     (search "unavailable under this authority context"
-                             (tool-result-content item-denied)))
+                     (eq (tool-result-error-code item-denied) ':access-denied))
                 "exact memory resources remain denied to task child agents"))
              (let ((sample (merge-pathnames "sample.lisp" first-workspace)))
                (with-open-file (stream sample
@@ -549,8 +561,6 @@
                (test-assert
                 (and (search "memory:workspace" (tool-description resource-edit))
                      (search "memory:id/<percent-encoded-stable-id>"
-                             (tool-description resource-edit))
-                     (search "memory:relevant is read-only"
                              (tool-description resource-edit)))
                 "resource.edit advertises guarded memory mutation"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
@@ -948,8 +958,7 @@
                         "content" "Task children cannot mutate memory resources."))))
                (test-assert
                 (and (not (tool-result-success-p denied))
-                     (search "unavailable under this authority context"
-                             (tool-result-content denied)))
+                     (eq (tool-result-error-code denied) ':access-denied))
                 "task child agents remain denied memory resource mutation"))
              (let* ((edit-tool (tool-registry-find registry "resource" "edit"))
                     (operations
@@ -973,9 +982,7 @@
                      (every (lambda (variant)
                               (eq (json-get variant "additionalProperties")
                                   false))
-                            memory-variants)
-                     (search "memory:relevant is read-only"
-                             (tool-description edit-tool)))
+                            memory-variants))
                 "resource.edit advertises three closed memory operation variants")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil))

@@ -36,6 +36,10 @@
     :documentation "The machine-readable reason selection could not proceed."))
   (:documentation "A skill could not be selected for the active logical turn."))
 
+(defmethod tool-failure-code ((condition skill-selection-error))
+  "Expose the structured selection reason as the tool failure code."
+  (skill-selection-error-reason condition))
+
 ;;;; -- Logical-Turn Selection --
 
 (-> call-with-skill-logical-turn (user-message-input function) t)

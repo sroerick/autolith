@@ -111,8 +111,7 @@
                    (skill-tool-tests--call registry context "alpha")))
              (test-assert
               (and (not (tool-result-success-p outside-turn))
-                   (search "only while an agent turn is active"
-                           (tool-result-content outside-turn)))
+                   (eq (tool-result-error-code outside-turn) ':inactive-turn))
               "skill.load rejects selection that cannot survive a logical turn"))
            (call-with-skill-logical-turn
             (user-message-input-create :text "Use the relevant workflow.")

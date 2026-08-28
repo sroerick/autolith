@@ -412,11 +412,13 @@
                           '(:workspace :global)))
        (error 'tool-error
               :message "Only memory:workspace and memory:global accept memory-remember."
+              :code ':operation-unsupported
               :tool-name "resource.edit")))
     (memory-item-resource
      (unless (member (getf operation :kind) '(:replace :forget))
        (error 'tool-error
               :message "Exact memory item URIs accept only memory-replace or memory-forget."
+              :code ':operation-unsupported
               :tool-name "resource.edit"))))
   nil)
 
@@ -550,6 +552,7 @@
             (nth-value 1 (gethash "line-count" arguments)))
     (error 'tool-error
            :message "memory: resources are always read in full and do not accept line windows."
+           :code ':line-windows-unsupported
            :tool-name "resource.read"))
   (let* ((query (tool-argument arguments "query"))
          (requested-maximum (tool-argument arguments "max-results")))

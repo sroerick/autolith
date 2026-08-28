@@ -353,7 +353,13 @@
     :initarg :success-p
     :reader tool-result-success-p
     :type boolean
-    :documentation "True when the tool operation succeeded."))
+    :documentation "True when the tool operation succeeded.")
+   (error-code
+    :initarg :error-code
+    :initform nil
+    :reader tool-result-error-code
+    :type (option keyword)
+    :documentation "The failure's machine-readable code, when one exists."))
   (:documentation "The model-visible outcome of exactly one tool call."))
 
 (defgeneric tool-result-details (result)
@@ -413,12 +419,13 @@
                    :content-blocks blocks
                    :success-p t)))
 
-(-> tool-failure (t) tool-result)
-(defun tool-failure (content)
-  "Return a failed bounded tool result containing CONTENT."
+(-> tool-failure (t &key (:code (option keyword))) tool-result)
+(defun tool-failure (content &key code)
+  "Return a failed bounded tool result containing CONTENT and optional CODE."
   (make-instance 'tool-result
                  :content (bounded-string content)
-                 :success-p nil))
+                 :success-p nil
+                 :error-code code))
 
 (-> tool-execute (tool tool-context json-object) tool-result)
 (defgeneric tool-execute (tool context arguments)
@@ -972,4 +979,5 @@ signals with the candidate canonical names."
         (error condition))
       (error (condition)
         (tool-failure
-         (format nil "~A failed: ~A" canonical-name condition))))))
+         (format nil "~A failed: ~A" canonical-name condition)
+         :code (tool-failure-code condition))))))

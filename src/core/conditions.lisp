@@ -513,8 +513,23 @@ The trigger, attempt, and budget slots come from the library condition."))
     :initarg :tool-name
     :reader tool-error-tool-name
     :type string
-    :documentation "The canonical dotted tool name."))
+    :documentation "The canonical dotted tool name.")
+   (code
+    :initarg :code
+    :initform nil
+    :reader tool-error-code
+    :type (option keyword)
+    :documentation "The machine-readable failure discriminator, when one exists."))
   (:documentation "A tool call could not be validated or executed."))
+
+(defgeneric tool-failure-code (condition)
+  (:documentation
+   "Return CONDITION's machine-readable tool failure code, or NIL.
+Codes let tests and callers discriminate failures without pinning prose.")
+  (:method ((condition condition))
+    nil)
+  (:method ((condition tool-error))
+    (tool-error-code condition)))
 
 (define-condition worker-error (tool-error)
   ()

@@ -50,6 +50,10 @@
              (format stream "Resource ~S is unavailable under this authority context."
                      (resource-access-denied-uri condition)))))
 
+(defmethod tool-failure-code ((condition resource-access-denied))
+  "Discriminate authority denials without pinning their prose."
+  ':access-denied)
+
 (define-condition resource-operation-unsupported (autolith-error)
   ((uri
     :initarg :uri
@@ -67,6 +71,10 @@
              (format stream "Resource ~S does not support ~S."
                      (resource-operation-unsupported-uri condition)
                      (resource-operation-unsupported-operation condition)))))
+
+(defmethod tool-failure-code ((condition resource-operation-unsupported))
+  "Discriminate unsupported resource operations without pinning their prose."
+  ':operation-unsupported)
 
 (define-condition resource-revision-stale (autolith-error)
   ((uri
