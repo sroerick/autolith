@@ -50,20 +50,22 @@
        (eq (third form) ':directory)
        (non-empty-string-p (fourth form))))
 
+(-> permissions--rules-p (t) boolean)
+(defun permissions--rules-p (rules)
+  "Return true when RULES is a list of exact command permission records."
+  (and (listp rules)
+       (every #'permissions--rule-form-p rules)))
+
 (-> permissions--form-p (t) boolean)
 (defun permissions--form-p (form)
   "Return true when FORM is one complete supported permission state."
-  (handler-case
-      (and (listp form)
-           (= (length form) 5)
-           (eq (first form) ':permissions)
-           (eq (second form) ':version)
-           (= (third form) *permissions-version*)
-           (eq (fourth form) ':rules)
-           (listp (fifth form))
-           (every #'permissions--rule-form-p (fifth form)))
-    (error ()
-      nil)))
+  (values (record-check form
+                        :tag ':permissions
+                        :versions (list *permissions-version*)
+                        :fields (list (list :indicator ':rules
+                                            :validate #'permissions--rules-p
+                                            :required t))
+                        :allow-other-keys nil)))
 
 (-> permissions--form->state (list) permission-state)
 (defun permissions--form->state (form)

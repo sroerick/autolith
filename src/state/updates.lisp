@@ -271,31 +271,23 @@
 (-> update-state--form-p (t) boolean)
 (defun update-state--form-p (form)
   "Return true when FORM is one complete supported update-state record."
-  (handler-case
-      (and (consp form)
-           (eq (first form) :update-state)
-           (let* ((properties (rest form))
-                  (expected
-                    '(:version :last-attempt-at :last-success-at
-                      :latest-tag :dismissed-tag))
-                  (keys (loop for tail on properties by #'cddr
-                              collect (first tail))))
-             (and (evenp (length properties))
-                  (= (length keys) (length expected))
-                  (every (lambda (key)
-                           (= (count key keys :test #'eq) 1))
-                         expected)
-                  (= (getf properties :version -1) *update-state-version*)
-                  (update-state--optional-time-p
-                   (getf properties :last-attempt-at))
-                  (update-state--optional-time-p
-                   (getf properties :last-success-at))
-                  (update-state--optional-tag-p
-                   (getf properties :latest-tag))
-                  (update-state--optional-tag-p
-                   (getf properties :dismissed-tag)))))
-    (error ()
-      nil)))
+  (values
+   (record-check form
+                 :tag ':update-state
+                 :versions (list *update-state-version*)
+                 :fields (list (list :indicator ':last-attempt-at
+                                     :validate #'update-state--optional-time-p
+                                     :required t)
+                               (list :indicator ':last-success-at
+                                     :validate #'update-state--optional-time-p
+                                     :required t)
+                               (list :indicator ':latest-tag
+                                     :validate #'update-state--optional-tag-p
+                                     :required t)
+                               (list :indicator ':dismissed-tag
+                                     :validate #'update-state--optional-tag-p
+                                     :required t))
+                 :allow-other-keys nil)))
 
 (-> update-state--form->state (list) update-state)
 (defun update-state--form->state (form)

@@ -596,6 +596,11 @@
                 #:log-append
                 #:log-map
                 #:log-read
+                #:make-record
+                #:record-check
+                #:record-property
+                #:record-property-present-p
+                #:record-version
                 #:snapshot-read
                 #:snapshot-write
                 #:store-error)

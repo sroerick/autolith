@@ -65,84 +65,46 @@
     "The last saved durable command-permission mode, or NIL when unset."))
    (:documentation "Validated global choices restored across Autolith processes."))
 
+(defparameter *preferences-record-fields*
+  (list (list :indicator ':reasoning-traces-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required t)
+        (list :indicator ':model
+              :validate (lambda (value)
+                          (or (null value) (non-empty-string-p value)))
+              :required '(2 3 4 5))
+        ;; Model-specific effort names may come from executable user
+        ;; initialization. Validate them when applying preferences to the
+        ;; active model.
+        (list :indicator ':reasoning-effort
+              :validate (lambda (value)
+                          (or (null value) (non-empty-string-p value)))
+              :required '(2 3 4 5))
+        (list :indicator ':compact-view-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required '(3 4 5))
+        (list :indicator ':turn-timestamps-p
+              :validate (lambda (value) (typep value 'boolean)))
+        (list :indicator ':simple-technical-english-p
+              :validate (lambda (value) (typep value 'boolean)))
+        (list :indicator ':codex-fast-mode-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required '(5))
+        (list :indicator ':session-title-generation-p
+              :validate (lambda (value) (typep value 'boolean))
+              :required '(4 5))
+        (list :indicator ':permission-mode
+              :validate (lambda (value)
+                          (member value '(nil :ask :auto) :test #'eq))))
+  "Versioned field descriptions for the durable preferences record.")
+
 (-> preferences--form-p (t) boolean)
 (defun preferences--form-p (form)
   "Return true when FORM is one complete supported preferences record."
-  (handler-case
-      (and (consp form)
-           (eq (first form) :preferences)
-           (let* ((properties (rest form))
-                  (version (getf properties :version -1)))
-             (and (evenp (length properties))
-                  (readable-state-property-present-p
-                   properties :reasoning-traces-p)
-                  (typep (getf properties :reasoning-traces-p) 'boolean)
-                  (case version
-                    (1
-                     t)
-                    ((2 3 4 5)
-                       (let ((model (getf properties :model))
-                             (effort (getf properties :reasoning-effort))
-                             (compact-present-p
-                               (readable-state-property-present-p
-                                properties :compact-view-p))
-                             (turn-timestamps-present-p
-                               (readable-state-property-present-p
-                                properties :turn-timestamps-p))
-                             (simple-technical-english-present-p
-                               (readable-state-property-present-p
-                                properties :simple-technical-english-p))
-                             (session-title-generation-present-p
-                               (readable-state-property-present-p
-                                properties :session-title-generation-p))
-                             (codex-fast-mode-present-p
-                               (readable-state-property-present-p
-                                properties :codex-fast-mode-p))
-                             (permission-mode
-                               (getf properties :permission-mode))
-                             (permission-mode-present-p
-                               (readable-state-property-present-p
-                                properties :permission-mode)))
-                         (and
-                          (readable-state-property-present-p properties :model)
-                          (readable-state-property-present-p
-                           properties :reasoning-effort)
-                          (or (null model) (non-empty-string-p model))
-                          ;; Model-specific effort names may come from
-                          ;; executable user initialization. Validate them when
-                          ;; applying preferences to the active model.
-                          (or (null effort)
-                              (non-empty-string-p effort))
-                          (or (not compact-present-p)
-                              (typep (getf properties :compact-view-p)
-                                     'boolean))
-                          (or (not turn-timestamps-present-p)
-                              (typep (getf properties :turn-timestamps-p)
-                                     'boolean))
-                          (or (not simple-technical-english-present-p)
-                              (typep
-                               (getf properties :simple-technical-english-p)
-                               'boolean))
-                          (or (not codex-fast-mode-present-p)
-                              (typep (getf properties :codex-fast-mode-p)
-                                     'boolean))
-                          (or (not permission-mode-present-p)
-                              (member permission-mode '(nil :ask :auto)
-                                      :test #'eq))
-                          (or (not session-title-generation-present-p)
-                              (typep
-                               (getf properties :session-title-generation-p)
-                               'boolean))
-                          (or (= version 2) compact-present-p)
-                          (or (/= version 4)
-                              session-title-generation-present-p)
-                          (or (/= version 5)
-                              (and session-title-generation-present-p
-                                   codex-fast-mode-present-p)))))
-                    (otherwise
-                     nil)))))
-    (error ()
-      nil)))
+  (values (record-check form
+                        :tag ':preferences
+                        :versions '(1 2 3 4 5)
+                        :fields *preferences-record-fields*)))
 
 (-> preferences--form->state (list) preference-state)
 (defun preferences--form->state (form)

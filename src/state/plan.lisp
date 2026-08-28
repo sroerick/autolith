@@ -101,20 +101,34 @@
               (<= (length text) *plan-step-text-limit*)
               (typep status 'plan-status)))))
 
+(-> plan--steps-p (t) boolean)
+(defun plan--steps-p (steps)
+  "Return true when STEPS is a bounded list of portable plan steps."
+  (and (listp steps)
+       (<= (length steps) *plan-maximum-steps*)
+       (every #'plan--step-form-p steps)))
+
 (-> plan--form-p (t) boolean)
 (defun plan--form-p (form)
   "Return true when FORM is a complete portable workspace plan."
-  (and (listp form)
-       (eq (first form) :plan)
-       (= (or (getf (rest form) :version) 0) *plan-version*)
-       (non-empty-string-p (getf (rest form) :directory))
-       (typep (getf (rest form) :updated-at) 'timestamp)
-       (let ((explanation (getf (rest form) :explanation))
-             (steps (getf (rest form) :steps)))
-         (and (or (null explanation) (stringp explanation))
-              (listp steps)
-              (<= (length steps) *plan-maximum-steps*)
-              (every #'plan--step-form-p steps)))))
+  (values
+   (record-check form
+                 :tag ':plan
+                 :versions (list *plan-version*)
+                 :fields (list (list :indicator ':directory
+                                     :validate #'non-empty-string-p
+                                     :required t)
+                               (list :indicator ':updated-at
+                                     :validate (lambda (value)
+                                                 (typep value 'timestamp))
+                                     :required t)
+                               (list :indicator ':explanation
+                                     :validate (lambda (value)
+                                                 (or (null value)
+                                                     (stringp value))))
+                               (list :indicator ':steps
+                                     :validate #'plan--steps-p
+                                     :required t)))))
 
 (-> plan-step->form (plan-step) list)
 (defun plan-step->form (step)
