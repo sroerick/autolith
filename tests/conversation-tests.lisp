@@ -1499,7 +1499,7 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
         (if (zerop child-pid)
             (handler-case
                 (progn
-                  (clrhash *conversation-leases*)
+                  (ls-flock:reset-after-fork)
                   (conversation-lease-acquire configuration identifier)
                   (sb-posix:_exit 0))
               (conversation-in-use ()
