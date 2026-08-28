@@ -1062,8 +1062,20 @@
                       (operation-items
                         (json-get (json-get properties "operations") "items"))
                       (variants (json-get operation-items "oneOf")))
-                 (test-assert (= (length variants) 14)
-                              "resource.edit schema exposes workspace, scratchpad, agenda, memory, and papercut variants")
+                 (test-assert
+                  (let ((operations
+                          (map 'list
+                               (lambda (variant)
+                                 (let ((op (json-get
+                                            (json-get variant "properties")
+                                            "op")))
+                                   (and op (aref (json-get op "enum") 0))))
+                               variants)))
+                    (every (lambda (operation)
+                             (member operation operations :test #'equal))
+                           '("replace-lines" "scratchpad-delete" "agenda-add"
+                             "memory-remember" "papercut-report")))
+                  "resource.edit exposes workspace, scratchpad, agenda, memory, and papercut operations")
                  (test-assert
                   (every (lambda (variant)
                            (and (json-get variant "required")

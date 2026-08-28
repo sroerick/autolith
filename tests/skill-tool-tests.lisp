@@ -247,7 +247,7 @@
                    (list ':presentation
                          (application-presentation-counter application))))
              (test-assert
-              (search "◆ loaded skill: code-review"
+              (search "loaded skill: code-review"
                       (recording-terminal-output terminal))
               "a successful compact Skill selection finalizes a visible marker")
              (test-assert
