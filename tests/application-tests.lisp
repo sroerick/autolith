@@ -832,6 +832,24 @@
                  (test-assert
                   (permissions-allowed-p state "git log" root)
                   "always persists the exact full-access approval"))))
+           (setf (application-permission-mode application) ':ask)
+           (test-call-with-function-replacements
+            (list
+             (list 'permissions-model-classify-command
+                   (lambda (command directory &key provider configuration
+                                                   sandbox-available-p)
+                     (declare (ignore command directory provider
+                                      configuration sandbox-available-p))
+                     (values ':full-access "prints a literal"))))
+            (lambda ()
+              (test-assert
+               (eq (application--apply-command-authorization-choice
+                    application "printf picked" root "pick")
+                   ':full-access)
+               "pick classifies the pending command immediately")))
+           (test-assert
+            (eq (application-permission-mode application) ':auto)
+            "pick switches the session to auto mode like full and sandbox")
            (application-command application "/permissions ask")
            (test-assert (eq (application-permission-mode application) ':ask)
                         "/permissions ask restores prompt mode")

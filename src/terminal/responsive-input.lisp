@@ -2593,8 +2593,8 @@ may execute immediately; other Lisp waits for the idle boundary."
           :argument nil
           :description
           (if sandbox-available-p
-              "pick for me; the model chooses sandbox, full access, or refusal"
-              "pick for me; the model chooses full access or refusal"))
+              "pick for me this session; the model chooses sandbox, full access, or refusal"
+              "pick for me this session; the model chooses full access or refusal"))
     (list :name "once"
           :argument nil
           :description "allow this command once with full user privileges")
@@ -2699,6 +2699,9 @@ sandbox grant is revalidated at this final authorization boundary."
   (cond
     ((or (string= (or choice "") "pick")
          (string= (or choice "") "auto"))
+     ;; Picking is a session policy like "full" and "sandbox": later
+     ;; commands classify themselves instead of prompting again.
+     (setf (application-permission-mode application) ':auto)
      (multiple-value-bind (decision reason)
          (application--model-command-permission application command directory)
        (application--apply-classified-command-permission
