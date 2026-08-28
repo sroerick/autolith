@@ -117,10 +117,6 @@
   "Record the subscription rate limit snapshot from Codex HEADERS."
   (provider-record-rate-limits provider headers))
 
-(defparameter *provider-stream-retry-delays*
-    '(1 2 4 8 16)
-  "Backoff seconds for bounded provider request reconnects.")
-
 (defparameter *provider-rate-limit-event-error-codes*
     '("rate_limit_exceeded")
   "Structured SSE error codes reporting exhausted provider allowance.")
@@ -139,9 +135,6 @@
 (defparameter *provider-retryable-http-statuses*
     '(500 502 503 504 507)
   "HTTP statuses eligible for bounded provider retry.")
-
-(defparameter *provider-stream-retry-sleep-function* #'sleep
-  "Function used to wait between provider stream reconnect attempts.")
 
 (defparameter *provider-stream-inactivity-seconds* 300
   "Seconds one provider stream line may stall before reconnecting.
@@ -668,56 +661,9 @@ stay outside it."
 
 ;;;; -- SSE Decoding --
 
-(defvar *sse-end-of-stream* (gensym "SSE-END-")
-  "A private marker returned after a clean SSE end of stream.")
-
-(defparameter *sse-maximum-line-characters* (* 1024 1024)
-  "Maximum accepted character count for one SSE wire line.")
-
-(defparameter *sse-maximum-event-characters* (* 4 1024 1024)
-  "Maximum accepted joined data character count for one SSE event.")
-
-(-> sse--signal-size-error (string) null)
-(defun sse--signal-size-error (message)
-  "Signal a bounded provider stream failure described by MESSAGE."
-  (error 'response-stream-error
-         :message message
-         :status nil
-         :request-id nil
-         :response nil))
-
-(-> sse-data-line (string) (option string))
-(defun sse-data-line (line)
-  "Return the payload of an SSE data LINE, or NIL for another field."
-  (when (and (>= (length line) 5)
-             (string= line "data:" :end1 5 :end2 5))
-    (let ((start (if (and (> (length line) 5)
-                          (char= (char line 5) #\Space))
-                     6
-                     5)))
-      (subseq line start))))
-
-(-> sse--read-line-characters (stream) t)
-(defun sse--read-line-characters (stream)
-  "Read one bounded line using only the portable character-stream protocol."
-  (let ((characters
-          (make-array 256
-                      :element-type 'character
-                      :adjustable t
-                      :fill-pointer 0)))
-    (loop for character = (read-char stream nil *sse-end-of-stream*)
-          do (cond
-               ((eq character *sse-end-of-stream*)
-                (return (if (plusp (length characters))
-                            (coerce characters 'string)
-                            *sse-end-of-stream*)))
-               ((char= character #\Newline)
-                (return (coerce characters 'string)))
-               ((>= (length characters) *sse-maximum-line-characters*)
-                (sse--signal-size-error
-                 "The provider returned an SSE line above the configured limit."))
-               (t
-                (vector-push-extend character characters))))))
+;;; Bounded SSE decoding lives in cl-llm-provider-api. Autolith supplies the
+;;; runtime-specific pieces: an inactivity deadline around each line read and
+;;; a provider condition class for stream size violations.
 
 (-> sse-read-line (stream) t)
 (defun sse-read-line (stream)
@@ -730,7 +676,7 @@ act on instead of blocking on a dead connection indefinitely."
            (plusp *provider-stream-inactivity-seconds*))
       (handler-case
           (sb-sys:with-deadline (:seconds *provider-stream-inactivity-seconds*)
-            (sse--read-line-characters stream))
+            (sse-read-line-characters stream))
         (sb-sys:deadline-timeout ()
           (error 'response-stream-error
                  :message
@@ -740,39 +686,10 @@ act on instead of blocking on a dead connection indefinitely."
                  :status nil
                  :request-id nil
                  :response nil)))
-      (sse--read-line-characters stream)))
+      (sse-read-line-characters stream)))
 
-(-> read-sse-data (stream) t)
-(defun read-sse-data (stream)
-  "Read one bounded SSE event's joined data field from STREAM."
-  (let ((data-stream (make-string-output-stream))
-        (data-character-count 0)
-        (data-line-count 0))
-    (labels ((event-data ()
-               (if (plusp data-line-count)
-                   (get-output-stream-string data-stream)
-                   *sse-end-of-stream*)))
-      (loop
-        (let ((raw-line (sse-read-line stream)))
-          (when (eq raw-line *sse-end-of-stream*)
-            (return (event-data)))
-          (let ((line (string-right-trim '(#\Return) raw-line)))
-            (when (zerop (length line))
-              (when (plusp data-line-count)
-                (return (event-data))))
-            (let ((data (sse-data-line line)))
-              (when data
-                (let ((next-count (+ data-character-count
-                                     (if (plusp data-line-count) 1 0)
-                                     (length data))))
-                  (when (> next-count *sse-maximum-event-characters*)
-                    (sse--signal-size-error
-                     "The provider returned an SSE event above the configured limit."))
-                  (when (plusp data-line-count)
-                    (write-char #\Newline data-stream))
-                  (write-string data data-stream)
-                  (setf data-character-count next-count)
-                  (incf data-line-count))))))))))
+(setf *sse-read-line-function* #'sse-read-line)
+(setf *stream-limit-error-class* 'response-stream-limit-error)
 
 (-> response-header (t string) (option string))
 (defun response-header (headers name)
@@ -1590,46 +1507,7 @@ streaming turns and native compaction requests."
                       :message
                       (format nil "~A authentication retry ended unexpectedly."
                               (provider-account-label provider))))))
-    (let ((retry-number 0))
-      (loop
-        (handler-case
-            (return-from provider--call-with-bounded-retries
-              (attempt-with-authentication))
-          (provider-resample-requested (condition)
-            ;; Loops are stochastic at sampling temperature, so a fresh
-            ;; sample is the remedy and waiting buys nothing. The signaling
-            ;; provider enforces its own per-turn resample budget.
-            (funcall event-callback
-                     (make-instance
-                      'provider-retry-event
-                      :attempt (provider-resample-requested-attempt condition)
-                      :maximum-attempts
-                      (provider-resample-requested-maximum-attempts condition)
-                      :delay 0)))
-          (provider-retryable-error (condition)
-            (when (= retry-number
-                     (length *provider-stream-retry-delays*))
-              (error condition))
-            (let ((delay
-                    (nth retry-number *provider-stream-retry-delays*)))
-              (funcall event-callback
-                       (make-instance
-                        'provider-retry-event
-                        :attempt (1+ retry-number)
-                        :maximum-attempts
-                        (length *provider-stream-retry-delays*)
-                        :delay delay))
-              (funcall *provider-stream-retry-sleep-function* delay)
-              ;; The waiting label would otherwise stand for the whole next
-              ;; attempt, so a stalled reconnect reads as a frozen countdown.
-              (funcall event-callback
-                       (make-instance
-                        'provider-retry-event
-                        :attempt (1+ retry-number)
-                        :maximum-attempts
-                        (length *provider-stream-retry-delays*)
-                        :delay 0))
-              (incf retry-number))))))))
+    (call-with-bounded-retries #'attempt-with-authentication event-callback)))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)

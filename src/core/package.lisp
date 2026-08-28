@@ -178,11 +178,20 @@
                 #:rfc8628-device-authorization-expires-in
                 #:rfc8628-device-authorization-issued-at)
   (:import-from #:cl-llm-provider-api
+                #:*bounded-retry-delays*
+                #:*bounded-retry-sleep-function*
+                #:*character-read-sequence-window*
                 #:*rlm-default-call-budget*
                 #:*rlm-default-depth-budget*
                 #:*rlm-default-token-budget*
+                #:*sse-end-of-stream*
+                #:*sse-maximum-event-characters*
+                #:*sse-maximum-line-characters*
+                #:*sse-read-line-function*
+                #:*stream-limit-error-class*
                 #:assistant-delta-event
                 #:assistant-delta-event-text
+                #:call-with-bounded-retries
                 #:chat-completions-provider
                 #:model-provider
                 #:model-provider-registration
@@ -199,6 +208,9 @@
                 #:provider-output-ceiling-p
                 #:provider-progress-event
                 #:provider-request-object
+                #:provider-resample-requested-attempt
+                #:provider-resample-requested-maximum-attempts
+                #:provider-resample-requested-triggers
                 #:provider-responses-hosted-tools
                 #:provider-responses-instructions-placement
                 #:provider-responses-reasoning-summary
@@ -225,6 +237,8 @@
                 #:provider-wire-tool-name
                 #:provider-wire-tools
                 #:provider-with-configuration
+                #:read-character-sequence
+                #:read-sse-data
                 #:reasoning-delta-event
                 #:reasoning-delta-event-text
                 #:responses-api-provider
@@ -246,6 +260,7 @@
                 #:rlm-view-error
                 #:rlm-views-materialize
                 #:rlm-views-render
+                #:sse-read-line-characters
                 #:subscription-provider
                 #:turn-completion)
   (:import-from #:flexi-streams

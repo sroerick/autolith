@@ -1360,7 +1360,7 @@
               (credential-manager-primary-source
                (provider-credential-manager provider))
               credentials)
-             (let ((*provider-stream-retry-sleep-function*
+             (let ((*bounded-retry-sleep-function*
                      (lambda (seconds)
                        (declare (ignore seconds)))))
                (let ((result
@@ -1390,7 +1390,7 @@
               (credential-manager-primary-source
                (provider-credential-manager provider))
               credentials)
-             (let ((*provider-stream-retry-sleep-function*
+             (let ((*bounded-retry-sleep-function*
                      (lambda (seconds)
                        (declare (ignore seconds)))))
                (let ((result
@@ -2126,7 +2126,7 @@
                           :usage nil
                           :turn-state nil)))
     (unwind-protect
-         (let ((*provider-stream-retry-sleep-function*
+         (let ((*bounded-retry-sleep-function*
                  (lambda (seconds)
                    (declare (ignore seconds)))))
            (dolist (failure
@@ -2155,7 +2155,7 @@
                   (and announcement
                        (= (provider-retry-event-attempt announcement) 1)
                        (= (provider-retry-event-maximum-attempts announcement)
-                          (length *provider-stream-retry-delays*))
+                          (length *bounded-retry-delays*))
                        (= (provider-retry-event-delay announcement) 1))
                   "provider retries expose their attempt and delay to the observer")
                  (test-assert
@@ -2173,7 +2173,7 @@
                    (test-codex-provider-create
                     configuration
                     (list :overloaded :overloaded result))))
-             (let ((*provider-stream-retry-sleep-function*
+             (let ((*bounded-retry-sleep-function*
                      (lambda (seconds)
                        (push seconds delays))))
                (test-assert
@@ -2191,7 +2191,7 @@
                    (test-codex-provider-create
                     configuration
                     (list :overloaded result))))
-             (let ((*provider-stream-retry-sleep-function*
+             (let ((*bounded-retry-sleep-function*
                      (lambda (seconds)
                        (declare (ignore seconds))
                        (error
@@ -2217,7 +2217,7 @@
                    (test-codex-provider-create
                     configuration
                     (make-list
-                     (1+ (length *provider-stream-retry-delays*))
+                     (1+ (length *bounded-retry-delays*))
                      :initial-element :server-error))))
              (test-assert
               (handler-case

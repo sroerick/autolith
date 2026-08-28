@@ -197,9 +197,11 @@
     :documentation "A bounded provider response safe for display."))
   (:documentation "A model-provider request failed."))
 
-(define-condition provider-retryable-error (provider-error)
+(define-condition provider-retryable-error
+    (llm-provider-api:provider-retryable-error provider-error)
   ()
-  (:documentation "A transient provider failure eligible for bounded retry."))
+  (:documentation "A transient provider failure eligible for bounded retry.
+Inherits the library condition so the shared retry ladder recognizes it."))
 
 (define-condition provider-incomplete-response (provider-retryable-error)
   ((reason
@@ -209,24 +211,12 @@
     :documentation "The provider's incomplete response reason, or unknown."))
   (:documentation "A retryable provider response that ended incomplete."))
 
-(define-condition provider-resample-requested (provider-retryable-error)
-  ((triggers
-    :initarg :triggers
-    :reader provider-resample-requested-triggers
-    :type list
-    :documentation "The provider's degenerate-generation trigger labels.")
-   (attempt
-    :initarg :attempt
-    :reader provider-resample-requested-attempt
-    :type (integer 1)
-    :documentation "The one-based resample attempt about to begin.")
-   (maximum-attempts
-    :initarg :maximum-attempts
-    :reader provider-resample-requested-maximum-attempts
-    :type (integer 1)
-    :documentation "The provider's per-turn resample budget."))
+(define-condition provider-resample-requested
+    (llm-provider-api:provider-resample-requested provider-retryable-error)
+  ()
   (:documentation
-   "A provider reported a degenerate generation loop worth resampling."))
+   "A provider reported a degenerate generation loop worth resampling.
+The trigger, attempt, and budget slots come from the library condition."))
 
 (define-condition provider-transport-error (provider-retryable-error)
   ()
@@ -236,6 +226,13 @@
 (define-condition response-stream-error (provider-transport-error)
   ()
   (:documentation "A provider stream ended without a valid terminal event."))
+
+(define-condition response-stream-limit-error
+    (llm-provider-api:provider-stream-limit-error response-stream-error)
+  ()
+  (:default-initargs :status nil :request-id nil :response nil)
+  (:documentation
+   "The shared SSE decoder rejected an oversized provider stream."))
 
 (define-condition provider-unauthorized (provider-error)
   ()

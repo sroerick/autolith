@@ -276,7 +276,7 @@
                  (test-codex-provider-create
                   configuration
                   (list :resample :resample result))))
-           (let ((*provider-stream-retry-sleep-function*
+           (let ((*bounded-retry-sleep-function*
                    (lambda (seconds)
                      (push seconds delays))))
              (test-assert
