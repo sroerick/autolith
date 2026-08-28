@@ -193,7 +193,8 @@
                  (test-assert (tool-result-success-p reported)
                               "papercut:current creates a report")
                  (test-assert (string= uri
-                                      (papercut-resource--item-uri
+                                      (resource-item-uri
+                                       "papercut"
                                        (papercut-identifier papercut)))
                               "papercut report edits return the canonical exact URI")
                  (test-assert
@@ -286,7 +287,7 @@
                     (fixture
                       (papercut-resource-tests--persist
                        configuration identifier "Encoded identifier" "Encoded body."))
-                    (uri (papercut-resource--item-uri identifier))
+                    (uri (resource-item-uri "papercut" identifier))
                     (read (read-resource first-context uri)))
                (test-assert
                 (and (search "%2F" uri)

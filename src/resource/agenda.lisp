@@ -62,6 +62,19 @@
                                          (resource-observation-revision observation)
                                          (agenda-observation-snapshot observation))))
 
+(defmethod resource-observation-state-class ((resource agenda-resource))
+  "Record agenda observations under the agenda state family."
+  (declare (ignore resource))
+  'agenda-observation-state)
+
+(defmethod resource-item-identity ((resource agenda-resource))
+  "Compare agenda observations by workspace directory."
+  (agenda-resource-directory resource))
+
+(defmethod resource-observation-identity ((observation agenda-observation))
+  "Compare agenda observations by workspace directory."
+  (agenda-observation-directory observation))
+
 (defmethod resource-observation-state-maximum ((state agenda-observation-state))
   "Return the configured agenda observation limit."
   (declare (ignore state))
@@ -182,30 +195,6 @@
 
 
 
-(-> agenda-resource--find-observation-state
-    (conversation agenda-resource non-empty-string)
-    agenda-observation-state)
-(defun agenda-resource--find-observation-state (conversation resource alias)
-  "Return CONVERSATION's exact RESOURCE observation ALIAS or signal staleness."
-  (let ((state
-          (resource-observation-state-find
-           (conversation-resource-observations conversation)
-           alias
-           'agenda-observation-state)))
-    (unless (and state
-                 (let ((observation
-                         (resource-observation-state-observation state)))
-                   (and (string= (resource-uri resource)
-                                 (resource-observation-uri observation))
-                        (string= (agenda-resource-directory resource)
-                                 (agenda-observation-directory observation)))))
-      (error 'resource-revision-stale
-             :uri               (resource-uri resource)
-             :expected-revision alias
-             :actual-revision   nil))
-    state))
-
-
 ;;;; -- Agenda Operation Arguments --
 
 (-> agenda-resource--status (json-object &key (:required boolean))
@@ -274,31 +263,6 @@
 
 ;;;; -- Agenda Operations --
 
-(-> agenda-resource--validate-operation-fields
-    (json-object list list)
-    null)
-(defun agenda-resource--validate-operation-fields (operation allowed required)
-  "Require OPERATION to contain exactly ALLOWED fields and every REQUIRED field."
-  (loop for name being the hash-keys of operation
-        unless (member name allowed :test #'string=)
-          do
-             (error 'tool-error
-                    :message (format nil
-                                     "Agenda resource operation does not accept field ~A."
-                                     name)
-                    :tool-name "resource.edit"))
-  (dolist (name required)
-    (multiple-value-bind (value present-p)
-        (gethash name operation)
-      (declare (ignore value))
-      (unless present-p
-        (error 'tool-error
-               :message (format nil
-                                "Agenda resource operation requires ~A."
-                                name)
-               :tool-name "resource.edit"))))
-  nil)
-
 (-> agenda-resource--normalize-operation (t) list)
 (defun agenda-resource--normalize-operation (operation)
   "Return one validated normalized agenda resource OPERATION."
@@ -313,7 +277,8 @@
              :tool-name "resource.edit"))
     (cond
       ((string= name "agenda-add")
-       (agenda-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Agenda"
         operation
         '("op" "text" "status" "memory-ids")
         '("op" "text"))
@@ -326,7 +291,8 @@
                :status (or (agenda-resource--status operation) ':todo)
                :memory-identifiers memory-identifiers)))
       ((string= name "agenda-update")
-       (agenda-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Agenda"
         operation
         '("op" "id" "text" "status" "memory-ids")
         '("op" "id"))
@@ -351,7 +317,8 @@
                  :memory-identifiers-supplied-p
                  memory-identifiers-supplied-p))))
       ((string= name "agenda-remove")
-       (agenda-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Agenda"
         operation '("op" "id") '("op" "id"))
        (list :kind ':remove
              :identifier
@@ -417,7 +384,7 @@
       (with-recursive-lock-held
           ((conversation-resource-observation-lock conversation))
         (let* ((state
-                 (agenda-resource--find-observation-state
+                 (resource-item-find-observation-state
                   conversation resource base-revision))
                (base-observation
                  (resource-observation-state-observation state)))
@@ -447,17 +414,6 @@
 
 ;;;; -- Resource Tool Methods --
 
-(-> agenda-resource--read-result
-    (agenda-observation-state)
-    non-empty-string)
-(defun agenda-resource--read-result (state)
-  "Return one explicit model-facing complete agenda observation result."
-  (let ((observation (resource-observation-state-observation state)))
-    (format nil "URI: ~A~%Revision: ~A~%Content:~%~A"
-            (resource-observation-uri observation)
-            (resource-observation-state-alias state)
-            (resource-observation-content observation))))
-
 (defmethod resource-tool-read
     ((resource agenda-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
@@ -474,7 +430,7 @@
               (resource-observation-state-ensure
               (tool-context-conversation context)
               observation)))
-      (tool-success (agenda-resource--read-result state)))))
+      (tool-success (resource-item-read-result state)))))
 
 (defmethod resource-tool-edit
     ((resource agenda-resource) (tool resource-edit-tool)
@@ -504,7 +460,7 @@
             (tool-success
              (format nil "~A~%~A"
                      summary
-                     (agenda-resource--read-result state)))))
+                     (resource-item-read-result state)))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, from another workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."

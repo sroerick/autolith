@@ -104,6 +104,7 @@
                              (:file "provider/usage")
                              (:file "provider/builtins")
                              (:file "resource/protocol")
+                             (:file "resource/item-identity")
                              (:file "tools/registry")
                              (:file "skills/tools")
                              (:file "mcp/tools")

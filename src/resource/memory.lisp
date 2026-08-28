@@ -82,6 +82,19 @@
                                          (resource-observation-revision observation)
                                          (memory-observation-snapshot observation))))
 
+(defmethod resource-observation-state-class ((resource memory-resource))
+  "Record memory observations under the memory state family."
+  (declare (ignore resource))
+  'memory-observation-state)
+
+(defmethod resource-item-identity ((resource memory-resource))
+  "Compare memory observations by collection or stable identifier."
+  (memory-resource-identifier resource))
+
+(defmethod resource-observation-identity ((observation memory-observation))
+  "Compare memory observations by collection or stable identifier."
+  (memory-observation-identifier observation))
+
 (defmethod resource-observation-state-maximum ((state memory-observation-state))
   "Return the configured memory observation limit."
   (declare (ignore state))
@@ -103,92 +116,11 @@
     (t
      nil)))
 
-(-> memory-resource--identifier-unreserved-octet-p
-    ((unsigned-byte 8))
-    boolean)
-(defun memory-resource--identifier-unreserved-octet-p (octet)
-  "Return true when OCTET is an RFC 3986 unreserved ASCII character."
-  (and (or (<= (char-code #\A) octet (char-code #\Z))
-           (<= (char-code #\a) octet (char-code #\z))
-           (<= (char-code #\0) octet (char-code #\9))
-           (member octet '(#x2D #x2E #x5F #x7E)))
-       t))
-
-(-> memory-resource--encode-identifier (non-empty-string) non-empty-string)
-(defun memory-resource--encode-identifier (identifier)
-  "Return IDENTIFIER as one canonical percent-encoded URI path segment."
-  (with-output-to-string (stream)
-    (loop for octet across
-          (sb-ext:string-to-octets identifier :external-format ':utf-8)
-          do
-             (if (memory-resource--identifier-unreserved-octet-p octet)
-                 (write-char (code-char octet) stream)
-                 (format stream "%~2,'0X" octet)))))
-
-(-> memory-resource--malformed-item-identifier (string non-empty-string) null)
-(defun memory-resource--malformed-item-identifier (encoded reason)
-  "Signal that ENCODED cannot identify one exact memory because of REASON."
-  (error 'resource-uri-malformed
-         :uri    (format nil "memory:id/~A" encoded)
-         :reason reason))
-
-(-> memory-resource--decode-identifier (string) non-empty-string)
-(defun memory-resource--decode-identifier (encoded)
-  "Decode one percent-encoded exact-memory path segment from ENCODED."
-  (when (zerop (length encoded))
-    (memory-resource--malformed-item-identifier
-     encoded "the exact memory identifier must not be empty"))
-  (let ((octets
-          (make-array (length encoded)
-                      :element-type '(unsigned-byte 8)
-                      :fill-pointer 0)))
-    (loop with index = 0
-          while (< index (length encoded))
-          for character = (char encoded index)
-          do
-             (cond
-               ((char= character #\%)
-                (when (> (+ index 3) (length encoded))
-                  (memory-resource--malformed-item-identifier
-                   encoded "a percent escape is incomplete"))
-                (let ((high (digit-char-p (char encoded (1+ index)) 16))
-                      (low (digit-char-p (char encoded (+ index 2)) 16)))
-                  (unless (and high low)
-                    (memory-resource--malformed-item-identifier
-                     encoded "a percent escape contains a non-hexadecimal digit"))
-                  (vector-push (+ (* high 16) low) octets)
-                  (incf index 3)))
-               ((and (< (char-code character) 128)
-                     (memory-resource--identifier-unreserved-octet-p
-                      (char-code character)))
-                (vector-push (char-code character) octets)
-                (incf index))
-               (t
-                (memory-resource--malformed-item-identifier
-                 encoded
-                 "exact memory identifiers must use percent encoding outside RFC 3986 unreserved characters"))))
-    (let ((identifier
-            (handler-case
-                (sb-ext:octets-to-string octets :external-format ':utf-8)
-              (error ()
-                (memory-resource--malformed-item-identifier
-                 encoded "the percent-encoded identifier is not valid UTF-8")))))
-      (unless (non-empty-string-p identifier)
-        (memory-resource--malformed-item-identifier
-         encoded "the exact memory identifier must not be empty"))
-      identifier)))
-
-(-> memory-resource--item-uri (non-empty-string) non-empty-string)
-(defun memory-resource--item-uri (identifier)
-  "Return the canonical exact-item resource URI for stable IDENTIFIER."
-  (format nil "memory:id/~A"
-          (memory-resource--encode-identifier identifier)))
-
 (-> memory-resource--make-item (non-empty-string) memory-item-resource)
 (defun memory-resource--make-item (identifier)
   "Return one exact item resource with canonical URI identity."
   (make-instance 'memory-item-resource
-                 :uri        (memory-resource--item-uri identifier)
+                 :uri        (resource-item-uri "memory" identifier)
                  :identifier identifier))
 
 (defmethod resource-resolver-resolve
@@ -204,7 +136,8 @@
                       :visibility visibility))
       ((uiop:string-prefix-p "id/" identifier)
        (memory-resource--make-item
-        (memory-resource--decode-identifier
+        (resource-item-decode-identifier
+         "memory" "memory"
          (subseq identifier (length "id/")))))
       (t
        (memory-resource--make-item identifier)))))
@@ -254,7 +187,7 @@
   "Return one complete metadata and bounded excerpt entry for MEMORY."
   (format nil
           "uri: ~A~%id: ~A~%scope: ~A~%created: ~A~%updated: ~A~%source conversation: ~A~%title: ~A~%tags: ~:[none~;~:*~{~A~^, ~}~]~%excerpt: ~A"
-          (memory-resource--item-uri (memory-identifier memory))
+          (resource-item-uri "memory" (memory-identifier memory))
           (memory-identifier memory)
           (memory-resource--scope-label memory)
           (memory--timestamp-string (memory-created-at memory))
@@ -378,51 +311,7 @@
 
 
 
-(-> memory-resource--find-observation-state
-    (conversation memory-resource non-empty-string)
-    memory-observation-state)
-(defun memory-resource--find-observation-state (conversation resource alias)
-  "Return CONVERSATION's exact RESOURCE observation ALIAS or signal staleness."
-  (let ((state
-          (resource-observation-state-find
-           (conversation-resource-observations conversation)
-           alias
-           'memory-observation-state)))
-    (unless (and state
-                 (let ((observation
-                         (resource-observation-state-observation state)))
-                   (and (string= (resource-uri resource)
-                                 (resource-observation-uri observation))
-                        (string= (memory-resource-identifier resource)
-                                 (memory-observation-identifier observation)))))
-      (error 'resource-revision-stale
-             :uri               (resource-uri resource)
-             :expected-revision alias
-             :actual-revision   nil))
-    state))
-
-
 ;;;; -- Memory Operations --
-
-(-> memory-resource--validate-operation-fields (json-object list list) null)
-(defun memory-resource--validate-operation-fields (operation allowed required)
-  "Require OPERATION to contain exactly ALLOWED fields and every REQUIRED field."
-  (loop for name being the hash-keys of operation
-        unless (member name allowed :test #'string=)
-          do
-             (error 'tool-error
-                    :message (format nil
-                                     "Memory resource operation does not accept field ~A."
-                                     name)
-                    :tool-name "resource.edit"))
-  (dolist (name required)
-    (unless (nth-value 1 (gethash name operation))
-      (error 'tool-error
-             :message (format nil
-                              "Memory resource operation requires ~A."
-                              name)
-             :tool-name "resource.edit")))
-  nil)
 
 (-> memory-resource--operation-tags (json-object) list)
 (defun memory-resource--operation-tags (operation)
@@ -470,7 +359,8 @@
              :tool-name "resource.edit"))
     (cond
       ((string= name "memory-remember")
-       (memory-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Memory"
         operation
         '("op" "title" "content" "tags")
         '("op" "title" "content"))
@@ -485,7 +375,8 @@
                        *memory-content-limit*)
              :tags (memory-resource--operation-tags operation)))
       ((string= name "memory-replace")
-       (memory-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Memory"
         operation
         '("op" "title" "content" "tags" "scope")
         '("op" "title" "content"))
@@ -501,7 +392,8 @@
              :tags (memory-resource--operation-tags operation)
              :scope (memory-resource--operation-scope operation)))
       ((string= name "memory-forget")
-       (memory-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Memory"
         operation '("op") '("op"))
        (list :kind ':forget))
       (t
@@ -573,7 +465,7 @@
         (with-recursive-lock-held
             ((conversation-resource-observation-lock conversation))
           (let* ((state
-                   (memory-resource--find-observation-state
+                   (resource-item-find-observation-state
                     conversation resource base-revision))
                  (base-observation
                    (resource-observation-state-observation state))
@@ -649,17 +541,6 @@
 
 ;;;; -- Resource Tool Methods --
 
-(-> memory-resource--read-result
-    (memory-observation-state)
-    non-empty-string)
-(defun memory-resource--read-result (state)
-  "Return one explicit model-facing complete memory observation result."
-  (let ((observation (resource-observation-state-observation state)))
-    (format nil "URI: ~A~%Revision: ~A~%Content:~%~A"
-            (resource-observation-uri observation)
-            (resource-observation-state-alias state)
-            (resource-observation-content observation))))
-
 (defmethod resource-tool-read
     ((resource memory-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
@@ -703,7 +584,7 @@
               (resource-observation-state-ensure
               (tool-context-conversation context)
               observation)))
-      (tool-success (memory-resource--read-result state)))))
+      (tool-success (resource-item-read-result state)))))
 
 (defmethod resource-tool-edit
     ((resource memory-resource) (tool resource-edit-tool)
@@ -734,7 +615,7 @@
              (format nil "~A~@[~%Exact URI: ~A~]~%~A"
                      summary
                      exact-uri
-                     (memory-resource--read-result state)))))
+                     (resource-item-read-result state)))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, for another memory URI, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."

@@ -58,7 +58,7 @@
   (let ((prefix "memory:id/"))
     (unless (uiop:string-prefix-p prefix uri)
       (error "Memory item URI ~S is not canonical." uri))
-    (memory-resource--decode-identifier (subseq uri (length prefix)))))
+    (resource-item-decode-identifier "memory" "memory" (subseq uri (length prefix)))))
 
 (-> memory-resource-tests--persist-identifier
     (configuration non-empty-string non-empty-string non-empty-string)
@@ -234,7 +234,8 @@
                 "memory:global contains global memories only")
                (test-assert
                 (and (search (format nil "uri: ~A"
-                                     (memory-resource--item-uri
+                                     (resource-item-uri
+                     "memory"
                                       (memory-identifier workspace-memory)))
                              relevant-content)
                      (search "created:" relevant-content)
@@ -268,11 +269,13 @@
                                  (eq (memory-observation-kind observation) ':item)
                                  (string=
                                   (resource-observation-uri observation)
-                                  (memory-resource--item-uri
+                                  (resource-item-uri
+                     "memory"
                                    (memory-identifier other-memory)))
                                  (search
                                   (format nil "URI: ~A"
-                                          (memory-resource--item-uri
+                                          (resource-item-uri
+                     "memory"
                                            (memory-identifier other-memory)))
                                   content))
                             "compatible direct item reads render the canonical exact URI")
@@ -292,7 +295,7 @@
                   "exact memory resources reject non-memory operations")))
              (dolist (memory reserved-memories)
                (let* ((identifier (memory-identifier memory))
-                      (uri (memory-resource--item-uri identifier))
+                      (uri (resource-item-uri "memory" identifier))
                       (exact (read-resource first-context uri))
                       (collection (read-resource
                                    first-context
@@ -308,7 +311,7 @@
                                (tool-result-content collection)))
                   "canonical item URIs prevent reserved collection names from shadowing exact memories")))
              (let* ((identifier (memory-identifier encoded-memory))
-                    (uri (memory-resource--item-uri identifier))
+                    (uri (resource-item-uri "memory" identifier))
                     (exact (read-resource first-context uri)))
                (test-assert
                 (and (tool-result-success-p exact)
@@ -504,7 +507,8 @@
                      (exact-read
                        (read-resource
                         first-context
-                        (memory-resource--item-uri
+                        (resource-item-uri
+                     "memory"
                          (memory-identifier global-memory)))))
                 (test-assert
                  (and (tool-result-success-p all-read)
@@ -670,7 +674,8 @@
                        "relevant"
                        "Reserved mutation fixture"
                        "Canonical exact item operations must reach this memory."))
-                    (uri (memory-resource--item-uri
+                    (uri (resource-item-uri
+                     "memory"
                           (memory-identifier fixture)))
                     (observed (read-resource context uri))
                     (replaced

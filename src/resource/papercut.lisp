@@ -100,6 +100,19 @@
                                            (resource-observation-revision observation)
                                            (papercut-observation-snapshot observation))))
 
+(defmethod resource-observation-state-class ((resource papercut-resource))
+  "Record papercut observations under the papercut state family."
+  (declare (ignore resource))
+  'papercut-observation-state)
+
+(defmethod resource-item-identity ((resource papercut-resource))
+  "Compare papercut observations by collection or stable identifier."
+  (papercut-resource-identifier resource))
+
+(defmethod resource-observation-identity ((observation papercut-observation))
+  "Compare papercut observations by collection or stable identifier."
+  (papercut-observation-identifier observation))
+
 (defmethod resource-observation-state-maximum ((state papercut-observation-state))
   "Return the configured papercut observation limit."
   (declare (ignore state))
@@ -108,94 +121,13 @@
 
 ;;;; -- URI Resolution --
 
-(-> papercut-resource--identifier-unreserved-octet-p
-    ((unsigned-byte 8))
-    boolean)
-(defun papercut-resource--identifier-unreserved-octet-p (octet)
-  "Return true when OCTET is an RFC 3986 unreserved ASCII character."
-  (and (or (<= (char-code #\A) octet (char-code #\Z))
-           (<= (char-code #\a) octet (char-code #\z))
-           (<= (char-code #\0) octet (char-code #\9))
-           (member octet '(#x2D #x2E #x5F #x7E)))
-       t))
-
-(-> papercut-resource--encode-identifier (non-empty-string) non-empty-string)
-(defun papercut-resource--encode-identifier (identifier)
-  "Return IDENTIFIER as one canonical percent-encoded URI path segment."
-  (with-output-to-string (stream)
-    (loop for octet across
-          (sb-ext:string-to-octets identifier :external-format ':utf-8)
-          do
-             (if (papercut-resource--identifier-unreserved-octet-p octet)
-                 (write-char (code-char octet) stream)
-                 (format stream "%~2,'0X" octet)))))
-
-(-> papercut-resource--malformed-item-identifier (string non-empty-string) null)
-(defun papercut-resource--malformed-item-identifier (encoded reason)
-  "Signal that ENCODED cannot identify one exact papercut because of REASON."
-  (error 'resource-uri-malformed
-         :uri    (format nil "papercut:id/~A" encoded)
-         :reason reason))
-
-(-> papercut-resource--decode-identifier (string) non-empty-string)
-(defun papercut-resource--decode-identifier (encoded)
-  "Decode one percent-encoded exact-papercut path segment from ENCODED."
-  (when (zerop (length encoded))
-    (papercut-resource--malformed-item-identifier
-     encoded "the exact papercut identifier must not be empty"))
-  (let ((octets
-          (make-array (length encoded)
-                      :element-type '(unsigned-byte 8)
-                      :fill-pointer 0)))
-    (loop with index = 0
-          while (< index (length encoded))
-          for character = (char encoded index)
-          do
-             (cond
-               ((char= character #\%)
-                (when (> (+ index 3) (length encoded))
-                  (papercut-resource--malformed-item-identifier
-                   encoded "a percent escape is incomplete"))
-                (let ((high (digit-char-p (char encoded (1+ index)) 16))
-                      (low (digit-char-p (char encoded (+ index 2)) 16)))
-                  (unless (and high low)
-                    (papercut-resource--malformed-item-identifier
-                     encoded "a percent escape contains a non-hexadecimal digit"))
-                  (vector-push (+ (* high 16) low) octets)
-                  (incf index 3)))
-               ((and (< (char-code character) 128)
-                     (papercut-resource--identifier-unreserved-octet-p
-                      (char-code character)))
-                (vector-push (char-code character) octets)
-                (incf index))
-               (t
-                (papercut-resource--malformed-item-identifier
-                 encoded
-                 "exact papercut identifiers must use percent encoding outside RFC 3986 unreserved characters"))))
-    (let ((identifier
-            (handler-case
-                (sb-ext:octets-to-string octets :external-format ':utf-8)
-              (error ()
-                (papercut-resource--malformed-item-identifier
-                 encoded "the percent-encoded identifier is not valid UTF-8")))))
-      (unless (non-empty-string-p identifier)
-        (papercut-resource--malformed-item-identifier
-         encoded "the exact papercut identifier must not be empty"))
-      identifier)))
-
-(-> papercut-resource--item-uri (non-empty-string) non-empty-string)
-(defun papercut-resource--item-uri (identifier)
-  "Return the canonical exact-item resource URI for stable IDENTIFIER."
-  (format nil "papercut:id/~A"
-          (papercut-resource--encode-identifier identifier)))
-
 (-> papercut-resource--make-item
     (non-empty-string non-empty-string)
     papercut-item-resource)
 (defun papercut-resource--make-item (identifier workspace)
   "Return one exact item resource with canonical URI and WORKSPACE identity."
   (make-instance 'papercut-item-resource
-                 :uri        (papercut-resource--item-uri identifier)
+                 :uri        (resource-item-uri "papercut" identifier)
                  :identifier identifier
                  :workspace  workspace))
 
@@ -213,7 +145,8 @@
                       :workspace  workspace))
       ((uiop:string-prefix-p "id/" identifier)
        (papercut-resource--make-item
-        (papercut-resource--decode-identifier
+        (resource-item-decode-identifier
+         "papercut" "papercut"
          (subseq identifier (length "id/")))
         workspace))
       (t
@@ -237,7 +170,7 @@
   (format nil
           "id: ~A~%uri: ~A~%reported: ~A~%title: ~A~%excerpt: ~A"
           (papercut-identifier papercut)
-          (papercut-resource--item-uri (papercut-identifier papercut))
+          (resource-item-uri "papercut" (papercut-identifier papercut))
           (papercut-timestamp-string (papercut-reported-at papercut))
           (papercut-title papercut)
           (papercut-excerpt
@@ -261,7 +194,7 @@
   (format nil
           "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%title: ~A~2%~A"
           (papercut-identifier papercut)
-          (papercut-resource--item-uri (papercut-identifier papercut))
+          (resource-item-uri "papercut" (papercut-identifier papercut))
           (papercut-timestamp-string (papercut-reported-at papercut))
           (papercut-workspace papercut)
           (or (papercut-source-conversation papercut) "unknown")
@@ -368,54 +301,7 @@
 ;;;; -- Conversation Observation State --
 
 
-(-> papercut-resource--find-observation-state
-    (conversation papercut-resource non-empty-string)
-    papercut-observation-state)
-(defun papercut-resource--find-observation-state (conversation resource alias)
-  "Return CONVERSATION's exact RESOURCE observation ALIAS or signal staleness."
-  (let ((state
-          (resource-observation-state-find
-           (conversation-resource-observations conversation)
-           alias
-           'papercut-observation-state)))
-    (unless (and state
-                 (let ((observation
-                         (resource-observation-state-observation state)))
-                   (and (string= (resource-uri resource)
-                                 (resource-observation-uri observation))
-                        (string= (papercut-resource-workspace resource)
-                                 (papercut-observation-workspace observation)))))
-      (error 'resource-revision-stale
-             :uri               (resource-uri resource)
-             :expected-revision alias
-             :actual-revision   nil))
-    state))
-
-
 ;;;; -- Papercut Operations --
-
-(-> papercut-resource--validate-operation-fields (json-object list list) null)
-(defun papercut-resource--validate-operation-fields (operation allowed required)
-  "Require OPERATION to contain exactly ALLOWED fields and every REQUIRED field."
-  (loop for name being the hash-keys of operation
-        unless (member name allowed :test #'string=)
-          do
-             (error 'tool-error
-                    :message (format nil
-                                     "Papercut resource operation does not accept field ~A."
-                                     name)
-                    :tool-name "resource.edit"))
-  (dolist (name required)
-    (multiple-value-bind (value present-p)
-        (gethash name operation)
-      (declare (ignore value))
-      (unless present-p
-        (error 'tool-error
-               :message (format nil
-                                "Papercut resource operation requires ~A."
-                                name)
-               :tool-name "resource.edit"))))
-  nil)
 
 (-> papercut-resource--required-text
     (json-object string string integer)
@@ -444,7 +330,8 @@
              :tool-name "resource.edit"))
     (cond
       ((string= name "papercut-report")
-       (papercut-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Papercut"
         operation '("op" "title" "content") '("op" "title" "content"))
        (list :kind ':report
              :title (papercut-resource--required-text
@@ -452,7 +339,8 @@
              :content (papercut-resource--required-text
                        operation "content" "content" *papercut-content-limit*)))
       ((string= name "papercut-close")
-       (papercut-resource--validate-operation-fields
+       (resource-item-validate-operation-fields
+     "Papercut"
         operation '("op" "resolution") '("op" "resolution"))
        (list :kind ':close
              :resolution (papercut-resource--required-text
@@ -523,7 +411,7 @@
         (with-recursive-lock-held
             ((conversation-resource-observation-lock conversation))
           (let* ((state
-                   (papercut-resource--find-observation-state
+                   (resource-item-find-observation-state
                     conversation resource base-revision))
                  (base-observation
                    (resource-observation-state-observation state))
@@ -581,17 +469,6 @@
 
 ;;;; -- Resource Tool Methods --
 
-(-> papercut-resource--read-result
-    (papercut-observation-state)
-    non-empty-string)
-(defun papercut-resource--read-result (state)
-  "Return one explicit model-facing complete papercut observation result."
-  (let ((observation (resource-observation-state-observation state)))
-    (format nil "URI: ~A~%Revision: ~A~%Content:~%~A"
-            (resource-observation-uri observation)
-            (resource-observation-state-alias state)
-            (resource-observation-content observation))))
-
 (defmethod resource-tool-read
     ((resource papercut-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
@@ -609,7 +486,7 @@
             (resource-observation-state-ensure
             (tool-context-conversation context)
             observation)))
-    (tool-success (papercut-resource--read-result state))))
+    (tool-success (resource-item-read-result state))))
 
 (defmethod resource-tool-edit
     ((resource papercut-resource) (tool resource-edit-tool)
@@ -640,7 +517,7 @@
              (format nil "~A~@[~%Exact URI: ~A~]~%~A"
                      summary
                      exact-uri
-                     (papercut-resource--read-result state)))))
+                     (resource-item-read-result state)))))
       (resource-revision-stale ()
         (tool-failure
          (format nil "Resource revision ~A is stale, expired, for another papercut URI or workspace, or was not observed in this conversation. Reread ~A with resource.read and retry against the returned revision."
