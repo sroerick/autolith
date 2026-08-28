@@ -814,7 +814,7 @@
                   "interactive once approval grants full access")
                  (test-assert
                   (equal authorization-item-names
-                         '("pick" "once" "always" "full" "deny"))
+                         '("auto" "once" "always" "full" "deny"))
                   "the command picker retains full-access approvals without a sandbox")
                  (test-assert
                   (eq (application--apply-command-authorization-choice
@@ -844,12 +844,12 @@
             (lambda ()
               (test-assert
                (eq (application--apply-command-authorization-choice
-                    application "printf picked" root "pick")
+                    application "printf picked" root "auto")
                    ':full-access)
-               "pick classifies the pending command immediately")))
+               "auto classifies the pending command immediately")))
            (test-assert
             (eq (application-permission-mode application) ':auto)
-            "pick switches the session to auto mode like full and sandbox")
+            "auto stays the session permission mode like full and sandbox")
            (application-command application "/permissions ask")
            (test-assert (eq (application-permission-mode application) ':ask)
                         "/permissions ask restores prompt mode")

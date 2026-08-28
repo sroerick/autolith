@@ -634,12 +634,6 @@ lock."
       (when input
         (list (first form) input)))))
 
-(-> application-input-controller--restore-work-items (list) list)
-(defun application-input-controller--restore-work-items (forms)
-  "Return in-memory work items restored from durable FORMS."
-  (remove nil
-          (mapcar #'application-input-controller--restore-work-item forms)))
-
 (-> application-input-controller--pending-steering-entry-form
     (agent-steering-input)
     list)
@@ -2589,7 +2583,7 @@ may execute immediately; other Lisp waits for the idle boundary."
   (declare (ignore command))
   (append
    (list
-    (list :name "pick"
+    (list :name "auto"
           :argument nil
           :description
           (if sandbox-available-p
@@ -2697,9 +2691,8 @@ sandbox grant is revalidated at this final authorization boundary."
     (application command directory choice)
   "Apply interactive command authorization CHOICE, failing closed when stale."
   (cond
-    ((or (string= (or choice "") "pick")
-         (string= (or choice "") "auto"))
-     ;; Picking is a session policy like "full" and "sandbox": later
+    ((string= (or choice "") "auto")
+     ;; Auto is a session policy like "full" and "sandbox": later
      ;; commands classify themselves instead of prompting again.
      (setf (application-permission-mode application) ':auto)
      (multiple-value-bind (decision reason)

@@ -749,7 +749,6 @@ terminals, and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
                 :persistent t
                 :items '(("ask" . :ask)
                          ("auto" . :auto)
-                         ("pick" . :auto)
                          ("sandbox" . :sandboxed)
                          ("full" . :full-access))
                 :description "initial command authorization mode")

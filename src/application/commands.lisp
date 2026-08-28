@@ -1829,8 +1829,7 @@ are forwarded to TERMINAL-UI-SELECT."
        (application-present
         application
         "Commands will ask before running unless the exact command was saved."))
-      ((or (string= choice "auto")
-           (string= choice "pick"))
+      ((string= choice "auto")
        (application--set-durable-permission-mode application ':auto)
        (application-present
         application
