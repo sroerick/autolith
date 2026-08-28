@@ -1975,6 +1975,43 @@
                        (<= (text-cell-width line) 19))
                      (uiop:split-string text :separator '(#\Newline))))
          "reasoning summaries wrap with room for the rail on narrow terminals")))
+    (let* ((item
+             (json-object
+              "type" "tool_search_output"
+              "tools"
+              (json-array
+               (json-object "type" "namespace"
+                            "name" "resource"
+                            "tools" (json-array))
+               (json-object
+                "type" "namespace"
+                "name"
+                (format nil "unsafe~%~C[31mnamespace"
+                        *terminal-escape-character*)
+                "tools" (json-array)))))
+           (entry (response-item-entry application item))
+           (text (test-terminal-row-text entry)))
+      (test-assert
+       (and (application--response-item-visible-p application item)
+            (= (count (terminal-span ':tool "▸ Loaded ") entry :test #'equal) 2)
+            (find (terminal-span ':syntax-function "resource")
+                  entry
+                  :test #'equal)
+            (= (count (terminal-span ':tool " tools") entry :test #'equal) 2))
+       "tool discovery presents each loaded namespace with tool styling")
+      (test-assert
+       (and (not (find *terminal-escape-character* text))
+            (every (lambda (line)
+                     (<= (text-cell-width line) 39))
+                   (uiop:split-string text :separator '(#\Newline))))
+       "tool discovery sanitizes and bounds provider-controlled namespaces"))
+    (let ((empty-item
+            (json-object "type" "tool_search_output"
+                         "tools" (json-array))))
+      (test-assert
+       (and (null (response-item-entry application empty-item))
+            (not (application--response-item-visible-p application empty-item)))
+       "empty tool discovery output has no transcript entry"))
     (let* ((narrow-application
              (application-tests--ui-application :columns 32))
            (rows

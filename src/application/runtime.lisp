@@ -2039,6 +2039,52 @@ command replaced the active conversation."
                    row
                    (cons (terminal-span ':plain (string #\Newline)) row))))
 
+(-> application--tool-search-namespaces (json-object) list)
+(defun application--tool-search-namespaces (item)
+  "Return unique sanitized namespace names exposed by tool-search ITEM."
+  (let ((tools (json-get item "tools"))
+        (seen (make-hash-table :test #'equal))
+        (names nil))
+    (when (vectorp tools)
+      (loop for tool across tools
+            when (and (json-object-p tool)
+                      (string= (or (json-get tool "type") "") "namespace"))
+              do (let* ((name (json-get tool "name"))
+                        (safe-name
+                          (and (stringp name)
+                               (sanitize-text name :single-line-p t))))
+                   (when (and (non-empty-string-p safe-name)
+                              (not (gethash safe-name seen)))
+                     (setf (gethash safe-name seen) t)
+                     (push safe-name names)))))
+    (nreverse names)))
+
+(-> application--tool-search-entry
+    (application json-object)
+    (option list))
+(defun application--tool-search-entry (application item)
+  "Return one highlighted row per namespace exposed by tool-search ITEM."
+  (let ((names (application--tool-search-namespaces item)))
+    (when names
+      (let ((maximum-width
+              (max 1
+                   (1- (terminal-columns
+                        (terminal-ui-terminal (application-ui application)))))))
+        (loop for namespace in names
+              for first-row-p = t then nil
+              for row = (list (terminal-span ':tool "▸ Loaded ")
+                              (terminal-span ':syntax-function namespace)
+                              (terminal-span ':tool " tools"))
+              append
+              (append
+               (unless first-row-p
+                 (list (terminal-span ':plain (string #\Newline))))
+               (if (<= (terminal--spans-width row) maximum-width)
+                   row
+                   (append
+                    (terminal--clip-spans row (max 0 (1- maximum-width)))
+                    (list (terminal-span ':dim "…"))))))))))
+
 (-> response-item-entry
     (application json-object &key (:timestamp (option timestamp)))
     (option list))
@@ -2074,6 +2120,8 @@ command replaced the active conversation."
         :detail (let ((detail (web-search-call-detail item)))
                   (and (non-empty-string-p detail)
                        detail))))
+      ((string= (or type "") "tool_search_output")
+       (application--tool-search-entry application item))
       (t
        nil))))
 
@@ -2206,6 +2254,8 @@ command replaced the active conversation."
       ((string= (or type "") "reasoning")
        (and (application-reasoning-traces-p application)
             (not (null (response-item-reasoning-summary item)))))
+      ((string= (or type "") "tool_search_output")
+       (not (null (application--tool-search-namespaces item))))
       ((and (stringp type)
             (member type '("function_call" "web_search_call")
                     :test #'string=))
