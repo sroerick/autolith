@@ -37,23 +37,6 @@
              :test #'string=
              :key #'agenda-item-identifier)))
 
-(-> application--agenda-current-record
-    (application)
-    (values (option workspace-agenda) boolean))
-(defun application--agenda-current-record (application)
-  "Return the current agenda record and whether it was read for presentation."
-  (block nil
-    (unless (slot-boundp application 'configuration)
-      (return (values nil nil)))
-    (let ((configuration (application-configuration application)))
-      (unless (typep configuration 'configuration)
-        (return (values nil nil)))
-      (handler-case
-          (with-recursive-lock-held (*agenda-lock*)
-            (values (agenda-current configuration (agenda-load configuration)) t))
-        (error ()
-          (values nil nil))))))
-
 (-> application--agenda-resource-record
     (application string string)
     (values (option workspace-agenda) boolean))

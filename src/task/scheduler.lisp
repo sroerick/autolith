@@ -586,21 +586,3 @@ guarantee."
                     (remove-if #'task-job-detached-p jobs)
                     nil))))))
 
-(defun task-orchestrator-start-job
-    (orchestrator
-     &key parent-agent definition item detached-p parent-call-id
-       command-authorization-function tool-authorization-function)
-  "Admit one JOB through the atomic scheduler admission path."
-  (multiple-value-bind (jobs inline)
-      (task-orchestrator-start-jobs
-       orchestrator
-       parent-agent
-       (list (list :definition definition
-                   :item item
-                   :detached detached-p))
-       :parent-call-id parent-call-id
-       :command-authorization-function command-authorization-function
-       :tool-authorization-function tool-authorization-function)
-    (dolist (job inline)
-      (job-run-inline job))
-    (first jobs)))

@@ -179,14 +179,6 @@
   "Return a documented JSON string property schema."
   (json-object "type" "string" "description" description))
 
-(-> tool-string-array-property (string) json-object)
-(defun tool-string-array-property (description)
-  "Return a documented array-of-strings property schema."
-  (json-object
-   "type" "array"
-   "description" description
-   "items" (json-object "type" "string")))
-
 (-> tool-integer-property (string) json-object)
 (defun tool-integer-property (description)
   "Return a documented JSON integer property schema."
@@ -713,11 +705,6 @@
 (defun tool-registry-bind-runtime (registry key binding)
   "Associate BINDING with KEY in REGISTRY and return BINDING."
   (setf (gethash key (tool-registry-runtime-bindings registry)) binding))
-
-(-> tool-registry-unbind-runtime (tool-registry symbol) boolean)
-(defun tool-registry-unbind-runtime (registry key)
-  "Remove KEY's runtime binding from REGISTRY and report whether it existed."
-  (and (remhash key (tool-registry-runtime-bindings registry)) t))
 
 (-> tool-registry--runtime-representatives
     (tool-registry &key (:reverse-p boolean))

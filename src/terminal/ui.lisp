@@ -362,11 +362,6 @@ emergency terminal input responsive while another thread owns presentation."
   "Return the number of live physical rows currently painted for UI."
   (live-region-row-count (terminal-ui-live-region ui)))
 
-(-> terminal-ui-live-cursor-row (terminal-ui) (integer 0))
-(defun terminal-ui-live-cursor-row (ui)
-  "Return the physical live row currently holding UI's input cursor."
-  (live-region-cursor-row (terminal-ui-live-region ui)))
-
 (-> terminal--write-newline (terminal) null)
 (defun terminal--write-newline (terminal)
   "Write a line break that returns to column zero on interactive terminals."
@@ -409,12 +404,6 @@ emergency terminal input responsive while another thread owns presentation."
         (write-string text stream)
         (when sequence
           (write-string *terminal-style-reset* stream))))))
-
-(-> terminal--write-row (terminal list) null)
-(defun terminal--write-row (terminal spans)
-  "Write sanitized semantic SPANS as one trusted terminal row."
-  (terminal--write-safe-text terminal (terminal--render-spans terminal spans))
-  nil)
 
 (-> terminal-ui--lisp-draft-p (string) boolean)
 (defun terminal-ui--lisp-draft-p (text)

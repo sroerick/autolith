@@ -509,17 +509,6 @@ so authentication can bootstrap credentials before model discovery."
 Inference frames bind this to their reserved output tranche so one
 response cannot dramatically overrun the shared subtree budget.")
 
-(-> provider--web-search-content-types (configuration) (option vector))
-(defun provider--web-search-content-types (configuration)
-  "Return CONFIGURATION's provider-required web-search content types.
-
-All supported Codex GPT-5.6 models require text-and-image web search, as
-recorded in the pinned Codex model catalog at ba42e6866cef4baed7ad92c73e6be8cd42e49d8b.
-Grok receives no Codex-specific search-content declaration."
-  (when (and (slot-boundp configuration 'model)
-             (eq (model-family (configuration-model configuration)) ':codex))
-    (json-array "text" "image")))
-
 (-> provider-web-search-tool (configuration) (option json-object))
 (defun provider-web-search-tool (configuration)
   "Return NIL because the subscription Responses endpoint does not execute web_search.

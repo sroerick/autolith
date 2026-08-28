@@ -34,21 +34,3 @@
                    :pathname pathname
                    :span-function #'syntax--terminal-span))
 
-(-> syntax--spans-subseq (list integer integer) list)
-(defun syntax--spans-subseq (spans start end)
-  "Return the character range from START to END within styled SPANS."
-  (let ((position 0)
-        (result nil))
-    (dolist (span spans (nreverse result))
-      (let* ((text (terminal-span-text span))
-             (span-end (+ position (length text)))
-             (part-start (max start position))
-             (part-end (min end span-end)))
-        (when (< part-start part-end)
-          (push (terminal-span
-                 (terminal-span-style span)
-                 (subseq text
-                         (- part-start position)
-                         (- part-end position)))
-                result))
-        (setf position span-end)))))

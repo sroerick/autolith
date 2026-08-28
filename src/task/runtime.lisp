@@ -136,11 +136,6 @@ a no-op, preserving lazy pools before their first job."
   "Return ORCHESTRATOR's queued, running, and finalizing tool executions."
   (job-pool-live-count (task-orchestrator-execution-pool orchestrator)))
 
-(-> task-orchestrator-execution-active-count (task-orchestrator) (integer 0))
-(defun task-orchestrator-execution-active-count (orchestrator)
-  "Return the tool executions currently running on workers."
-  (job-pool-active-count (task-orchestrator-execution-pool orchestrator)))
-
 (-> task-orchestrator-session-live-count (task-orchestrator) (integer 0))
 (defun task-orchestrator-session-live-count (orchestrator)
   "Return all live child and tool jobs in ORCHESTRATOR."
@@ -151,12 +146,6 @@ a no-op, preserving lazy pools before their first job."
 (defun task-orchestrator-lifecycle-state (orchestrator)
   "Return ORCHESTRATOR's :OPEN, :CLOSING, or :CLOSED lifecycle state."
   (job-pool-lifecycle-state (task-orchestrator-pool orchestrator)))
-
-(-> task-orchestrator-shutdown-p (task-orchestrator) boolean)
-(defun task-orchestrator-shutdown-p (orchestrator)
-  "Return true when ORCHESTRATOR has stopped accepting new children."
-  (not (eq (task-orchestrator-lifecycle-state orchestrator) :open)))
-
 
 ;;;; -- Construction and Refresh --
 
@@ -778,15 +767,6 @@ values from either side of a terminal transition."
         :key #'session-job-identifier
         :test #'string=))
 
-(-> task-orchestrator-find-job (task-orchestrator string) session-job)
-(defun task-orchestrator-find-job (orchestrator identifier)
-  "Return IDENTIFIER's retained session job or signal a typed task error."
-  (or (task-orchestrator--find-job orchestrator identifier)
-      (error 'task-error
-             :message (format nil "No job named ~A exists." identifier)
-             :tool-name "job.wait"
-             :task-id identifier)))
-
 (-> session-job-live-activity (session-job) (option list))
 (defgeneric session-job-live-activity (job)
   (:documentation
@@ -872,11 +852,6 @@ values from either side of a terminal transition."
         (string=
          (session-job-root-conversation-identifier job)
          (conversation-identifier (agent-conversation viewer)))))))
-
-(-> task-job-visible-to-agent-p (task-job agent) boolean)
-(defun task-job-visible-to-agent-p (job viewer)
-  "Return true when VIEWER owns task JOB through conversation or ancestry."
-  (session-job-visible-to-agent-p job viewer))
 
 (-> task-orchestrator-list-visible-jobs
     (task-orchestrator agent)

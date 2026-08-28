@@ -1280,37 +1280,6 @@ their prior layer without destroying shadowed lower layers."
             (setf *mcp-server-registrations* candidate)))))
     configuration))
 
-(-> unregister-mcp-server
-    (string &key (:source keyword))
-    boolean)
-(defun unregister-mcp-server
-    (name &key (source (mcp--current-registration-source)))
-  "Remove NAME's registration from SOURCE and report whether it changed."
-  (unless
-      (mcp-configuration--bounded-string-p
-       name *mcp-server-name-maximum-characters*)
-    (mcp-configuration--error
-     "An MCP server name must be a bounded non-empty string."))
-  (unless (keywordp source)
-    (mcp-configuration--error
-     "An MCP registration source must be a keyword."))
-  (mcp--registration-source-rank source)
-  (with-extension-registry-transaction
-    (with-lock-held (*mcp-server-registry-lock*)
-      (let* ((before (length *mcp-server-registrations*))
-             (after
-               (remove-if
-                (lambda (registration)
-                  (and
-                   (eq source (mcp-server-registration-source registration))
-                   (string=
-                    name
-                    (mcp-server-configuration-name
-                     (mcp-server-registration-configuration registration)))))
-                *mcp-server-registrations*)))
-        (setf *mcp-server-registrations* after)
-        (< (length after) before)))))
-
 (-> mcp--registry-snapshot () list)
 (defun mcp--registry-snapshot ()
   "Return an exact ordered snapshot of MCP registration layers."

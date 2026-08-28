@@ -497,17 +497,6 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
    (skill-catalog-for-configuration configuration)
    conversation))
 
-(-> skill-request-instructions
-    (configuration conversation)
-    list)
-(defun skill-request-instructions (configuration conversation)
-  "Return ephemeral skill developer instructions for one provider request.
-
-The returned catalog and selected instructions are assembled fresh and are
-never written to conversation history, memories, summaries, or saved images."
-  (mapcar #'context-contribution-instruction
-          (skill-request-contributions configuration conversation)))
-
 (-> skill--load-tool-visible-p (request-context) boolean)
 (defun skill--load-tool-visible-p (request)
   "Return true when REQUEST exposes the exact skill.load tool."

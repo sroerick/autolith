@@ -327,41 +327,6 @@ semantic order so a temporary builder outage cannot skip a version."
     (error ()
       nil)))
 
-(-> release-builder--prepare-checkout
-    (release-builder-configuration release-source-tag)
-    pathname)
-(defun release-builder--prepare-checkout (configuration source-tag)
-  "Return a clean exact checkout for SOURCE-TAG, cloning it when necessary."
-  (let ((checkout (release-builder--checkout-path configuration source-tag)))
-    (unless (release-builder--checkout-valid-p checkout source-tag)
-      (when (uiop:directory-exists-p checkout)
-        (uiop:delete-directory-tree checkout
-                                    :validate t
-                                    :if-does-not-exist ':ignore))
-      (ensure-directories-exist checkout)
-      (uiop:delete-empty-directory checkout)
-      (handler-case
-          (uiop:run-program
-           (list "git" "clone"
-                 "--depth" "1"
-                 "--branch" (release-source-tag-name source-tag)
-                 "--single-branch"
-                 (release-builder-configuration-repository configuration)
-                 (namestring checkout))
-           :output ':interactive
-           :error-output ':interactive)
-        (error (cause)
-          (error 'release-builder-error
-                 :stage ':checkout
-                 :tag (release-source-tag-name source-tag)
-                 :cause cause)))
-      (unless (release-builder--checkout-valid-p checkout source-tag)
-        (error 'release-builder-error
-               :stage ':checkout
-               :tag (release-source-tag-name source-tag)
-               :cause "The cloned checkout does not match its remote tag.")))
-    checkout))
-
 (-> release-builder--source-version (pathname) string)
 (defun release-builder--source-version (checkout)
   "Read the single ASDF version declared by CHECKOUT."
@@ -385,28 +350,6 @@ semantic order so a temporary builder outage cannot skip a version."
 
 
 ;;;; -- Container Build --
-
-(-> release-builder--container-image (release-builder-configuration) null)
-(defun release-builder--container-image (configuration)
-  "Build or refresh the pinned portable release-builder container image."
-  (let* ((source-root
-           (release-builder-configuration-source-root configuration))
-         (server-root (merge-pathnames "server/" source-root))
-         (containerfile (merge-pathnames "Containerfile" server-root)))
-    (handler-case
-        (uiop:run-program
-         (list (release-builder-configuration-container-command configuration)
-               "build"
-               "--tag" *release-builder-container-image*
-               "--file" (namestring containerfile)
-               (namestring server-root))
-         :output ':interactive
-         :error-output ':interactive)
-      (error (cause)
-        (error 'release-builder-error
-               :stage ':container-image
-               :cause cause))))
-  nil)
 
 (-> release-builder--staging-path
     (release-builder-configuration release-source-tag)

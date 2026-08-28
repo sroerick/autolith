@@ -1083,20 +1083,6 @@ protocol."
              :pathname pathname))
     (values match source)))
 
-(-> self-source-pathname (configuration string) pathname)
-(defun self-source-pathname (configuration relative-name)
-  "Resolve RELATIVE-NAME to an existing editable file beneath Autolith's src directory."
-  (let* ((source-root (configuration-source-root configuration))
-         (editable-root (merge-pathnames "src/" source-root))
-         (pathname (merge-pathnames relative-name source-root)))
-    (unless (and (uiop:subpathp pathname editable-root)
-                 (probe-file pathname))
-      (error 'source-mutation-error
-             :message "Durable self modification is limited to existing files under src/."
-             :tool-name "self.persist-definition"
-             :pathname pathname))
-    pathname))
-
 (-> source--atomic-write (pathname string) pathname)
 (defun source--atomic-write (pathname content)
   "Atomically replace PATHNAME with CONTENT through a sibling temporary file."

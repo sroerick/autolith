@@ -469,13 +469,6 @@
        (sanitize-text preview :single-line-p t)
        *conversation-preview-width*))))
 
-(-> application--conversation-preview (pathname) (option string))
-(defun application--conversation-preview (pathname)
-  "Return a one-line excerpt from PATHNAME's compact picker metadata."
-  (let ((metadata (conversation-picker-metadata-find pathname)))
-    (when metadata
-      (application--conversation-preview-from-metadata metadata))))
-
 (-> application--conversation-current-directory-p
     ((option string) pathname)
     boolean)
@@ -641,17 +634,6 @@
   (let ((configuration
           (configuration-with-reasoning-effort
            (application-configuration application)
-           effort)))
-    (application--persist-model-selection application configuration)
-    (application--install-configuration application configuration)))
-
-(-> application-set-model-selection (application string string) null)
-(defun application-set-model-selection (application model effort)
-  "Switch APPLICATION to MODEL and reasoning EFFORT, and persist both choices."
-  (let ((configuration
-          (configuration-with-reasoning-effort
-           (configuration-with-model (application-configuration application)
-                                     model)
            effort)))
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))

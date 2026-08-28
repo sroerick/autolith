@@ -245,11 +245,6 @@
   "Return the persisted reasoning-summary setting, defaulting safely to false."
   (preference-state-reasoning-traces-p (preferences-load configuration)))
 
-(-> preferences-codex-fast-mode-p (configuration) boolean)
-(defun preferences-codex-fast-mode-p (configuration)
-  "Return the persisted Codex Fast mode setting, defaulting safely to false."
-  (preference-state-codex-fast-mode-p (preferences-load configuration)))
-
 (-> preferences-compact-view-p (configuration) boolean)
 (defun preferences-compact-view-p (configuration)
   "Return the persisted compact tool-presentation setting, defaulting to true."

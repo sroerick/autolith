@@ -91,11 +91,6 @@
   "Return IMAGE's saved core pathname."
   (sbcl-worker-image-core-pathname image))
 
-(-> lisp-image-manifest-pathname (lisp-image) pathname)
-(defun lisp-image-manifest-pathname (image)
-  "Return IMAGE's readable manifest pathname."
-  (sbcl-worker-image-manifest-pathname image))
-
 (-> lisp-image-parent-identifier (lisp-image) string)
 (defun lisp-image-parent-identifier (image)
   "Return the pristine or saved parent of IMAGE."
@@ -146,24 +141,6 @@
       :note note
       :core-pathname core-pathname
       :source-revision source-commit))))
-
-(-> lisp-image-staging-directory (configuration string) pathname)
-(defun lisp-image-staging-directory (configuration identifier)
-  "Return a fresh unpublished directory for saved image IDENTIFIER."
-  (lisp-image--call
-   (lambda ()
-     (sbcl-worker-image-staging-directory
-      (lisp-worker--environment configuration)
-      identifier))))
-
-(-> lisp-image-load (configuration string) lisp-image)
-(defun lisp-image-load (configuration identifier)
-  "Load and validate saved Lisp worker image IDENTIFIER."
-  (lisp-image--call
-   (lambda ()
-     (sbcl-worker-image-load
-      (lisp-worker--environment configuration)
-      identifier))))
 
 (-> lisp-image-compatible-p (lisp-image) boolean)
 (defun lisp-image-compatible-p (image)
