@@ -107,7 +107,7 @@
 (-> localgroup-attachment-send (localgroup-attachment list) boolean)
 (defun localgroup-attachment-send (attachment packet)
   "Queue PACKET for ATTACHMENT, closing a client that falls too far behind."
-  (let ((text (localgroup--packet-string packet))
+  (let ((text (daemon-packet-string packet))
         (accepted-p nil)
         (close-p nil))
     (with-lock-held ((localgroup-attachment-lock attachment))

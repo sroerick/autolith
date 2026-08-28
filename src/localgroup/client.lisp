@@ -35,7 +35,7 @@
          (session-id (localgroup--record-session-id record))
          (response
            (handler-case
-               (localgroup-call
+               (daemon-call
                 (localgroup--record-port record)
                 (localgroup--record-token record)
                 operation
@@ -44,7 +44,7 @@
                (localgroup--remove-stale-record pathname record)
                (error 'localgroup-error
                        :message (format nil "Localgroup session ~A is unavailable."
-                                        (localgroup-session-identifier-display
+                                        (session-identifier-display
                                          session-id))
                       :operation operation
                       :session-id session-id
@@ -61,14 +61,14 @@
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
   "Return CONFIGURATION's unique endpoint record matching SESSION-ID."
-  (let* ((session-id (localgroup-session-identifier-normalize session-id))
+  (let* ((session-id (session-identifier-normalize session-id))
          (matches
            (remove-if-not
             (lambda (entry)
               (string=
                session-id
                (handler-case
-                   (localgroup-session-identifier-normalize
+                   (session-identifier-normalize
                     (localgroup--record-session-id (rest entry)))
                  (localgroup-error ()
                    (localgroup--record-session-id (rest entry))))))
@@ -76,13 +76,13 @@
     (cond ((null matches)
            (error 'localgroup-error
                   :message (format nil "No localgroup session named ~A is running."
-                                   (localgroup-session-identifier-display session-id))
+                                   (session-identifier-display session-id))
                   :operation ':discover
                   :session-id session-id))
           ((rest matches)
            (error 'localgroup-error
                   :message (format nil "More than one localgroup session named ~A is registered."
-                                   (localgroup-session-identifier-display session-id))
+                                   (session-identifier-display session-id))
                   :operation ':discover
                   :session-id session-id))
           (t
@@ -138,7 +138,7 @@
          (identifier (getf values :session-id))
          (timestamp
            (and (stringp identifier)
-                (localgroup-session-identifier-timestamp identifier))))
+                (session-identifier-timestamp identifier))))
     (if timestamp
         (localgroup--status-timestamp-text timestamp)
         (let ((created-at (getf values :created-at)))
@@ -164,7 +164,7 @@
   (let ((values (rest status)))
     (ecase field
       (:session
-       (localgroup-session-identifier-display (getf values :session-id)))
+       (session-identifier-display (getf values :session-id)))
       (:pid
        (let ((pid (getf values :pid)))
          (if (typep pid '(integer 1))
@@ -459,7 +459,7 @@ HEADER-P renders field labels rather than status values."
                                 (getf (rest response) :operation)))
          (terminal-span
           ':code
-          (localgroup-session-identifier-display
+          (session-identifier-display
            (getf (rest response) :session-id)))
          (terminal-span ':plain "."))
    styled-p)
@@ -474,7 +474,7 @@ HEADER-P renders field labels rather than status values."
   "Copy attachment output packets to OUTPUT-STREAM until closure."
   (unwind-protect
        (handler-case
-           (loop for packet = (localgroup-read-packet socket-stream)
+           (loop for packet = (daemon-read-packet socket-stream)
                  while packet
                  do (case (first packet)
                       (:output
@@ -519,7 +519,7 @@ HEADER-P renders field labels rather than status values."
                         (setf *terminal-resize-pending-p* nil)
                         (multiple-value-bind (rows columns)
                             (terminal-current-size)
-                          (localgroup-write-packet
+                          (daemon-write-packet
                            socket-stream
                            (list :resize
                                  :rows rows
@@ -536,11 +536,11 @@ HEADER-P renders field labels rather than status values."
                             ((member event '(:end-of-input :stream-end))
                              (return))
                             ((not (eq mode ':read-only))
-                             (localgroup-write-packet
+                             (daemon-write-packet
                               socket-stream (list :event event))))))
                       (sleep 0.01)))
         (ignore-errors
-          (localgroup-write-packet socket-stream '(:detach)))
+          (daemon-write-packet socket-stream '(:detach)))
         (ignore-errors (close socket-stream))
         (when receiver
           (localgroup-stop-thread receiver)))))
@@ -566,7 +566,7 @@ HEADER-P renders field labels rather than status values."
                    (handler-case
                        (eq
                         (first
-                         (localgroup-call
+                         (daemon-call
                           (localgroup--record-port record) token ':status))
                         ':ok)
                      (error () nil)))
@@ -598,11 +598,11 @@ HEADER-P renders field labels rather than status values."
                     :operation ':attach
                     :session-id (localgroup--record-session-id record)))
            (multiple-value-setq (socket socket-stream)
-             (localgroup-connect (localgroup--record-port record)))
-           (localgroup-write-packet
+             (daemon-connect (localgroup--record-port record)))
+           (daemon-write-packet
             socket-stream
             (list :localgroup-request
-                  :version *localgroup-protocol-version*
+                  :version *daemon-protocol-version*
                   :token (localgroup--record-token record)
                   :operation ':attach
                   :arguments
@@ -610,7 +610,7 @@ HEADER-P renders field labels rather than status values."
                         :rows (terminal-rows terminal)
                         :columns (terminal-columns terminal)
                         :styled-p (terminal-environment-styling-p))))
-           (let ((response (localgroup-read-response socket-stream ':attach)))
+           (let ((response (daemon-read-response socket-stream ':attach)))
              (cond
                ((and response (eq (first response) ':handoff))
                 (let ((session-id (getf (rest response) :session-id))

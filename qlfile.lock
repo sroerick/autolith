@@ -106,6 +106,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/org-templater.git" :ref "918d456528474e880014fe8377e4810e4a55e6a9")
   :version "git-918d456528474e880014fe8377e4810e4a55e6a9"))
+("image-daemon" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/lambda-symbolics/image-daemon.git" :ref "fb530e996ab83f91b79d316b93c98517b7e25bfd")
+  :version "git-fb530e996ab83f91b79d316b93c98517b7e25bfd"))
 ("idsmall" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/idsmall.git" :ref "3f4b8e067a1e41b5388f7c5af58585e8c9ab51b9")

@@ -843,12 +843,12 @@
 (defun rlm-endpoint-test-call (endpoint request)
   "Send one raw REQUEST packet to ENDPOINT and return its response."
   (multiple-value-bind (socket stream)
-      (localgroup-connect (rlm-endpoint-port endpoint))
+      (daemon-connect (rlm-endpoint-port endpoint))
     (declare (ignore socket))
     (unwind-protect
          (progn
-           (localgroup-write-packet stream request)
-           (localgroup-read-packet stream))
+           (daemon-write-packet stream request)
+           (daemon-read-packet stream))
       (ignore-errors (close stream)))))
 
 (-> test-rlm-endpoint () null)

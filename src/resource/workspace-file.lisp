@@ -754,7 +754,7 @@ Return NIL when NAME disappears during enumeration."
   (merge-pathnames
    (format nil ".~A.autolith-resource-~A.tmp"
            (file-namestring path)
-           (subseq (localgroup-random-token) 0 16))
+           (subseq (daemon-random-token) 0 16))
    (uiop:pathname-directory-pathname path)))
 
 (-> workspace-file--replacement-octets (string) (simple-array (unsigned-byte 8) (*)))

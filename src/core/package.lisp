@@ -347,6 +347,26 @@
   (:import-from #:closer-mop
                 #:class-slots
                 #:slot-definition-name)
+  (:import-from #:image-daemon
+                #:*daemon-connect-timeout-seconds*
+                #:*daemon-frame-header-character-limit*
+                #:*daemon-packet-character-limit*
+                #:*daemon-protocol-version*
+                #:daemon-call
+                #:daemon-connect
+                #:daemon-packet-string
+                #:daemon-error-operation
+                #:daemon-error-session-id
+                #:daemon-random-nonce
+                #:daemon-random-token
+                #:daemon-read-packet
+                #:daemon-read-response
+                #:daemon-socket-stream
+                #:daemon-write-packet
+                #:legacy-session-identifier-p
+                #:session-identifier-display
+                #:session-identifier-normalize
+                #:session-identifier-timestamp)
   (:import-from #:idsmall
                 #:*random-index-function*
                 #:identifier-base

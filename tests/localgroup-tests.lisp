@@ -27,7 +27,7 @@
   (test-assert
    (task-tests--wait-until (lambda () (listen stream)) 2)
    "the localgroup attachment produces its next packet promptly")
-  (or (localgroup-read-packet stream)
+  (or (daemon-read-packet stream)
       (error "The localgroup attachment closed before its next packet.")))
 
 (-> test-localgroup--attach
@@ -36,11 +36,11 @@
 (defun test-localgroup--attach (session mode)
   "Open one test attachment to SESSION with MODE."
   (multiple-value-bind (socket stream)
-      (localgroup-connect (localgroup-session-port session))
-    (localgroup-write-packet
+      (daemon-connect (localgroup-session-port session))
+    (daemon-write-packet
      stream
      (list :localgroup-request
-           :version *localgroup-protocol-version*
+           :version *daemon-protocol-version*
            :token (localgroup-session-token session)
            :operation ':attach
            :arguments
@@ -222,21 +222,7 @@
 (defun test-localgroup-session-identifiers ()
   "Test canonical timestamp-bearing IDs and retained legacy discovery behavior."
   (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
-         (canonical (identifier-from-seed timestamp 0))
-         (display (identifier-display canonical))
-         (legacy "ABCDEF012345"))
-    (test-assert
-     (and (string= (localgroup-session-identifier-normalize display) canonical)
-          (string= (localgroup-session-identifier-display canonical) display)
-          (= (localgroup-session-identifier-timestamp canonical) timestamp)
-          (null (localgroup-session-identifier-timestamp legacy)))
-     "localgroup canonical identifiers normalize, display, and recover their timestamp")
-    (test-assert
-     (and (string= (localgroup-session-identifier-normalize legacy)
-                   "abcdef012345")
-          (string= (localgroup-session-identifier-display legacy)
-                   "abcdef012345"))
-     "localgroup retains lowercase-normalized legacy hexadecimal identifiers")
+         (canonical (identifier-from-seed timestamp 0)))
     (let ((configuration (test-configuration)))
       (unwind-protect
            (progn
@@ -259,7 +245,7 @@
                        (and (identifier-p first)
                             (identifier-p second)
                             (not (string= first second))
-                            (= (localgroup-session-identifier-timestamp first)
+                            (= (session-identifier-timestamp first)
                                timestamp))
                        "new localgroup process sessions receive unique timestamp-bearing identifiers"))
                  (when first
@@ -309,75 +295,7 @@
 (defun test-localgroup-protocol ()
   "Test bounded safe packets, private discovery, status, and control routing."
   (test-localgroup-session-identifiers)
-  (let* ((text
-           (concatenate 'string
-                        "first"
-                        (string #\Newline)
-                        "second"
-                        (string #\Return)
-                        " quoted \"text\" \\ λ"))
-         (packets
-           (list (list :output text)
-                 (list :event (list :paste text))))
-         (wire
-           (with-output-to-string (stream)
-             (dolist (packet packets)
-               (localgroup-write-packet stream packet))))
-         (input (make-string-input-stream wire)))
-    (test-assert
-     (and (equal (localgroup-read-packet input) (first packets))
-          (equal (localgroup-read-packet input) (second packets))
-          (null (localgroup-read-packet input)))
-     "length-prefixed localgroup frames preserve multiline Unicode packets"))
-  (let* ((executed-p nil)
-         (payload "#.(setf executed-p t)")
-         (wire (format nil "~D~%~A" (length payload) payload)))
-    (declare (special executed-p))
-    (test-assert
-     (handler-case
-         (progn
-           (localgroup-read-packet (make-string-input-stream wire))
-           nil)
-       (localgroup-error () t))
-     "localgroup packet reading disables reader evaluation")
-    (test-assert (not executed-p)
-                 "rejected localgroup reader syntax never executes"))
-  (test-assert
-   (handler-case
-       (progn
-         (localgroup-read-packet
-          (make-string-input-stream (format nil "5~%(:x")))
-         nil)
-     (localgroup-error () t))
-   "localgroup framing rejects a payload shorter than its declared length")
-  (multiple-value-bind (read-descriptor write-descriptor)
-      (sb-posix:pipe)
-    (let ((input nil))
-      (unwind-protect
-           (progn
-             (setf input
-                   (sb-sys:make-fd-stream
-                    read-descriptor
-                    :input t
-                    :element-type 'character
-                    :external-format ':utf-8
-                    :buffering ':none
-                    :auto-close nil))
-             (let ((*localgroup-connect-timeout-seconds* 0.05))
-               (test-assert
-                (handler-case
-                    (progn
-                      (localgroup-read-response input ':status)
-                      nil)
-                  (localgroup-error (condition)
-                    (search "did not respond in time"
-                            (autolith-error-message condition))))
-                "localgroup response reads stop at the transport deadline")))
-        (when input
-          (ignore-errors (close input)))
-        (ignore-errors (sb-posix:close read-descriptor))
-        (ignore-errors (sb-posix:close write-descriptor)))))
-    (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
+  (let* ((timestamp (encode-universal-time 5 4 3 2 1 2025 0))
            (status
              (list :localgroup-status
                    :session-id (identifier-from-seed timestamp 0)
@@ -457,7 +375,7 @@
             (lambda (file-descriptor)
               (declare (ignore file-descriptor))
               nil))
-      (list 'localgroup-connect
+      (list 'daemon-connect
             (lambda (port)
               (declare (ignore port))
               (error "Noninteractive attach reached the network."))))
@@ -475,7 +393,7 @@
                ':read-only)
               nil)
           (localgroup-error (condition)
-            (and (eq (localgroup-error-operation condition) ':attach)
+            (and (eq (daemon-error-operation condition) ':attach)
                  (search "interactive terminal"
                          (autolith-error-message condition)))))
          "localgroup attach rejects noninteractive input before connecting"))))
@@ -497,7 +415,7 @@
                     (localgroup-session-registry-pathname session))
                   (record (localgroup--read-endpoint-record record-pathname))
                   (response
-                    (localgroup-call
+                    (daemon-call
                      (localgroup-session-port session)
                      (localgroup-session-token session)
                      ':status))
@@ -507,7 +425,7 @@
                (test-assert
                 (and (eq (first response) ':ok)
                      (identifier-p (localgroup-session-identifier session))
-                     (= (localgroup-session-identifier-timestamp
+                     (= (session-identifier-timestamp
                          (localgroup-session-identifier session))
                         (localgroup-session-created-at session))
                       (string= (getf (rest status) :session-id)
@@ -521,7 +439,7 @@
                (test-assert
                 (eq
                  (first
-                  (localgroup-call
+                  (daemon-call
                    (localgroup-session-port session)
                    "wrong-token"
                    ':status))
@@ -545,7 +463,7 @@
                    (string= (localgroup-session-token session) token)
                    (= (localgroup-session-created-at session) created-at))
               "checkpoint quiescence preserves the process session identity"))
-           (localgroup-call
+           (daemon-call
             (localgroup-session-port session)
             (localgroup-session-token session)
             ':tell
@@ -558,7 +476,7 @@
            (let ((status
                    (getf
                     (rest
-                     (localgroup-call
+                     (daemon-call
                       (localgroup-session-port session)
                       (localgroup-session-token session)
                       ':status))
@@ -567,20 +485,20 @@
               (and (not (getf (rest status) :idle-p))
                    (= (getf (rest status) :queued-input-count) 1))
               "queued remote input makes strict idle false"))
-           (localgroup-call
+           (daemon-call
             (localgroup-session-port session)
             (localgroup-session-token session)
             ':pause)
            (test-assert (application-localgroup-paused-p application)
                         "localgroup pause holds queued primary work")
-           (localgroup-call
+           (daemon-call
             (localgroup-session-port session)
             (localgroup-session-token session)
             ':tell
             (list :message "resume input"))
            (test-assert (not (application-localgroup-paused-p application))
                         "new localgroup input resumes a paused session")
-           (localgroup-call
+           (daemon-call
             (localgroup-session-port session)
             (localgroup-session-token session)
             ':kill)
@@ -716,7 +634,7 @@
                         'list)))
                    (packets
                      (mapcar (lambda (frame)
-                               (localgroup-read-packet
+                               (daemon-read-packet
                                 (make-string-input-stream frame)))
                              frames))
                    (handshake (first packets))
@@ -793,13 +711,13 @@
                        (and (eq (first packet) ':output)
                             (string= (second packet) (format nil "observer output~%")))
                        "read-only attach receives live terminal output"))
-                    (localgroup-write-packet
+                    (daemon-write-packet
                      read-only-stream (list :event (list :insert "ignored")))
                     (sleep 0.05)
                     (test-assert
                      (string= (line-editor-text (terminal-ui-editor ui)) "")
                      "read-only attachment cannot inject terminal input")
-                    (localgroup-write-packet read-only-stream '(:detach)))
+                    (daemon-write-packet read-only-stream '(:detach)))
                (ignore-errors (close read-only-stream))
                (ignore-errors
                  (sb-bsd-sockets:socket-close read-only-socket))))
@@ -816,14 +734,14 @@
                      (= (terminal-columns relay) 91))
                 "control attaches to a detached terminal relay")
                (values control-socket control-stream)))
-           (localgroup-write-packet stream (list :event (list :insert "remote")))
+           (daemon-write-packet stream (list :event (list :insert "remote")))
            (test-assert
             (task-tests--wait-until
              (lambda ()
                (string= (line-editor-text (terminal-ui-editor ui)) "remote"))
              2)
             "controlling attachment input reaches the ordinary line editor")
-           (localgroup-write-packet stream (list :event ':submit))
+           (daemon-write-packet stream (list :event ':submit))
            (test-assert
             (task-tests--wait-until
              (lambda ()
@@ -832,7 +750,7 @@
                        (list (list ':message "remote")))))
              2)
             "controlling attachment submission uses the ordinary input queue")
-           (localgroup-write-packet
+           (daemon-write-packet
             stream (list :resize :rows 44 :columns 120 :styled-p t))
            (test-assert
             (task-tests--wait-until
@@ -842,7 +760,7 @@
                     (terminal-styled-p relay)))
              2)
             "controlling attachment resize updates the live terminal")
-           (localgroup-write-packet stream '(:detach))
+           (daemon-write-packet stream '(:detach))
            (test-assert
             (task-tests--wait-until
              (lambda ()

@@ -309,7 +309,7 @@
                    (idle-p ':idle)
                    (t ':starting))))
       (list :localgroup-status
-            :version *localgroup-protocol-version*
+            :version *daemon-protocol-version*
             :session-id (localgroup-session-identifier session)
             :pid (sb-posix:getpid)
             :autolith-version *autolith-version*
@@ -402,7 +402,7 @@
   (loop
     for packet =
       (handler-case
-          (localgroup-read-packet (localgroup-attachment-stream attachment))
+          (daemon-read-packet (localgroup-attachment-stream attachment))
         (error () nil))
     while packet
     do (case (first packet)
@@ -433,7 +433,7 @@
 (defun localgroup--serve-attachment (session socket stream request)
   "Authenticate REQUEST, attach its persistent SOCKET, and relay terminal packets."
   (unless (localgroup--valid-request-p request session)
-    (localgroup-write-packet
+    (daemon-write-packet
      stream (list :error :message "The localgroup request was rejected."))
     (return-from localgroup--serve-attachment nil))
   (let* ((arguments (localgroup--request-field request :arguments))
@@ -448,7 +448,7 @@
                (eq (localgroup-terminal-attachment-kind terminal) ':foreground))
       (let ((response
               (application-localgroup-request-handoff application ':take-over)))
-        (localgroup-write-packet
+        (daemon-write-packet
          stream
          (list :handoff
                :session-id (localgroup-session-identifier session)
@@ -517,7 +517,7 @@
   "Return true when REQUEST is structurally valid and authentic for SESSION."
   (and (eq (first request) ':localgroup-request)
        (= (or (localgroup--request-field request :version) 0)
-          *localgroup-protocol-version*)
+          *daemon-protocol-version*)
        (stringp (localgroup--request-field request :token))
        (string= (localgroup--request-field request :token)
                 (localgroup-session-token session))
@@ -591,24 +591,24 @@
     (unwind-protect
          (handler-case
              (progn
-               (setf stream (localgroup--socket-stream socket))
-               (let ((request (localgroup-read-packet stream)))
+               (setf stream (daemon-socket-stream socket))
+               (let ((request (daemon-read-packet stream)))
                  (cond
                    ((null request)
-                    (localgroup-write-packet
+                    (daemon-write-packet
                      stream
                      (list :error :message "The localgroup request was empty.")))
                    ((eq (localgroup--request-field request :operation) ':attach)
                     (setf attachment-p t)
                     (localgroup--serve-attachment session socket stream request))
                    (t
-                    (localgroup-write-packet
+                    (daemon-write-packet
                      stream
                      (localgroup--dispatch-request session request))))))
            (error (condition)
              (when (and stream (not attachment-p))
                (ignore-errors
-                 (localgroup-write-packet
+                 (daemon-write-packet
                   stream
                   (list :error :message (princ-to-string condition)))))))
       (if stream
@@ -694,14 +694,14 @@ Optional identity values preserve one session across quiescence or process hando
               (let* ((created-at
                        (or created-at
                            (and identifier
-                                (localgroup-session-identifier-timestamp identifier))
+                                (session-identifier-timestamp identifier))
                            (get-universal-time)))
                      (identifier
-                       (localgroup-session-identifier-normalize
+                       (session-identifier-normalize
                         (or identifier
                             (localgroup-session-identifier-generate
                              configuration created-at))))
-                     (token (or token (localgroup-random-token))))
+                     (token (or token (daemon-random-token))))
                 (setf session
                       (make-instance
                        'localgroup-session
@@ -746,7 +746,7 @@ Optional identity values preserve one session across quiescence or process hando
   "Wake SESSION's blocking accept loop without authenticating a request."
   (handler-case
       (multiple-value-bind (socket stream)
-          (localgroup-connect (localgroup-session-port session))
+          (daemon-connect (localgroup-session-port session))
         (declare (ignore socket))
         (close stream))
     (error () nil))

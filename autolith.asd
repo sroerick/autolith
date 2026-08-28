@@ -23,6 +23,7 @@
                #:dexador
                #:flexi-streams
                #:idsmall
+               #:image-daemon
                #:ironclad/mac/siphash
                #:bordeaux-threads
                #:mcparen

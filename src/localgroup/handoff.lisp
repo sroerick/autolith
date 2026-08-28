@@ -97,7 +97,7 @@ exit \"$status\""
   "Return a fresh private handoff pathname for SESSION-ID."
   (merge-pathnames
    (make-pathname
-    :name (format nil "~A-~A" session-id (localgroup-random-session-id))
+    :name (format nil "~A-~A" session-id (daemon-random-nonce))
     :type "sexp")
    (localgroup-handoff-directory configuration)))
 
@@ -439,9 +439,9 @@ and never interrupts session work."
       (terminal-current-size)
     (let* ((created-at (get-universal-time))
            (session-id
-             (localgroup-session-identifier-normalize
+             (session-identifier-normalize
               (localgroup-session-identifier-generate configuration created-at)))
-           (token (localgroup-random-token))
+           (token (daemon-random-token))
            (pathname (localgroup-handoff--pathname configuration session-id))
            (record
              (list :localgroup-handoff
@@ -503,7 +503,7 @@ and never interrupts session work."
          (handler-case
              (eq
               (first
-               (localgroup-call
+               (daemon-call
                 (getf (rest record) :port)
                 token
                 ':status))

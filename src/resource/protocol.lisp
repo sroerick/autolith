@@ -153,7 +153,7 @@
 (defun resource-observation-state-new-alias (states)
   "Return a fresh opaque alias not present in resource observation STATES."
   (loop for candidate = (format nil "R~A"
-                                (subseq (localgroup-random-token) 0 16))
+                                (subseq (daemon-random-token) 0 16))
         unless (nth-value 1 (fifo-cache-get states candidate))
           return candidate))
 

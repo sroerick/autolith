@@ -255,8 +255,8 @@ leaves a machine-readable invocation tree instead of orphaned frames."
     (unwind-protect
          (handler-case
              (progn
-               (setf stream (localgroup--socket-stream socket))
-               (let ((request (localgroup-read-packet stream)))
+               (setf stream (daemon-socket-stream socket))
+               (let ((request (daemon-read-packet stream)))
                  (unless (and (listp request)
                               (eq (first request) ':rlm-request))
                    (error 'rlm-inference-error
@@ -266,7 +266,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                                   (rlm-endpoint-token endpoint))
                      (error 'rlm-inference-error
                             :message "The environment token is invalid."))
-                   (localgroup-write-packet
+                   (daemon-write-packet
                     stream
                     (rlm-endpoint--dispatch
                      endpoint
@@ -275,7 +275,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
            (error (condition)
              (when stream
                (ignore-errors
-                 (localgroup-write-packet
+                 (daemon-write-packet
                   stream
                   (list :rlm-response :status :error
                         :message (princ-to-string condition)))))))
@@ -334,7 +334,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
              (let ((endpoint (make-instance 'rlm-endpoint
                                             :listener listener
                                             :port port
-                                            :token (localgroup-random-token)
+                                            :token (daemon-random-token)
                                             :provider provider
                                             :configuration configuration
                                             :budget budget
@@ -354,7 +354,7 @@ leaves a machine-readable invocation tree instead of orphaned frames."
   "Nudge ENDPOINT's blocking accept loop with a throwaway connection."
   (handler-case
       (multiple-value-bind (socket stream)
-          (localgroup-connect (rlm-endpoint-port endpoint))
+          (daemon-connect (rlm-endpoint-port endpoint))
         (declare (ignore socket))
         (close stream))
     (error () nil))
