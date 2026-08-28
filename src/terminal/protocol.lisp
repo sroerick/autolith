@@ -44,6 +44,15 @@
 
 ;;;; -- Terminal Objects --
 
+(defvar *terminal-relayed-resize* nil
+  "Pending (rows . columns) relayed by a controlling client, or NIL.
+
+A relayed session's process has no controlling terminal, so its own
+kernel size reports only ever see fallback defaults. Controlling
+clients therefore relay exact dimensions, and the interactive reader
+applies them through TERMINAL-UI-RESIZE, the one writer that changes
+the composed width and the live-region geometry together.")
+
 (defclass terminal ()
   ((rows
     :initarg :rows

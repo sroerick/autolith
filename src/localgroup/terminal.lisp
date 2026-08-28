@@ -380,14 +380,18 @@
     (localgroup-terminal integer integer boolean)
     null)
 (defun localgroup-terminal-resize (terminal rows columns styled-p)
-  "Apply controlling client dimensions and styling to TERMINAL."
+  "Adopt client styling and relay client dimensions to the interactive reader.
+
+Dimensions are deliberately not applied here: writing them directly
+desynchronizes the composed row width from the live-region geometry, and
+every following repaint then eats one scrollback line while the live
+region climbs toward the top of the screen. TERMINAL-UI-RESIZE is the
+only dimension writer that keeps both in step and repaints."
   (with-lock-held ((localgroup-terminal-lock terminal))
-    (when (plusp rows)
-      (setf (terminal-rows terminal) rows))
-    (when (plusp columns)
-      (setf (terminal-columns terminal) columns))
     (setf (terminal-interactive-p terminal) t
           (terminal-styled-p terminal) (not (null styled-p))))
+  (when (and (plusp rows) (plusp columns))
+    (setf *terminal-relayed-resize* (cons rows columns)))
   nil)
 
 (-> localgroup-terminal-release-direct (localgroup-terminal) boolean)
@@ -461,10 +465,9 @@
          (sb-thread:condition-broadcast
           (localgroup-terminal-input-condition-variable terminal))
         (when (not (eq mode ':read-only))
-          (setf (terminal-rows terminal) next-rows
-                (terminal-columns terminal) next-columns
-                (terminal-interactive-p terminal) t
-                (terminal-styled-p terminal) (not (null styled-p))))))
+          (setf (terminal-interactive-p terminal) t
+                (terminal-styled-p terminal) (not (null styled-p)))
+          (setf *terminal-relayed-resize* (cons next-rows next-columns)))))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (when (and old-controller (not (eq old-controller attachment)))

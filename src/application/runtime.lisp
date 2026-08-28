@@ -355,12 +355,22 @@
     ()
     (option (cons (integer 1) (integer 1))))
 (defun application-pending-terminal-size ()
-  "Consume a pending SIGWINCH and return refreshed rows and columns."
-  (when *terminal-resize-pending-p*
-    (setf *terminal-resize-pending-p* nil)
-    (multiple-value-bind (rows columns)
-        (terminal-current-size)
-      (cons rows columns))))
+  "Consume one pending resize and return refreshed rows and columns.
+
+A relayed client size takes precedence over local measurement: a
+relayed session cannot measure its terminal, so the packet is the only
+truthful source of dimensions."
+  (let ((relayed *terminal-relayed-resize*))
+    (cond
+      (relayed
+       (setf *terminal-relayed-resize* nil
+             *terminal-resize-pending-p* nil)
+       relayed)
+      (*terminal-resize-pending-p*
+       (setf *terminal-resize-pending-p* nil)
+       (multiple-value-bind (rows columns)
+           (terminal-current-size)
+         (cons rows columns))))))
 
 (defparameter *application-prompt* "❯ "
   "The styled input prompt shown on the live editor row.")

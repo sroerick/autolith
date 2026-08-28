@@ -400,6 +400,48 @@
                    "resize reflows and replaces the live region in one frame")))
   nil)
 
+(-> test-terminal-relayed-resize () null)
+(defun test-terminal-relayed-resize ()
+  "Test relayed client resizes reflowing geometry with composition."
+  (let ((*terminal-relayed-resize* nil)
+        (*terminal-resize-pending-p* nil))
+    (let ((localgroup-terminal (make-instance 'localgroup-terminal
+                                              :columns 60
+                                              :rows 20)))
+      (localgroup-terminal-resize localgroup-terminal 24 120 t)
+      (test-assert (= (terminal-columns localgroup-terminal) 60)
+                   "a relayed resize packet does not poke dimension slots")
+      (test-assert (equal *terminal-relayed-resize* '(24 . 120))
+                   "a relayed resize packet parks the exact client size"))
+    (setf *terminal-resize-pending-p* t)
+    (test-assert (equal (application-pending-terminal-size) '(24 . 120))
+                 "a relayed size takes precedence over local measurement")
+    (test-assert (and (null *terminal-relayed-resize*)
+                      (not *terminal-resize-pending-p*))
+                 "consuming a relayed size clears both pending signals")
+    (test-assert (null (application-pending-terminal-size))
+                 "a consumed relayed size does not repeat")
+    (let* ((terminal (make-instance 'recording-terminal :columns 60))
+           (ui (terminal-ui-create :terminal terminal)))
+      (with-terminal-ui (active-ui ui)
+        (terminal-ui-process-event
+         active-ui
+         '(:insert "a relayed resize must reflow this wrapped input line"))
+        (setf *terminal-relayed-resize* (cons 24 120))
+        (recording-terminal-reset terminal)
+        (test-assert (terminal-ui-refresh-size
+                      active-ui #'application-pending-terminal-size)
+                     "the reader applies a relayed size as a UI resize")
+        (test-assert (= (terminal-columns terminal) 120)
+                     "a relayed resize updates the composed row width")
+        (test-assert (= (clinedi:live-region-columns
+                         (terminal-ui-live-region active-ui))
+                        120)
+                     "a relayed resize reflows the live-region geometry")
+        (test-assert (plusp (length (recording-terminal-chunks terminal)))
+                     "a relayed resize repaints without waiting for input"))))
+  nil)
+
 (-> test-terminal-line-editor () null)
 (defun test-terminal-line-editor ()
   "Test Autolith event dispatch, submission, control policy, and reader actions."
@@ -2664,6 +2706,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-untrusted-text)
   (test-terminal-finalized-scrollback)
   (test-terminal-resize-frame)
+  (test-terminal-relayed-resize)
   (test-terminal-line-editor)
   (test-terminal-history-replacement)
   (test-terminal-image-attachments)
