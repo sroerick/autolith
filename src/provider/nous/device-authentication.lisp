@@ -27,13 +27,13 @@
   (let ((access-token (json-get document "access_token")))
     (unless (and (non-empty-string-p access-token)
                  (jwt-payload access-token))
-      (device-authentication--fail
+      (device-authentication-fail
        :stage ':credentials
        :message "The Nous device flow did not return an access JWT."))
     (unless (nous-authentication--access-token-scope-p
              access-token
              *nous-oauth-scope*)
-      (device-authentication--fail
+      (device-authentication-fail
        :stage ':credentials
        :message
        "The Nous access token lacks the inference:invoke scope.")))
@@ -79,14 +79,14 @@
        request-function
        poll-function
        (sleep-function #'sleep)
-       (clock-function #'device-authentication--monotonic-seconds)
+       (clock-function #'device-authentication-monotonic-seconds)
        (browser-function #'device-authentication-open-browser)
        (poll-timeout *device-authentication-timeout*))
   "Create a Nous device client, optionally replacing every external effect."
   (unless (and (non-empty-string-p portal-url)
                (non-empty-string-p client-id)
                (plusp poll-timeout))
-    (device-authentication--fail
+    (device-authentication-fail
      :stage ':configuration
      :message "Nous device authentication configuration is invalid."))
   (make-instance
@@ -97,9 +97,9 @@
    :token-path "/api/oauth/token"
    :scope *nous-oauth-scope*
    :request-function
-   (or request-function #'device-authentication--request)
+   (or request-function #'device-authentication-request)
    :poll-function
-   (or poll-function #'rfc8628-device-authentication--poll-for-tokens)
+   (or poll-function #'rfc8628-device-authentication-poll-for-tokens)
    :sleep-function sleep-function
    :clock-function clock-function
    :browser-function browser-function

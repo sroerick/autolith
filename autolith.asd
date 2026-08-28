@@ -9,6 +9,7 @@
                #:cl-colorist
                #:cl-exec-sandbox
                #:cl-jobpond
+               #:cl-rfc8628
                #:cl-llm-provider-api
                #:cl-skills
                #:cl-termdown
@@ -64,7 +65,6 @@
                              (:file "provider/fireworks/authentication")
                              (:file "workers/images")
                              (:file "provider/device-authentication")
-                             (:file "provider/rfc8628-device-authentication")
                              (:file "provider/grok/device-authentication")
                              (:file "provider/nous/authentication")
                              (:file "provider/nous/device-authentication")
@@ -243,7 +243,6 @@
                              (:file "lisp-worker-tests")
                              (:file "self-tool-tests")
                              (:file "device-authentication-tests")
-                             (:file "grok-device-authentication-tests")
                              (:file "nous-device-authentication-tests")
                              (:file "agent-tests")
                              (:file "inference-tests")

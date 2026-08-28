@@ -66,137 +66,6 @@ its protocol-level close operation."
   (with-lock-held (*active-secret-use-lock*)
     (plusp *active-secret-use-count*)))
 
-(defclass oauth-credentials ()
-  ((access-token
-    :initarg :access-token
-    :reader oauth-credentials-access-token
-    :type non-empty-string
-    :documentation "The bearer token used for one provider request scope.")
-   (refresh-token
-    :initarg :refresh-token
-    :reader oauth-credentials-refresh-token
-    :type (option string)
-    :documentation "The rotating OAuth refresh token, if available.")
-   (id-token
-    :initarg :id-token
-    :reader oauth-credentials-id-token
-    :type (option string)
-    :documentation "The OpenID token, if supplied by the OAuth server.")
-   (account-id
-    :initarg :account-id
-    :reader oauth-credentials-account-id
-    :type non-empty-string
-    :documentation "The ChatGPT account routed by the provider.")
-   (expires-at
-    :initarg :expires-at
-    :reader oauth-credentials-expires-at
-    :type (option timestamp)
-    :documentation "The access-token expiration in universal time, if known.")
-   (source-path
-    :initarg :source-path
-    :reader oauth-credentials-source-path
-    :type pathname
-    :documentation "The file from which these request-scoped credentials came."))
-  (:documentation "ChatGPT OAuth material held only inside request scope."))
-
-(-> oauth-credentials-secret-values (oauth-credentials) list)
-(defun oauth-credentials-secret-values (credentials)
-  "Return CREDENTIALS' nonempty secret-bearing values longest first."
-  (stable-sort
-   (remove-duplicates
-    (remove-if-not
-     #'non-empty-string-p
-     (list
-      (oauth-credentials-access-token credentials)
-      (oauth-credentials-refresh-token credentials)
-      (oauth-credentials-id-token credentials)
-      (oauth-credentials-account-id credentials)))
-    :test #'string=)
-   #'>
-   :key #'length))
-
-(-> redact-exact-string-value (string string string) string)
-(defun redact-exact-string-value (source secret marker)
-  "Replace every exact SECRET occurrence in SOURCE with MARKER.
-
-Returns SOURCE itself, not a copy, when SECRET is empty or absent."
-  (if (or (zerop (length secret))
-          (null (search secret source)))
-      source
-      (with-output-to-string (stream)
-        (loop with start = 0
-              for position = (search secret source :start2 start)
-              do
-                 (write-string source stream :start start :end position)
-                 (if position
-                     (progn
-                       (write-string marker stream)
-                       (setf start (+ position (length secret))))
-                     (return))))))
-
-(-> redact-exact-string-values (string list string) string)
-(defun redact-exact-string-values (source secrets marker)
-  "Replace exact SECRETS in SOURCE with MARKER."
-  (reduce
-   (lambda (current secret)
-     (redact-exact-string-value current secret marker))
-   (remove-if-not #'non-empty-string-p secrets)
-   :initial-value source))
-
-(-> safe-redaction-marker (string list) string)
-(defun safe-redaction-marker (preferred secrets)
-  "Return a marker that cannot contain or form any exact nonempty SECRET."
-  (let* ((nonempty-secrets
-           (remove-if-not #'non-empty-string-p secrets))
-         (sentinel
-           (loop for code from #x2588 below char-code-limit
-                 for character = (code-char code)
-                 when (and
-                       character
-                       (notany
-                        (lambda (secret)
-                          (find character secret :test #'char=))
-                        nonempty-secrets))
-                   return character)))
-    (unless sentinel
-      (error 'authentication-error
-             :message "No credential-safe redaction marker is available."))
-    (if (notany (lambda (secret)
-                  (search secret preferred))
-                nonempty-secrets)
-        (format nil "~C~A~C" sentinel preferred sentinel)
-        (string sentinel))))
-
-(-> padded-base64url (string) string)
-(defun padded-base64url (source)
-  "Return SOURCE padded to a complete Base64 quartet."
-  (let ((missing (mod (- 4 (mod (length source) 4)) 4)))
-    (concatenate 'string source (make-string missing :initial-element #\.))))
-
-(-> jwt-payload (string) (option json-object))
-(defun jwt-payload (token)
-  "Decode TOKEN's unverified JWT payload, returning NIL for malformed input."
-  (handler-case
-      (let* ((first-dot (position #\. token))
-             (second-dot (and first-dot (position #\. token :start (1+ first-dot)))))
-        (when second-dot
-          (let* ((encoded (subseq token (1+ first-dot) second-dot))
-                 (decoded (base64-string-to-string
-                           (padded-base64url encoded)
-                           :uri t))
-                 (payload (json-decode decoded)))
-            (and (json-object-p payload) payload))))
-    (error ()
-      nil)))
-
-(-> jwt-expiration (string) (option timestamp))
-(defun jwt-expiration (token)
-  "Return TOKEN's unverified JWT expiration as universal time."
-  (let* ((payload (jwt-payload token))
-         (unix-expiration (and payload (json-get payload "exp"))))
-    (when (integerp unix-expiration)
-      (unix-time->universal-time unix-expiration))))
-
 (-> jwt-account-id (string) (option string))
 (defun jwt-account-id (token)
   "Return the ChatGPT account identifier carried by TOKEN, if any."
@@ -212,25 +81,9 @@ Returns SOURCE itself, not a copy, when SECRET is empty or absent."
                        (json-object-p (aref organizations 0)))
               (json-get (aref organizations 0) "id")))))))
 
-(-> jwt-subject (string) (option string))
-(defun jwt-subject (token)
-  "Return TOKEN's unverified JWT subject claim, if present and non-empty."
-  (let ((payload (jwt-payload token)))
-    (when payload
-      (let ((subject (json-get payload "sub")))
-        (and (non-empty-string-p subject) subject)))))
-
-(-> credentials-needs-refresh-p (oauth-credentials &key (:window integer)) boolean)
-(defun credentials-needs-refresh-p (credentials &key (window 300))
-  "Return true when CREDENTIALS expire within WINDOW seconds."
-  (let ((expiration (oauth-credentials-expires-at credentials)))
-    (and expiration
-         (<= expiration (+ (get-universal-time) window)))))
-
-
 ;;;; -- Credential Sources --
 
-(defclass credential-source ()
+(defclass credential-source (cl-rfc8628:credential-source)
   ((pathname
     :initarg :pathname
     :reader credential-source-pathname
@@ -245,18 +98,6 @@ Returns SOURCE itself, not a copy, when SECRET is empty or absent."
 (defclass codex-bootstrap-credential-source (credential-source)
   ()
   (:documentation "A read-only adapter for an existing Codex auth.json file."))
-
-(-> credential-source-load (credential-source) (option oauth-credentials))
-(defgeneric credential-source-load (source)
-  (:documentation "Load request-scoped credentials from SOURCE, or return NIL."))
-
-(-> credential-source-save (credential-source oauth-credentials) oauth-credentials)
-(defgeneric credential-source-save (source credentials)
-  (:documentation "Atomically save CREDENTIALS to writable SOURCE."))
-
-(-> credential-source-label (credential-source) string)
-(defgeneric credential-source-label (source)
-  (:documentation "Return the short user-visible name of SOURCE's issuer."))
 
 (defmethod credential-source-label ((source codex-bootstrap-credential-source))
   "Name the Codex bootstrap source in user-visible failures."
@@ -364,7 +205,7 @@ Returns SOURCE itself, not a copy, when SECRET is empty or absent."
 
 ;;;; -- Credential Manager --
 
-(defclass credential-manager ()
+(defclass credential-manager (cl-rfc8628:credential-manager)
   ((primary-source
     :initarg :primary-source
     :reader credential-manager-primary-source
@@ -450,10 +291,9 @@ false when a sibling process already published an equivalent rotation."))
                                     'codex-bootstrap-credential-source
                                     :pathname (configuration-codex-auth-path configuration))))
 
-(-> credential-manager-accept-account
-    (credential-manager oauth-credentials &key (:allow-change boolean))
-    oauth-credentials)
-(defun credential-manager-accept-account (manager credentials &key allow-change)
+(defmethod credential-manager-accept-account
+    ((manager credential-manager) (credentials oauth-credentials)
+     &key allow-change)
   "Pin CREDENTIALS' account in MANAGER, rejecting an unexplained account change."
   (let ((expected (credential-manager-account-id manager))
         (actual (oauth-credentials-account-id credentials)))
@@ -529,27 +369,6 @@ false when a sibling process already published an equivalent rotation."))
                              (and bootstrap-source
                                   (credential-source-pathname
                                    bootstrap-source)))))))))))
-
-(-> oauth-error-code (t) (option string))
-(defun oauth-error-code (body)
-  "Extract a non-secret OAuth error code from BODY, if possible."
-  (handler-case
-      (let ((document (and (stringp body) (json-decode body))))
-        (when (json-object-p document)
-          (let ((error-value (json-get document "error")))
-            (let ((code
-                    (cond
-                      ((stringp error-value)
-                       error-value)
-                      ((json-object-p error-value)
-                       (or (json-get error-value "code")
-                           (json-get error-value "type")))
-                      (t
-                       nil))))
-              (and (non-empty-string-p code)
-                   (subseq code 0 (min 256 (length code))))))))
-    (error ()
-      nil)))
 
 (-> oauth-refresh-response-credentials
     (credential-manager oauth-credentials string)
@@ -729,3 +548,8 @@ false when a sibling process already published an equivalent rotation."))
                           (lambda (,variable)
                             ,@body)
                           :force-refresh ,force-refresh))
+
+
+;;;; -- cl-rfc8628 Host Wiring --
+
+(setf cl-rfc8628:*secret-region-function* #'call-with-secret-use)
