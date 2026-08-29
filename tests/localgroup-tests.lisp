@@ -727,8 +727,13 @@
                (test-assert
                 (and (eq (first response) ':attached)
                      (eq (localgroup-terminal-attachment-kind relay) ':remote)
-                     (= (terminal-rows relay) 31)
-                     (= (terminal-columns relay) 91))
+                     ;; The attachment's dimensions apply asynchronously
+                     ;; through the reader's TERMINAL-UI-RESIZE.
+                     (task-tests--wait-until
+                      (lambda ()
+                        (and (= (terminal-rows relay) 31)
+                             (= (terminal-columns relay) 91)))
+                      2))
                 "control attaches to a detached terminal relay")
                (values control-socket control-stream)))
            (daemon-write-packet stream (list :event (list :insert "remote")))
