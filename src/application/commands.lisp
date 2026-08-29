@@ -1082,14 +1082,30 @@ Return true only when the objective was rewritten."
 
 (-> application--start-goal-work (application) null)
 (defun application--start-goal-work (application)
-  "Begin working toward APPLICATION's active session goal immediately."
+  "Begin working toward APPLICATION's active session goal immediately.
+
+Goal turns run inside the /goal command's work item, so they wire the
+input controller's steering hooks themselves: prose typed during goal
+work must steer the running turn, not queue as follow-up work."
   (let ((goal (application-goal application)))
     (when (and goal (eq (getf goal :status) ':active))
       (setf (getf (application-goal application) :continuations) 0)
-      (application--run-turn application
-                             *application-goal-continuation-prompt*
-                             :continuation-p t)
-      (application--run-goal-continuations application)))
+      (flet ((work (steering-function steering-persisted-function)
+               (application--run-turn application
+                                      *application-goal-continuation-prompt*
+                                      :continuation-p t
+                                      :steering-function steering-function
+                                      :steering-persisted-function
+                                      steering-persisted-function)
+               (application--run-goal-continuations
+                application
+                :steering-function steering-function
+                :steering-persisted-function steering-persisted-function)))
+        (let ((controller (application-input-controller application)))
+          (if controller
+              (application-input-controller-call-with-primary-steering
+               controller #'work)
+              (work nil nil))))))
   nil)
 
 (-> application-goal-command (application string) null)
