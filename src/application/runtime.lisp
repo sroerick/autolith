@@ -3431,25 +3431,38 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
           user-message-persisted-function pending-operations-function
           pending-input-identifier (tools-p t)
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t))
-  "Run one user turn for CONTENT with optional tools and goal continuations."
+  "Run one user turn for CONTENT with optional tools and goal continuations.
+
+A turn without explicit steering hooks still consumes terminal steering
+through the input controller, so command-driven messages steer instead
+of quietly queueing prose as follow-up work."
   (let ((goal (application-goal application)))
     (when (and goal (eq (getf goal :status) ':active))
       (setf (getf (application-goal application) :continuations) 0)))
-  (application--run-turn application
-                         content
-                         :steering-function steering-function
-                         :steering-persisted-function steering-persisted-function
-                         :user-message-persisted-function
-                         user-message-persisted-function
-                         :pending-operations-function pending-operations-function
-                         :pending-input-identifier pending-input-identifier
-                         :tools-p tools-p
-                         :tool-allowlist tool-allowlist
-                         :tool-restriction-p tool-restriction-p)
-  (when goal-continuations-p
-    (application--run-goal-continuations
-     application
-     :steering-function steering-function
-     :steering-persisted-function steering-persisted-function
-     :pending-operations-function pending-operations-function))
+  (flet ((run (steering-function steering-persisted-function)
+           (application--run-turn application
+                                  content
+                                  :steering-function steering-function
+                                  :steering-persisted-function
+                                  steering-persisted-function
+                                  :user-message-persisted-function
+                                  user-message-persisted-function
+                                  :pending-operations-function
+                                  pending-operations-function
+                                  :pending-input-identifier
+                                  pending-input-identifier
+                                  :tools-p tools-p
+                                  :tool-allowlist tool-allowlist
+                                  :tool-restriction-p tool-restriction-p)
+           (when goal-continuations-p
+             (application--run-goal-continuations
+              application
+              :steering-function steering-function
+              :steering-persisted-function steering-persisted-function
+              :pending-operations-function pending-operations-function))))
+    (let ((controller (application-input-controller application)))
+      (if (and controller (null steering-function))
+          (application-input-controller-call-with-primary-steering
+           controller #'run)
+          (run steering-function steering-persisted-function))))
   nil)

@@ -3964,6 +3964,66 @@
      "recovery diagnosis enables only its read-only tool surface"))
   nil)
 
+(-> test-command-turn-steering () null)
+(defun test-command-turn-steering ()
+  "Test prose steering command-hosted turns such as goal work."
+  (let* ((terminal (make-instance 'waiting-recording-terminal :columns 60))
+         (ui (terminal-ui-create :terminal terminal))
+         (application (make-instance 'application :ui ui))
+         (controller nil))
+    (with-terminal-ui (active-ui ui)
+      (declare (ignore active-ui))
+      (setf controller
+            (application-input-controller-create
+             application
+             :load-pending-p nil
+             :start-reader-p nil))
+      (unwind-protect
+           (progn
+             (application-input-controller--enqueue
+              controller ':command "/goal ship it")
+             (test-assert
+              (equal (application-input-controller--next-work controller)
+                     '(:command "/goal ship it"))
+              "the goal command becomes the active work item")
+             (multiple-value-bind (accepted-p delivery)
+                 (application-input-controller-submit-primary-prompt
+                  controller "queued during a plain command")
+               (test-assert
+                (and accepted-p (eq delivery ':queued))
+                "plain command work still queues prose as follow-ups"))
+             (application-input-controller-call-with-primary-steering
+              controller
+              (lambda (take acknowledge)
+                (multiple-value-bind (accepted-p delivery)
+                    (application-input-controller-submit-primary-prompt
+                     controller "steer the goal turn")
+                  (test-assert
+                   (and accepted-p (eq delivery ':steering))
+                   "prose steers a command-hosted steering-consuming turn"))
+                (let ((entries (funcall take)))
+                  (test-assert
+                   (and (= (length entries) 1)
+                        (string= (user-message-input-text
+                                  (agent-steering-input-content
+                                   (first entries)))
+                                 "steer the goal turn"))
+                   "the running turn takes the steered prose")
+                  (funcall acknowledge
+                           (agent-steering-input-identifier (first entries)))
+                  (test-assert
+                   (null (application-input-controller--state
+                          controller :steering-in-flight-items))
+                   "delivered goal steering retires durably"))))
+             (multiple-value-bind (accepted-p delivery)
+                 (application-input-controller-submit-primary-prompt
+                  controller "after the steering consumer ended")
+               (test-assert
+                (and accepted-p (eq delivery ':queued))
+                "prose queues again once the steering consumer ends")))
+        (application-input-controller-stop controller))))
+  nil)
+
 (-> test-primary-prompt-admission () null)
 (defun test-primary-prompt-admission ()
   "Test primary prompts share message steering and FIFO queue admission."
@@ -7585,6 +7645,7 @@
   (test-recovery-diagnosis-tool-surface)
   (test-input-reader-quiescence)
   (test-primary-prompt-admission)
+  (test-command-turn-steering)
   (test-late-steering-promotion)
   (test-application-conversation-title-refresh)
   (test-conversation-picker)

@@ -96,6 +96,12 @@
     :accessor application-input-controller-follow-up-edit-work
     :type (option list)
     :documentation "The queued work item currently recalled into the draft.")
+   (primary-steering-p
+    :initform nil
+    :accessor application-input-controller-primary-steering-p
+    :type boolean
+    :documentation
+    "Whether the active work consumes prose steering despite its kind.")
    (active-p
     :initform nil
     :accessor application-input-controller-active-p
@@ -1256,8 +1262,9 @@ not steer the active primary message."
         (work (application-input-controller-work-items controller)))
     (cond
       ((and prefer-steering-p
-            (eq (application-input-controller-active-work-kind controller)
-                ':message))
+            (or (eq (application-input-controller-active-work-kind controller)
+                    ':message)
+                (application-input-controller-primary-steering-p controller)))
        (deque-push-back
         (application-input-controller-steering-items controller)
         copied-input)
@@ -1535,6 +1542,31 @@ the ordinary FIFO queue."
         (application-input-controller--persist-pending controller)))
     (application-input-controller--publish-counts controller)
     entries))
+
+(-> application-input-controller-call-with-primary-steering
+    (application-input-controller function)
+    t)
+(defun application-input-controller-call-with-primary-steering
+    (controller function)
+  "Call FUNCTION with terminal prose steering the running primary turn.
+
+FUNCTION receives a take function moving queued steering into durable
+in-flight entries and an acknowledge function retiring one delivered
+entry. While FUNCTION runs, submitted prose steers even though the
+active work item is not a message, so command-driven turns such as goal
+work receive steering as soon as possible instead of as follow-ups."
+  (with-lock-held ((application-input-controller-lock controller))
+    (setf (application-input-controller-primary-steering-p controller) t))
+  (unwind-protect
+       (funcall function
+                (lambda ()
+                  (application-input-controller--take-steering controller))
+                (lambda (identifier)
+                  (application-input-controller--acknowledge-steering
+                   controller identifier)))
+    (with-lock-held ((application-input-controller-lock controller))
+      (setf (application-input-controller-primary-steering-p controller)
+            nil))))
 
 (-> application-input-controller--acknowledge-active-work
     (application-input-controller non-empty-string)
