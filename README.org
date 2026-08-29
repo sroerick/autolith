@@ -4,7 +4,7 @@
 
 #+begin_src
 
-    :::.      :::        AUTOLITH v0.40.1
+    :::.      :::        AUTOLITH v0.44.0
   ;;`;;     ;;;        ─────────────────────────────────────────
  ,[[ '[[,   [[[        model         gpt-5.6-terra (effort high)
 c$$$cc$$$c  $$'        workspace     ~/src/autolith/
@@ -80,6 +80,7 @@ Authenticate providers either with web flows or API keys:
 
 #+BEGIN_SRC sh
 autolith auth chatgpt
+autolith auth gemini
 autolith auth grok
 autolith auth nous
 autolith auth anthropic
