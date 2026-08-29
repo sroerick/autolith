@@ -38,6 +38,25 @@ a user-local init.lisp change, or a private image commit.
   safe multiline reconstruction comments, or GitHub workflow waits cease to be
   recurring work.
 
+** Lisp worker reader boundary
+
+- Problem: The worker protocol disabled =*read-eval*= while reading untrusted
+  requests and accidentally kept it disabled during request execution. Standard
+  dependency source containing =#.= syntax, including Colorlisp, then failed to
+  compile through =lisp.*=.
+- Behavior: Protocol input is still read with =*read-eval*= disabled. Request
+  execution uses normal Common Lisp reader semantics.
+- Scope and location: private image commit
+  =d5387bc4-9dd1-47a6-8788-a8cd59e7f0ce=, private Git commit
+  =fbc458a9e19f894d7872d06af3f5e2c983f590b8=. The durable downstream fix is
+  =lambda-symbolics/sbcl-workers= commit =1f832d0= and Autolith pins it in
+  tracked commit =536dc1f=.
+- Verification: clean-process replay passed. A fresh pristine worker reports
+  =*read-eval*= as true during request execution, and =lisp.load-system=
+  successfully loads =autolith=.
+- Removal condition: a rebuilt active image loads the tracked =sbcl-workers=
+  pin, making the private replay definition redundant.
+
 ** NetBSD amd64 source bootstrap
 
 - Problem: Autolith's supported source targets were Linux x86-64 and macOS
