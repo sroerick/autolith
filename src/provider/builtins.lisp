@@ -19,6 +19,26 @@
   (declare (ignore reasoning-summaries-p))
   (provider-family-create ':grok configuration))
 
+(-> provider--gemini-registration-factory
+    (configuration &key (:reasoning-summaries-p boolean))
+    model-provider)
+(defun provider--gemini-registration-factory
+    (configuration &key reasoning-summaries-p)
+  "Create the built-in Gemini Code Assist subscription provider."
+  (declare (ignore reasoning-summaries-p))
+  (gemini-code-assist-provider-create configuration))
+
+(-> provider--gemini-registration-authenticator
+    (model-provider &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider--gemini-registration-authenticator
+    (provider &key stream open-browser-p)
+  "Run installed-application OAuth for the built-in Gemini provider."
+  (gemini-oauth-login (provider-credential-manager provider)
+                      :stream (or stream *standard-output*)
+                      :open-browser-p open-browser-p)
+  "Gemini authentication was saved by Autolith.")
+
 (-> provider--nous-registration-factory
     (configuration &key (:reasoning-summaries-p boolean))
     model-provider)
@@ -143,6 +163,17 @@
            "gpt-5.6-luna"
            "gpt-5.6-terra")
  :factory #'provider--codex-registration-factory
+ :source ':builtin)
+
+(register-provider
+ "gemini"
+ :description "Gemini Code Assist subscription"
+ :family ':gemini-code-assist
+ :protocol ':gemini-code-assist
+ :models *gemini-code-assist-models*
+ :factory #'provider--gemini-registration-factory
+ :authenticator #'provider--gemini-registration-authenticator
+ :endpoint *gemini-code-assist-endpoint*
  :source ':builtin)
 
 (register-provider

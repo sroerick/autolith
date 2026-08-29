@@ -107,19 +107,12 @@
 
 (-> gemini-code-assist-credential-manager-create (configuration) credential-manager)
 (defgeneric gemini-code-assist-credential-manager-create (configuration)
-  (:documentation
-   "Return the OAuth credential manager used by Gemini Code Assist.
-
-This is the sole credential-access seam in the wire slice. The OAuth UI slice
-specializes or replaces it without changing the transport implementation."))
+  (:documentation "Return the OAuth credential manager used by Gemini Code Assist."))
 
 (defmethod gemini-code-assist-credential-manager-create
     ((configuration configuration))
-  "Signal that the separate Gemini OAuth implementation is not installed."
-  (declare (ignore configuration))
-  (error 'credentials-unavailable
-         :message "Gemini Code Assist OAuth support is not installed."
-         :searched-paths nil))
+  "Create the installed-application OAuth manager for Code Assist."
+  (gemini-credential-manager-create configuration))
 
 (-> gemini-code-assist-provider-create
     (configuration &key
@@ -129,7 +122,7 @@ specializes or replaces it without changing the transport implementation."))
 (defun gemini-code-assist-provider-create
     (configuration &key credential-manager
                           (endpoint *gemini-code-assist-endpoint*))
-  "Create a Code Assist provider without registering it as a builtin."
+  "Create a Code Assist provider."
   (make-instance
    'gemini-code-assist-provider
    :configuration configuration
@@ -277,7 +270,8 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                    (funcall request-function)
                  (cond
                    ((<= 200 status 299)
-                    (return (gemini-code-assist--decode-json-response body stage)))
+                    (return-from gemini-code-assist--nonstream-request
+                      (gemini-code-assist--decode-json-response body stage)))
                    ((and (gemini-code-assist--transient-status-p status)
                          (< attempt *gemini-code-assist-nonstream-maximum-attempts*))
                     (sleep *gemini-code-assist-nonstream-retry-delay*))
@@ -791,7 +785,7 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                                                         (gemini-code-assist--normalize-call
                                                          provider function-call
                                                          (incf call-index) headers)
-                                                        calls)))))))))))))))))
+                                                         calls))))))))))))))))
     (when (and finish-reason
                (not (member finish-reason '("STOP" "MAX_TOKENS")
                             :test #'string=)))
@@ -824,4 +818,4 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                        :tool-calls (remove-if-not #'function-call-item-p items)
                        :usage usage
                        :turn-state nil
-                       :turn-completion turn-completion))))
+                       :turn-completion turn-completion)))))

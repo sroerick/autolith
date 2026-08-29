@@ -434,7 +434,8 @@ available. =(models)= triggers discovery. You can also pass non-secret
 providers that have no model-list endpoint.
 
 Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
-browser device flow. Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and
+browser device flow. Gemini uses Google installed-application OAuth with a local
+loopback callback. Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and
 user-registered OpenAI-compatible providers use API keys.
 
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
@@ -456,6 +457,15 @@ GPT-5.4 and later Codex models use native Responses tool search. Autolith sends
 stable namespace names and descriptions up front, marks each function
 =defer_loading=true=, and lets the provider expose matching schemas only when
 needed. Other models and providers receive the complete eager tool array.
+
+Authenticate Gemini with =autolith auth gemini=, =/auth gemini=, or
+=(auth "gemini")=. Autolith stores its Google OAuth credentials separately at
+=gemini-auth.sexp= under the state root. The provider uses the Gemini CLI Code
+Assist subscription service directly, including streaming text and thinking,
+tool calls, token usage, account onboarding, and managed companion projects.
+=AUTOLITH_GEMINI_OAUTH_CLIENT_ID= may replace the public installed-application
+client ID; =AUTOLITH_GEMINI_OAUTH_CLIENT_SECRET= supplies a client secret when a
+deployment requires one.
 
 #+BEGIN_SRC sh
 autolith auth nous

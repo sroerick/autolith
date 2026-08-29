@@ -5,7 +5,9 @@
 (-> gemini-code-assist-test--provider () gemini-code-assist-provider)
 (defun gemini-code-assist-test--provider ()
   "Return an isolated Code Assist provider with an existing test manager."
-  (let ((configuration (test-configuration)))
+  (let* ((configuration
+           (configuration-with-model (test-configuration)
+                                     "gemini-3-flash-preview")))
     (gemini-code-assist-provider-create
      configuration
      :credential-manager (credential-manager-create configuration))))
@@ -65,12 +67,19 @@
              (declarations
                (json-get (aref (json-get inner "tools") 0)
                          "functionDeclarations"))
-             (call-part
-               (json-get (aref (json-get (aref contents 2) "parts") 0)
-                         "functionCall"))
-             (response-part
-               (json-get (aref (json-get (aref contents 3) "parts") 0)
-                         "functionResponse")))
+              (call-part
+                (loop for content across contents
+                      thereis (loop for part across (json-get content "parts")
+                                    thereis (json-get part "functionCall"))))
+              (response-part
+                (loop for content across contents
+                      thereis (loop for part across (json-get content "parts")
+                                    thereis (json-get part "functionResponse"))))
+              (thought-part
+                (loop for content across contents
+                      thereis (loop for part across (json-get content "parts")
+                                    when (json-get part "thought")
+                                      return part))))
         (test-assert
          (string= (json-get (aref declarations 0) "name")
                   (provider-wire-function-name--encode "fs" "read"))
@@ -83,9 +92,8 @@
          (string= (json-get response-part "name")
                   (provider-wire-function-name--encode "fs" "read"))
          "Code Assist matches function responses to calls")
-        (test-assert
-         (json-get (aref (json-get (aref contents 1) "parts") 0) "thought")
-         "Code Assist preserves thinking parts"))))
+        (test-assert thought-part
+                     "Code Assist preserves thinking parts"))))
   nil)
 
 (-> gemini-code-assist-test--stream-fixture () null)
@@ -183,9 +191,33 @@
      "Code Assist records the selected tier"))
   nil)
 
+(-> gemini-code-assist-test--builtin-registration () null)
+(defun gemini-code-assist-test--builtin-registration ()
+  "Test built-in model selection and OAuth authentication wiring."
+  (let* ((configuration
+           (configuration-with-model (test-configuration)
+                                     "gemini-3-flash-preview"))
+         (registration (provider-registration-find "gemini"))
+         (provider (provider-create configuration)))
+    (test-assert
+     (and registration
+          (eq (provider-registration-family registration)
+              ':gemini-code-assist)
+          (eq (provider-registration-protocol registration)
+              ':gemini-code-assist))
+     "Gemini is registered as a built-in Code Assist provider")
+    (test-assert
+     (and (typep provider 'gemini-code-assist-provider)
+          (typep (provider-credential-manager provider)
+                 'gemini-credential-manager)
+          (eq (model-provider-registration provider) registration))
+     "Gemini model selection creates the subscription provider and OAuth manager"))
+  nil)
+
 (-> run-gemini-code-assist-provider-tests () null)
 (defun run-gemini-code-assist-provider-tests ()
   "Run Gemini Code Assist wire and transport tests."
+  (gemini-code-assist-test--builtin-registration)
   (gemini-code-assist-test--model-catalog)
   (gemini-code-assist-test--request-conversion)
   (gemini-code-assist-test--stream-fixture)
