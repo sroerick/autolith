@@ -280,16 +280,25 @@
        (eq (client-p :resume-requested-p t :resume-id nil) ordinary)
        "resuming through the picker is not a special case either")))
   (test-assert
-   (not (main--client-session-p
-         :handoff-record nil
-         :authenticate-p nil
-         :resume-requested-p nil
-         :resume-id nil
-         :recovery-conversation-id "K-8vQ2mp"
-         :recovery-diagnosis nil
-         :image-values nil
-         :simulate-crash-p nil))
-   "crash recovery stays direct")
+   (eq (main--client-session-p
+        :handoff-record nil
+        :authenticate-p nil
+        :resume-requested-p nil
+        :resume-id nil
+        :recovery-conversation-id "K-8vQ2mp"
+        :recovery-diagnosis "diagnose the crash"
+        :image-values nil
+        :simulate-crash-p nil)
+       (main--client-session-p
+        :handoff-record nil
+        :authenticate-p nil
+        :resume-requested-p nil
+        :resume-id nil
+        :recovery-conversation-id nil
+        :recovery-diagnosis nil
+        :image-values nil
+        :simulate-crash-p nil))
+   "crash recovery keeps the same client-first path as an ordinary start")
   (test-assert
    (not (main--client-session-p
          :handoff-record (list :localgroup-handoff :version 1)
@@ -327,7 +336,8 @@
                     (localgroup-handoff-spawn-fresh
                      configuration
                      :permission-mode ':sandboxed
-                     :immutable-p t)))
+                     :immutable-p t
+                     :recovery-diagnosis "diagnose the crash")))
              (destructuring-bind (launched-id pathname permission immutable-p)
                  (first launches)
                (test-assert (and (= (length launches) 1)
@@ -340,6 +350,8 @@
                   (and (eq (getf (rest record) :state) ':pending)
                        (getf (rest record) :fresh-conversation-p)
                        (null (getf (rest record) :conversation-id))
+                        (string= (getf (rest record) :recovery-diagnosis)
+                                 "diagnose the crash")
                        (typep (getf (rest record) :rows) '(integer 1))
                        (typep (getf (rest record) :columns) '(integer 1))
                        (typep (getf (rest record) :styled-p) 'boolean)

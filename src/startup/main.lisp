@@ -655,16 +655,17 @@ dependencies."
            (if handoff-record
                (getf (rest handoff-record) :conversation-id)
                resume-id))
-         (recovery-state
-           (if handoff-record
-               (list nil nil)
-               (multiple-value-list
-                (application-recovery-state configuration))))
-         (recovery-conversation-id (first recovery-state))
-         (recovery-diagnosis
-           (and (null handoff-record)
-                (null effective-resume-id)
-                (application-recovery-diagnosis-prompt configuration)))
+          (recovery-state
+            (if handoff-record
+                (list nil nil)
+                (multiple-value-list
+                 (application-recovery-state configuration))))
+          (recovery-conversation-id (first recovery-state))
+          (recovery-diagnosis
+            (if handoff-record
+                (getf (rest handoff-record) :recovery-diagnosis)
+                (and (null effective-resume-id)
+                     (application-recovery-diagnosis-prompt configuration))))
          (resume-command-p
            (or (and handoff-record
                     (getf (rest handoff-record) :resume-command-p))
@@ -698,10 +699,12 @@ dependencies."
                          configuration
                          :permission-mode permission-mode
                          :immutable-p immutable-p
-                         :conversation-id effective-resume-id
-                         :resume-command-p
-                         (and effective-resume-requested-p
-                              (null effective-resume-id)))))
+                          :conversation-id
+                          (or effective-resume-id recovery-conversation-id)
+                          :resume-command-p
+                          (and effective-resume-requested-p
+                               (null effective-resume-id))
+                          :recovery-diagnosis recovery-diagnosis)))
         (when session-id
           (localgroup-attach-record
            configuration
@@ -773,16 +776,14 @@ dependencies."
   "Return true when this start should spawn a detached session and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
-immediate and never interrupts session work, so every resume takes it
-too: the session itself picks the conversation and shows the picker
-through the attached terminal. Replacements, authentication, crash
-recovery, startup images, crash simulation, non-interactive terminals,
-and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
-  (declare (ignore resume-requested-p resume-id))
+immediate and never interrupts session work, so resumes and crash recovery
+take it too. Replacements, authentication, startup images, crash simulation,
+non-interactive terminals, and AUTOLITH_SESSION_STYLE=direct keep the direct
+path."
+  (declare (ignore resume-requested-p resume-id
+                   recovery-conversation-id recovery-diagnosis))
   (and (null handoff-record)
        (not authenticate-p)
-       (null recovery-conversation-id)
-       (null recovery-diagnosis)
        (null image-values)
        (not simulate-crash-p)
        (not (string= (or (uiop:getenv "AUTOLITH_SESSION_STYLE") "")
@@ -792,18 +793,20 @@ and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
 (-> main--spawn-client-session
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
-                        (:resume-command-p boolean))
+                        (:resume-command-p boolean)
+                        (:recovery-diagnosis t))
     (option string))
 (defun main--spawn-client-session
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p)
+                        resume-command-p recovery-diagnosis)
   "Spawn the detached session for a client-first start, or NIL to run direct."
   (handler-case
       (localgroup-handoff-spawn-fresh configuration
                                       :permission-mode permission-mode
                                       :immutable-p immutable-p
                                       :conversation-id conversation-id
-                                      :resume-command-p resume-command-p)
+                                      :resume-command-p resume-command-p
+                                      :recovery-diagnosis recovery-diagnosis)
     (error (condition)
       (format *error-output*
               "Autolith is starting directly in this terminal: ~A~%"

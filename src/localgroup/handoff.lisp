@@ -428,18 +428,20 @@ exit \"$status\""
 (-> localgroup-handoff-spawn-fresh
     (configuration &key (:permission-mode keyword) (:immutable-p boolean)
                         (:conversation-id (option string))
-                        (:resume-command-p boolean))
+                        (:resume-command-p boolean)
+                        (:recovery-diagnosis t))
     string)
 (defun localgroup-handoff-spawn-fresh
     (configuration &key (permission-mode ':ask) immutable-p conversation-id
-                        resume-command-p)
+                        resume-command-p recovery-diagnosis)
   "Launch a detached session and return its ready identifier.
 
 CONVERSATION-ID resumes that conversation instead of starting a fresh
-one, and RESUME-COMMAND-P lets the session pick one itself through the
-attached terminal. The session process starts shell-independent from the
-outset, so the calling terminal can attach as a thin relay whose detach
-is immediate and never interrupts session work."
+one, RESUME-COMMAND-P lets the session pick one itself through the
+attached terminal, and RECOVERY-DIAGNOSIS preserves crash diagnosis
+across the client-first launch. The session process starts shell-independent
+from the outset, so the calling terminal can attach as a thin relay whose
+detach is immediate and never interrupts session work."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at (get-universal-time))
@@ -462,6 +464,7 @@ is immediate and never interrupts session work."
                    :old-pid (sb-posix:getpid)
                    :replacement-pid nil
                    :conversation-id conversation-id
+                    :recovery-diagnosis recovery-diagnosis
                    :draft ""
                    :rows rows
                    :columns columns
