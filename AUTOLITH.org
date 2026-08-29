@@ -335,8 +335,9 @@ a user-local init.lisp change, or a private image commit.
   retains its product-specific migration, validation, provenance, atomic state,
   authority, cancellation, and output policies. Pinned =sexp-config= =408fa90=
   handles standard keyword-to-string reader boundaries directly;
-  =sbcl-workers= =d46e94c= owns the shared worker-name predicate and prompt
-  request cancellation; =sbcl-generations= =e65e27e= owns the live-thread
+  =sbcl-workers= =1f832d0= owns the shared worker-name predicate, prompt request
+  cancellation, and the reader-evaluation boundary between protocol input and
+  request execution; =sbcl-generations= =e65e27e= owns the live-thread
   snapshot preflight, with hosts retaining exclusion across that check and fork;
   and =cl-jobpond= =ee2e2eb= owns atomic four-limit pool policy publication,
   immediate worker and monitor capacity refresh, and the locked default-runtime

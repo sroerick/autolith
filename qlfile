@@ -33,5 +33,5 @@ git mcparen https://github.com/luciusmagn/mcparen.git :ref 58ba29a8dd8d06417452b
 git sbcl-generations https://github.com/luciusmagn/sbcl-generations.git :ref e65e27e9ac969c5a83c3f9c2318ae4237856d53f
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref 408fa906e2d16aa515b39c943d3affcab3811ffc
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 815ef23b48b9bd9ef974ada28b9e8c1b5cf11b1f
-git sbcl-workers https://github.com/luciusmagn/sbcl-workers.git :ref d46e94cd95562a645acf144cf84daf0b31cc707a
+git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref 1f832d0e03b2d4b6683dc2d3d46eddb84e90df48
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746

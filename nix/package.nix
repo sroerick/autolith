@@ -310,10 +310,10 @@ let
     pname = "sbcl-workers";
     version = "0.1.0";
     src = pkgs.fetchFromGitHub {
-      owner = "luciusmagn";
+      owner = "lambda-symbolics";
       repo = "sbcl-workers";
-      rev = "d46e94cd95562a645acf144cf84daf0b31cc707a";
-      hash = "sha256-8zKqChwt9/ibnvieTw1Jgb+nzAcTLHLlmsh3RWBv1DI=";
+      rev = "1f832d0e03b2d4b6683dc2d3d46eddb84e90df48";
+      hash = "sha256-lVDIKJZP7aw8PwmbQzH5WqsnIf62C409DcY3wtab538=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
