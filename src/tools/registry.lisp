@@ -598,6 +598,8 @@ spilling is unavailable, in which case the tail is discarded as before.")
        (and default t))
       ((eq value t)
        t)
+      ((null value)
+       nil)
       ((eq value false)
        nil)
       (t

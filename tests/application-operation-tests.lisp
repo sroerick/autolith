@@ -450,10 +450,36 @@
                                          :if-does-not-exist ':ignore))))
   nil)
 
+(-> test-tool-boolean-argument () null)
+(defun test-tool-boolean-argument ()
+  "Test optional JSON Boolean arguments preserving explicit false values."
+  (test-assert
+   (null (tool-boolean-argument (json-object "async" nil) "async"))
+   "an explicit NIL JSON false is accepted")
+  (test-assert
+   (null (tool-boolean-argument (json-object "async" false) "async"))
+   "an explicit Yason JSON false is accepted")
+  (test-assert
+   (tool-boolean-argument (json-object "async" t) "async")
+   "an explicit JSON true is accepted")
+  (test-assert
+   (tool-boolean-argument (json-object) "async" :default t)
+   "an absent Boolean uses its true default")
+  (test-assert
+   (handler-case
+       (progn
+         (tool-boolean-argument (json-object "async" "false") "async")
+         nil)
+     (tool-error ()
+       t))
+   "a non-Boolean value is rejected")
+  nil)
+
 (-> run-application-operation-tests () boolean)
 (defun run-application-operation-tests ()
   "Run focused unified command and tool operation tests."
   (test-prompt-operation)
+  (test-tool-boolean-argument)
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (unwind-protect
