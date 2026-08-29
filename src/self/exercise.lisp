@@ -2,9 +2,14 @@
 
 ;;;; -- Focused Mutation Exercises --
 
-(-> self-exercise--mutation-record (configuration (option string)) list)
+(-> self-exercise--mutation-record
+    (configuration (option string))
+    (option list))
 (defun self-exercise--mutation-record (configuration identifier)
-  "Return the effective mutation selected by IDENTIFIER for an exercise."
+  "Return the effective mutation selected by IDENTIFIER for an exercise.
+
+When IDENTIFIER is NIL and no mutation is pending, return NIL so the exercise
+can verify the current active state after a discard."
   (let* ((effective (image-commit-effective-diff-records configuration))
          (record
            (if identifier
@@ -13,24 +18,23 @@
                             (getf (rest candidate) :id))
                      :test #'string=)
                (first (last effective)))))
-    (unless record
+    (when (and identifier (null record))
       (error 'source-mutation-error
              :message
-             (if identifier
-                 (format nil "No effective pending mutation is named ~A."
-                         identifier)
-                 "The active image has no effective pending mutation to exercise.")
+             (format nil "No effective pending mutation is named ~A."
+                     identifier)
              :tool-name "self.exercise"
              :pathname (configuration-journal-path configuration)))
     record))
 
 (-> self-exercise-mutation (configuration string (option string)) string)
 (defun self-exercise-mutation (configuration source mutation-identifier)
-  "Run SOURCE against one pending mutation and append pass or fail evidence."
+  "Run SOURCE against the active image and append pass or fail evidence."
   (with-live-mutation
     (let* ((record
              (self-exercise--mutation-record configuration mutation-identifier))
-           (mutation-identifier (getf (rest record) :id))
+           (mutation-identifier
+             (and record (getf (rest record) :id)))
            (exercise-identifier (make-identifier)))
       (mutation-journal-append
        configuration
@@ -57,7 +61,8 @@
                    :result ':passed
                    :values result-values
                    :output (bounded-string output :limit 2000)))
-            (format nil "Exercise ~A passed for mutation ~A.~2%~A"
+            (format nil
+                    "Exercise ~A passed ~:[against the current active state~;for mutation ~:*~A~].~2%~A"
                     exercise-identifier
                     mutation-identifier
                     (self-evaluation-result result-values output)))
@@ -77,7 +82,7 @@
 (defmethod tool-execute ((tool self-exercise-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Run and journal one focused exercise against an effective live mutation."
+  "Run and journal one focused exercise against the active image."
   (declare (ignore tool))
   (tool-success
    (self-exercise-mutation

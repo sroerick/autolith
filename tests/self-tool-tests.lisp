@@ -906,16 +906,29 @@
                         "discarding a new definition restores an unbound function")
            (test-assert (null (image-commit-pending-records configuration))
                         "completed discards leave no commit candidates")
+           (let ((result
+                   (tool-execute
+                    exercise-tool
+                    context
+                    (json-object
+                     "form"
+                     "(assert (eq *test-discard-setting* :baseline))"))))
+             (test-assert
+              (and (tool-result-success-p result)
+                   (search "current active state"
+                           (tool-result-content result)))
+              "self.exercise verifies restored state after discard"))
            (test-assert
             (handler-case
                 (progn
                   (tool-execute exercise-tool
                                 context
-                                (json-object "form" "t"))
+                                (json-object "form" "t"
+                                             "mutation" "absent"))
                   nil)
               (source-mutation-error ()
                 t))
-            "self.exercise requires an effective pending mutation")
+            "self.exercise rejects an unknown mutation identifier")
            (test-assert
             (handler-case
                 (progn
