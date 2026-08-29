@@ -309,6 +309,7 @@
     (test-openai-compatible-provider-registration-identity)
      (test-provider-sse-bounds)
     (test-openai-compatible-provider)
+    (run-gemini-code-assist-provider-tests)
     (test-anthropic-provider)
     (test-nous-provider)
     (test-fireworks-provider)
