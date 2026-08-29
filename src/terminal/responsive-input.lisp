@@ -2825,8 +2825,20 @@ sandbox grant is revalidated at this final authorization boundary."
             command
             directory)
            ':full-access
-           (application--ask-command-permission
-            application command directory))))))
+           (let ((controller (application-input-controller application))
+                 (ui         (application-ui application)))
+             (if (and controller
+                      ui
+                      (terminal-interactive-p (terminal-ui-terminal ui)))
+                 (application--ask-command-permission
+                  application command directory)
+                 (multiple-value-bind (decision reason)
+                     (application--model-command-permission
+                      application command directory)
+                   (application--apply-classified-command-permission
+                    application command directory
+                    (if (eq decision ':ask) ':deny decision)
+                    reason)))))))))
 
 (-> application--tool-authorization-title (tool) string)
 (defun application--tool-authorization-title (tool)

@@ -666,19 +666,23 @@
     (unwind-protect
          (progn
            (terminal-ui-start ui)
-            (let ((condition
-                    (handler-case
-                        (progn
-                          (application-authorize-command
-                           application "printf unknown" root)
-                          nil)
-                      (command-authorization-unavailable (failure)
-                        failure))))
-              (test-assert condition
-                           "ask mode explicitly rejects commands without an approval UI")
-              (test-assert
-               (search "no interactive terminal" (princ-to-string condition))
-               "noninteractive authorization failure explains how to proceed"))
+            (test-call-with-function-replacements
+             (list
+              (list 'permissions-model-classify-command
+                    (lambda (command directory &key provider configuration
+                                                    sandbox-available-p)
+                      (declare (ignore command directory provider
+                                       configuration sandbox-available-p))
+                      (values ':sandboxed "read-only inspection"))))
+             (lambda ()
+               (test-assert
+                (eq (application-authorize-command
+                     application "printf unknown" root)
+                    ':sandboxed)
+                "ask mode classifies commands when no approval UI is available")
+               (test-assert
+                (eq (application-permission-mode application) ':ask)
+                "noninteractive classification preserves ask mode")))
             (permissions-allow :configuration configuration
                                :state         state
                                :command       "printf saved"
