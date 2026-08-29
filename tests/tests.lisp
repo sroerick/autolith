@@ -280,6 +280,7 @@
     (test-workspace-plan)
     (test-authentication-store)
     (test-authentication-bootstrap-and-refresh)
+    (run-gemini-authentication-tests)
     (test-grok-authentication)
     (run-nous-authentication-tests)
      (test-provider-deferred-tool-loading)

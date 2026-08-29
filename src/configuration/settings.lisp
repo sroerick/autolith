@@ -22,6 +22,43 @@
 (defparameter *openai-oauth-client-id* "app_EMoamEEZ73f0CkXaXp7hrann"
   "The public OAuth client identifier used by Codex-compatible clients.")
 
+;; Gemini CLI OAuth behavior inspected at google-gemini/gemini-cli commit
+;; 0bd1d439751478771c45d3d0895a6a9760554bf4. The installed application uses
+;; PKCE as a public client. Autolith deliberately does not embed its client
+;; secret; deployments that require one may provide it through the environment.
+(defparameter *gemini-oauth-client-id*
+  "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"
+  "The public Google installed-application client identifier used by Gemini CLI.")
+
+(defparameter *gemini-oauth-authorization-endpoint*
+  "https://accounts.google.com/o/oauth2/v2/auth"
+  "The Google OAuth authorization endpoint used for Gemini subscription login.")
+
+(defparameter *gemini-oauth-token-endpoint*
+  "https://oauth2.googleapis.com/token"
+  "The Google OAuth token endpoint used for Gemini subscription credentials.")
+
+(defparameter *gemini-oauth-scopes*
+  '("https://www.googleapis.com/auth/cloud-platform"
+    "https://www.googleapis.com/auth/userinfo.email"
+    "https://www.googleapis.com/auth/userinfo.profile")
+  "The Google scopes required by Gemini Code Assist subscription access.")
+
+(defparameter *gemini-oauth-callback-timeout* 300
+  "The maximum seconds to wait for the installed-app loopback callback.")
+
+(-> gemini-oauth-client-id () string)
+(defun gemini-oauth-client-id ()
+  "Return the configured Google installed-app OAuth client identifier."
+  (let ((override (uiop:getenv "AUTOLITH_GEMINI_OAUTH_CLIENT_ID")))
+    (if (non-empty-string-p override) override *gemini-oauth-client-id*)))
+
+(-> gemini-oauth-client-secret () (option string))
+(defun gemini-oauth-client-secret ()
+  "Return an optional configured Google installed-app client secret."
+  (let ((secret (uiop:getenv "AUTOLITH_GEMINI_OAUTH_CLIENT_SECRET")))
+    (and (non-empty-string-p secret) secret)))
+
 ;; The subscription proxy serving Grok Build sessions, read from grok-build
 ;; reference commit 47348d13 (crates/codegen/xai-grok-env).
 (defparameter *grok-responses-endpoint*
