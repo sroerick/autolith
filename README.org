@@ -252,3 +252,11 @@ live work reconstructible, so it's hard to terminally lobotomize AL.
 
 * License
 Autolith is ISC licensed. See [[file:LICENSE][LICENSE]].
+
+* Friends of Autolith
+
+- [[https://github.com/yogthos/samizdat/][samizdat]]
+- [[https://github.com/browep/cl-sm-harness][sm-harness]]
+- [[https://github.com/kleisli-io/kli][kli]]
+- [[https://pricklypear.rocks/][pricklypear]]
+- [[https://github.com/DeadMeme5441/fractal-engine][fractal-engine]]
