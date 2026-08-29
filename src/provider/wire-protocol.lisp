@@ -85,6 +85,9 @@
     (error ()
       nil)))
 
+;; The length prefix lets the decoder find the namespace boundary without
+;; ambiguity, so namespaces following the MCP convention of the form
+;; mcp__server, which themselves contain a double underscore, survive decode.
 (-> provider-wire-function-name--encode (string string) string)
 (defun provider-wire-function-name--encode (namespace name)
   "Encode NAMESPACE and NAME as one readable reversible function name."

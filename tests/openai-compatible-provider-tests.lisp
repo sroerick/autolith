@@ -1314,6 +1314,13 @@
       (test-assert
        (and (equal namespace "mcp__demo") (equal name "call_name"))
        "readable OpenAI-compatible wire names round-trip")))
+  (let ((wire-name
+          (openai-compatible--wire-tool-name "mcp__server" "get__status")))
+    (multiple-value-bind (namespace name)
+        (openai-compatible--decode-wire-tool-name wire-name)
+      (test-assert
+       (and (equal namespace "mcp__server") (equal name "get__status"))
+       "namespaced wire names with double underscores in both halves round-trip")))
   (multiple-value-bind (namespace name)
       (openai-compatible--decode-wire-tool-name "acmVzb3VyY2UAcmVhZA")
     (test-assert
