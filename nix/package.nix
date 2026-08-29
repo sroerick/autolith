@@ -96,13 +96,12 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "ls-compat";
-      rev = "b3b8557a133b7410ddb2a2244139a5097e8d4b9d";
-      hash = "sha256-lKC+UBIIF56LPY7pVQa27XMlB/O4PGVD2d5FseqwES8=";
+      rev = "84ca8b1f3be29817f5aff93ac2b341347fd287fb";
+      hash = "sha256-D5aCdrpX8nzAcAZ6LLv+GbjYfZUoQVE4Ei77V/SGUb8=";
     };
     systems = [ "ls-compat" "ls-compat/posix" ];
     lispLibs = with pkgs.sbclPackages; [
       babel
-      osicat
       serapeum
     ];
   };
@@ -113,12 +112,11 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "ls-flock";
-      rev = "75e1e584b1ee68d1326ba8ce12c81bfb52d89370";
-      hash = "sha256-TIfVBg4PWCFaTpjt2ke3ab0/apFpvUo4R0UbJIbOB+4=";
+      rev = "ff7a6abbc53f069c13d9649232ade062409c12da";
+      hash = "sha256-vzTiH1dlDTVWpfcTphdMRU4vziDsa1YuWYHdoiuU6P0=";
     };
     lispLibs = with pkgs.sbclPackages; [
       bordeaux-threads
-      osicat
     ];
   };
 
