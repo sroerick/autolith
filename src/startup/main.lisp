@@ -666,10 +666,12 @@ dependencies."
                 (null effective-resume-id)
                 (application-recovery-diagnosis-prompt configuration)))
          (resume-command-p
-           (and effective-resume-requested-p
-                (or (not (null effective-resume-id))
-                    (and (null recovery-conversation-id)
-                         (null recovery-diagnosis))))))
+           (or (and handoff-record
+                    (getf (rest handoff-record) :resume-command-p))
+               (and effective-resume-requested-p
+                    (or (not (null effective-resume-id))
+                        (and (null recovery-conversation-id)
+                             (null recovery-diagnosis)))))))
     (when authenticate-p
       (user-init-load configuration)
       (main-authenticate (preferences-apply-model-selection
@@ -695,7 +697,11 @@ dependencies."
       (let ((session-id (main--spawn-client-session
                          configuration
                          :permission-mode permission-mode
-                         :immutable-p immutable-p)))
+                         :immutable-p immutable-p
+                         :conversation-id effective-resume-id
+                         :resume-command-p
+                         (and effective-resume-requested-p
+                              (null effective-resume-id)))))
         (when session-id
           (localgroup-attach-record
            configuration
@@ -767,13 +773,14 @@ dependencies."
   "Return true when this start should spawn a detached session and attach.
 
 A client-first start keeps this terminal a thin relay whose detach is
-immediate and never interrupts session work. Replacements, authentication,
-resumes, crash recovery, startup images, crash simulation, non-interactive
-terminals, and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
+immediate and never interrupts session work, so every resume takes it
+too: the session itself picks the conversation and shows the picker
+through the attached terminal. Replacements, authentication, crash
+recovery, startup images, crash simulation, non-interactive terminals,
+and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
+  (declare (ignore resume-requested-p resume-id))
   (and (null handoff-record)
        (not authenticate-p)
-       (not resume-requested-p)
-       (null resume-id)
        (null recovery-conversation-id)
        (null recovery-diagnosis)
        (null image-values)
@@ -783,15 +790,20 @@ terminals, and AUTOLITH_SESSION_STYLE=direct all keep the direct path."
        (not (null (interactive-stream-p *standard-input*)))))
 
 (-> main--spawn-client-session
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean))
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:conversation-id (option string))
+                        (:resume-command-p boolean))
     (option string))
 (defun main--spawn-client-session
-    (configuration &key (permission-mode ':ask) immutable-p)
+    (configuration &key (permission-mode ':ask) immutable-p conversation-id
+                        resume-command-p)
   "Spawn the detached session for a client-first start, or NIL to run direct."
   (handler-case
       (localgroup-handoff-spawn-fresh configuration
                                       :permission-mode permission-mode
-                                      :immutable-p immutable-p)
+                                      :immutable-p immutable-p
+                                      :conversation-id conversation-id
+                                      :resume-command-p resume-command-p)
     (error (condition)
       (format *error-output*
               "Autolith is starting directly in this terminal: ~A~%"

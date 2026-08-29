@@ -200,6 +200,109 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-localgroup-detach-preempts-active-work () null)
+(defun test-localgroup-detach-preempts-active-work ()
+  "Test detach leaving the running agent alone and never waiting on queues."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (controller nil)
+         (session nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (multiple-value-bind (new-application new-controller relay conversation)
+               (test-localgroup--relay-application configuration)
+             (declare (ignore relay conversation))
+             (setf application new-application
+                   controller new-controller
+                   session (localgroup-start new-application)))
+           (application-input-controller--enqueue
+            controller ':message "the turn holding the terminal")
+           (application-input-controller--next-work controller)
+           (application-input-controller--enqueue
+            controller ':message "queued follow-up")
+           (application-input-controller-submit-primary-prompt
+            controller "steering for the running turn")
+           (test-assert
+            (and (application-input-controller-turn-active-p controller)
+                 (not (deque-empty-p
+                       (application-input-controller-steering-items
+                        controller))))
+            "the session holds an active turn and unconsumed steering")
+           (application-localgroup-request-handoff application ':detach)
+           (test-assert
+            (and (not (application-input-controller-turn-cancellation-p
+                       controller))
+                 (application-input-controller-turn-active-p controller))
+            "detach never interrupts the agent that is running")
+           (test-assert
+            (localgroup-handoff--primary-ready-p controller)
+            "steering and queued work never hold a detach")
+           (application-input-controller--finish-work controller)
+           (test-assert
+            (equal (application-input-controller--next-work controller)
+                   (list ':localgroup-handoff ':detach))
+            "the detach the terminal asked for is the next thing taken")
+           (test-assert
+            (equal (deque->list
+                    (application-input-controller-work-items controller))
+                   (list (list ':message "steering for the running turn")
+                         (list ':message "queued follow-up")))
+            "detaching leaves steering and follow-ups for the replacement"))
+      (when application
+        (localgroup-stop application)
+        (application-release-conversation-lease application))
+      (when controller
+        (application-input-controller-stop controller))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-localgroup-client-first-resume () null)
+(defun test-localgroup-client-first-resume ()
+  "Test every resume keeping the client path whose detach is instant."
+  (flet ((client-p (&rest arguments)
+           (apply #'main--client-session-p
+                  :handoff-record nil
+                  :authenticate-p nil
+                  :recovery-conversation-id nil
+                  :recovery-diagnosis nil
+                  :image-values nil
+                  :simulate-crash-p nil
+                  arguments)))
+    (let ((ordinary (client-p :resume-requested-p nil :resume-id nil)))
+      (test-assert
+       (eq (client-p :resume-requested-p t :resume-id "K-8vQ2mp") ordinary)
+       "resuming an exact conversation is not a special case")
+      (test-assert
+       (eq (client-p :resume-requested-p t :resume-id nil) ordinary)
+       "resuming through the picker is not a special case either")))
+  (test-assert
+   (not (main--client-session-p
+         :handoff-record nil
+         :authenticate-p nil
+         :resume-requested-p nil
+         :resume-id nil
+         :recovery-conversation-id "K-8vQ2mp"
+         :recovery-diagnosis nil
+         :image-values nil
+         :simulate-crash-p nil))
+   "crash recovery stays direct")
+  (test-assert
+   (not (main--client-session-p
+         :handoff-record (list :localgroup-handoff :version 1)
+         :authenticate-p nil
+         :resume-requested-p nil
+         :resume-id nil
+         :recovery-conversation-id nil
+         :recovery-diagnosis nil
+         :image-values nil
+         :simulate-crash-p nil))
+   "the spawned session itself runs direct")
+  nil)
+
 (-> test-localgroup-fresh-session-spawn () null)
 (defun test-localgroup-fresh-session-spawn ()
   "Test client-first spawn records, launch options, and start-failure cleanup."

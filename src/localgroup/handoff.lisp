@@ -426,15 +426,20 @@ exit \"$status\""
          :output output)))))
 
 (-> localgroup-handoff-spawn-fresh
-    (configuration &key (:permission-mode keyword) (:immutable-p boolean))
+    (configuration &key (:permission-mode keyword) (:immutable-p boolean)
+                        (:conversation-id (option string))
+                        (:resume-command-p boolean))
     string)
 (defun localgroup-handoff-spawn-fresh
-    (configuration &key (permission-mode ':ask) immutable-p)
-  "Launch a fresh detached session and return its ready identifier.
+    (configuration &key (permission-mode ':ask) immutable-p conversation-id
+                        resume-command-p)
+  "Launch a detached session and return its ready identifier.
 
-The session process starts shell-independent from the outset, so the
-calling terminal can attach as a thin relay whose detach is immediate
-and never interrupts session work."
+CONVERSATION-ID resumes that conversation instead of starting a fresh
+one, and RESUME-COMMAND-P lets the session pick one itself through the
+attached terminal. The session process starts shell-independent from the
+outset, so the calling terminal can attach as a thin relay whose detach
+is immediate and never interrupts session work."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at (get-universal-time))
@@ -451,10 +456,12 @@ and never interrupts session work."
                    :created-at created-at
                    :mode ':detach
                    :state ':pending
-                   :fresh-conversation-p t
+                   :fresh-conversation-p (and (null conversation-id)
+                                              (not resume-command-p))
+                   :resume-command-p (not (null resume-command-p))
                    :old-pid (sb-posix:getpid)
                    :replacement-pid nil
-                   :conversation-id nil
+                   :conversation-id conversation-id
                    :draft ""
                    :rows rows
                    :columns columns
@@ -740,7 +747,11 @@ and never interrupts session work."
 
 (-> application-localgroup-request-handoff (application keyword) list)
 (defun application-localgroup-request-handoff (application mode)
-  "Schedule MODE process handoff after APPLICATION reaches strict idle."
+  "Schedule MODE process handoff without disturbing the running agent.
+
+Detaching is a terminal-side event: the agent keeps working and never
+observes it. Queued work and steering stay in the durable snapshot the
+replacement restores, so detaching changes nothing about the session."
   (unless (member mode '(:detach :take-over))
     (error 'localgroup-error
            :message "The localgroup handoff mode is invalid."
@@ -816,12 +827,13 @@ scheduler tests that must not disturb the armed mode."
 (defun localgroup-handoff--primary-ready-p (controller)
   "Return true when CONTROLLER has no work that must precede handoff.
 
-Queued follow-up work does not block a handoff: it is durably persisted
-and the detached replacement restores and runs it. Steering, an open
-follow-up edit, cancellation, failure, and shutdown must still resolve
-in this process."
-  (and (deque-empty-p (application-input-controller-steering-items controller))
-       (null (application-input-controller-follow-up-edit-work controller))
+Queued follow-up work and steering never block a handoff: both live in
+the durable pending snapshot the detached replacement restores, so
+detaching changes nothing about them. Only cancellation, failure, and
+shutdown must resolve in this process, because those decide whether a
+replacement may exist at all. An open follow-up edit also holds it: the
+recalled draft lives only in this editor, not in the snapshot."
+  (and (null (application-input-controller-follow-up-edit-work controller))
        (null (application-input-controller-turn-cancellation-p controller))
        (null (application-input-controller-failure controller))
        (not (application-input-controller-stopping-p controller))))

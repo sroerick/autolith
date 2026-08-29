@@ -2952,20 +2952,14 @@ sandbox grant is revalidated at this final authorization boundary."
                  (application-input-controller-active-p controller) t)
            (return))
           ((and (not (application-localgroup-paused-p application))
-                ;; A ready handoff preempts queued follow-up work: queued
-                ;; items are durably persisted and the detached replacement
-                ;; restores and runs them, so detaching first honors "detach,
-                ;; then carry on" instead of inverting it. Steering, pending
-                ;; boundary applies, an open follow-up edit, and explicitly
-                ;; paused queued work still hold the handoff, because those
-                ;; must resolve in this process.
+                ;; A ready handoff preempts queued work and steering alike:
+                ;; both are durably persisted and the detached replacement
+                ;; restores them, so detaching changes nothing about them.
+                ;; Only startup work, pending boundary applies, and an open
+                ;; follow-up edit still hold the handoff: those resolve in
+                ;; this process, and a recalled draft lives only here.
                 (deque-empty-p
                  (application-input-controller-initial-work-items controller))
-                (deque-empty-p
-                 (application-input-controller-steering-items controller))
-                (deque-empty-p
-                 (application-input-controller-steering-in-flight-items
-                  controller))
                 (deque-empty-p
                  (application-input-controller-pending-apply-items controller))
                 (or (deque-empty-p

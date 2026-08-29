@@ -408,6 +408,8 @@
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)
     (test-localgroup-handoff-scheduling)
+    (test-localgroup-detach-preempts-active-work)
+    (test-localgroup-client-first-resume)
     (test-localgroup-fresh-session-spawn)
     (test-localgroup-process-handoff)
     (test-localgroup-handoff-cancellation)
