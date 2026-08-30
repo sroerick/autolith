@@ -1861,6 +1861,13 @@
                               (json-object
                                "type" "output_text"
                                "text" "Portable compaction handoff."))))
+                 (earlier-item
+                   (json-object
+                    "type" "message"
+                    "role" "assistant"
+                    "content" (json-array
+                               (json-object "type" "output_text"
+                                            "text" "Earlier response."))))
                 (answer-item
                   (json-object
                    "type" "message"
@@ -1885,16 +1892,23 @@
                                      :conversation conversation
                                      :tool-registry (agent-test-registry)
                                      :worker nil)))
-           (conversation-append-user-message conversation "earlier context")
-           (conversation-append-provider-metadata
-            conversation
-            (list :request-number 1
-                  :response-id "seed-native"
-                  :usage '(("total_tokens" 999999))))
-           (agent-run-user-turn agent "hello")
-           (test-assert
-            (= (length (native-scripted-provider-native-input-snapshots provider)) 1)
-            "native compaction receives one durable projection")
+            (conversation-append-user-message conversation "earlier context")
+            (conversation-append-provider-item conversation earlier-item)
+            (conversation-append-provider-metadata
+             conversation
+             (list :request-number 1
+                   :response-id "seed-native"
+                   :usage '(("total_tokens" 999999))))
+            (agent-run-user-turn agent "hello")
+            (test-assert
+             (= (length
+                 (first
+                  (native-scripted-provider-native-input-snapshots provider)))
+                2)
+             "native compaction receives the full durable projection")
+            (test-assert
+             (= (first (reverse (scripted-provider-input-counts provider))) 1)
+             "portable summarization starts from the native checkpoint only")
            (test-assert
             (find :native-compaction
                   (rest (conversation--read-records
@@ -1905,6 +1919,9 @@
             (native-compaction-item-p
              (first (conversation-input-items conversation)))
             "the active provider reuses the opaque checkpoint")
+            (test-assert
+             (= (length (conversation-input-items-for-family conversation ':codex)) 3)
+             "the active provider omits the redundant portable handoff")
            (test-assert
             (= (length (conversation-input-items-for-family conversation ':grok)) 3)
             "another provider receives the portable handoff and new messages"))

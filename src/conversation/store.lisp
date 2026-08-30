@@ -263,6 +263,12 @@
     :type hash-table
     :documentation
     "The model family that produced each projected item, keyed by item.")
+   (portable-handoff-families
+    :initform (make-hash-table :test #'eq)
+    :reader conversation-portable-handoff-families
+    :type hash-table
+    :documentation
+    "The native family that does not need each portable compaction handoff.")
    (turn-state
     :initform nil
     :accessor conversation-turn-state
@@ -341,21 +347,22 @@
 
 (defmethod (setf conversation-input-items)
     :after ((items list) (conversation conversation))
-  "Keep CONVERSATION's projection tail and item families synchronized.
+  "Keep CONVERSATION's projection tail and item metadata synchronized.
 
-Compaction replaces the whole projection, so families recorded for
-discarded items are pruned here rather than retained for the session."
+Compaction replaces the whole projection, so metadata recorded for discarded
+items is pruned here rather than retained for the session."
   (setf (conversation-input-items-tail conversation) (last items))
-  (let ((families (conversation-input-item-families conversation)))
-    (when (plusp (hash-table-count families))
+  (dolist (table (list (conversation-input-item-families conversation)
+                       (conversation-portable-handoff-families conversation)))
+    (when (plusp (hash-table-count table))
       (let ((retained (make-hash-table :test #'eq)))
         (dolist (item items)
-          (multiple-value-bind (family present-p) (gethash item families)
+          (multiple-value-bind (value present-p) (gethash item table)
             (when present-p
-              (setf (gethash item retained) family))))
-        (clrhash families)
-        (maphash (lambda (item family)
-                   (setf (gethash item families) family))
+              (setf (gethash item retained) value))))
+        (clrhash table)
+        (maphash (lambda (item value)
+                   (setf (gethash item table) value))
                  retained)))))
 
 
@@ -1359,16 +1366,38 @@ because durable configuration records are projected in order."
 A private reasoning or native compaction item carries encrypted content that
 only the family which produced it can decrypt, so such items from another
 family, or from an unrecorded one, are omitted rather than replayed into a
-rejected request. Every other item stays, including a portable compaction
-summary, keeping the conversation usable across families."
+rejected request. A native checkpoint's portable handoff is omitted for its
+producing family and retained for every other family."
   (remove-if
    (lambda (item)
-     (and (family-private-item-p item)
-          (not (eq (conversation-input-item-family conversation item)
-                   family))))
+     (or (and (family-private-item-p item)
+              (not (eq (conversation-input-item-family conversation item)
+                       family)))
+         (eq (gethash item (conversation-portable-handoff-families conversation))
+             family)))
    (conversation-input-items-for-request
     conversation
     :include-ephemeral-p include-ephemeral-p)))
+
+(-> conversation-native-compaction-summary-view
+    (conversation json-object keyword)
+    conversation)
+(defun conversation-native-compaction-summary-view (conversation item family)
+  "Return a transient request view containing native compaction ITEM only."
+  (let ((view
+          (make-instance
+           'conversation
+           :identifier (conversation-identifier conversation)
+           :prompt-cache-key (conversation-prompt-cache-key conversation)
+           :pathname (conversation-pathname conversation)
+           :log-pathname (conversation-log-pathname conversation)
+           :persisted-p nil
+           :created-at (conversation-created-at conversation)
+           :origin-directory (conversation-origin-directory conversation)
+           :next-sequence (conversation-next-sequence conversation)
+           :input-items (list item))))
+    (setf (gethash item (conversation-input-item-families view)) family)
+    view))
 
 (defparameter *conversation-inherited-reference-boundary*
     (concatenate
@@ -2040,8 +2069,9 @@ it described the uncompacted context."
 
 ITEM retains private model context for FAMILY. SUMMARY is deliberately kept
 alongside it so a later provider family can continue from a readable handoff.
-Both replace every preceding durable provider item while pending request-local
-items remain available for the next ordinary request."
+The producing family receives only ITEM. Both replace every preceding durable
+provider item while pending request-local items remain available for the next
+ordinary request."
   (native-compaction-item-canonicalize item)
   (unless (and (keywordp family)
                (native-compaction-item-p item)
@@ -2057,20 +2087,23 @@ items remain available for the next ordinary request."
                 (getf entry :item))
               (conversation-ephemeral-input-entries conversation)))
            (summary-item (conversation-summary-item summary))
-         (record
-           (conversation-append-record
-            conversation
-            (list :native-compaction
-                  :through-seq (1- (conversation-next-sequence conversation))
-                  :family family
-                  :wire-json (json-encode item)
-                  :summary summary))))
-    (setf (conversation-input-items conversation)
-          (append (list item summary-item) ephemeral-items)
-          (conversation-turn-state conversation) nil
-          (conversation-last-total-tokens conversation) 0
-          (gethash item (conversation-input-item-families conversation))
-          family)
+           (record
+             (conversation-append-record
+              conversation
+              (list :native-compaction
+                    :through-seq (1- (conversation-next-sequence conversation))
+                    :family family
+                    :wire-json (json-encode item)
+                    :summary summary))))
+      (setf (conversation-input-items conversation)
+            (append (list item summary-item) ephemeral-items)
+            (conversation-turn-state conversation) nil
+            (conversation-last-total-tokens conversation) 0
+            (gethash item (conversation-input-item-families conversation))
+            family
+            (gethash summary-item
+                     (conversation-portable-handoff-families conversation))
+            family)
       record)))
 
 
@@ -2616,12 +2649,16 @@ later picker searches read it without scanning the log."
         (conversation--record-error
          conversation properties
          "A persisted native compaction item is unsupported."))
-      (setf (conversation-input-items conversation)
-            (list item (conversation-summary-item summary))
-            (conversation-turn-state conversation) nil
-            (conversation-last-total-tokens conversation) 0
-            (gethash item (conversation-input-item-families conversation))
-            family))))
+      (let ((summary-item (conversation-summary-item summary)))
+        (setf (conversation-input-items conversation)
+              (list item summary-item)
+              (conversation-turn-state conversation) nil
+              (conversation-last-total-tokens conversation) 0
+              (gethash item (conversation-input-item-families conversation))
+              family
+              (gethash summary-item
+                       (conversation-portable-handoff-families conversation))
+              family)))))
 
 (defmethod conversation--project-record
     ((kind (eql :provider)) conversation properties)

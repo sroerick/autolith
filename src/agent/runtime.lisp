@@ -1089,9 +1089,9 @@ tool registry reaches the very next provider request."
     (agent observer &key tool-allowlist (tool-restriction-p nil))
   "Compact AGENT's conversation with native state when the provider supports it.
 
-The summarization request remains a side channel. Its durable text is the
-portable handoff for another provider family, while a supported native
-checkpoint preserves the current model's opaque reasoning state."
+A supported native checkpoint becomes the input to the portable summarization
+side channel, avoiding a second upload of the full pre-compaction history. The
+durable summary remains a handoff for another provider family."
   (let ((conversation (agent-conversation agent))
         (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
     (agent-observer-status
@@ -1115,15 +1115,20 @@ checkpoint preserves the current model's opaque reasoning state."
               (lambda (event)
                 (declare (ignore event))
                 (agent-observer-status observer :provider-progress nil))))
-           (result (provider-stream-turn
-                    provider
-                    conversation
-                    :tool-namespaces #()
-                    :event-callback
-                    (lambda (event)
-                      (declare (ignore event))
-                      (agent-observer-status observer :provider-progress nil))
-                    :compaction-p t))
+            (summary-conversation
+              (if native-item
+                  (conversation-native-compaction-summary-view
+                   conversation native-item (provider-family provider))
+                  conversation))
+            (result (provider-stream-turn
+                     provider
+                     summary-conversation
+                     :tool-namespaces #()
+                     :event-callback
+                     (lambda (event)
+                       (declare (ignore event))
+                       (agent-observer-status observer :provider-progress nil))
+                     :compaction-p t))
            (summary (provider-result-assistant-text result)))
       (unless (non-empty-string-p summary)
         (error 'agent-loop-error

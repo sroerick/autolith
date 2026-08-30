@@ -266,9 +266,9 @@
             "native compaction preserves Codex's current checkpoint encoding")
            (test-assert (zerop (conversation-last-total-tokens conversation))
                         "native compaction resets the tracked usage")
-           (test-assert
-            (= (length (conversation-input-items-for-family conversation ':codex)) 2)
-            "the producing family receives its opaque checkpoint")
+            (test-assert
+             (= (length (conversation-input-items-for-family conversation ':codex)) 1)
+             "the producing family receives only its opaque checkpoint")
            (let ((grok-items
                    (conversation-input-items-for-family conversation ':grok)))
              (test-assert (= (length grok-items) 1)
@@ -287,12 +287,12 @@
             "native compaction persists one durable checkpoint record")
            (let ((reloaded
                    (conversation-load-by-id configuration "native-compact")))
-             (test-assert
-              (and (= (length (conversation-input-items-for-family reloaded ':codex))
-                      2)
-                   (= (length (conversation-input-items-for-family reloaded ':grok))
-                      1))
-              "native checkpoint replay preserves each family projection")))
+              (test-assert
+               (and (= (length (conversation-input-items-for-family reloaded ':codex))
+                       1)
+                    (= (length (conversation-input-items-for-family reloaded ':grok))
+                       1))
+               "native checkpoint replay preserves each family projection")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
