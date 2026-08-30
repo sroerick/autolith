@@ -62,6 +62,7 @@
                              (:file "configuration/preferences")
                              (:file "configuration/permissions")
                              (:file "provider/authentication")
+                             (:file "provider/chatgpt/authentication")
                              (:file "provider/gemini/authentication")
                              (:file "provider/grok/authentication")
                              (:file "provider/api-key")
@@ -201,6 +202,7 @@
   :components ((:module "tests"
                 :serial t
                 :components ((:file "test-support")
+                             (:file "device-authentication-test-support")
                              (:file "stream-tests")
                              (:file "memory-tests")
                              (:file "papercut-tests")
@@ -223,6 +225,7 @@
                              (:file "conversation-replay-tests")
                              (:file "plan-tests")
                              (:file "authentication-tests")
+                             (:file "chatgpt-authentication-tests")
                              (:file "gemini-authentication-tests")
                              (:file "grok-authentication-tests")
                              (:file "nous-authentication-tests")
@@ -249,7 +252,6 @@
                              (:file "recovery-tests")
                              (:file "lisp-worker-tests")
                              (:file "self-tool-tests")
-                             (:file "device-authentication-tests")
                              (:file "nous-device-authentication-tests")
                              (:file "agent-tests")
                              (:file "inference-tests")

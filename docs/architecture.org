@@ -113,7 +113,7 @@ provider request --> semantic events --> agent --> validated tool calls
 - Configuration records credential *locations* only
 - A provider request sees tokens only in its dynamic scope
 - The optional Codex file is a one-time access-token import
-- Renewable credentials come from Autolith's own device flow
+- Renewable ChatGPT credentials come from Autolith's browser OAuth flow
 
 * Workspace and workers
 

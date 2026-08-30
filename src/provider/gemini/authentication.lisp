@@ -66,16 +66,6 @@
 
 ;;;; -- PKCE and Request Data --
 
-(-> gemini-oauth--base64url ((simple-array (unsigned-byte 8) (*))) string)
-(defun gemini-oauth--base64url (octets)
-  "Return OCTETS as unpadded RFC 4648 Base64url text."
-  (string-right-trim
-   '(#\=)
-   (substitute #\_
-               #\/
-               (substitute #\-
-                           #\+
-                           (usb8-array-to-base64-string octets)))))
 
 (-> gemini-oauth--random-hex (integer) string)
 (defun gemini-oauth--random-hex (octet-count)
@@ -86,13 +76,8 @@
 
 (-> gemini-oauth-create-pkce () (values string string))
 (defun gemini-oauth-create-pkce ()
-  "Return a fresh PKCE verifier and its S256 challenge."
-  (let* ((verifier (gemini-oauth--base64url (random-data 32)))
-         (octets (map '(simple-array (unsigned-byte 8) (*)) #'char-code verifier))
-         (challenge
-           (gemini-oauth--base64url
-            (ironclad:digest-sequence ':sha256 octets))))
-    (values verifier challenge)))
+  "Return a fresh 256-bit PKCE verifier and its S256 challenge."
+  (oauth--create-pkce :verifier-octets 32))
 
 (-> gemini-oauth-authorization-url
     (&key
@@ -124,22 +109,6 @@
             (cons "code_challenge_method" "S256")
             (cons "state" state)))))
 
-(-> gemini-oauth--query-parameters (string) list)
-(defun gemini-oauth--query-parameters (target)
-  "Decode TARGET's query string into an association list."
-  (let ((question (position #\? target)))
-    (when question
-      (loop with query = (subseq target (1+ question))
-            with start = 0
-            for end = (position #\& query :start start)
-            for field = (subseq query start end)
-            for equals = (position #\= field)
-            collect (cons (url-decode (subseq field 0 equals))
-                          (url-decode (if equals
-                                          (subseq field (1+ equals))
-                                          "")))
-            while end
-            do (setf start (1+ end))))))
 
 (-> gemini-oauth--redacted-value (t list) (option string))
 (defun gemini-oauth--redacted-value (value secrets)
@@ -245,7 +214,7 @@
                                        (1+ first-space)
                                        second-space)))
                   (parameters (and target
-                                   (gemini-oauth--query-parameters target)))
+                                   (oauth--query-parameters target)))
                   (state (cdr (assoc "state" parameters :test #'string=)))
                   (code (cdr (assoc "code" parameters :test #'string=)))
                   (oauth-error (cdr (assoc "error" parameters :test #'string=))))

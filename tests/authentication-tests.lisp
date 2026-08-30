@@ -623,7 +623,7 @@
                   nil)
               (token-refresh-failed ()
                 t))
-            "non-renewable bootstrap credentials require Autolith's device flow")
+             "non-renewable bootstrap credentials require Autolith's browser login")
            (let* ((primary-source (credential-manager-primary-source manager))
                   (renewable
                     (make-instance 'oauth-credentials

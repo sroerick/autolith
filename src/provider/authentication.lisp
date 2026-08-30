@@ -81,6 +81,59 @@ its protocol-level close operation."
                        (json-object-p (aref organizations 0)))
               (json-get (aref organizations 0) "id")))))))
 
+
+;;;; -- OAuth Wire Helpers --
+
+(-> authentication-user-agent () string)
+(defun authentication-user-agent ()
+  "Return the honest Autolith user agent sent to authentication services."
+  (format nil "autolith/~A (~A ~A; ~A)"
+          *autolith-version*
+          (software-type)
+          (software-version)
+          (machine-type)))
+
+(-> oauth--base64url ((simple-array (unsigned-byte 8) (*))) string)
+(defun oauth--base64url (octets)
+  "Return OCTETS as unpadded RFC 4648 Base64url text."
+  (string-right-trim
+   '(#\=)
+   (substitute #\_
+               #\/
+               (substitute #\-
+                           #\+
+                           (usb8-array-to-base64-string octets)))))
+
+(-> oauth--create-pkce (&key (:verifier-octets integer)) (values string string))
+(defun oauth--create-pkce (&key (verifier-octets 32))
+  "Return a fresh PKCE verifier and S256 challenge from VERIFIER-OCTETS."
+  (unless (plusp verifier-octets)
+    (error 'authentication-error
+           :message "The OAuth PKCE verifier size must be positive."))
+  (let* ((verifier (oauth--base64url (random-data verifier-octets)))
+         (octets (map '(simple-array (unsigned-byte 8) (*)) #'char-code verifier))
+         (challenge
+           (oauth--base64url
+            (ironclad:digest-sequence ':sha256 octets))))
+    (values verifier challenge)))
+
+(-> oauth--query-parameters (string) list)
+(defun oauth--query-parameters (target)
+  "Decode TARGET's query string into an association list."
+  (let ((question (position #\? target)))
+    (when question
+      (loop with query = (subseq target (1+ question))
+            with start = 0
+            for end = (position #\& query :start start)
+            for field = (subseq query start end)
+            for equals = (position #\= field)
+            collect (cons (url-decode (subseq field 0 equals))
+                          (url-decode (if equals
+                                          (subseq field (1+ equals))
+                                          "")))
+            while end
+            do (setf start (1+ end))))))
+
 ;;;; -- Credential Sources --
 
 (defclass credential-source (cl-rfc8628:credential-source)

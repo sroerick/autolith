@@ -90,6 +90,15 @@
                  "The ~A provider does not expose an authentication operation."
                  (provider-account-label provider))))
 
+(defmethod provider-authenticate
+    ((provider codex-subscription-provider) &key stream open-browser-p)
+  "Run browser OAuth for the ChatGPT subscription provider."
+  (chatgpt-oauth-login
+   (provider-credential-manager provider)
+   :stream (or stream *standard-output*)
+   :open-browser-p open-browser-p)
+  "ChatGPT authentication was saved by Autolith.")
+
 (defmethod provider-authenticate ((provider subscription-provider)
                                   &key stream open-browser-p)
   "Run the device login protocol for a subscription provider."
@@ -235,11 +244,6 @@ This follows the filtered fork-history behavior in Codex
   (:documentation
    "Return a fresh device authentication client for PROVIDER's account service."))
 
-(defmethod provider-device-authentication-client
-    ((provider codex-subscription-provider))
-  "Return the ChatGPT device authentication client."
-  (declare (ignore provider))
-  (device-authentication-client-create))
 
 (-> provider-family-create
     (keyword configuration &key (:reasoning-summaries-p boolean))

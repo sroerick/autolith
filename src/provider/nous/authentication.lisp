@@ -316,7 +316,7 @@
                      (cons "x-nous-refresh-token" effective-refresh-token)
                      (cons "Content-Type" "application/x-www-form-urlencoded")
                      (cons "Accept" "application/json")
-                     (cons "User-Agent" (device-authentication--user-agent)))
+                     (cons "User-Agent" (authentication-user-agent)))
                     :content
                     (url-encode-params
                      (list

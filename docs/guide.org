@@ -433,10 +433,12 @@ available. =(models)= triggers discovery. You can also pass non-secret
 =:headers= and static =:models= for descriptions, windows, efforts, or
 providers that have no model-list endpoint.
 
-Built-in ChatGPT, Grok, and Nous Research subscriptions authenticate through a
-browser device flow. Gemini uses Google installed-application OAuth with a local
-loopback callback. Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and
-user-registered OpenAI-compatible providers use API keys.
+Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
+on =localhost:1455= or =localhost:1457=. The authorization URL is always printed
+for manual browser use. Grok and Nous Research use browser device flows. Gemini
+uses Google installed-application OAuth with a local loopback callback.
+Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and user-registered
+OpenAI-compatible providers use API keys.
 
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support and uses 2x plan usage. The built-in GPT-5.6 models

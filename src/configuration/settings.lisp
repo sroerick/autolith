@@ -15,12 +15,42 @@
   "https://chatgpt.com/backend-api/codex/responses"
   "The current ChatGPT Codex Responses endpoint.")
 
+;; ChatGPT browser OAuth behavior inspected at
+;; https://github.com/openai/codex commit
+;; 94cbbddafc1776d5e377bca1b05932c697e82238.
+(defparameter *openai-oauth-issuer* "https://auth.openai.com"
+  "The OpenAI issuer serving ChatGPT browser OAuth.")
+
 (defparameter *openai-oauth-token-endpoint*
   "https://auth.openai.com/oauth/token"
   "The OpenAI OAuth token endpoint.")
 
 (defparameter *openai-oauth-client-id* "app_EMoamEEZ73f0CkXaXp7hrann"
   "The public OAuth client identifier used by Codex-compatible clients.")
+
+(defparameter *openai-oauth-scopes*
+  '("openid"
+    "profile"
+    "email"
+    "offline_access"
+    "api.connectors.read"
+    "api.connectors.invoke")
+  "The scopes requested by ChatGPT browser OAuth.")
+
+(defparameter *openai-oauth-originator* "autolith"
+  "The honest client originator sent during ChatGPT browser OAuth.")
+
+(defparameter *chatgpt-oauth-callback-ports* '(1455 1457)
+  "The localhost callback ports allowed by the ChatGPT OAuth client.")
+
+(defparameter *chatgpt-oauth-callback-timeout* 900
+  "The maximum seconds to wait for the ChatGPT browser callback.")
+
+(defparameter *chatgpt-oauth-request-timeout* 5
+  "The maximum seconds allowed to read one local callback request line.")
+
+(defparameter *chatgpt-oauth-request-line-limit* 8192
+  "The maximum characters accepted in one local callback request line.")
 
 ;; Gemini CLI OAuth behavior inspected at google-gemini/gemini-cli commit
 ;; 0bd1d439751478771c45d3d0895a6a9760554bf4. The installed application uses
