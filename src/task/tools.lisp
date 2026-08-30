@@ -550,6 +550,82 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                     "The mandatory job snapshot exceeds its native result bound."
                     :tool-name "job.wait")))
 
+(-> task--durable-job-result
+    (agent string string)
+    (values (option list) (option pathname)))
+(defun task--durable-job-result (viewer identifier tool-name)
+  "Return VIEWER's durable task result named by execution IDENTIFIER.
+
+Only the current primary conversation's artifact root is searched."
+  (when (typep viewer 'task-child-agent)
+    (return-from task--durable-job-result (values nil nil)))
+  (let* ((fragment (task--identifier-fragment identifier))
+         (root
+           (task--artifact-group-root
+            (agent-configuration viewer)
+            (conversation-identifier (agent-conversation viewer))))
+         (path
+           (and fragment
+                (merge-pathnames
+                 (format nil "~A/result.sexp" fragment)
+                 root))))
+    (unless (and path (probe-file path))
+      (return-from task--durable-job-result (values nil nil)))
+    (handler-case
+        (let ((result (snapshot-read path)))
+          (unless (and (listp result)
+                       (member (getf result :status)
+                               '(:success :failed :aborted)
+                               :test #'eq))
+            (error 'task-error
+                   :message (format nil
+                                    "Durable job result ~A is invalid."
+                                    identifier)
+                   :tool-name tool-name
+                   :task-id identifier))
+          (values result path))
+      (task-error (condition)
+        (error condition))
+      (error (condition)
+        (error 'task-error
+               :message (format nil
+                                "Could not read durable job result ~A: ~A"
+                                identifier condition)
+               :tool-name tool-name
+               :task-id identifier)))))
+
+(-> task--durable-job-native-form
+    (list pathname string)
+    (values list string))
+(defun task--durable-job-native-form (result path execution-identifier)
+  "Fit one durable RESULT artifact into a bounded job.get response."
+  (let ((snapshot
+          (list :job-id (or (getf result :id) execution-identifier)
+                :execution-id execution-identifier
+                :agent (getf result :agent)
+                :state (case (getf result :status)
+                         (:success ':completed)
+                         (:aborted ':aborted)
+                         (otherwise ':failed))
+                :detached (and (getf result :detached) t)
+                :result (append (copy-list result)
+                                (list :output-path (namestring path))))))
+    (loop for limit = *task-result-preview-limit* then (floor limit 2)
+          for record =
+            (task--job-native-record
+             snapshot
+             :artifact-path (namestring path)
+             :preview-limit limit)
+          for form = (list :job-get :durable-p t :job record)
+          for content = (task--write-readable-sexp form :pretty-p t)
+          when (<= (length content) *task-tool-content-limit*)
+            return (values form content)
+          when (zerop limit)
+            do (error 'task-error
+                      :message
+                      "The durable job result exceeds its native result bound."
+                      :tool-name "job.get"))))
+
 (-> task--tool-execution-handoff-result
     (tool-execution-job agent keyword)
     task-tool-result)
@@ -899,6 +975,37 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            (multiple-value-bind (form content)
                (task--job-list-page snapshots offset limit)
              (task-tool-result content form)))))
+      ((string= operation "get")
+       (task--validate-tool-arguments arguments '("id") "job.get")
+       (let* ((identifier
+                (task--validate-job-identifier
+                 (tool-argument arguments "id" :required t)
+                 "job.get"))
+              (job
+                (find identifier
+                      (task-orchestrator-list-visible-jobs orchestrator viewer)
+                      :key #'session-job-identifier
+                      :test #'string=)))
+         (if job
+             (let ((snapshot (session-job-snapshot job)))
+               (multiple-value-bind (form content)
+                   (task--job-native-form
+                    job snapshot viewer
+                    :wrapper
+                    (lambda (record)
+                      (list :job-get :durable-p nil :job record)))
+                 (task-tool-result content form)))
+             (multiple-value-bind (result path)
+                 (task--durable-job-result viewer identifier "job.get")
+               (unless result
+                 (error 'task-error
+                        :message (format nil "No visible job named ~A exists."
+                                         identifier)
+                        :tool-name "job.get"
+                        :task-id identifier))
+               (multiple-value-bind (form content)
+                   (task--durable-job-native-form result path identifier)
+                 (task-tool-result content form))))))
       ((member operation '("wait" "cancel") :test #'string=)
        (task--validate-tool-arguments
         arguments
@@ -1032,7 +1139,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
    "In-process child-agent delegation with batching and detached jobs.")
   (tool-registry-describe-namespace
    registry "job"
-   "Inspection, waiting, and cancellation for task jobs.")
+   "Inspection, waiting, cancellation, and durable result lookup for task jobs.")
   (let* ((orchestrator (task-orchestrator-create))
          (identifier-schema
            (tool-object-schema
@@ -1071,6 +1178,12 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                                            "list" :description
                                            "List child and tool execution jobs in this session."
                                            :parameters job-list-schema))
+    (tool-registry-register registry
+                            (make-instance 'task-job-tool :orchestrator
+                                           orchestrator :namespace "job" :name
+                                           "get" :description
+                                           "Inspect one live session job or a completed task result persisted for the current primary conversation."
+                                           :parameters identifier-schema))
     (tool-registry-register registry
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name

@@ -1233,6 +1233,113 @@ exactly that race."
   nil)
 
 
+(-> test-task-durable-job-lookup () null)
+(defun test-task-durable-job-lookup ()
+  "Test live inspection and conversation-scoped durable result lookup."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (registry      (task-augment-tool-registry
+                         (make-default-tool-registry)))
+         (run-tool      (tool-registry-find registry "task" "run"))
+         (get-tool      (tool-registry-find registry "job" "get"))
+         (orchestrator  (task-run-tool-orchestrator run-tool))
+         (definition
+           (task-agent-definition-create
+            :name "durable-lookup"
+            :description "Exercise durable result lookup."
+            :instructions "Remain queued for live inspection."
+            :source ':test))
+         (primary-a
+           (task-tests--primary-agent
+            configuration "durable-lookup-primary-a" registry))
+         (primary-b
+           (task-tests--primary-agent
+            configuration "durable-lookup-primary-b" registry))
+         (live-job
+           (task-tests--register-job
+            orchestrator primary-a definition :name "live-lookup"))
+         (child
+           (task-tests--child-viewer
+            configuration live-job :registry registry))
+         (execution-identifier (make-identifier))
+         (artifact-path
+           (merge-pathnames
+            (format nil "~A/result.sexp" execution-identifier)
+            (task--artifact-group-root
+             configuration
+             (conversation-identifier (agent-conversation primary-a)))))
+         (durable-result
+           (list :id "resumed-child-1"
+                 :name "resumed-child"
+                 :agent "task"
+                 :status ':success
+                 :output "Recovered durable child output."
+                 :error nil
+                 :yielded-p t
+                 :structured-output-present-p nil
+                 :duration-ms 17
+                 :model "test-model"
+                 :detached t)))
+    (labels ((execute-get (viewer identifier)
+               (tool-execute
+                get-tool
+                (make-instance
+                 'tool-context
+                 :configuration configuration
+                 :worker nil
+                 :conversation (agent-conversation viewer)
+                 :registry registry
+                 :agent viewer
+                 :call-id "durable-job-lookup")
+                (json-object "id" identifier))))
+      (unwind-protect
+           (progn
+             (snapshot-write artifact-path durable-result)
+             (let* ((result
+                      (execute-get primary-a (session-job-identifier live-job)))
+                    (details (rest (tool-result-details result)))
+                    (record (getf details :job)))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (null (getf details :durable-p))
+                     (string= (getf record :id)
+                              (session-job-identifier live-job))
+                     (eq (getf record :state) :queued))
+                "job.get inspects a retained live session job"))
+             (let* ((result (execute-get primary-a execution-identifier))
+                    (details (rest (tool-result-details result)))
+                    (record (getf details :job))
+                    (result-record (getf record :result))
+                    (artifact (getf result-record :artifact)))
+               (test-assert
+                (and (tool-result-success-p result)
+                     (getf details :durable-p)
+                     (string= (getf record :id) "resumed-child-1")
+                     (string= (getf record :execution-id)
+                              execution-identifier)
+                     (eq (getf record :state) :completed)
+                     (eq (getf result-record :status) :success)
+                     (string= (getf result-record :output)
+                              "Recovered durable child output.")
+                     (string= (getf artifact :path)
+                              (namestring artifact-path))
+                     (getf artifact :available-p))
+                "job.get reconstructs a bounded terminal record from its artifact"))
+             (dolist (viewer (list primary-b child))
+               (let ((report
+                       (task-tests--job-tool-error-report
+                        orchestrator viewer
+                        :operation "get"
+                        :identifier execution-identifier)))
+                 (test-assert
+                  (search "No visible job" report)
+                  "durable lookup does not expose another conversation or task branch"))))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist ':ignore))))
+  nil)
+
+
 (-> test-session-tool-execution-jobs () null)
 (defun test-session-tool-execution-jobs ()
   "Test shared ordering, visibility, inspection, waiting, and cancellation."

@@ -388,6 +388,7 @@
     (test-task-publication-coherence)
     (test-task-terminal-wakeup-ordering)
     (test-task-job-visibility)
+    (test-task-durable-job-lookup)
     (test-session-tool-execution-jobs)
     (test-shell-execution-jobs)
     (test-tool-execution-retention)
