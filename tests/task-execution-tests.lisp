@@ -84,17 +84,17 @@
                   (initial-count (length (tool-registry-tools registry))))
              (task-augment-tool-registry registry)
              (test-assert
-               (= (length (tool-registry-tools registry))
-                  (+ initial-count 5))
-               "task augmentation adds two task and three job tools")
+              (= (length (tool-registry-tools registry))
+                 (+ initial-count 6))
+              "task augmentation adds two task and four job tools")
              (dolist (name '("run" "agents"))
                (test-assert (tool-registry-find registry "task" name)
                             (format nil
                                     "task augmentation registers task.~A"
                                     name)))
-              (dolist (name '("list" "wait" "cancel"))
-                (test-assert (tool-registry-find registry "job" name)
-                             (format nil "task augmentation registers job.~A" name)))
+             (dolist (name '("list" "get" "wait" "cancel"))
+               (test-assert (tool-registry-find registry "job" name)
+                            (format nil "task augmentation registers job.~A" name)))
              (test-assert (eq registry (task-augment-tool-registry registry))
                           "task augmentation is idempotent")
              (let* ((orchestrator
