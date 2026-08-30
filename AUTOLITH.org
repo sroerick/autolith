@@ -57,6 +57,21 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: a rebuilt active image loads the tracked =sbcl-workers=
   pin, making the private replay definition redundant.
 
+** Frob Qlot worker image
+
+- Problem: The generic =asdf-user-tree= worker image resolved an incompatible
+  =sexp-store= while loading =autolith/tests=, so focused tests failed before
+  compiling the changed code.
+- Behavior: Start Frob-focused workers from =frob-qlot=. The image is pristine
+  SBCL with this checkout's =.qlot/setup.lisp= loaded and =autolith.asd=
+  registered, giving the locked project sources exact precedence.
+- Scope and location: saved Lisp worker image =frob-qlot=, parent =pristine=;
+  no active-image or tracked runtime behavior changes.
+- Verification: a fresh =frob-qlot= worker loaded =autolith/tests= successfully
+  in 548 ms.
+- Removal condition: the generic worker image reliably reproduces this
+  checkout's Qlot source registry, or project-focused workers stop recurring.
+
 ** Current-state self exercises
 
 - Problem: =self.exercise= required an effective pending mutation, so it could
