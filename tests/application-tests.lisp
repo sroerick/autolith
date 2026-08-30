@@ -1080,7 +1080,7 @@
 
 (-> test-active-turn-interrupt-events () null)
 (defun test-active-turn-interrupt-events ()
-  "Test active Ctrl-C holds follow-ups while Escape permits continuation."
+  "Test Ctrl-C holds follow-ups while Escape runs the newest steer first."
   (dolist (event '(:interrupt :escape))
     (let* ((now 10)
            (terminal (make-instance 'recording-terminal :columns 80))
@@ -1099,9 +1099,10 @@
       (deque-push-back
        (application-input-controller-work-items controller)
        (list ':message "queued"))
-      (deque-push-back
-       (application-input-controller-steering-items controller)
-       "steering")
+      (dolist (steering '("older steering" "newest steering"))
+        (deque-push-back
+         (application-input-controller-steering-items controller)
+         steering))
       (terminal-ui-set-input ui "draft survives")
       (application-input-controller--process-event controller event)
       (test-assert (not (application-input-controller-stopping-p controller))
@@ -1113,12 +1114,17 @@
        "active-turn stop keys preserve the current draft")
       (test-assert
        (equal (application-input-controller--state controller :work-items)
-              (list (list ':message "queued")))
-       "active-turn stop keys preserve queued work")
+              (if (eq event ':escape)
+                  (list (list ':message "newest steering")
+                        (list ':message "queued"))
+                  (list (list ':message "queued"))))
+       "Escape puts the newest steer ahead of queued work")
       (test-assert
        (equal (application-input-controller--state controller :steering-items)
-              (list "steering"))
-       "active-turn stop keys preserve steering work")
+              (if (eq event ':escape)
+                  (list "older steering")
+                  (list "older steering" "newest steering")))
+       "Escape removes only the newest steer from steering work")
       (test-assert
        (application-input-controller-turn-cancellation-p controller)
        "the cancellation lifecycle remains active until work cleanup finishes")
@@ -1177,6 +1183,13 @@
             (null
              (application-input-controller-interrupt-deadline controller)))
        "work cleanup ends the cancellation lifecycle and force window")
+      (when (eq event ':escape)
+        (test-assert
+         (equal (application-input-controller--state controller :work-items)
+                (list (list ':message "newest steering")
+                      (list ':message "older steering")
+                      (list ':message "queued")))
+         "cancellation cleanup keeps the newest steer first"))
       (test-assert
        (eq (not (null (terminal-ui-notice ui)))
            (eq event ':interrupt))
