@@ -2075,6 +2075,9 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 (defparameter *mcp-maximum-content-blocks* 256
   "The maximum MCP content blocks projected from one result.")
 
+(defparameter *mcp-maximum-result-text-bytes* (* 1024 1024)
+  "The maximum UTF-8 text bytes accepted from one MCP tool result.")
+
 (-> mcp-tools--json-sequence (t) list)
 (defun mcp-tools--json-sequence (value)
   "Return JSON array VALUE as a list without accepting Lisp list stand-ins."
@@ -2312,11 +2315,23 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
                              (json-encode structured-content))))
                (push section sections)
                (push section provider-blocks)))
-           (setf complete-p t)
-           (values
-            (format nil "~{~A~^~2%~}" (nreverse sections))
-            (nreverse attachments)
-            (nreverse provider-blocks)))
+            (let* ((ordered-sections (nreverse sections))
+                   (rendered-text (format nil "~{~A~^~2%~}" ordered-sections))
+                   (rendered-bytes
+                     (length
+                      (sb-ext:string-to-octets
+                       rendered-text :external-format ':utf-8))))
+              (when (> rendered-bytes *mcp-maximum-result-text-bytes*)
+                (error 'tool-error
+                       :message
+                       (format nil
+                               "An MCP result exceeds the ~:D-byte text limit; request a narrower result."
+                               *mcp-maximum-result-text-bytes*)
+                       :tool-name "mcp"))
+              (setf complete-p t)
+              (values rendered-text
+                      (nreverse attachments)
+                      (nreverse provider-blocks))))
       (unless complete-p
         (conversation--delete-image-attachments attachments)))))
 

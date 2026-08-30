@@ -3494,6 +3494,54 @@
   nil)
 
 
+(-> test-mcp-result-text-bound () null)
+(defun test-mcp-result-text-bound ()
+  "Test MCP textual and structured results cannot create unbounded model context."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "mcp-result-bound"))
+         (context
+           (test-mcp--context
+            configuration conversation (make-instance 'tool-registry)))
+         (*mcp-maximum-result-text-bytes* 64))
+    (unwind-protect
+         (progn
+           (dolist (arguments
+                    (list
+                     (list (list (json-object "type" "text"
+                                                   "text" (make-string 65
+                                                                       :initial-element #\x)))
+                           nil)
+                     (list nil
+                           (json-object "payload"
+                                        (make-string 65 :initial-element #\y)))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (mcp-tools--render-content
+                     context
+                     (first arguments)
+                     "mcp://bounded/result"
+                     :structured-content (second arguments))
+                    nil)
+                (tool-error (condition)
+                  (search "request a narrower result"
+                          (princ-to-string condition))))
+              "oversized MCP result text fails before entering model context"))
+           (multiple-value-bind (text attachments provider-blocks)
+               (mcp-tools--render-content
+                context
+                (list (json-object "type" "text" "text" "bounded"))
+                "mcp://bounded/result")
+             (test-assert
+              (and (string= text "bounded")
+                   (null attachments)
+                   (equal provider-blocks '("bounded")))
+              "bounded MCP result text retains its provider projection")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-mcp-tools () null)
 (defun test-mcp-tools ()
   "Test MCP tool projection, authorization, resources, and lifecycle behavior."
@@ -3509,6 +3557,7 @@
   (test-mcp-credential-echo-containment)
   (test-mcp-aggregate-discovery-bounds)
   (test-mcp-initialization-metadata-bounds)
+  (test-mcp-result-text-bound)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
