@@ -699,13 +699,13 @@
           (list
            'self-exercise-tool
            "self" "exercise"
-           "Evaluate and journal one focused assertion-style Common Lisp form against an effective pending mutation. A signaled condition fails the exercise; this does not replace self.commit's full checks."
+           "Evaluate and journal one focused assertion-style Common Lisp form against the active image. It defaults to the newest effective pending mutation, or verifies the current active state when none is pending. A signaled condition fails the exercise; this does not replace self.commit's full checks."
            (tool-object-schema
             (json-object
              "form" (tool-string-property
                      "One Common Lisp exercise form; use ASSERT or ERROR to signal failure.")
              "mutation" (tool-string-property
-                         "An effective mutation identifier from self.diff; defaults to the newest effective mutation."))
+                         "An optional effective mutation identifier from self.diff; defaults to the newest effective mutation, or omit it to verify current state after discard."))
             '("form")))
           (list
            'self-diff-tool

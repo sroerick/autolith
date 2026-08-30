@@ -57,6 +57,23 @@ a user-local init.lisp change, or a private image commit.
 - Removal condition: a rebuilt active image loads the tracked =sbcl-workers=
   pin, making the private replay definition redundant.
 
+** Current-state self exercises
+
+- Problem: =self.exercise= required an effective pending mutation, so it could
+  not journal final verification after =self.discard= restored tracked or
+  previously committed behavior.
+- Behavior: An exercise still defaults to the newest effective mutation. When
+  none is pending, it runs and journals evidence against the current active
+  state. An explicitly named unknown mutation still fails.
+- Scope and location: tracked commit =c0295d7= and private image commit
+  =71bca135-ba7b-4139-b04d-a14428c105fd=, private Git commit
+  =766467d0904c22881b0194f59491b7334c9a38ef=.
+- Verification: clean-process replay passed, the focused discard test passed,
+  all 4,766 repository tests passed, and live =self.exercise= reported a pass
+  against the current active state with no uncommitted mutations.
+- Removal condition: the private replay can be dropped after a rebuilt active
+  image contains tracked commit =c0295d7=.
+
 ** NetBSD amd64 source bootstrap
 
 - Problem: Autolith's supported source targets were Linux x86-64 and macOS
