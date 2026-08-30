@@ -560,8 +560,10 @@ dependencies."
                   (list 'main--locate-user-tree-system))))
   nil)
 
-(-> main-authenticate (configuration (option string)) null)
-(defun main-authenticate (configuration selection)
+(-> main-authenticate
+    (configuration (option string) &optional (option string))
+    null)
+(defun main-authenticate (configuration selection &optional method)
   "Authenticate a registered provider before the conversation UI starts."
   (configuration-ensure-directories configuration)
   (let ((provider (main--authentication-provider configuration selection))
@@ -569,9 +571,10 @@ dependencies."
         (*api-key-output-styled-p*
           (main--authentication-output-styled-p *standard-output*)))
     (format t "~&~A~%"
-            (provider-authenticate provider
-                                   :stream *standard-output*
-                                   :open-browser-p t)))
+            (provider-authenticate-with-method
+             provider method
+             :stream *standard-output*
+             :open-browser-p t)))
   nil)
 
 (-> main--image-pathnames (list) list)
@@ -624,11 +627,12 @@ dependencies."
      &key (:resume-requested-p boolean)
           (:resume-id (option string))
           (:authenticate-p boolean)
-          (:authentication-selection (option string)))
+          (:authentication-selection (option string))
+          (:authentication-method (option string)))
     null)
 (defun main--start-session
     (command &key resume-requested-p resume-id authenticate-p
-                  authentication-selection)
+                  authentication-selection authentication-method)
   "Start one interactive Autolith session from COMMAND's parsed options."
   (main--register-local-source-trees)
   (let* ((immutable-p (not (null (getopt* command ':immutable))))
@@ -677,7 +681,8 @@ dependencies."
       (user-init-load configuration)
       (main-authenticate (preferences-apply-model-selection
                           (provider-bootstrap-configuration configuration))
-                         authentication-selection))
+                         authentication-selection
+                         authentication-method))
     (when handoff-record
       (localgroup-handoff-begin-startup handoff-record)
       (application--clear-recovery-environment))
@@ -909,14 +914,18 @@ path."
   (make-command
    :name "auth"
    :description "authenticate a provider, then start a session"
-   :usage "[PROVIDER]"
+   :usage "[PROVIDER] [METHOD]"
    :handler
    (lambda (command)
-     (main--start-session
-      command
-      :authenticate-p t
-      :authentication-selection
-      (main--single-selection command "provider name")))))
+     (let ((arguments (command-arguments command)))
+       (when (> (length arguments) 2)
+         (error 'configuration-error
+                :message "Auth accepts a provider and optional method."))
+       (main--start-session
+        command
+        :authenticate-p t
+        :authentication-selection (first arguments)
+        :authentication-method (second arguments))))))
 
 (-> main--top-level-command () clingon:command)
 (defun main--top-level-command ()

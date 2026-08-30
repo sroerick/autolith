@@ -45,6 +45,43 @@
   (:documentation
    "Authenticate PROVIDER and return a safe user-visible completion message."))
 
+(defparameter *chatgpt-authentication-method* ':browser
+  "The dynamically selected ChatGPT authentication method.")
+
+(-> provider--authentication-method
+    (model-provider (or null string symbol))
+    keyword)
+(defun provider--authentication-method (provider method)
+  "Validate and normalize METHOD for PROVIDER authentication."
+  (when (and method
+             (not (typep provider 'codex-subscription-provider)))
+    (error 'authentication-error
+           :message
+           "Only the ChatGPT provider accepts an authentication method."))
+  (let ((name (and method (string-downcase (string method)))))
+    (cond
+      ((or (null name) (string= name "browser"))
+       ':browser)
+      ((member name '("device" "device-code") :test #'string=)
+       ':device-code)
+      (t
+       (error 'authentication-error
+              :message
+              "ChatGPT authentication method must be browser or device.")))))
+
+(-> provider-authenticate-with-method
+    (model-provider (or null string symbol)
+     &key (:stream stream) (:open-browser-p boolean))
+    string)
+(defun provider-authenticate-with-method
+    (provider method &key stream open-browser-p)
+  "Authenticate PROVIDER using its selected METHOD."
+  (let ((*chatgpt-authentication-method*
+          (provider--authentication-method provider method)))
+    (provider-authenticate provider
+                           :stream stream
+                           :open-browser-p open-browser-p)))
+
 (-> provider--authentication-completion-message
     (model-provider string)
     string)
@@ -92,11 +129,20 @@
 
 (defmethod provider-authenticate
     ((provider codex-subscription-provider) &key stream open-browser-p)
-  "Run browser OAuth for the ChatGPT subscription provider."
-  (chatgpt-oauth-login
-   (provider-credential-manager provider)
-   :stream (or stream *standard-output*)
-   :open-browser-p open-browser-p)
+  "Run the selected OAuth flow for the ChatGPT subscription provider."
+  (let ((stream (or stream *standard-output*)))
+    (ecase *chatgpt-authentication-method*
+      (:browser
+       (chatgpt-oauth-login
+        (provider-credential-manager provider)
+        :stream stream
+        :open-browser-p open-browser-p))
+      (:device-code
+       (device-authentication-login
+        (provider-device-authentication-client provider)
+        (provider-credential-manager provider)
+        :stream stream
+        :open-browser-p open-browser-p))))
   "ChatGPT authentication was saved by Autolith.")
 
 (defmethod provider-authenticate ((provider subscription-provider)
@@ -243,6 +289,12 @@ This follows the filtered fork-history behavior in Codex
 (defgeneric provider-device-authentication-client (provider)
   (:documentation
    "Return a fresh device authentication client for PROVIDER's account service."))
+
+(defmethod provider-device-authentication-client
+    ((provider codex-subscription-provider))
+  "Return the ChatGPT device authentication client."
+  (declare (ignore provider))
+  (device-authentication-client-create))
 
 
 (-> provider-family-create

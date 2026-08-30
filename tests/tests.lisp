@@ -349,6 +349,7 @@
     (test-image-commit-replay-probe)
     (test-crash-capsule-correlation)
     (run-recovery-tests)
+    (run-device-authentication-tests)
     (run-nous-device-authentication-tests)
     (run-agent-tests)
     (test-task-agent-native-reader)

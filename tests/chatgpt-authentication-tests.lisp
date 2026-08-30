@@ -264,8 +264,11 @@
            (provider-authentication-provider (test-configuration) "chatgpt"))
          (output (make-string-output-stream))
          (browser-setting nil)
+         (device-setting nil)
          (browser-login-count 0)
-         (message nil))
+         (device-login-count 0)
+         (browser-message nil)
+         (device-message nil))
     (test-call-with-function-replacements
      (list
       (list 'chatgpt-oauth-login
@@ -275,16 +278,34 @@
               (setf browser-setting open-browser-p)
               nil))
       (list 'device-authentication-login
-            (lambda (&rest arguments)
-              (declare (ignore arguments))
-              (error "The ChatGPT auth command must not use device authentication."))))
+            (lambda (client manager &key stream open-browser-p)
+              (declare (ignore client manager stream))
+              (incf device-login-count)
+              (setf device-setting open-browser-p)
+              t)))
      (lambda ()
-       (setf message
-             (provider-authenticate
-              provider :stream output :open-browser-p nil))))
-    (test-assert (and (= browser-login-count 1)
-                      (null browser-setting)
-                      (string= message
-                               "ChatGPT authentication was saved by Autolith."))
-                 "The ChatGPT auth command routes through browser OAuth"))
+       (setf browser-message
+             (provider-authenticate-with-method
+              provider nil :stream output :open-browser-p nil)
+             device-message
+             (provider-authenticate-with-method
+              provider "device" :stream output :open-browser-p nil))))
+    (test-assert
+     (and (= browser-login-count 1)
+          (= device-login-count 1)
+          (null browser-setting)
+          (null device-setting)
+          (string= browser-message
+                   "ChatGPT authentication was saved by Autolith.")
+          (string= device-message browser-message))
+     "The ChatGPT auth command offers browser and device OAuth")
+    (test-assert
+     (handler-case
+         (progn
+           (provider-authenticate-with-method
+            provider "invalid" :stream output :open-browser-p nil)
+           nil)
+       (authentication-error ()
+         t))
+     "The ChatGPT auth command rejects unknown authentication methods"))
   nil)

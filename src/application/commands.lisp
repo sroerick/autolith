@@ -1710,9 +1710,11 @@ are forwarded to TERMINAL-UI-SELECT."
   (terminal-authentication-streams
    (terminal-ui-terminal (application-ui application))))
 
-(-> application-authenticate (application string) null)
-(defun application-authenticate (application provider-name)
-  "Authenticate APPLICATION's explicitly named provider."
+(-> application-authenticate
+    (application string &optional (or null string symbol))
+    null)
+(defun application-authenticate (application provider-name &optional method)
+  "Authenticate APPLICATION's explicitly named provider using optional METHOD."
   (let* ((ui       (application-ui application))
          (provider (application--authentication-provider application provider-name))
          (message  nil))
@@ -1732,10 +1734,11 @@ are forwarded to TERMINAL-UI-SELECT."
                  (*api-key-input-file-descriptor* input-file-descriptor)
                  (*api-key-output-styled-p*
                    (terminal-styled-p (terminal-ui-terminal ui))))
-             (setf message
-                   (provider-authenticate provider
-                                          :stream output
-                                          :open-browser-p t)))
+              (setf message
+                    (provider-authenticate-with-method
+                     provider method
+                     :stream output
+                     :open-browser-p t)))
         (if stop-ui-p
             (terminal-ui-start ui)
             (application--authentication-ui-resume ui))))
@@ -2065,20 +2068,20 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-authentication-command
     (:name "/auth"
-     :argument "[PROVIDER]"
+     :argument "[PROVIDER] [METHOD]"
      :description "pick and authenticate a registered provider"
-     :tip "starts direct authentication for an explicitly selected provider."
+     :tip "uses browser auth by default; ChatGPT also accepts device."
      :busy-behavior :hold
      :terminal-behavior :exclusive
      :callable t)
-    (application &optional (provider-name nil provider-name-supplied-p))
+    (application &optional (provider-name nil provider-name-supplied-p) method)
   (let ((provider-name
           (if provider-name-supplied-p
               provider-name
               (and *application-command-interactive-p*
                    (application--pick-authentication-provider application)))))
     (when provider-name
-      (application-authenticate application provider-name)))
+      (application-authenticate application provider-name method)))
   ':continue)
 
 (define-application-command application--builtin-model-command

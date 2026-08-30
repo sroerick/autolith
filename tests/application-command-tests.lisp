@@ -587,23 +587,24 @@
                (null (application-operation-call application name))
                (format nil "(~A) accepts its omitted optional argument" name)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  (dolist (input '("/auth grok typo"
-                   "/mcp refresh typo"
-                   "/permissions auto garbage"))
-    (test-assert
-     (= (length (application-command--tokens input)) 3)
-     (format nil "~A tokenizes every supplied slash argument" input))
-    (let* ((invocation (application-command-invocation-parse input))
-           (command (application-command-invocation-command invocation)))
+  (dolist (case '(("/auth grok device typo" 4)
+                  ("/mcp refresh typo" 3)
+                  ("/permissions auto garbage" 3)))
+    (destructuring-bind (input token-count) case
       (test-assert
-       (handler-case
-           (progn
-             (application-command-execute command nil invocation)
-             nil)
-         (configuration-error ()
-           t))
-       (format nil "~A reports excess slash arguments during guarded dispatch"
-               input))))
+       (= (length (application-command--tokens input)) token-count)
+       (format nil "~A tokenizes every supplied slash argument" input))
+      (let* ((invocation (application-command-invocation-parse input))
+             (command (application-command-invocation-command invocation)))
+        (test-assert
+         (handler-case
+             (progn
+               (application-command-execute command nil invocation)
+               nil)
+           (configuration-error ()
+             t))
+         (format nil "~A reports excess slash arguments during guarded dispatch"
+                 input)))))
   (test-assert
    (handler-case
        (progn
@@ -893,7 +894,8 @@
   "Test /auth and (auth) share selection, explicit naming, and direct output."
   (let ((application (make-instance 'application))
         (picked-p nil)
-        (authenticated-provider nil))
+        (authenticated-provider nil)
+        (authenticated-method nil))
     (test-call-with-function-replacements
      (list
       (list
@@ -904,9 +906,10 @@
          "grok"))
       (list
        'application-authenticate
-       (lambda (candidate provider-name)
+       (lambda (candidate provider-name &optional method)
          (declare (ignore candidate))
-         (setf authenticated-provider provider-name)
+         (setf authenticated-provider provider-name
+               authenticated-method method)
          nil)))
      (lambda ()
        (let ((*application-command-interactive-p* t))
@@ -918,15 +921,28 @@
           (and picked-p (string= authenticated-provider "grok"))
           "argument-free auth picks and authenticates one provider")
          (setf picked-p nil
-               authenticated-provider nil)
+               authenticated-provider nil
+               authenticated-method nil)
          (test-assert
           (eq (application--builtin-authentication-command application "anthropic")
               ':continue)
           "named auth completes through the canonical command")
          (test-assert
           (and (not picked-p)
-               (string= authenticated-provider "anthropic"))
-          "named auth bypasses selection and preserves the provider name")))))
+               (string= authenticated-provider "anthropic")
+               (null authenticated-method))
+          "named auth bypasses selection and preserves the provider name")
+         (setf authenticated-provider nil
+               authenticated-method nil)
+         (test-assert
+          (eq (application--builtin-authentication-command
+               application "chatgpt" "device")
+              ':continue)
+          "auth accepts an explicit ChatGPT authentication method")
+         (test-assert
+          (and (string= authenticated-provider "chatgpt")
+               (string= authenticated-method "device"))
+          "auth passes the explicit authentication method through unchanged")))))
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration
@@ -942,7 +958,8 @@
                           :conversation conversation
                           :ui (terminal-ui-create :terminal terminal)))
          (picked-p nil)
-         (authenticated-provider nil))
+         (authenticated-provider nil)
+         (authenticated-method nil))
     (unwind-protect
          (test-call-with-function-replacements
           (list
@@ -954,9 +971,10 @@
               "grok"))
            (list
             'application-authenticate
-            (lambda (candidate provider-name)
+            (lambda (candidate provider-name &optional method)
               (declare (ignore candidate))
-              (setf authenticated-provider provider-name)
+              (setf authenticated-provider provider-name
+                    authenticated-method method)
               nil)))
           (lambda ()
             (test-assert
@@ -966,7 +984,8 @@
              (and picked-p (string= authenticated-provider "grok"))
              "callable auth with no provider opens provider selection")
             (setf picked-p nil
-                  authenticated-provider nil)
+                  authenticated-provider nil
+                  authenticated-method nil)
             (test-assert
              (eq (application-run-lisp-input
                   application "(auth \"anthropic\")")
@@ -974,8 +993,20 @@
              "callable auth with a provider completes through local Lisp")
             (test-assert
              (and (not picked-p)
-                  (string= authenticated-provider "anthropic"))
-             "callable auth with a provider bypasses selection")))
+                  (string= authenticated-provider "anthropic")
+                  (null authenticated-method))
+             "callable auth with a provider bypasses selection")
+            (setf authenticated-provider nil
+                  authenticated-method nil)
+            (test-assert
+             (eq (application-run-lisp-input
+                  application "(auth \"chatgpt\" \"device\")")
+                 ':continue)
+             "callable auth accepts an explicit authentication method")
+            (test-assert
+             (and (string= authenticated-provider "chatgpt")
+                  (string= authenticated-method "device"))
+             "callable auth passes its authentication method through")))
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist ':ignore)))

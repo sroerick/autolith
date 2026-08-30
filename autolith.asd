@@ -252,6 +252,7 @@
                              (:file "recovery-tests")
                              (:file "lisp-worker-tests")
                              (:file "self-tool-tests")
+                               (:file "device-authentication-tests")
                              (:file "nous-device-authentication-tests")
                              (:file "agent-tests")
                              (:file "inference-tests")

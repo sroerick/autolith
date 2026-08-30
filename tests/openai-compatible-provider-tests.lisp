@@ -240,8 +240,7 @@
             (make-instance 'preference-state
                            :model model
                            :reasoning-effort "minimal"))
-           (let ((authenticated-configuration nil)
-                 (authenticated-selection :unset)
+           (let ((authentication-calls nil)
                  (live-application (make-instance 'application))
                  (reconnect-called-p nil))
              (test-call-with-function-replacements
@@ -273,9 +272,9 @@
                            :reasoning-efforts ("minimal"))))
                        nil))
                (list 'main-authenticate
-                     (lambda (configuration selection)
-                       (setf authenticated-configuration configuration
-                             authenticated-selection selection)
+                     (lambda (configuration selection &optional method)
+                       (push (list configuration selection method)
+                             authentication-calls)
                        nil))
                (list 'application-reconnect
                      (lambda (application &rest arguments)
@@ -288,22 +287,32 @@
                      (lambda (application &rest arguments)
                        (declare (ignore application arguments))
                        nil)))
-               (lambda ()
-                 (let ((*active-application* live-application))
-                   (let ((*active-application* nil))
-                     (main-dispatch '("auth"))))))
+              (lambda ()
+                (let ((*active-application* live-application))
+                  (let ((*active-application* nil))
+                    (main-dispatch '("auth")))
+                  (let ((*active-application* nil))
+                    (main-dispatch '("auth" "chatgpt" "device"))))))
              (test-assert
               (not reconnect-called-p)
-              "bare auth does not reconnect the active application")
-             (test-assert
-              (and authenticated-configuration
-                   (null authenticated-selection)
-                   (string= (configuration-model authenticated-configuration)
-                            model)
-                   (string= (configuration-reasoning-effort
-                             authenticated-configuration)
-                            "minimal"))
-              "bare auth selects the persisted registered provider")))
+              "auth commands do not reconnect the active application")
+             (let ((calls (nreverse authentication-calls)))
+               (test-assert (= (length calls) 2)
+                            "auth commands authenticate exactly once each")
+               (destructuring-bind (bare explicit) calls
+                 (test-assert
+                  (and (typep (first bare) 'configuration)
+                       (null (second bare))
+                       (null (third bare))
+                       (string= (configuration-model (first bare)) model)
+                       (string= (configuration-reasoning-effort (first bare))
+                                "minimal"))
+                  "bare auth selects the persisted registered provider")
+                 (test-assert
+                  (and (typep (first explicit) 'configuration)
+                       (string= (second explicit) "chatgpt")
+                       (string= (third explicit) "device"))
+                  "command-line auth passes its explicit provider and method")))))
       (if old-environment-model
           (sb-posix:setenv "AUTOLITH_MODEL" old-environment-model 1)
           (sb-posix:unsetenv "AUTOLITH_MODEL"))

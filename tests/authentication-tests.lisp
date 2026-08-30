@@ -461,24 +461,26 @@
          (root (test-configuration-root configuration))
          (observed-descriptor nil)
          (observed-styled-p ':unset)
+          (observed-method nil)
          (provider-function
            (lambda (candidate selection)
              (declare (ignore candidate selection))
              ':test-provider))
          (authenticator
-           (lambda (provider &key stream open-browser-p)
-             (declare (ignore stream))
-             (test-assert (and (eq provider ':test-provider)
-                               open-browser-p)
-                          "command-line auth invokes the selected provider")
-             (setf observed-descriptor *api-key-input-file-descriptor*
-                   observed-styled-p *api-key-output-styled-p*)
-             "Provider authentication was saved.")))
+            (lambda (provider method &key stream open-browser-p)
+              (declare (ignore stream))
+              (test-assert (and (eq provider ':test-provider)
+                                open-browser-p)
+                           "command-line auth invokes the selected provider")
+              (setf observed-descriptor *api-key-input-file-descriptor*
+                    observed-styled-p *api-key-output-styled-p*
+                    observed-method method)
+              "Provider authentication was saved.")))
     (unwind-protect
          (progn
            (test-call-with-function-replacements
             (list (list 'main--authentication-provider provider-function)
-                  (list 'provider-authenticate authenticator))
+                  (list 'provider-authenticate-with-method authenticator))
             (lambda ()
               (let ((*standard-output* (make-string-output-stream)))
                 (main-authenticate configuration "example"))))
@@ -486,6 +488,8 @@
             (and (= observed-descriptor 0)
                  (null observed-styled-p))
             "noninteractive command-line auth supplies stdin without terminal styling")
+            (test-assert (null observed-method)
+                         "command-line auth defaults its method selection")
            (setf observed-styled-p ':unset)
            (test-call-with-function-replacements
             (list (list 'main--authentication-provider provider-function)
@@ -493,12 +497,13 @@
                         (lambda (stream)
                           (declare (ignore stream))
                           t))
-                  (list 'provider-authenticate authenticator))
+                  (list 'provider-authenticate-with-method authenticator))
             (lambda ()
               (let ((*standard-output* (make-string-output-stream)))
-                (main-authenticate configuration "example"))))
-           (test-assert (eq observed-styled-p t)
-                        "interactive command-line auth enables semantic styling"))
+                (main-authenticate configuration "example" "device"))))
+            (test-assert (and (eq observed-styled-p t)
+                              (string= observed-method "device"))
+                         "command-line auth passes styling and method selection"))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 

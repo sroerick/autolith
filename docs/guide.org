@@ -434,9 +434,12 @@ available. =(models)= triggers discovery. You can also pass non-secret
 providers that have no model-list endpoint.
 
 Built-in ChatGPT subscriptions use browser OAuth with PKCE and a local callback
-on =localhost:1455= or =localhost:1457=. The authorization URL is always printed
-for manual browser use. Grok and Nous Research use browser device flows. Gemini
-uses Google installed-application OAuth with a local loopback callback.
+on =localhost:1455= or =localhost:1457= by default. Use
+=/auth chatgpt device=, =(auth "chatgpt" "device")=, or
+=autolith auth chatgpt device= to select the device-code flow instead. The
+browser authorization URL is always printed for manual use. Grok and Nous
+Research use browser device flows. Gemini uses Google installed-application
+OAuth with a local loopback callback.
 Anthropic, Fireworks, OpenCode, OpenRouter, Mistral, and user-registered
 OpenAI-compatible providers use API keys.
 
