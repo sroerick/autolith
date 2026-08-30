@@ -115,16 +115,26 @@
     (t
      value)))
 
+(-> mcp-transport-configuration--credential-bindings
+    (mcp-transport-configuration)
+    list)
+(defgeneric mcp-transport-configuration--credential-bindings (transport)
+  (:documentation
+   "Return TRANSPORT's environment-backed credential bindings."))
+
+(defmethod mcp-transport-configuration--credential-bindings
+    ((transport mcp-stdio-transport-configuration))
+  (mcp-stdio-configuration-environment-bindings transport))
+
+(defmethod mcp-transport-configuration--credential-bindings
+    ((transport mcp-http-transport-configuration))
+  (mcp-http-configuration-header-bindings transport))
+
 (-> mcp-tools--credential-bindings (mcp-server-configuration) list)
 (defun mcp-tools--credential-bindings (configuration)
   "Return CONFIGURATION's environment-backed credential bindings."
-  (etypecase (mcp-server-configuration-transport configuration)
-    (mcp-stdio-transport-configuration
-     (mcp-stdio-configuration-environment-bindings
-      (mcp-server-configuration-transport configuration)))
-    (mcp-http-transport-configuration
-     (mcp-http-configuration-header-bindings
-      (mcp-server-configuration-transport configuration)))))
+  (mcp-transport-configuration--credential-bindings
+   (mcp-server-configuration-transport configuration)))
 
 (-> mcp-tools--environment-unavailable-condition
     (mcp-server-configuration mcp-environment-binding)
@@ -460,49 +470,71 @@
        (format nil "MCP stdio directory ~A does not exist." candidate)))
     (uiop:ensure-directory-pathname (truename candidate))))
 
+(-> mcp-transport-configuration--materialize
+    (mcp-transport-configuration mcp-server-configuration configuration
+     &key (:notification-handler (option function))
+       (:exchange-scope-function (option function)))
+    mcp-transport)
+(defgeneric mcp-transport-configuration--materialize
+    (transport server-configuration configuration
+     &key notification-handler exchange-scope-function)
+  (:documentation
+   "Materialize TRANSPORT for SERVER-CONFIGURATION and CONFIGURATION."))
+
+(defmethod mcp-transport-configuration--materialize
+    ((transport mcp-stdio-transport-configuration)
+     (server-configuration mcp-server-configuration)
+     (configuration configuration)
+     &key notification-handler exchange-scope-function)
+  (declare (ignore exchange-scope-function))
+  (make-mcp-stdio-transport
+   (mcp-stdio-configuration-command transport)
+   :arguments (mcp-stdio-configuration-arguments transport)
+   :directory
+   (lambda ()
+     (mcp-tools--stdio-directory
+      server-configuration configuration transport))
+   :environment-function
+   (mcp-tools--stdio-environment-function server-configuration transport)
+   :notification-handler notification-handler
+   :ingress-projector
+   (if (null (mcp-stdio-configuration-environment-bindings transport))
+       #'mcp-tools--identity-ingress-projector
+       #'mcp-tools--credential-stdio-ingress-projector)))
+
+(defmethod mcp-transport-configuration--materialize
+    ((transport mcp-http-transport-configuration)
+     (server-configuration mcp-server-configuration)
+     (configuration configuration)
+     &key notification-handler exchange-scope-function)
+  (declare (ignore configuration))
+  (make-mcp-streamable-http-transport
+   (mcp-http-configuration-url transport)
+   :headers-function
+   (mcp-tools--http-headers-function server-configuration transport)
+   :exchange-scope-function
+   (or exchange-scope-function
+       (lambda (function)
+         (funcall function)))
+   :notification-handler notification-handler
+   :connect-timeout
+   (mcp-http-configuration-connect-timeout-seconds transport)))
+
 (-> mcp-tools--transport
     (mcp-server-configuration configuration
      &key (:notification-handler (option function))
-          (:exchange-scope-function (option function)))
+       (:exchange-scope-function (option function)))
     mcp-transport)
 (defun mcp-tools--transport
     (server-configuration configuration
      &key notification-handler exchange-scope-function)
   "Materialize SERVER-CONFIGURATION's lazy MCP transport."
-  (let ((transport
-          (mcp-server-configuration-transport server-configuration)))
-    (etypecase transport
-      (mcp-stdio-transport-configuration
-       (make-mcp-stdio-transport
-        (mcp-stdio-configuration-command transport)
-        :arguments (mcp-stdio-configuration-arguments transport)
-        :directory
-        (lambda ()
-          (mcp-tools--stdio-directory
-           server-configuration configuration transport))
-        :environment-function
-        (mcp-tools--stdio-environment-function
-         server-configuration transport)
-        :notification-handler notification-handler
-        :ingress-projector
-        (if
-            (null
-             (mcp-stdio-configuration-environment-bindings transport))
-            #'mcp-tools--identity-ingress-projector
-            #'mcp-tools--credential-stdio-ingress-projector)))
-      (mcp-http-transport-configuration
-       (make-mcp-streamable-http-transport
-        (mcp-http-configuration-url transport)
-        :headers-function
-        (mcp-tools--http-headers-function
-         server-configuration transport)
-        :exchange-scope-function
-        (or exchange-scope-function
-            (lambda (function)
-              (funcall function)))
-        :notification-handler notification-handler
-        :connect-timeout
-        (mcp-http-configuration-connect-timeout-seconds transport))))))
+  (mcp-transport-configuration--materialize
+   (mcp-server-configuration-transport server-configuration)
+   server-configuration
+   configuration
+   :notification-handler notification-handler
+   :exchange-scope-function exchange-scope-function))
 
 (-> mcp-tools--client
     (mcp-server-configuration configuration
@@ -2622,14 +2654,29 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 
 ;;;; -- Registry Construction and Status --
 
+(-> mcp-transport-configuration--kind
+    (mcp-transport-configuration)
+    keyword)
+(defgeneric mcp-transport-configuration--kind (transport)
+  (:documentation "Return TRANSPORT's concise status kind."))
+
+(defmethod mcp-transport-configuration--kind
+    ((transport mcp-stdio-transport-configuration))
+  (declare (ignore transport))
+  ':stdio)
+
+(defmethod mcp-transport-configuration--kind
+    ((transport mcp-http-transport-configuration))
+  (declare (ignore transport))
+  ':http)
+
 (-> mcp-tools--transport-kind
     (mcp-server-configuration)
     keyword)
 (defun mcp-tools--transport-kind (configuration)
   "Return CONFIGURATION's concise transport kind."
-  (etypecase (mcp-server-configuration-transport configuration)
-    (mcp-stdio-transport-configuration :stdio)
-    (mcp-http-transport-configuration :http)))
+  (mcp-transport-configuration--kind
+   (mcp-server-configuration-transport configuration)))
 
 (-> mcp-tools--task-required-tool-count (list) (integer 0))
 (defun mcp-tools--task-required-tool-count (tools)
