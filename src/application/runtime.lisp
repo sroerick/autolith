@@ -2073,27 +2073,28 @@ command replaced the active conversation."
     (application json-object)
     (option list))
 (defun application--tool-search-entry (application item)
-  "Return one highlighted row per namespace exposed by tool-search ITEM."
+  "Return one compact row naming namespaces expanded by tool search ITEM."
   (let ((names (application--tool-search-namespaces item)))
     (when names
-      (let ((maximum-width
-              (max 1
-                   (1- (terminal-columns
-                        (terminal-ui-terminal (application-ui application)))))))
-        (loop for namespace in names
-              for first-row-p = t then nil
-              for row = (list (terminal-span ':tool "▸ Loaded ")
-                              (terminal-span ':syntax-function namespace)
-                              (terminal-span ':tool " tools"))
-              append
-              (append
-               (unless first-row-p
-                 (list (terminal-span ':plain (string #\Newline))))
-               (if (<= (terminal--spans-width row) maximum-width)
-                   row
-                   (append
-                    (terminal--clip-spans row (max 0 (1- maximum-width)))
-                    (list (terminal-span ':dim "…"))))))))))
+      (let* ((maximum-width
+               (max 1
+                    (1- (terminal-columns
+                         (terminal-ui-terminal (application-ui application))))))
+             (row
+               (append
+                (list (terminal-span ':tool "▸ tool schemas: "))
+                (loop for namespace in names
+                      for first-name-p = t then nil
+                      append
+                      (append
+                       (unless first-name-p
+                         (list (terminal-span ':dim ", ")))
+                       (list (terminal-span ':syntax-function namespace)))))))
+        (if (<= (terminal--spans-width row) maximum-width)
+            row
+            (append
+             (terminal--clip-spans row (max 0 (1- maximum-width)))
+             (list (terminal-span ':dim "…"))))))))
 
 (-> response-item-entry
     (application json-object &key (:timestamp (option timestamp)))

@@ -2022,12 +2022,19 @@
            (text (test-terminal-row-text entry)))
       (test-assert
        (and (application--response-item-visible-p application item)
-            (= (count (terminal-span ':tool "▸ Loaded ") entry :test #'equal) 2)
+            (= (count (terminal-span ':tool "▸ tool schemas: ")
+                      entry :test #'equal)
+               1)
             (find (terminal-span ':syntax-function "resource")
                   entry
                   :test #'equal)
-            (= (count (terminal-span ':tool " tools") entry :test #'equal) 2))
-       "tool discovery presents each loaded namespace with tool styling")
+            (= (count-if (lambda (span)
+                           (eq (terminal-span-style span) ':syntax-function))
+                         entry)
+               2)
+            (not (find (terminal-span ':plain (string #\Newline))
+                       entry :test #'equal)))
+       "tool discovery collapses expanded namespaces into one compact schema event")
       (test-assert
        (and (not (find *terminal-escape-character* text))
             (every (lambda (line)
