@@ -6,7 +6,7 @@ master =ba5ac68= against the two pricing mechanisms that matter: raw prompt
 size, and prompt-cache stability (cached input replays at roughly 0.1x list
 price on OpenAI and Anthropic, and on subscription routes a cache miss burns
 the rate-limit window that =later= exists to ration). Sizes below were
-measured in a live image, not estimated from source: the real frob workspace
+measured in a live image, not estimated from source: the real Autolith workspace
 configuration, the full default-plus-task tool registry, tokens approximated
 as characters over four.
 
@@ -14,7 +14,7 @@ as characters over four.
 
 | Fixed request prefix              | chars  | ~tokens |
 |-----------------------------------+--------+---------|
-| System prompt (frob workspace)    | 43,252 | 10,800  |
+| System prompt (Autolith workspace) | 43,252 | 10,800  |
 | Tool definitions, 46 tools        | 48,924 | 12,200  |
 | Total before any history          | 92,176 | 23,000  |
 
@@ -132,7 +132,7 @@ only =todo=, =doing=, =blocked=, and =note= items. Completed history remains
 available through =resource.read agenda:current= without paying to inject it on
 every provider request. The existing complete-line character bound still limits
 unusually large active agendas.
-On the same frob workspace, this reduced the live =session-state= contribution
+On the same Autolith workspace, this reduced the live =session-state= contribution
 from 48,291 to 3,153 instruction characters, or about 12,079 to 795 tokens in
 =context-status=.
 
@@ -344,7 +344,7 @@ provider round trip.
 
 * Method
 
-Measured in a live image at =ba5ac68= with the real frob workspace: full
+Measured in a live image at =ba5ac68= with the real Autolith workspace: full
 default registry plus task tools (MCP excluded, so user configurations sit
 above these numbers), Codex wire encoding, =json-encode= lengths, tokens
 approximated as chars/4 (JSON and base64 tokenize denser, so tool figures

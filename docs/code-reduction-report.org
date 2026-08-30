@@ -1,10 +1,10 @@
 #+TITLE: Autolith Code Reduction Audit
 #+STARTUP: content
 
-Audited at master =37c2f80= in a detached checkout
-(=/root/common-lisp/frob-audit=), 141 source files / 74,246 lines under
-=src/=+=server/=+=recovery/=, 72 test files / 77,418 lines with 3,977
-=test-assert= calls. Method: token-level definition/reference analysis
+Audited at master =37c2f80= in a detached checkout, with 141 source files /
+74,246 lines under =src/=+=server/=+=recovery/= and 72 test files / 77,418
+lines containing 3,977 =test-assert= calls. Method: token-level
+definition/reference analysis
 with exact declaim baselines, identical-line and identical-after-rename
 function comparison across file pairs, per-library imported-symbol usage
 counts, and pattern sweeps over the test suite. Estimates are lines
@@ -123,7 +123,7 @@ have moved down when its library was extracted.
 ** 2.1 The provider engine belongs in cl-llm-provider-api
 
 The library today is 887 lines of generics plus RLM budgets/views/
-objects. The engine that makes those generics usable stayed in frob:
+objects. The engine that makes those generics usable stayed in Autolith:
 
 - SSE decoding with bounded lines/events and the inactivity deadline
   (=src/provider/client.lisp=, =sse-read-line= family).
