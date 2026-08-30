@@ -1673,28 +1673,42 @@ are forwarded to TERMINAL-UI-SELECT."
       (terminal-ui--paint-live ui)))
   nil)
 
+(-> terminal-authentication-streams
+    (terminal)
+    (values stream stream boolean boolean (option integer)))
+(defgeneric terminal-authentication-streams (terminal)
+  (:documentation
+   "Return authentication input, output, UI-stop, echo, and descriptor state for TERMINAL."))
+
+(defmethod terminal-authentication-streams ((terminal terminal))
+  "Use the process standard streams for an application-provided TERMINAL."
+  (declare (ignore terminal))
+  (values *standard-input* *standard-output* t nil
+          (api-key--input-file-descriptor *standard-input* nil)))
+
+(defmethod terminal-authentication-streams ((terminal stream-terminal))
+  "Use STREAM-TERMINAL's direct streams and input descriptor."
+  (values (stream-terminal-input-stream terminal)
+          (stream-terminal-output-stream terminal)
+          t nil
+          (stream-terminal-input-file-descriptor terminal)))
+
+(defmethod terminal-authentication-streams ((terminal localgroup-terminal))
+  "Adapt LOCALGROUP-TERMINAL events and output to authentication streams."
+  (values
+   (make-instance 'application-authentication-input-stream
+                  :terminal terminal)
+   (make-instance 'application-authentication-output-stream
+                  :terminal terminal)
+   nil t nil))
+
 (-> application--authentication-streams
     (application)
     (values stream stream boolean boolean (option integer)))
 (defun application--authentication-streams (application)
-  "Return authentication input, output, UI-stop, echo, and descriptor state."
-  (let ((terminal (terminal-ui-terminal (application-ui application))))
-    (typecase terminal
-      (stream-terminal
-       (values (stream-terminal-input-stream terminal)
-               (stream-terminal-output-stream terminal)
-               t nil
-               (stream-terminal-input-file-descriptor terminal)))
-      (localgroup-terminal
-       (values
-        (make-instance 'application-authentication-input-stream
-                       :terminal terminal)
-        (make-instance 'application-authentication-output-stream
-                       :terminal terminal)
-        nil t nil))
-      (t
-       (values *standard-input* *standard-output* t nil
-               (api-key--input-file-descriptor *standard-input* nil))))))
+  "Return authentication streams and state selected by APPLICATION's terminal."
+  (terminal-authentication-streams
+   (terminal-ui-terminal (application-ui application))))
 
 (-> application-authenticate (application string) null)
 (defun application-authenticate (application provider-name)

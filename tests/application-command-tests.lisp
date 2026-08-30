@@ -841,6 +841,53 @@
   (or (pop (application-authentication-test-localgroup-terminal-events terminal))
       ':end-of-input))
 
+(-> test-terminal-authentication-streams () null)
+(defun test-terminal-authentication-streams ()
+  "Test terminal classes select authentication streams through the protocol."
+  (let ((input (make-string-input-stream ""))
+        (output (make-string-output-stream)))
+    (let ((*standard-input* input)
+          (*standard-output* output))
+      (multiple-value-bind
+            (observed-input observed-output stop-ui-p echo-disabled-p descriptor)
+          (terminal-authentication-streams (make-instance 'terminal))
+        (test-assert
+         (and (eq observed-input input)
+              (eq observed-output output)
+              stop-ui-p
+              (not echo-disabled-p)
+              (null descriptor))
+         "base terminals use process streams and stop the UI"))))
+  (let* ((input (make-string-input-stream ""))
+         (output (make-string-output-stream))
+         (terminal
+           (make-instance 'stream-terminal
+                          :input-stream input
+                          :output-stream output
+                          :input-file-descriptor 7)))
+    (multiple-value-bind
+          (observed-input observed-output stop-ui-p echo-disabled-p descriptor)
+        (terminal-authentication-streams terminal)
+      (test-assert
+       (and (eq observed-input input)
+            (eq observed-output output)
+            stop-ui-p
+            (not echo-disabled-p)
+            (= descriptor 7))
+       "stream terminals expose their direct authentication streams")))
+  (let ((terminal (localgroup-terminal-create nil)))
+    (multiple-value-bind
+          (input output stop-ui-p echo-disabled-p descriptor)
+        (terminal-authentication-streams terminal)
+      (test-assert
+       (and (typep input 'application-authentication-input-stream)
+            (typep output 'application-authentication-output-stream)
+            (not stop-ui-p)
+            echo-disabled-p
+            (null descriptor))
+       "localgroup terminals adapt semantic events without stopping the UI")))
+  nil)
+
 (-> test-application-authentication-command () null)
 (defun test-application-authentication-command ()
   "Test /auth and (auth) share selection, explicit naming, and direct output."
@@ -1111,5 +1158,6 @@
   (test-built-in-application-command-policies)
   (test-built-in-application-command-calls)
   (test-application-codex-fast-mode-command)
+  (test-terminal-authentication-streams)
   (test-application-authentication-command)
   t)
