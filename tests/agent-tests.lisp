@@ -1034,6 +1034,47 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-provider-request-limit () null)
+(defun test-agent-provider-request-limit ()
+  "Test an ordinary turn stops before an unbounded provider continuation loop."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-request-limit"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (loop for index from 1 to 3
+                  collect
+                  (agent-test-result
+                   (format nil "response-~D" index)
+                   (list (agent-test-message "still working"))
+                   :turn-completion ':continue)))))
+    (unwind-protect
+         (let* ((agent
+                  (agent-create
+                   :configuration configuration
+                   :provider provider
+                   :conversation conversation
+                   :tool-registry (agent-test-registry)
+                   :worker ':unused))
+                (condition nil)
+                (*agent-maximum-provider-requests-per-turn* 2))
+           (handler-case
+               (agent-run-user-turn agent "keep continuing")
+             (agent-loop-error (caught)
+               (setf condition caught)))
+           (test-assert
+            (and condition
+                 (= (agent-loop-error-request-number condition) 2))
+            "the request safety limit reports the completed request count")
+           (test-assert
+            (= (length (scripted-provider-input-snapshots provider)) 2)
+            "the request safety limit prevents another paid provider call"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-invalid-call-history () null)
 (defun test-agent-invalid-call-history ()
   "Test uncorrelatable and duplicate calls cannot poison durable history."
@@ -2281,6 +2322,7 @@
   (test-agent-empty-tool-allowlist)
   (test-agent-steering)
   (test-agent-explicit-continuation)
+  (test-agent-provider-request-limit)
   (test-agent-invalid-call-history)
   (test-agent-tool-failures)
   (test-agent-provider-failure-persistence)

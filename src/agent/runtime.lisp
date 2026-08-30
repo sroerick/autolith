@@ -126,6 +126,9 @@
 (defparameter *agent-restricted-maximum-tool-rounds* 4
   "Maximum executed tool rounds within one restricted agent turn.")
 
+(defparameter *agent-maximum-provider-requests-per-turn* 512
+  "Maximum provider requests issued within one ordinary agent turn.")
+
 (defparameter *agent-maximum-concurrent-tool-workers* 8
   "Maximum worker threads executing independent calls from one provider batch.")
 
@@ -1155,6 +1158,15 @@ checkpoint preserves the current model's opaque reasoning state."
         (tool-rounds 0)
         (tool-calls 0))
     (loop
+      (when (>= request-number *agent-maximum-provider-requests-per-turn*)
+        (error 'agent-loop-error
+               :message
+               (format nil
+                       "The turn reached its ~D provider-request safety limit."
+                       *agent-maximum-provider-requests-per-turn*)
+               :conversation-id
+               (conversation-identifier (agent-conversation agent))
+               :request-number request-number))
       (when (agent-should-compact-p agent)
         (agent-compact-conversation
          agent observer
