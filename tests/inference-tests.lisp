@@ -89,7 +89,12 @@
     :initform nil
     :accessor rlm-inference-test-provider-output-limits
     :type list
-    :documentation "The bound output ceilings observed per request, newest first."))
+    :documentation "The bound output ceilings observed per request, newest first.")
+   (tool-schema-counts
+    :initform nil
+    :accessor rlm-inference-test-provider-tool-schema-counts
+    :type list
+    :documentation "The provider tool schema counts observed, newest first."))
   (:documentation "A deterministic provider for exercising inference frames."))
 
 (defmethod provider-with-configuration
@@ -103,7 +108,9 @@
      (conversation conversation)
      &key tool-namespaces event-callback goal-context compaction-p)
   "Return PROVIDER's next scripted inference result."
-  (declare (ignore tool-namespaces event-callback goal-context compaction-p))
+  (declare (ignore event-callback goal-context compaction-p))
+  (push (length tool-namespaces)
+        (rlm-inference-test-provider-tool-schema-counts provider))
   (push *provider-maximum-output-tokens*
         (rlm-inference-test-provider-output-limits provider))
   (let ((result (pop (rlm-inference-test-provider-results provider))))
@@ -374,6 +381,39 @@
                    "each provider request in the frame charges one call")
       (test-assert (= (rlm-budget-remaining-tokens budget) 898)
                    "every reported frame usage drains the token pool")))
+  (let* ((configuration (test-configuration))
+         (source (make-instance 'tool-registry))
+         (search-tool (rlm-frame-test-tool "search" "content"))
+         (provider
+           (make-instance
+            'rlm-inference-test-provider
+            :results
+            (list (agent-test-result
+                   "reserved-1"
+                   (list (agent-test-call :call-id "reserved-call"
+                                          :namespace "search"
+                                          :name "content"
+                                          :arguments "{}")))
+                  (rlm-inference-test-result
+                   "reserved-2" "budgeted answer" 10))))
+         (budget (rlm-budget-create :calls 2 :tokens 1000 :depth 1)))
+    (tool-registry-register source search-tool)
+    (test-assert
+     (string= (infer "Inspect once, then answer."
+                     :capabilities ':read
+                     :budget budget
+                     :provider provider
+                     :configuration configuration
+                     :source-registry source)
+              "budgeted answer")
+     "read-capability frames reserve the final provider call for an answer")
+    (test-assert
+     (equal (reverse
+             (rlm-inference-test-provider-tool-schema-counts provider))
+            '(2 0))
+     "the final reserved request omits every tool schema")
+    (test-assert (zerop (rlm-budget-remaining-calls budget))
+                 "the reserved final answer may consume the last call"))
   nil)
 
 (-> test-rlm-infer-tool () null)

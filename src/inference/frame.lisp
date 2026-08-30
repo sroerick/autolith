@@ -347,8 +347,9 @@ aborted turn."
       (loop
         (let ((result
                 (let ((*agent-restricted-maximum-tool-rounds*
-                        (min *rlm-frame-maximum-tool-rounds*
-                             (rlm-budget-remaining-calls budget)))
+                        (max 0
+                             (min *rlm-frame-maximum-tool-rounds*
+                                  (1- (rlm-budget-remaining-calls budget)))))
                       (*provider-maximum-output-tokens* nil))
                   (unwind-protect
                        (agent-run-user-turn agent request
