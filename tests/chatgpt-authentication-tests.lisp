@@ -112,8 +112,8 @@
       (chatgpt-oauth--read-request-line
        (make-string-input-stream "")
        -1
-       100
-       :clock-function (lambda () 0)
+       201/2
+       :clock-function (lambda () 1/2)
        :wait-function
        (lambda (file-descriptor direction timeout)
          (declare (ignore file-descriptor direction timeout))

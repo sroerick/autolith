@@ -229,7 +229,7 @@
       nil)))
 
 (-> chatgpt-oauth--read-request-line
-    (stream integer integer
+    (stream integer real
      &key (:clock-function function) (:wait-function function)
      (:request-timeout integer) (:line-limit integer))
     (option string))
