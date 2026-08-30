@@ -49,8 +49,8 @@ a user-local init.lisp change, or a private image commit.
 - Scope and location: private image commit
   =d5387bc4-9dd1-47a6-8788-a8cd59e7f0ce=, private Git commit
   =fbc458a9e19f894d7872d06af3f5e2c983f590b8=. The durable downstream fix is
-  =lambda-symbolics/sbcl-workers= commit =1f832d0= and Autolith pins it in
-  tracked commit =536dc1f=.
+  =lambda-symbolics/sbcl-workers= commit =1f832d0=, retained by the current
+  =85bbab4= pin; Autolith first pinned it in tracked commit =536dc1f=.
 - Verification: clean-process replay passed. A fresh pristine worker reports
   =*read-eval*= as true during request execution, and =lisp.load-system=
   successfully loads =autolith=.
@@ -371,10 +371,11 @@ a user-local init.lisp change, or a private image commit.
   retains its product-specific migration, validation, provenance, atomic state,
   authority, cancellation, and output policies. Pinned =sexp-config= =408fa90=
   handles standard keyword-to-string reader boundaries directly;
-  =sbcl-workers= =1f832d0= owns the shared worker-name predicate, prompt request
-  cancellation, and the reader-evaluation boundary between protocol input and
-  request execution; =sbcl-generations= =e65e27e= owns the live-thread
-  snapshot preflight, with hosts retaining exclusion across that check and fork;
+  =sbcl-workers= =85bbab4= owns the shared worker-name predicate, prompt request
+  cancellation, the reader-evaluation boundary between protocol input and
+  request execution, and exact ASDF definition selection for loads and tests;
+  =sbcl-generations= =e65e27e= owns the live-thread snapshot preflight, with
+  hosts retaining exclusion across that check and fork;
   and =cl-jobpond= =ee2e2eb= owns atomic four-limit pool policy publication,
   immediate worker and monitor capacity refresh, and the locked default-runtime
   admission boundary. No pool-policy compatibility adapter remains in Autolith.

@@ -533,6 +533,8 @@
            (tool-object-schema
             (json-object
              "system" (tool-string-property "The ASDF system name.")
+             "asd" (tool-string-property
+                     "An optional path to the exact ASD file defining the system.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
              "async" (tool-boolean-property
@@ -581,6 +583,8 @@
            (tool-object-schema
             (json-object
              "system" (tool-string-property "The ASDF system name.")
+             "asd" (tool-string-property
+                     "An optional path to the exact ASD file defining the system.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default.")
              "async" (tool-boolean-property

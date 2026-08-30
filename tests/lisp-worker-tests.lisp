@@ -15,6 +15,34 @@
     (write-byte 0 stream))
   pathname)
 
+(-> test--write-lisp-worker-text (pathname string) pathname)
+(defun test--write-lisp-worker-text (pathname content)
+  "Replace PATHNAME with exact UTF-8 CONTENT."
+  (ensure-directories-exist pathname)
+  (with-open-file (stream pathname
+                          :direction ':output
+                          :if-exists ':supersede
+                          :if-does-not-exist ':create
+                          :external-format ':utf-8)
+    (write-string content stream))
+  pathname)
+
+(-> test--write-lisp-worker-audit-system (pathname keyword) pathname)
+(defun test--write-lisp-worker-audit-system (directory marker)
+  "Write a source-audit ASDF system beneath DIRECTORY using MARKER."
+  (let ((asd (merge-pathnames "autolith-worker-source-audit.asd" directory)))
+    (test--write-lisp-worker-text
+     asd
+     (format nil
+             "(asdf:defsystem #:autolith-worker-source-audit~%  :serial t~%  :components ((:file \"source\"))~%  :perform (asdf:test-op (operation component)~%             (declare (ignore operation component))~%             (setf cl-user::*autolith-worker-source-audit-tested* '~S)))~%"
+             marker))
+    (test--write-lisp-worker-text
+     (merge-pathnames "source.lisp" directory)
+     (format nil
+             "(defparameter cl-user::*autolith-worker-source-audit-loaded* '~S)~%"
+             marker))
+    asd))
+
 (-> test-lisp-image-manifests () null)
 (defun test-lisp-image-manifests ()
   "Test immutable saved worker-image manifests, notes, and compatibility."
@@ -377,8 +405,18 @@
                              (json-get (tool-parameters tool) "properties")))
                       (property
                         (and properties (gethash "async" properties))))
-                 (and (json-object-p property)
-                      (string= (json-get property "type") "boolean")))))
+                  (and (json-object-p property)
+                       (string= (json-get property "type") "boolean"))))
+
+              (asd-schema-p (name)
+                "Return true when lisp.NAME advertises one optional ASD string."
+                (let* ((tool (tool-registry-find registry "lisp" name))
+                       (properties
+                         (and tool
+                              (json-get (tool-parameters tool) "properties")))
+                       (property (and properties (gethash "asd" properties))))
+                  (and (json-object-p property)
+                       (string= (json-get property "type") "string")))))
       (unwind-protect
            (progn
              (setf alpha (lisp-worker-pool-start pool "alpha" "pristine")
@@ -396,6 +434,9 @@
                        '("describe" "source" "reset" "start" "stop" "repls"
                          "images" "save-image"))
                "Lisp inspection and lifecycle tools stay synchronous")
+              (test-assert
+               (every #'asd-schema-p '("load-system" "run-tests"))
+               "system execution tools advertise an optional exact ASD file")
               (let* ((eval-tool (tool-registry-find registry "lisp" "eval"))
                      (properties (json-get (tool-parameters eval-tool) "properties"))
                      (compile-property (json-get properties "compile")))
@@ -516,6 +557,63 @@
                (test-assert
                 (tool-result-success-p load-result)
                 "lisp.load-system uses the shared execution path"))
+              (let* ((audit-root (merge-pathnames "lisp-source-audit/" root))
+                     (old-asd
+                       (test--write-lisp-worker-audit-system
+                        (merge-pathnames "old/" audit-root) ':old))
+                     (new-asd
+                       (test--write-lisp-worker-audit-system
+                        (merge-pathnames "new/" audit-root) ':new)))
+                (lisp-worker-request
+                 alpha
+                 :load-system
+                 (list :system ':autolith-worker-source-audit
+                       :asd-pathname (namestring old-asd)))
+                (test-assert
+                 (equal
+                  (worker-values
+                   alpha "cl-user::*autolith-worker-source-audit-loaded*")
+                  '(":OLD"))
+                 "the exact-ASD fixture starts from its stale definition")
+                (let* ((*tool-execution-blocking-grace-seconds* 5)
+                       (load-result
+                         (run-lisp
+                          "load-system"
+                          "system" "autolith-worker-source-audit"
+                          "asd" (namestring new-asd)
+                          "repl" "alpha")))
+                  (test-assert
+                   (and (tool-result-success-p load-result)
+                        (search (namestring (truename new-asd))
+                                (tool-result-content load-result))
+                        (equal
+                         (worker-values
+                          alpha
+                          "cl-user::*autolith-worker-source-audit-loaded*")
+                         '(":NEW")))
+                   "lisp.load-system replaces stale registration from a canonical ASD file"))
+                (lisp-worker-request
+                 alpha
+                 :load-system
+                 (list :system ':autolith-worker-source-audit
+                       :asd-pathname (namestring old-asd)))
+                (let* ((*tool-execution-blocking-grace-seconds* 5)
+                       (test-result
+                         (run-lisp
+                          "run-tests"
+                          "system" "autolith-worker-source-audit"
+                          "asd" (namestring new-asd)
+                          "repl" "alpha")))
+                  (test-assert
+                   (and (tool-result-success-p test-result)
+                        (search (namestring (truename new-asd))
+                                (tool-result-content test-result))
+                        (equal
+                         (worker-values
+                          alpha
+                          "cl-user::*autolith-worker-source-audit-tested*")
+                         '(":NEW")))
+                   "lisp.run-tests replaces stale registration from a canonical ASD file")))
               (let* ((read-result
                        (workspace-resource-tests--call
                         registry context "resource" "read"

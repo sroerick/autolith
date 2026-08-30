@@ -377,6 +377,28 @@
    (tool-context-worker context)
    (lisp-tool-repl-name arguments)))
 
+(-> lisp-tool-asd-pathname
+    (tool-context hash-table non-empty-string)
+    (option pathname))
+(defun lisp-tool-asd-pathname (context arguments tool-name)
+  "Return the optional canonical ASD file selected by ARGUMENTS."
+  (let ((requested (tool-argument arguments "asd")))
+    (when requested
+      (unless (non-empty-string-p requested)
+        (error 'tool-error
+               :message (format nil
+                                "The ~A asd argument must be a non-empty string."
+                                tool-name)
+               :tool-name tool-name))
+      (let ((path (workspace-tool-path context requested)))
+        (unless (uiop:file-exists-p path)
+          (error 'tool-error
+                 :message (format nil
+                                  "The ~A asd argument does not name an existing file: ~A"
+                                  tool-name path)
+                 :tool-name tool-name))
+        path))))
+
 (-> lisp-tool-invoke-execution
     (tool-context hash-table
      &key (:tool-name non-empty-string)
@@ -432,7 +454,9 @@ request restarts immediately from a clean protocol stream."
                          (arguments hash-table))
   "Load the required system once through CONTEXT's isolated worker."
   (declare (ignore tool))
-  (let ((system (tool-argument arguments "system" :required t)))
+  (let* ((system (tool-argument arguments "system" :required t))
+         (asd-pathname
+           (lisp-tool-asd-pathname context arguments "lisp.load-system")))
     (lisp-tool-invoke-execution
      context arguments
      :tool-name "lisp.load-system"
@@ -440,7 +464,12 @@ request restarts immediately from a clean protocol stream."
      :operation-function
      (lambda (worker)
        (worker-response-tool-result
-        (lisp-worker-request worker :load-system (list :system system)))))))
+        (lisp-worker-request
+         worker
+         :load-system
+         (list :system system
+               :asd-pathname (and asd-pathname
+                                  (namestring asd-pathname)))))))))
 
 (-> lisp-tool--active-target-p (tool-context hash-table string) boolean)
 (defun lisp-tool--active-target-p (context arguments tool-name)
@@ -501,7 +530,9 @@ request restarts immediately from a clean protocol stream."
                          (arguments hash-table))
   "Run the required system's tests once through CONTEXT's isolated worker."
   (declare (ignore tool))
-  (let ((system (tool-argument arguments "system" :required t)))
+  (let* ((system (tool-argument arguments "system" :required t))
+         (asd-pathname
+           (lisp-tool-asd-pathname context arguments "lisp.run-tests")))
     (lisp-tool-invoke-execution
      context arguments
      :tool-name "lisp.run-tests"
@@ -509,7 +540,12 @@ request restarts immediately from a clean protocol stream."
      :operation-function
      (lambda (worker)
        (worker-response-tool-result
-        (lisp-worker-request worker :run-tests (list :system system)))))))
+        (lisp-worker-request
+         worker
+         :run-tests
+         (list :system system
+               :asd-pathname (and asd-pathname
+                                  (namestring asd-pathname)))))))))
 
 (defmethod tool-execute ((tool lisp-reset-tool)
                          (context tool-context)
