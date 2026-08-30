@@ -26,14 +26,18 @@ a user-local init.lisp change, or a private image commit.
   commit through Dexador, optionally filters by workflow and event, uses
   =GH_TOKEN= or =GITHUB_TOKEN= when available, requires two stable completed
   observations, and returns one compact terminal summary. Its bounded timeout
-  retries transient request failures without exposing credentials.
-- Scope and location: private image commit
-  =2dcb8218-a80b-4672-aa6e-b34dbeaf5086=, private Git commit
-  =6a4f8aba7233789473990582a51b6c1bae7463fe=. The same commit sanitizes
-  multiline mutation targets when writing reconstruction-script comments.
-- Verification: clean-process replay passed. The model-visible tool waited for
-  commit =7784b3841d2522b5b9ee10f9030d8599ac199045= and returned the successful
-  Nix push run after two requests and two seconds.
+  retries transport failures and explicitly transient HTTP statuses. Permanent
+  API failures, including unauthenticated HTTP 401 and 403 responses, stop after
+  the first request without exposing credentials.
+- Scope and location: private image commits
+  =2dcb8218-a80b-4672-aa6e-b34dbeaf5086= and
+  =823c003e-aa27-42b8-aa99-521606752548=; private Git commits
+  =6a4f8aba7233789473990582a51b6c1bae7463fe= and
+  =6225e8d8d86bb6609f13e4e01260c5ace7d6309f=. The first commit also
+  sanitizes multiline mutation targets in reconstruction-script comments.
+- Verification: both clean-process replays passed. Focused active-image
+  exercises verified that HTTP 403 is non-retryable and one permanent failure
+  produces exactly one workflow request.
 - Removal condition: tracked Autolith provides equivalent workflow waiting and
   safe multiline reconstruction comments, or GitHub workflow waits cease to be
   recurring work.
