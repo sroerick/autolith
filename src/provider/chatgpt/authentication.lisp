@@ -344,7 +344,7 @@
 
 (-> chatgpt-oauth--request
     (&key (:url string) (:content string))
-    (values string integer list))
+    (values string integer t))
 (defun chatgpt-oauth--request (&key url content)
   "POST one form-encoded request to OpenAI's OAuth token endpoint."
   (handler-case

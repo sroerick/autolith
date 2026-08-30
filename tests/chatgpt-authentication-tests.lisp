@@ -122,6 +122,24 @@
      "ChatGPT callback request reading stops when its local read wait expires")
     (test-assert (= wait-count 1)
                  "ChatGPT callback request reading performs one bounded wait"))
+  (let ((headers (make-hash-table :test #'equal)))
+    (multiple-value-bind (body status returned-headers)
+        (test-call-with-function-replacements
+         (list
+          (list
+           'dexador:post
+           (lambda (&rest arguments)
+             (declare (ignore arguments))
+             (values "{}" 200 headers nil nil))))
+         (lambda ()
+           (chatgpt-oauth--request
+            :url "https://issuer.test/oauth/token"
+            :content "grant_type=authorization_code")))
+      (test-assert
+       (and (string= body "{}")
+            (= status 200)
+            (eq returned-headers headers))
+       "ChatGPT token transport accepts Dexador hash-table response headers")))
   (let* ((manager (chatgpt-test--manager))
          (id-token (test-account-jwt "account-test"))
          (request-url nil)
