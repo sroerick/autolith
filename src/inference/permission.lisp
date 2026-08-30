@@ -15,10 +15,11 @@ Grant levels:
 - deny: the command must not run at all.
 - ask: a human must decide.
 
-A workspace-sandbox availability view accompanies each command. When
-it says unavailable, never choose sandboxed. Choose full for routine,
-non-destructive commands that would otherwise fit the sandbox. Keep
-deny and ask for consequential, ambiguous, or unsafe commands.
+Workspace-sandbox and human-approval availability views accompany each
+command. When the sandbox is unavailable, never choose sandboxed. When
+human approval is unavailable, never choose ask: choose full for routine,
+non-destructive commands that clearly need it, and deny consequential,
+ambiguous, or unsafe commands.
 
 Choose sandboxed whenever the available sandbox suffices: inspection,
 builds, tests, and edits confined to the workspace and temporary
@@ -27,9 +28,10 @@ that clearly need what the sandbox forbids, such as fetching
 dependencies, network version-control operations, or writing agreed
 artifacts outside the workspace. Choose deny for privilege escalation,
 credential or secret access, host reconfiguration, or data destruction.
-Choose ask when the command is consequential, ambiguous, or
-irreversible enough that a human should decide; when torn between full
-and ask, ask. Keep the reason to one clause of at most twelve words."
+When human approval is available, choose ask for commands consequential,
+ambiguous, or irreversible enough that a human should decide; when torn
+between full and ask, ask. Keep the reason to one clause of at most twelve
+words."
   "The frame task guiding one model command permission decision.")
 
 (defparameter *permissions-model-decision-contract*
@@ -76,51 +78,71 @@ and ask, ask. Keep the reason to one clause of at most twelve words."
     (string pathname
      &key (:provider model-provider)
           (:configuration configuration)
-          (:sandbox-available-p boolean))
+          (:sandbox-available-p boolean)
+          (:ask-available-p boolean))
     (values keyword string))
 (defun permissions-model-classify-command
-    (command directory &key provider configuration (sandbox-available-p t))
+    (command directory
+     &key provider configuration (sandbox-available-p t) (ask-available-p t))
   "Classify COMMAND in DIRECTORY with one bounded inference frame.
 
 Return :SANDBOXED, :FULL-ACCESS, :DENY, or :ASK plus the model's
-reason. SANDBOX-AVAILABLE-P prevents an unusable sandbox grant. Every
-failure, malformed answer, or exhausted budget falls back to :ASK so a
-human decides instead of the command running."
-  (handler-case
-      (let* ((value
-               (infer *permissions-model-decision-guidance*
-                      :context
-                      (list (list ':label "command"
-                                  ':content command)
-                            (list ':label "working directory"
-                                  ':content (namestring directory))
-                            (list ':label "workspace sandbox"
-                                  ':content
-                                  (if sandbox-available-p
-                                      "available"
-                                      "unavailable; never choose sandboxed")))
-                      :contract *permissions-model-decision-contract*
-                      :budget (rlm-budget-create
-                               :calls *permissions-model-call-budget*
-                               :tokens *permissions-model-token-budget*
-                               :depth 0)
-                      :effort "low"
-                      :provider provider
-                      :configuration configuration))
-             (pairs (rest value))
-             (decision (permissions--model-decision-keyword
-                        (second (assoc "decision" pairs :test #'string=))))
-             (reason (second (assoc "reason" pairs :test #'string=))))
-        (cond
-          ((and (eq decision ':sandboxed) (not sandbox-available-p))
-           (values ':ask "the workspace sandbox is unavailable"))
-          (decision
-           (values decision
-                   (if (non-empty-string-p reason)
-                       reason
-                       "the model gave no reason")))
-          (t
-           (values ':ask "the model returned an unknown decision"))))
-    (error (condition)
-      (declare (ignore condition))
-      (values ':ask "the model classifier failed, so a human must decide"))))
+reason. Availability flags prevent unusable grants. Every failure,
+malformed answer, or exhausted budget falls back to :ASK when a human
+can decide and :DENY otherwise."
+  (labels ((defer-or-deny (ask-reason deny-reason)
+             "Return the safe fallback allowed by ASK-AVAILABLE-P."
+             (if ask-available-p
+                 (values ':ask ask-reason)
+                 (values ':deny deny-reason))))
+    (handler-case
+        (let* ((value
+                 (infer *permissions-model-decision-guidance*
+                        :context
+                        (list (list ':label "command"
+                                    ':content command)
+                              (list ':label "working directory"
+                                    ':content (namestring directory))
+                              (list ':label "workspace sandbox"
+                                    ':content
+                                    (if sandbox-available-p
+                                        "available"
+                                        "unavailable; never choose sandboxed"))
+                              (list ':label "human approval"
+                                    ':content
+                                    (if ask-available-p
+                                        "available"
+                                        "unavailable; never choose ask")))
+                        :contract *permissions-model-decision-contract*
+                        :budget (rlm-budget-create
+                                 :calls *permissions-model-call-budget*
+                                 :tokens *permissions-model-token-budget*
+                                 :depth 0)
+                        :effort "low"
+                        :provider provider
+                        :configuration configuration))
+               (pairs (rest value))
+               (decision (permissions--model-decision-keyword
+                          (second (assoc "decision" pairs :test #'string=))))
+               (reason (second (assoc "reason" pairs :test #'string=))))
+          (cond
+            ((and (eq decision ':sandboxed) (not sandbox-available-p))
+             (defer-or-deny "the workspace sandbox is unavailable"
+                            "the workspace sandbox is unavailable"))
+            ((and (eq decision ':ask) (not ask-available-p))
+             (values ':deny
+                     (if (non-empty-string-p reason)
+                         reason
+                         "human approval is unavailable")))
+            (decision
+             (values decision
+                     (if (non-empty-string-p reason)
+                         reason
+                         "the model gave no reason")))
+            (t
+             (defer-or-deny "the model returned an unknown decision"
+                            "the model returned an unknown decision"))))
+      (error (condition)
+        (declare (ignore condition))
+        (defer-or-deny "the model classifier failed, so a human must decide"
+                       "the model classifier failed, so the command was denied")))))

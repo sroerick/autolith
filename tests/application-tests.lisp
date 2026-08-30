@@ -668,12 +668,15 @@
            (terminal-ui-start ui)
             (test-call-with-function-replacements
              (list
-              (list 'permissions-model-classify-command
-                    (lambda (command directory &key provider configuration
-                                                    sandbox-available-p)
-                      (declare (ignore command directory provider
-                                       configuration sandbox-available-p))
-                      (values ':sandboxed "read-only inspection"))))
+               (list 'permissions-model-classify-command
+                     (lambda (command directory &key provider configuration
+                                                     sandbox-available-p
+                                                     ask-available-p)
+                       (declare (ignore command directory provider
+                                        configuration sandbox-available-p))
+                       (test-assert (not ask-available-p)
+                                    "detached ask mode disables model deferral")
+                       (values ':sandboxed "read-only inspection"))))
              (lambda ()
                (test-assert
                 (eq (application-authorize-command
@@ -746,26 +749,39 @@
                  application "sudo ls" root)
                 ':deny)
             "auto mode refuses privilege-escalation commands")
-           (let ((capability-checks 0))
-             (test-call-with-function-replacements
-              (list
-               (list 'sandbox-supported-p
-                     (lambda (&optional capability)
-                       (declare (ignore capability))
-                       (= (incf capability-checks) 1))))
-              (lambda ()
+            (test-call-with-function-replacements
+             (list
+              (list 'permissions-model-classify-command
+                    (lambda (command directory &key provider configuration
+                                                    sandbox-available-p
+                                                    ask-available-p)
+                      (declare (ignore command directory provider configuration
+                                       sandbox-available-p))
+                      (test-assert (not ask-available-p)
+                                   "detached auto mode disables model deferral")
+                      (values ':ask "destructive change"))))
+             (lambda ()
+               (test-assert
+                (eq (application-authorize-command
+                     application "git restore file" root)
+                    ':deny)
+                "auto mode denies model deferral without a terminal")))
+            (let ((capability-checks 0))
+              (test-call-with-function-replacements
+               (list
+                (list 'sandbox-supported-p
+                      (lambda (&optional capability)
+                        (declare (ignore capability))
+                        (= (incf capability-checks) 1))))
+               (lambda ()
                  (test-assert
-                  (handler-case
-                      (progn
-                        (application-authorize-command
-                         application "git diff" root)
-                        nil)
-                    (command-authorization-unavailable ()
-                      t))
-                  "auto mode explicitly rejects when containment disappears")
-                (test-assert
-                 (= capability-checks 2)
-                 "a sandbox grant is checked at the final authorization boundary"))))
+                  (eq (application-authorize-command
+                       application "git diff" root)
+                      ':deny)
+                  "auto mode denies when containment disappears noninteractively")
+                 (test-assert
+                  (= capability-checks 2)
+                  "a sandbox grant is checked at the final authorization boundary"))))
            (test-call-with-function-replacements
             (list
              (list 'sandbox-supported-p
@@ -839,12 +855,14 @@
            (setf (application-permission-mode application) ':ask)
            (test-call-with-function-replacements
             (list
-             (list 'permissions-model-classify-command
-                   (lambda (command directory &key provider configuration
-                                                   sandbox-available-p)
-                     (declare (ignore command directory provider
-                                      configuration sandbox-available-p))
-                     (values ':full-access "prints a literal"))))
+              (list 'permissions-model-classify-command
+                    (lambda (command directory &key provider configuration
+                                                    sandbox-available-p
+                                                    ask-available-p)
+                      (declare (ignore command directory provider
+                                       configuration sandbox-available-p
+                                       ask-available-p))
+                      (values ':full-access "prints a literal"))))
             (lambda ()
               (test-assert
                (eq (application--apply-command-authorization-choice

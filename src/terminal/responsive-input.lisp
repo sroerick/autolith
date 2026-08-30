@@ -2651,6 +2651,16 @@ may execute immediately; other Lisp waits for the idle boundary."
           :argument nil
           :description "do not run the command"))))
 
+(-> application--interactive-command-approval-p (application) boolean)
+(defun application--interactive-command-approval-p (application)
+  "Return true when APPLICATION can present a command approval picker."
+  (let ((controller (application-input-controller application))
+        (ui         (application-ui application)))
+    (and controller
+         ui
+         (terminal-interactive-p (terminal-ui-terminal ui))
+         t)))
+
 (-> application--apply-classified-command-permission
     (application string pathname keyword string)
     keyword)
@@ -2669,7 +2679,11 @@ sandbox grant is revalidated at this final authorization boundary."
             application
             (list (terminal-span ':dim "auto-permission sandbox")))
            ':sandboxed)
-         (application--ask-command-permission application command directory)))
+         (if (application--interactive-command-approval-p application)
+             (application--ask-command-permission application command directory)
+             (application--apply-classified-command-permission
+              application command directory ':deny
+              "the workspace sandbox became unavailable"))))
     (:full-access
      (application-present
       application
@@ -2689,26 +2703,30 @@ sandbox grant is revalidated at this final authorization boundary."
     (values keyword string))
 (defun application--model-command-permission (application command directory)
   "Return the cached or freshly inferred model permission for COMMAND."
-  (unless (and (slot-boundp application 'provider)
-               (application-provider application))
-    (return-from application--model-command-permission
-      (values ':ask "no provider is available to classify commands")))
-  (let* ((sandbox-available-p
-           (application--command-sandbox-available-p))
-         (cache (application-command-classifications application))
-         (key
-           (format nil "~:[unavailable~;available~]~%~A~%~A"
-                   sandbox-available-p command (namestring directory)))
-         (cached (gethash key cache)))
-    (if cached
-        (values (car cached) (cdr cached))
-        (progn
+  (let ((ask-available-p
+          (application--interactive-command-approval-p application)))
+    (unless (and (slot-boundp application 'provider)
+                 (application-provider application))
+      (return-from application--model-command-permission
+        (values (if ask-available-p ':ask ':deny)
+                "no provider is available to classify commands")))
+    (let* ((sandbox-available-p
+             (application--command-sandbox-available-p))
+           (cache (application-command-classifications application))
+           (key
+             (format nil "sandbox=~:[unavailable~;available~]~%ask=~:[unavailable~;available~]~%~A~%~A"
+                     sandbox-available-p ask-available-p
+                     command (namestring directory)))
+           (cached (gethash key cache)))
+      (if cached
+          (values (car cached) (cdr cached))
           (multiple-value-bind (decision reason)
               (permissions-model-classify-command
                command directory
                :provider            (application-provider application)
                :configuration       (application-configuration application)
-               :sandbox-available-p sandbox-available-p)
+               :sandbox-available-p sandbox-available-p
+               :ask-available-p     ask-available-p)
             (unless (eq decision ':ask)
               (setf (gethash key cache) (cons decision reason)))
             (values decision reason))))))
@@ -2717,11 +2735,14 @@ sandbox grant is revalidated at this final authorization boundary."
     (application string pathname)
     keyword)
 (defun application--auto-command-permission (application command directory)
-  "Classify COMMAND with the model and ask only when it defers."
+  "Classify COMMAND with the model and ask only when a picker is available."
   (multiple-value-bind (decision reason)
       (application--model-command-permission application command directory)
     (if (eq decision ':ask)
-        (application--ask-command-permission application command directory)
+        (if (application--interactive-command-approval-p application)
+            (application--ask-command-permission application command directory)
+            (application--apply-classified-command-permission
+             application command directory ':deny reason))
         (application--apply-classified-command-permission
          application command directory decision reason))))
 
@@ -2771,9 +2792,7 @@ sandbox grant is revalidated at this final authorization boundary."
   (block nil
     (let* ((controller (application-input-controller application))
            (ui         (application-ui application)))
-      (unless (and controller
-                   ui
-                   (terminal-interactive-p (terminal-ui-terminal ui)))
+      (unless (application--interactive-command-approval-p application)
         (error 'command-authorization-unavailable
                :message
                "Command approval is required, but no interactive terminal owns this session. Attach a controlling terminal or choose an explicit permission mode; the command was not run."
@@ -2825,20 +2844,16 @@ sandbox grant is revalidated at this final authorization boundary."
             command
             directory)
            ':full-access
-           (let ((controller (application-input-controller application))
-                 (ui         (application-ui application)))
-             (if (and controller
-                      ui
-                      (terminal-interactive-p (terminal-ui-terminal ui)))
-                 (application--ask-command-permission
-                  application command directory)
-                 (multiple-value-bind (decision reason)
-                     (application--model-command-permission
-                      application command directory)
-                   (application--apply-classified-command-permission
-                    application command directory
-                    (if (eq decision ':ask) ':deny decision)
-                    reason)))))))))
+           (if (application--interactive-command-approval-p application)
+               (application--ask-command-permission
+                application command directory)
+               (multiple-value-bind (decision reason)
+                   (application--model-command-permission
+                    application command directory)
+                  (application--apply-classified-command-permission
+                   application command directory
+                   (if (eq decision ':ask) ':deny decision)
+                   reason))))))))
 
 (-> application--tool-authorization-title (tool) string)
 (defun application--tool-authorization-title (tool)
