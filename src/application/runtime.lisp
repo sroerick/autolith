@@ -3346,6 +3346,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
     (unwind-protect
          (progn
             (application-set-activity application (application-thinking-label))
+            (herdr-report-working)
             (let ((result
                     (agent-run-user-turn
                      (application-agent application)
@@ -3373,6 +3374,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
       (terminal-ui-set-compacting ui nil)
       (terminal-ui-set-preview-rows ui nil)
       (application-set-activity application nil)
+      (herdr-report-idle)
       (terminal-ui-stream-update ui :tail nil)
       (application-render-records application)))
   nil)
