@@ -2749,22 +2749,27 @@ sandbox grant is revalidated at this final authorization boundary."
                :directory directory))
       (let* ((sandbox-available-p
                (application--command-sandbox-available-p))
-             (choice
-               (application-input-controller-call-with-reader-paused
-                controller
-                (lambda ()
-                  (terminal-ui-select
-                   ui
-                   :title
-                   (format nil "run ~A"
-                           (text-cell-prefix
-                            (sanitize-text command :single-line-p t)
-                            56))
-                   :items
-                   (application--command-authorization-items
-                    command directory
-                    :sandbox-available-p sandbox-available-p)
-                   :resize-callback #'application-pending-terminal-size)))))
+             (title
+               (format nil "run ~A"
+                       (text-cell-prefix
+                        (sanitize-text command :single-line-p t)
+                        56)))
+             (choice nil))
+        (herdr-report-blocked (format nil "command approval: ~A" title))
+        (unwind-protect
+             (setf choice
+                   (application-input-controller-call-with-reader-paused
+                    controller
+                    (lambda ()
+                      (terminal-ui-select
+                       ui
+                       :title title
+                       :items
+                       (application--command-authorization-items
+                        command directory
+                        :sandbox-available-p sandbox-available-p)
+                       :resize-callback #'application-pending-terminal-size))))
+          (herdr-report-resumed))
         (application--apply-command-authorization-choice
          application command directory choice)))))
 
@@ -2842,19 +2847,24 @@ sandbox grant is revalidated at this final authorization boundary."
                    ui
                    (terminal-interactive-p (terminal-ui-terminal ui)))
         (return ':deny))
-      (let ((choice
-              (application-input-controller-call-with-reader-paused
-               controller
-               (lambda ()
-                 (application-present
-                  application
-                  (application--tool-authorization-request-entry
-                   tool arguments))
-                 (terminal-ui-select
-                  ui
-                  :title (application--tool-authorization-title tool)
-                  :items (application--tool-authorization-items)
-                  :resize-callback #'application-pending-terminal-size)))))
+      (let ((choice nil)
+            (title (application--tool-authorization-title tool)))
+        (herdr-report-blocked (format nil "tool approval: ~A" title))
+        (unwind-protect
+             (setf choice
+                   (application-input-controller-call-with-reader-paused
+                    controller
+                    (lambda ()
+                      (application-present
+                       application
+                       (application--tool-authorization-request-entry
+                        tool arguments))
+                      (terminal-ui-select
+                       ui
+                       :title title
+                       :items (application--tool-authorization-items)
+                       :resize-callback #'application-pending-terminal-size))))
+          (herdr-report-resumed))
         (if (string= (or choice "") "allow")
             ':allow
             ':deny)))))

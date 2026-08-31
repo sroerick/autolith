@@ -344,7 +344,8 @@
                nil)
 
              (finish-shutdown ()
-               "Close runtimes while preserving CONTROLLER's Ctrl-C escape."
+               "Release the Herdr agent and close runtimes at most once."
+               (herdr-release)
                (if input-controller
                    (progn
                      (application-input-controller-call-with-shutdown-escape
@@ -414,6 +415,7 @@
                      input-controller)
                     (application-input-controller--start-reader
                      input-controller)
+                    (herdr-report-idle)
                     ;; Entering the interactive debugger would hang the raw
                     ;; terminal, so debugger entry becomes fatal recovery.
                     (let ((*checkpoint-thread-quiescer*
