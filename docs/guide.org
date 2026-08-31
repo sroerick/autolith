@@ -260,6 +260,22 @@ continue across login sessions. Autolith uses authenticated loopback TCP rather
 than filesystem sockets for its inference and Localgroup protocols, and cleans
 stale Localgroup records itself.
 
+* Run under Herdr
+
+When Autolith starts inside a Herdr pane it reports its agent lifecycle to
+Herdr, so the Herdr sidebar tracks the session like its other agents:
+
+- =working= while a model turn runs, including goal continuation turns.
+- =blocked= while a command or external tool approval waits on a decision,
+  with a one-line summary of what needs the user.
+- =idle= when the primary input is ready for a message.
+
+Reporting activates only when Herdr exports =HERDR_ENV=1= together with
+=HERDR_PANE_ID= and =HERDR_BIN_PATH=, and runs the Herdr CLI on a dedicated
+background thread so turns and the terminal reader never wait on it. The
+release happens once during shutdown; there is no configuration and no
+behavior change outside Herdr.
+
 * Configure Autolith
 
 Autolith loads optional
