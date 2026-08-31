@@ -247,6 +247,7 @@
     (test-command-permission-corruption)
     (test-herdr-argument-shapes)
     (test-herdr-availability)
+    (test-herdr-sequence-monotonicity)
     (test-herdr-lifecycle-reports)
     (test-session-state-context-contributor)
     (test-request-local-context)

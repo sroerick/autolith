@@ -63,6 +63,22 @@
        (non-empty-string-p (uiop:getenv *herdr-binary-variable*))))
 
 
+(-> herdr--wall-milliseconds () integer)
+(defun herdr--wall-milliseconds ()
+  "Return the current wall clock time in milliseconds since the epoch."
+  (multiple-value-bind (seconds microseconds) (sb-ext:get-time-of-day)
+    (+ (* seconds 1000) (floor microseconds 1000))))
+
+(-> herdr--next-sequence () integer)
+(defun herdr--next-sequence ()
+  "Return the next strictly increasing report sequence. Lock must be held.
+
+Herdr keeps one sequence watermark per lifecycle source and discards lower
+sequences as stale, so a fresh Autolith process seeds from the wall clock and
+never returns below any report any earlier process ever sent."
+  (setf *herdr-sequence*
+        (max (1+ *herdr-sequence*) (herdr--wall-milliseconds))))
+
 (-> herdr--report-arguments
     (string string keyword &key (:seq integer) (:summary (option string)))
     list)
@@ -157,9 +173,8 @@
     (herdr--enqueue
      (list ':report
            (herdr--report-arguments binary pane-id state
-                                    :seq     (1+ *herdr-sequence*)
-                                    :summary summary)))
-    (incf *herdr-sequence*))
+                                    :seq     (herdr--next-sequence)
+                                    :summary summary))))
   nil)
 
 (-> herdr-report-idle () null)
@@ -221,13 +236,12 @@
     (with-lock-held (*herdr-lock*)
       (unless *herdr-released-p*
         (setf *herdr-released-p* t)
-        (incf *herdr-sequence*)
         (herdr--enqueue
          (list ':report
                (herdr--release-arguments
                 (uiop:getenv *herdr-binary-variable*)
                 (uiop:getenv *herdr-pane-variable*)
-                :seq *herdr-sequence*)))
+                :seq (herdr--next-sequence))))
         (herdr--enqueue (list ':stop)))))
   (herdr--await-quiescence)
   nil)
