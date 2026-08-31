@@ -100,6 +100,17 @@
      "ChatGPT callback failures reject mismatched state without retaining secrets")
     (test-assert (typep condition 'chatgpt-oauth-state-mismatch)
                  "ChatGPT state mismatches use their dedicated condition"))
+  (let* ((secret "secret-that-crosses-the-original-boundary")
+         (value
+           (concatenate 'string
+                        (make-string 230 :initial-element #\x)
+                        secret
+                        " trailing text"))
+         (safe-value (chatgpt-oauth--redacted-value value (list secret))))
+    (test-assert
+     (and (search "[OAUTH VALUE REDACTED]" safe-value)
+          (not (search (subseq secret 0 16) safe-value)))
+     "ChatGPT OAuth errors redact complete secrets before bounding output"))
   (test-assert
    (null
     (chatgpt-oauth--callback-code-or-continue

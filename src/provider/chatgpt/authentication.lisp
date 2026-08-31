@@ -81,12 +81,13 @@
 
 (-> chatgpt-oauth--redacted-value (t list) (option string))
 (defun chatgpt-oauth--redacted-value (value secrets)
-  "Return bounded VALUE after exact secret redaction, or NIL."
+  "Return VALUE after exact secret redaction and bounding, or NIL."
   (when (stringp value)
-    (let ((bounded (bounded-string value :limit 256)))
-      (redact-exact-string-values
-       bounded secrets
-       (safe-redaction-marker "[OAUTH VALUE REDACTED]" secrets)))))
+    (bounded-string
+     (redact-exact-string-values
+      value secrets
+      (safe-redaction-marker "[OAUTH VALUE REDACTED]" secrets))
+     :limit 256)))
 
 (-> chatgpt-oauth--fail
     (&key
