@@ -74,11 +74,32 @@
         (tests--restore-environment (first entry) (rest entry)))))
   nil)
 
-(-> test-herdr--call-state-seq (list) list)
-(defun test-herdr--call-state-seq (call)
-  "Return the state and sequence reported by one Herdr CLI CALL."
-  (list (second (member "--state" call :test #'string-equal))
-        (second (member "--seq" call :test #'string-equal))))
+(-> test-herdr--call-state (list) string)
+(defun test-herdr--call-state (call)
+  "Return the state reported by one Herdr report-agent CLI CALL."
+  (second (member "--state" call :test #'string-equal)))
+
+(-> test-herdr--call-sequence (list) integer)
+(defun test-herdr--call-sequence (call)
+  "Return the sequence number reported by one Herdr CLI CALL."
+  (parse-integer (second (member "--seq" call :test #'string-equal))))
+
+(-> test-herdr-sequence-monotonicity () null)
+(defun test-herdr-sequence-monotonicity ()
+  "Test report sequences stay strictly increasing across process restarts."
+  (with-lock-held (*herdr-lock*)
+    (setf *herdr-sequence* 0)
+    (let ((first-sequence (herdr--next-sequence))
+          (second-sequence (herdr--next-sequence)))
+      (test-assert (> first-sequence 0)
+                   "herdr sequences seed from the wall clock")
+      (test-assert (> second-sequence first-sequence)
+                   "herdr sequences increase within one process")
+      (setf *herdr-sequence* 0)
+      (sleep 0.002)
+      (test-assert (> (herdr--next-sequence) first-sequence)
+                   "herdr sequences never drop below an earlier process")))
+  nil)
 
 (-> test-herdr--reset-state () null)
 (defun test-herdr--reset-state ()
@@ -122,24 +143,22 @@
             (test-assert (herdr--await-quiescence :seconds 30)
                          "herdr idle and working reports drain in time")
             (test-assert
-             (equal (mapcar #'test-herdr--call-state-seq calls)
-                    '(("idle" "1") ("working" "2")))
-             "herdr reports serialize with increasing sequence numbers")
+             (equal (mapcar #'test-herdr--call-state calls)
+                    '("idle" "working"))
+             "herdr reports serialize in submission order")
+            (test-assert
+             (apply #'<= (mapcar #'test-herdr--call-sequence calls))
+             "herdr report sequences never decrease")
             (herdr-report-blocked "command approval: run make")
             (test-assert (herdr--await-quiescence :seconds 30)
                          "herdr blocked report drains in time")
             (herdr-report-resumed)
             (test-assert (herdr--await-quiescence :seconds 30)
                          "herdr resumed report drains in time")
-            (let ((rest-messages
-                    (mapcar #'test-herdr--call-state-seq calls)))
-              (test-assert
-               (equal rest-messages
-                      '(("idle" "1")
-                        ("working" "2")
-                        ("blocked" "3")
-                        ("working" "4")))
-               "herdr resumes to the pre-block working state"))
+            (test-assert
+             (equal (mapcar #'test-herdr--call-state calls)
+                    '("idle" "working" "blocked" "working"))
+             "herdr resumes to the pre-block working state")
             (herdr-report-idle)
             (herdr-report-blocked "tool approval: allow tool")
             (herdr-report-resumed)
