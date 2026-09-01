@@ -55,16 +55,15 @@ a user-local init.lisp change, or a private image commit.
   the in-flight turn and retry indefinitely with exponential jitter. Delays
   begin near one second and cap in the 40 to 60 second range. Authentication and
   definitive TLS failures retain bounded or immediate failure behavior.
-- Scope and location: private image commit
-  =01cf13cf-93f8-4565-a45a-5357813a60af=, private Git commit
-  =4f054957c7451ab64ffa6cb979ef15ff37a8506e=.
-- Verification: clean-process replay passed. Focused active-image exercises
-  verified successful continuation after three retryable provider conditions,
-  bounded jitter delays, rolling retry presentation, and normalization of
+- Scope and location: tracked project work in =src/provider/client.lisp= and
+  =tests/provider-tests.lisp=, committed as =2dbdbad=.
+- Verification: focused provider tests passed for successful continuation beyond
+  the former retry bound, bounded jitter delays, cancellation during backoff,
+  rolling retry presentation, and normalization of
   =USOCKET:NS-TRY-AGAIN-ERROR= into =PROVIDER-RETRYABLE-ERROR=.
-- Removal condition: tracked Autolith normalizes the complete provider attempt
-  and persistently retries transient provider failures with equivalent capped
-  backoff, or this private replay is incorporated into a rebuilt active image.
+- Removal condition: a replacement provider recovery protocol preserves the
+  same complete-attempt transport normalization, persistent transient retries,
+  cancellation behavior, and capped jitter with less runtime complexity.
 
 ** Lisp worker reader boundary
 
