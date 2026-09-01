@@ -427,6 +427,53 @@
                  terminal rows columns styled-p)))))))
   nil)
 
+(-> localgroup--session-pristine-p (localgroup-session) boolean)
+(defun localgroup--session-pristine-p (session)
+  "Return true when SESSION holds no user-visible state worth keeping.
+
+A pristine session never persisted a conversation record, has no goal,
+no busy or queued controller work, no live tasks, and no remaining
+terminal owner of any kind."
+  (let* ((application (localgroup-session-application session))
+         (configuration (application-configuration application))
+         (controller (application-input-controller application))
+         (terminal (localgroup--terminal session))
+         (conversation (and (slot-boundp application 'conversation)
+                            (application-conversation application))))
+    (and controller
+         conversation
+         (null (application-goal application))
+         (not (application-input-controller-busy-p controller))
+         (not (application-input-controller-turn-active-p controller))
+         (null (conversation-storage-active-pathname
+                (conversation-pathname-for-id
+                 configuration
+                 (conversation-identifier conversation))))
+         (multiple-value-bind (live active)
+             (localgroup--task-counts application)
+           (declare (ignore active))
+           (zerop live))
+         (with-lock-held ((localgroup-terminal-lock terminal))
+           (and (null (localgroup-terminal-controller terminal))
+                (null (localgroup-terminal-observers terminal))
+                (null (localgroup-terminal-direct-terminal terminal)))))))
+
+(-> localgroup--reap-abandoned-session (localgroup-session) null)
+(defun localgroup--reap-abandoned-session (session)
+  "Exit SESSION when its only client vanished before anything happened.
+
+An explicit detach releases control first and never reaches this path,
+so deliberately backgrounded sessions always survive. Only a session
+that lost its controlling attachment while still pristine exits, which
+keeps abandoned launches from accumulating as idle detached processes."
+  (when (localgroup--session-pristine-p session)
+    (let ((controller (application-input-controller
+                       (localgroup-session-application session))))
+      (when controller
+        (application-input-controller--request-exit
+         controller ':localgroup-kill))))
+  nil)
+
 (-> localgroup--serve-attachment
     (localgroup-session sb-bsd-sockets:socket stream list)
     null)
@@ -483,8 +530,10 @@
              (unless attached-p
                (return-from localgroup--serve-attachment nil))
              (localgroup--attachment-read-loop terminal attachment))
-        (localgroup-terminal-detach terminal attachment)
-        (localgroup-attachment-close attachment))))
+        (let ((controlled-p (localgroup-terminal-detach terminal attachment)))
+          (localgroup-attachment-close attachment)
+          (when controlled-p
+            (localgroup--reap-abandoned-session session))))))
   nil)
 
 (-> localgroup--detach-terminal (localgroup-session) list)

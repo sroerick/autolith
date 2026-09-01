@@ -711,10 +711,15 @@ dependencies."
                                (null effective-resume-id))
                           :recovery-diagnosis recovery-diagnosis)))
         (when session-id
-          (localgroup-attach-record
-           configuration
-           (localgroup--find-record configuration session-id)
-           ':control)
+          (let ((record (localgroup--find-record configuration session-id)))
+            (handler-case
+                (localgroup-attach-record configuration record ':control)
+              (serious-condition (condition)
+                ;; The freshly spawned session has no other owner yet, so
+                ;; a failed first attach would leak it as an idle
+                ;; detached process.
+                (ignore-errors (localgroup-query-record record ':kill))
+                (error condition))))
           (return-from main--start-session nil))))
     (let ((*localgroup-startup-record* handoff-record))
       (setf *active-application*

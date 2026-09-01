@@ -260,6 +260,92 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-localgroup-abandoned-session-reap () null)
+(defun test-localgroup-abandoned-session-reap ()
+  "Test pristine sessions exiting when their only client vanishes."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (controller nil)
+         (relay nil)
+         (session nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (multiple-value-setq (application controller relay)
+             (test-localgroup--relay-application configuration))
+           (setf session (localgroup-start application))
+           (test-assert
+            (not (localgroup--session-pristine-p session))
+            "a session with a foreground terminal is never pristine")
+           (localgroup-terminal-release-control relay)
+           (test-assert
+            (localgroup--session-pristine-p session)
+            "an untouched ownerless session is pristine")
+           (setf (application-goal application)
+                 (list :objective "keep me" :status ':active
+                       :continuations 0))
+           (test-assert
+            (not (localgroup--session-pristine-p session))
+            "a session goal keeps an abandoned session alive")
+           (setf (application-goal application) nil)
+           (application-input-controller--enqueue
+            controller ':message "queued input")
+           (test-assert
+            (not (localgroup--session-pristine-p session))
+            "queued work keeps an abandoned session alive")
+           (application-input-controller--next-work controller)
+           (test-assert
+            (not (localgroup--session-pristine-p session))
+            "an active turn keeps an abandoned session alive")
+           (application-input-controller--finish-work controller)
+           (test-assert
+            (localgroup--session-pristine-p session)
+            "a drained untouched session is pristine again")
+           (localgroup--reap-abandoned-session session)
+           (test-assert
+            (eq (application-input-controller-exit-reason controller)
+                ':localgroup-kill)
+            "losing the only client exits a pristine session"))
+      (when application
+        (localgroup-stop application)
+        (application-release-conversation-lease application))
+      (when controller
+        (application-input-controller-stop controller))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (controller nil)
+         (relay nil)
+         (session nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (multiple-value-setq (application controller relay)
+             (test-localgroup--relay-application configuration
+                                                 :persisted-p t))
+           (setf session (localgroup-start application))
+           (localgroup-terminal-release-control relay)
+           (test-assert
+            (not (localgroup--session-pristine-p session))
+            "a persisted conversation keeps an abandoned session alive")
+           (localgroup--reap-abandoned-session session)
+           (test-assert
+            (null (application-input-controller-exit-reason controller))
+            "reaping never touches a session with durable history"))
+      (when application
+        (localgroup-stop application)
+        (application-release-conversation-lease application))
+      (when controller
+        (application-input-controller-stop controller))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-client-first-resume () null)
 (defun test-localgroup-client-first-resume ()
   "Test every resume keeping the client path whose detach is instant."
