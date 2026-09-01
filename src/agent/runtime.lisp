@@ -605,10 +605,12 @@
               (and
                (function-call-item-p item)
                (find (json-get item "call_id")
-                    call-plans
-                    :key (lambda (entry)
-                           (json-get (getf entry :call) "call_id"))
-                    :test #'equal))))
+                     call-plans
+                     :key (lambda (entry)
+                            (json-get (getf entry :call) "call_id"))
+                     :test #'equal))))
+        (when (and plan (getf plan :argument-error))
+          (setf (gethash "arguments" item) "{}"))
         (conversation-append-provider-item
          conversation
          item
@@ -644,6 +646,15 @@
              :time (get-universal-time)))))
   nil)
 
+(-> agent--sanitize-tool-call-arguments (json-object) (option string))
+(defun agent--sanitize-tool-call-arguments (call)
+  "Make CALL replayable and return a failure message for malformed arguments."
+  (unless (json-object-source-p (json-get call "arguments"))
+    (setf (gethash "arguments" call) "{}")
+    (format nil
+            "Tool ~A was not executed because the provider returned arguments that were not a valid JSON object."
+            (function-call-canonical-name call))))
+
 (-> agent--tool-call-plans (agent list) list)
 (defun agent--tool-call-plans (agent calls)
   "Return CALLS annotated with tools, persistence, and round-trip barriers."
@@ -653,6 +664,8 @@
     (dolist (call calls)
       (let* ((namespace (json-get call "namespace"))
              (name      (json-get call "name"))
+             (argument-error
+               (agent--sanitize-tool-call-arguments call))
              (tool
                (and (non-empty-string-p namespace)
                     (non-empty-string-p name)
@@ -667,7 +680,8 @@
         (push (list :call call
                     :tool tool
                     :persistence persistence
-                    :blocked-p blocked-p)
+                    :blocked-p blocked-p
+                    :argument-error argument-error)
               plans)
         (when (and tool
                    (tool-provider-round-trip-barrier-p tool))
@@ -789,6 +803,7 @@
   "Execute one PLAN body and return its result, timings, or fatal condition."
   (let* ((call      (getf plan :call))
          (call-id   (json-get call "call_id"))
+         (argument-error (getf plan :argument-error))
          (context
            (make-instance
             'tool-context
@@ -820,10 +835,12 @@
          (condition nil))
     (handler-case
         (setf result
-              (tool-registry-execute-call
-               (agent-tool-registry agent)
-               call
-               context))
+              (if argument-error
+                  (tool-failure argument-error :code ':invalid-arguments)
+                  (tool-registry-execute-call
+                   (agent-tool-registry agent)
+                   call
+                   context)))
       (serious-condition (failure)
         (setf condition failure)))
     (list

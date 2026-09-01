@@ -74,6 +74,25 @@
   (let ((yason:*parse-json-arrays-as-vectors* t))
     (yason:parse source)))
 
+(-> json-object-source-p (t) boolean)
+(defun json-object-source-p (source)
+  "Return true when SOURCE contains exactly one JSON object and whitespace."
+  (and
+   (stringp source)
+   (handler-case
+       (with-input-from-string (stream source)
+         (let ((yason:*parse-json-arrays-as-vectors* t))
+           (let ((value (yason:parse stream)))
+             (loop for character = (peek-char nil stream nil nil)
+                   while (and character
+                              (member character
+                                      '(#\Space #\Tab #\Newline #\Return)))
+                   do (read-char stream))
+             (and (json-object-p value)
+                  (null (peek-char nil stream nil nil))))))
+     (error ()
+       nil))))
+
 
 ;;;; -- Bounded Presentation --
 

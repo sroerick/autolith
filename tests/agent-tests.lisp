@@ -1144,6 +1144,127 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-malformed-tool-arguments () null)
+(defun test-agent-malformed-tool-arguments ()
+  "Test malformed tool arguments fail safely and legacy poison is repaired on replay."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (malformed     "{\"value\":\"first\"}{\"value\":\"second\"}"))
+    (unwind-protect
+         (progn
+           (let* ((conversation
+                    (conversation-create
+                     configuration :identifier "malformed-tool-arguments"))
+                  (call
+                    (agent-test-call
+                     :call-id "malformed-call" :arguments malformed))
+                  (provider
+                    (make-instance
+                     'scripted-provider
+                     :results
+                     (list
+                      (agent-test-result "malformed-call" (list call))
+                      (agent-test-result
+                       "malformed-final"
+                       (list (agent-test-message "malformed call handled"))))))
+                  (agent
+                    (agent-create :configuration configuration
+                                  :provider provider
+                                  :conversation conversation
+                                  :tool-registry (agent-test-registry)
+                                  :worker ':unused))
+                  (result (agent-run-user-turn agent "handle malformed arguments"))
+                  (snapshots
+                    (nreverse (scripted-provider-input-snapshots provider)))
+                  (replayed-call
+                    (find-if #'function-call-item-p (second snapshots)))
+                  (outputs (agent-test-tool-outputs conversation)))
+             (test-assert
+              (string= (provider-result-response-id result) "malformed-final")
+              "malformed arguments do not stop the provider tool loop")
+             (test-assert
+              (string= (json-get replayed-call "arguments") "{}")
+              "the next provider request receives replayable call arguments")
+             (test-assert
+              (and (= (length outputs) 1)
+                   (search "not a valid JSON object" (first outputs)))
+              "malformed arguments receive one correlated failed tool result")
+             (let* ((records
+                      (conversation--read-records
+                       (conversation-pathname conversation)))
+                    (provider-record
+                      (find ':provider-item records :key #'first))
+                    (persisted-call
+                      (json-decode (getf (rest provider-record) :wire-json))))
+               (test-assert
+                (string= (json-get persisted-call "arguments") "{}")
+                "new malformed calls are sanitized before durable persistence")))
+           (let* ((conversation
+                    (conversation-create
+                     configuration :identifier "legacy-malformed-tool-arguments"))
+                  (call
+                    (agent-test-call
+                     :call-id "legacy-malformed-call" :arguments malformed)))
+             (conversation-append-user-message conversation "legacy history")
+             (conversation-append-record
+              conversation
+              (list :provider-item :wire-json (json-encode call)))
+             (conversation-append-tool-result
+              conversation
+              "legacy-malformed-call"
+              :tool-name "test.echo"
+              :output "The legacy call was rejected."
+              :success-p nil)
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-append-provider-item conversation call)
+                    nil)
+                (conversation-invariant-error ()
+                  t))
+              "the durable provider-item boundary rejects malformed arguments")
+             (let* ((pathname (conversation-pathname conversation))
+                    (reloaded
+                      (conversation-load-by-id
+                       configuration "legacy-malformed-tool-arguments"))
+                    (replayed-call
+                      (find-if #'function-call-item-p
+                               (conversation-input-items reloaded)))
+                    (provider
+                      (make-instance
+                       'scripted-provider
+                       :results
+                       (list
+                        (agent-test-result
+                         "legacy-recovered"
+                         (list (agent-test-message "legacy history recovered"))))))
+                    (agent
+                      (agent-create :configuration configuration
+                                    :provider provider
+                                    :conversation reloaded
+                                    :tool-registry (agent-test-registry)
+                                    :worker ':unused)))
+               (test-assert
+                (string= (json-get replayed-call "arguments") "{}")
+                "loading legacy history repairs malformed call arguments in memory")
+               (let* ((records (conversation--read-records pathname))
+                      (provider-record
+                        (find ':provider-item records :key #'first))
+                      (persisted-call
+                        (json-decode (getf (rest provider-record) :wire-json))))
+                 (test-assert
+                  (string= (json-get persisted-call "arguments") malformed)
+                  "legacy repair leaves the append-only record unchanged"))
+               (agent-run-user-turn agent "continue recovered history")
+               (let* ((snapshot
+                        (first (scripted-provider-input-snapshots provider)))
+                      (provider-call (find-if #'function-call-item-p snapshot)))
+                 (test-assert
+                  (string= (json-get provider-call "arguments") "{}")
+                  "recovered legacy history is replayable on the next request")))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-tool-failures () null)
 (defun test-agent-tool-failures ()
   "Test successful and failed calls retain independent correlation."
@@ -2341,6 +2462,7 @@
   (test-agent-explicit-continuation)
   (test-agent-provider-request-limit)
   (test-agent-invalid-call-history)
+  (test-agent-malformed-tool-arguments)
   (test-agent-tool-failures)
   (test-agent-provider-failure-persistence)
   (test-agent-incomplete-provider-failure-persistence)

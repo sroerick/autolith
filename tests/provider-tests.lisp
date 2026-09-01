@@ -625,12 +625,13 @@
             (json-object "type" "reasoning"
                          "encrypted_content" "retained-reasoning"
                          "summary" (json-array)))
-           (conversation-append-provider-item
-            conversation
-            (json-object "type" "function_call"
-                         "call_id" "ephemeral-call"
-                         "name" "test")
-            :persistence ':next-response)
+            (conversation-append-provider-item
+             conversation
+             (json-object "type" "function_call"
+                          "call_id" "ephemeral-call"
+                          "name" "test"
+                          "arguments" "{}")
+             :persistence ':next-response)
             (let* ((request
                      (provider-native-compaction-request-object
                       provider conversation schemas))

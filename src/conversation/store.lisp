@@ -1674,6 +1674,18 @@ copied."
                   (conversation-title-source conversation) previous-title-source)
             (conversation--delete-image-attachments attachments)))))))
 
+(-> conversation--validate-provider-item (conversation json-object) json-object)
+(defun conversation--validate-provider-item (conversation item)
+  "Return ITEM after rejecting provider calls that would poison durable replay."
+  (when (and (function-call-item-p item)
+             (not (json-object-source-p (json-get item "arguments"))))
+    (error 'conversation-invariant-error
+           :message
+           "A provider function call has arguments that are not exactly one JSON object."
+           :pathname (conversation-pathname conversation)
+           :sequence (conversation-next-sequence conversation)))
+  item)
+
 (-> conversation-append-provider-item
     (conversation json-object
      &key (:persistence tool-conversation-persistence))
@@ -1681,6 +1693,7 @@ copied."
 (defun conversation-append-provider-item
     (conversation item &key (persistence ':durable))
   "Append one authoritative provider ITEM with the requested PERSISTENCE."
+  (conversation--validate-provider-item conversation item)
   (ecase persistence
     (:durable
      (conversation-append-record
@@ -2678,6 +2691,16 @@ later picker searches read it without scanning the log."
     (setf (conversation-model conversation) model
           (conversation-reasoning-effort conversation) reasoning-effort)))
 
+(-> conversation--repair-provider-item-arguments (json-object) json-object)
+(defun conversation--repair-provider-item-arguments (item)
+  "Repair malformed function-call arguments persisted by older Autolith releases."
+  ;; Compatibility reader for records written through v0.46.0. Remove only when
+  ;; upgrading from v0.46.x conversation histories is no longer supported.
+  (when (and (function-call-item-p item)
+             (not (json-object-source-p (json-get item "arguments"))))
+    (setf (gethash "arguments" item) "{}"))
+  item)
+
 (-> conversation--apply-record (conversation list) null)
 (defun conversation--apply-record (conversation record)
   "Project one persisted RECORD into CONVERSATION's in-memory state."
@@ -2725,8 +2748,10 @@ later picker searches read it without scanning the log."
           (conversation--record-error
            conversation properties
            "A persisted provider item is not a JSON object."))
-        (conversation--append-input-item conversation item))))
-  nil)
+        (when (eq kind ':provider-item)
+          (conversation--repair-provider-item-arguments item))
+        (conversation--append-input-item conversation item)))
+    nil))
 
 (-> conversation--peek-segment-header (pathname) (option list))
 (defun conversation--peek-segment-header (pathname)
