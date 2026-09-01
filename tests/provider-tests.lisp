@@ -2053,6 +2053,48 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-persistent-transient-retries () null)
+(defun test-provider-persistent-transient-retries ()
+  "Test persistent jittered retries and complete-attempt DNS normalization."
+  (let ((attempts 0)
+        (events nil)
+        (sleeps nil))
+    (test-assert
+     (eq ':ok
+         (provider--call-with-transient-retries
+          (lambda ()
+            (incf attempts)
+            (when (<= attempts 3)
+              (error 'provider-retryable-error
+                     :message "Injected transient failure."
+                     :status nil
+                     :request-id nil
+                     :response-id nil
+                     :response nil))
+            ':ok)
+          (lambda (event)
+            (push event events))
+          :sleep-function (lambda (delay) (push delay sleeps))
+          :random-state (make-random-state t)))
+     "retryable provider failures preserve and complete the same attempt")
+    (test-assert (= attempts 4)
+                 "persistent provider recovery retries every transient failure")
+    (test-assert (and (= (length sleeps) 3)
+                      (every (lambda (delay) (<= 1 delay 60)) sleeps))
+                 "persistent provider recovery uses bounded jitter delays")
+    (test-assert (= (length events) 6)
+                 "each retry reports its wait and resumed attempt"))
+  (test-assert
+   (handler-case
+       (progn
+         (provider--call-with-transport-normalization
+          (lambda () (error 'usocket:ns-try-again-error)))
+         nil)
+     (provider-retryable-error (condition)
+       (search "could not be resolved" (princ-to-string condition))))
+   "temporary DNS failures across the complete attempt are retryable")
+  nil)
+
 (-> test-provider-stream-retries () null)
 (-> provider-tests--connected-stream-pair () (values stream t t t))
 (defun provider-tests--connected-stream-pair ()
@@ -2154,9 +2196,8 @@
                  (test-assert
                   (and announcement
                        (= (provider-retry-event-attempt announcement) 1)
-                       (= (provider-retry-event-maximum-attempts announcement)
-                          (length *bounded-retry-delays*))
-                       (= (provider-retry-event-delay announcement) 1))
+                       (= (provider-retry-event-maximum-attempts announcement) 6)
+                       (<= 1 (provider-retry-event-delay announcement) 60))
                   "provider retries expose their attempt and delay to the observer")
                  (test-assert
                   (and in-flight
@@ -2184,9 +2225,10 @@
                      :event-callback #'identity)
                     result)
                 "provider overload retries may recover")
-               (test-assert
-                (equal (nreverse delays) '(1 2))
-                "provider overload retries use the bounded backoff schedule")))
+                (test-assert
+                 (and (= (length delays) 2)
+                      (every (lambda (delay) (<= 1 delay 60)) delays))
+                 "provider overload retries use bounded jittered backoff")))
            (let ((provider
                    (test-codex-provider-create
                     configuration
@@ -2213,22 +2255,16 @@
                     (test-codex-provider-refresh-flags provider))
                    1)
                 "turn cancellation prevents another provider attempt")))
-           (let ((provider
-                   (test-codex-provider-create
-                    configuration
-                    (make-list
-                     (1+ (length *bounded-retry-delays*))
-                     :initial-element :server-error))))
-             (test-assert
-              (handler-case
-                  (progn
-                    (provider-stream-turn provider
-                                          conversation
-                                          :tool-namespaces #()
-                                          :event-callback #'identity)
-                    nil)
-                (provider-retryable-error (condition)
-                  (string= (provider-error-code condition) "server_error")))
-              "retry exhaustion re-signals the final structured failure")))
+            (let ((provider
+                    (test-codex-provider-create
+                     configuration
+                     (append (make-list 7 :initial-element :server-error)
+                             (list result)))))
+              (test-assert
+               (eq (provider-stream-turn provider conversation
+                                         :tool-namespaces #()
+                                         :event-callback #'identity)
+                   result)
+               "transient provider recovery continues past the old retry bound")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

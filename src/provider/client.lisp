@@ -1525,16 +1525,93 @@ abandon the looping stream; the default reaction ignores the report."))
         (http-request-failed (condition)
           (provider-signal-http-failure provider condition))))))
 
+(-> provider--call-with-transient-retries
+    (function function &key (:sleep-function function) (:random-state random-state))
+    t)
+(defun provider--call-with-transient-retries
+    (attempt-function event-callback
+     &key
+       (sleep-function llm-provider-api:*bounded-retry-sleep-function*)
+       (random-state *random-state*))
+  "Call ATTEMPT-FUNCTION until it succeeds or signals a definitive failure."
+  (let ((retry-number 0))
+    (loop
+      (handler-case
+          (return (funcall attempt-function))
+        (provider-resample-requested (condition)
+          (funcall event-callback
+                   (make-instance
+                    'provider-retry-event
+                    :attempt (provider-resample-requested-attempt condition)
+                    :maximum-attempts
+                    (provider-resample-requested-maximum-attempts condition)
+                    :delay 0)))
+        (provider-retryable-error ()
+          (incf retry-number)
+          (let* ((base-delay
+                   (min 50 (ash 1 (min 6 (1- retry-number)))))
+                 (delay
+                   (max 1
+                        (min 60
+                             (round
+                              (* base-delay
+                                 (+ 0.8d0
+                                    (random 0.4d0 random-state)))))))
+                 (display-attempt (1+ (mod (1- retry-number) 6))))
+            (funcall event-callback
+                     (make-instance 'provider-retry-event
+                                    :attempt display-attempt
+                                    :maximum-attempts 6
+                                    :delay delay))
+            (funcall sleep-function delay)
+            (funcall event-callback
+                     (make-instance 'provider-retry-event
+                                    :attempt display-attempt
+                                    :maximum-attempts 6
+                                    :delay 0))))))))
+
+(-> provider--call-with-transport-normalization (function) t)
+(defun provider--call-with-transport-normalization (attempt-function)
+  "Call ATTEMPT-FUNCTION and normalize dependency transport conditions."
+  (handler-case
+      (funcall attempt-function)
+    (ssl-error-syscall (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider connection failed before the request completed."
+        condition)
+       :retryable-p t))
+    (socket-error (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider connection failed before the request completed."
+        condition)
+       :retryable-p t))
+    (sb-bsd-sockets:name-service-error (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
+       :retryable-p t))
+    (ns-error (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider address could not be resolved."
+        condition)
+       :retryable-p t))
+    (cl+ssl-error (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider TLS connection could not be established."
+        condition)
+       :retryable-p nil))))
+
 (-> provider--call-with-bounded-retries
     (subscription-provider function function)
     t)
 (defun provider--call-with-bounded-retries
     (provider attempt-function event-callback)
-  "Call ATTEMPT-FUNCTION with bounded authentication and transport recovery.
-
-ATTEMPT-FUNCTION receives one boolean indicating whether it must force a
-credential refresh. EVENT-CALLBACK receives the retry notifications shared by
-streaming turns and native compaction requests."
+  "Call ATTEMPT-FUNCTION with bounded authentication and persistent transport recovery."
   (labels ((attempt-with-authentication ()
              "Run one logical request with bounded credential recovery."
              (let* ((manager (provider-credential-manager provider))
@@ -1546,7 +1623,9 @@ streaming turns and native compaction requests."
                                               (= attempt-number 3))
                      do (handler-case
                             (return-from attempt-with-authentication
-                              (funcall attempt-function force-refresh))
+                              (provider--call-with-transport-normalization
+                               (lambda ()
+                                 (funcall attempt-function force-refresh))))
                           (provider-unauthorized ()
                             (when (= attempt-number maximum-attempts)
                               (error 'authentication-error
@@ -1563,7 +1642,8 @@ streaming turns and native compaction requests."
                       :message
                       (format nil "~A authentication retry ended unexpectedly."
                               (provider-account-label provider))))))
-    (call-with-bounded-retries #'attempt-with-authentication event-callback)))
+    (provider--call-with-transient-retries
+     #'attempt-with-authentication event-callback)))
 
 (defmethod provider-stream-turn
     ((provider subscription-provider)
