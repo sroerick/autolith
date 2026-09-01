@@ -85,6 +85,11 @@
     :accessor rlm-inference-test-provider-results
     :type list
     :documentation "The provider results returned in request order.")
+   (input-snapshots
+    :initform nil
+    :accessor rlm-inference-test-provider-input-snapshots
+    :type list
+    :documentation "The provider request items observed, newest first.")
    (output-limits
     :initform nil
     :accessor rlm-inference-test-provider-output-limits
@@ -109,6 +114,8 @@
      &key tool-namespaces event-callback goal-context compaction-p)
   "Return PROVIDER's next scripted inference result."
   (declare (ignore event-callback goal-context compaction-p))
+  (push (copy-tree (conversation-input-items-for-request conversation))
+        (rlm-inference-test-provider-input-snapshots provider))
   (push (length tool-namespaces)
         (rlm-inference-test-provider-tool-schema-counts provider))
   (push *provider-maximum-output-tokens*
@@ -794,7 +801,7 @@
 
 (-> test-rlm-permission-classifier () null)
 (defun test-rlm-permission-classifier ()
-  "Test model permission decisions and availability-aware safe fallbacks."
+  "Test automatic permission context, decisions, and fail-closed fallbacks."
   (let ((configuration (test-configuration)))
     (flet ((classify (&rest texts)
              (permissions-model-classify-command
@@ -803,10 +810,52 @@
                          'rlm-inference-test-provider
                          :results
                          (mapcar (lambda (text)
-                                   (rlm-inference-test-result "response"
-                                                              text 20))
+                                   (rlm-inference-test-result "response" text 20))
                                  texts))
-              :configuration configuration)))
+              :configuration configuration
+              :user-instructions "Build the project in this workspace.")))
+      (test-assert
+       (equal (getf (second
+                     (first (getf *permissions-model-decision-contract*
+                                  ':properties)))
+                    ':enum)
+              '("sandboxed" "full" "deny"))
+       "the model contract exposes only automatic permission outcomes")
+      (test-assert (null (permissions--model-decision-keyword "ask"))
+                   "the decision parser rejects manual ask output")
+      (test-assert (null (permissions--model-decision-keyword "pick"))
+                   "the decision parser rejects pick output")
+      (let ((provider
+              (make-instance
+               'rlm-inference-test-provider
+               :results
+               (list
+                (rlm-inference-test-result
+                 "context"
+                 "{\"decision\": \"sandboxed\", \"reason\": \"workspace build\"}"
+                 20)))))
+        (test-assert
+         (eq (permissions-model-classify-command
+              "cargo build" #p"/root/project/"
+              :provider provider
+              :configuration configuration
+              :user-instructions "Build and test the current checkout.")
+             ':sandboxed)
+         "a valid sandbox decision is returned")
+        (let* ((snapshot
+                 (first
+                  (rlm-inference-test-provider-input-snapshots provider)))
+               (request-text
+                 (loop for item in (reverse snapshot)
+                       when (and (json-object-p item)
+                                 (string= (or (json-get item "role") "") "user"))
+                         do (return (context--message-text item)))))
+          (test-assert
+           (search "current user instructions" request-text)
+           "classification includes a labeled user-instruction view")
+          (test-assert
+           (search "Build and test the current checkout." request-text)
+           "classification forwards the current user instructions verbatim")))
       (multiple-value-bind (decision reason)
           (classify
            "{\"decision\": \"sandboxed\", \"reason\": \"workspace build\"}")
@@ -827,90 +876,48 @@
               "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
               20)))
            :configuration configuration
-           :sandbox-available-p nil)
-        (test-assert (eq decision ':ask)
-                     "unavailable sandbox decisions fall back to asking")
-        (test-assert (string= reason "the workspace sandbox is unavailable")
-                     "unavailable sandbox fallback explains the missing grant"))
-      (multiple-value-bind (decision reason)
-          (permissions-model-classify-command
-           "git status" #p"/root/project/"
-           :provider
-           (make-instance
-            'rlm-inference-test-provider
-            :results
-            (list
-             (rlm-inference-test-result
-              "unavailable-sandbox-no-human"
-              "{\"decision\": \"sandboxed\", \"reason\": \"read-only inspection\"}"
-              20)))
-           :configuration configuration
            :sandbox-available-p nil
-           :ask-available-p nil)
+           :user-instructions "Inspect the checkout.")
         (test-assert (eq decision ':deny)
-                     "unavailable grants are denied without human approval")
+                     "unavailable sandbox decisions are denied")
         (test-assert (string= reason "the workspace sandbox is unavailable")
-                     "noninteractive unavailable grants explain the denial"))
-      (test-assert (eq (classify
-                        "{\"decision\": \"full\", \"reason\": \"network\"}")
-                       ':full-access)
-                   "full decisions map to the full-access grant")
-      (test-assert (eq (classify
-                        "{\"decision\": \"deny\", \"reason\": \"wipe\"}")
-                       ':deny)
-                   "deny decisions map to the deny grant")
-      (test-assert (eq (classify
-                        "{\"decision\": \"ask\", \"reason\": \"unclear\"}")
-                       ':ask)
-                   "ask decisions defer to the human")
-      (multiple-value-bind (decision reason)
-          (permissions-model-classify-command
-           "git restore file" #p"/root/project/"
-           :provider
-           (make-instance
-            'rlm-inference-test-provider
-            :results
-            (list
-             (rlm-inference-test-result
-              "ask-without-human"
-              "{\"decision\": \"ask\", \"reason\": \"destructive change\"}"
-              20)))
-           :configuration configuration
-           :ask-available-p nil)
-        (test-assert (eq decision ':deny)
-                     "ask decisions are denied without human approval")
-        (test-assert (string= reason "destructive change")
-                     "the classifier reason explains a noninteractive denial"))
-      (multiple-value-bind (decision reason)
-          (classify "garbage" "still garbage")
-        (test-assert (eq decision ':ask)
-                     "unrepaired classifier output falls back to asking")
-        (test-assert (non-empty-string-p reason)
-                     "the fallback carries an explanation"))
-      (test-assert (eq (classify) ':ask)
-                   "provider failures fall back to asking")
+                     "unavailable sandbox denial explains the missing grant"))
+      (test-assert
+       (eq (classify "{\"decision\": \"full\", \"reason\": \"network\"}")
+           ':full-access)
+       "full decisions map to the full-access grant")
+      (test-assert
+       (eq (classify "{\"decision\": \"deny\", \"reason\": \"wipe\"}")
+           ':deny)
+       "deny decisions map to the deny grant")
       (test-assert
        (eq (permissions-model-classify-command
-            "cargo build" #p"/root/project/"
+            "git restore file" #p"/root/project/"
             :provider
             (make-instance
              'rlm-inference-test-provider
              :results
-             (list (rlm-inference-test-result "garbage-no-human" "garbage" 20)
-                   (rlm-inference-test-result "still-garbage-no-human"
-                                              "still garbage" 20)))
+             (list
+              (rlm-inference-test-result
+               "pick-1"
+               "{\"decision\": \"pick\", \"reason\": \"uncertain\"}"
+               20)
+              (rlm-inference-test-result
+               "pick-2"
+               "{\"decision\": \"pick\", \"reason\": \"still uncertain\"}"
+               20)))
             :configuration configuration
-            :ask-available-p nil)
+            :user-instructions "Inspect changes only.")
            ':deny)
-       "unrepaired output is denied without human approval")
-      (test-assert
-       (eq (permissions-model-classify-command
-            "cargo build" #p"/root/project/"
-            :provider (make-instance 'rlm-inference-test-provider)
-            :configuration configuration
-            :ask-available-p nil)
-           ':deny)
-       "provider failures are denied without human approval")))
+       "unknown pick output is denied")
+      (multiple-value-bind (decision reason)
+          (classify "garbage" "still garbage")
+        (test-assert (eq decision ':deny)
+                     "unrepaired classifier output is denied")
+        (test-assert (non-empty-string-p reason)
+                     "malformed-output denial carries an explanation"))
+      (test-assert (eq (classify) ':deny)
+                   "provider failures are denied")))
   nil)
 
 (-> test-rlm-context-object-adapter () null)

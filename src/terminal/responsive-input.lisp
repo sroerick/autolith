@@ -2664,8 +2664,8 @@ may execute immediately; other Lisp waits for the idle boundary."
           :argument nil
           :description
           (if sandbox-available-p
-              "pick for me this session; the model chooses sandbox, full access, or refusal"
-              "pick for me this session; the model chooses full access or refusal"))
+              "classify automatically this session as sandboxed, full access, or denied"
+              "classify automatically this session as full access or denied"))
     (list :name "once"
           :argument nil
           :description "allow this command once with full user privileges")
@@ -2702,11 +2702,12 @@ may execute immediately; other Lisp waits for the idle boundary."
     keyword)
 (defun application--apply-classified-command-permission
     (application command directory decision reason)
-  "Apply one classifier DECISION for COMMAND with a terse dim notice.
+  "Apply one automatic DECISION for COMMAND with a terse dim notice.
 
 The command already appears with its tool call, so the notice never
 restates it; only a refusal carries the classifier's short reason. A
 sandbox grant is revalidated at this final authorization boundary."
+  (declare (ignore command directory))
   (ecase decision
     (:sandboxed
      (if (application--command-sandbox-available-p)
@@ -2715,11 +2716,13 @@ sandbox grant is revalidated at this final authorization boundary."
             application
             (list (terminal-span ':dim "auto-permission sandbox")))
            ':sandboxed)
-         (if (application--interactive-command-approval-p application)
-             (application--ask-command-permission application command directory)
-             (application--apply-classified-command-permission
-              application command directory ':deny
-              "the workspace sandbox became unavailable"))))
+         (progn
+           (application-present
+            application
+            (list (terminal-span
+                   ':dim
+                   "auto-permission deny: the workspace sandbox became unavailable")))
+           ':deny)))
     (:full-access
      (application-present
       application
@@ -2734,53 +2737,79 @@ sandbox grant is revalidated at this final authorization boundary."
                      (sanitize-text reason :single-line-p t)))))
      ':deny)))
 
+(-> application--current-user-instructions (application) (option string))
+(defun application--current-user-instructions (application)
+  "Return the latest durable user instructions available to APPLICATION."
+  (when (slot-boundp application 'conversation)
+    (loop for item in (reverse
+                       (conversation-input-items
+                        (application-conversation application)))
+          when (and (json-object-p item)
+                    (string= (or (json-get item "role") "") "user"))
+            do (return (context--message-text item)))))
+
+(-> application--automatic-command-decision (t) keyword)
+(defun application--automatic-command-decision (decision)
+  "Return DECISION when automatic authorization may use it, otherwise :DENY."
+  (if (member decision '(:sandboxed :full-access :deny) :test #'eq)
+      decision
+      ':deny))
+
 (-> application--model-command-permission
     (application string pathname)
     (values keyword string))
 (defun application--model-command-permission (application command directory)
-  "Return the cached or freshly inferred model permission for COMMAND."
-  (let ((ask-available-p
-          (application--interactive-command-approval-p application)))
-    (unless (and (slot-boundp application 'provider)
-                 (application-provider application))
-      (return-from application--model-command-permission
-        (values (if ask-available-p ':ask ':deny)
-                "no provider is available to classify commands")))
-    (let* ((sandbox-available-p
-             (application--command-sandbox-available-p))
-           (cache (application-command-classifications application))
-           (key
-             (format nil "sandbox=~:[unavailable~;available~]~%ask=~:[unavailable~;available~]~%~A~%~A"
-                     sandbox-available-p ask-available-p
-                     command (namestring directory)))
-           (cached (gethash key cache)))
-      (if cached
-          (values (car cached) (cdr cached))
-          (multiple-value-bind (decision reason)
-              (permissions-model-classify-command
-               command directory
-               :provider            (application-provider application)
-               :configuration       (application-configuration application)
-               :sandbox-available-p sandbox-available-p
-               :ask-available-p     ask-available-p)
-            (unless (eq decision ':ask)
-              (setf (gethash key cache) (cons decision reason)))
+  "Return the cached or freshly inferred automatic permission for COMMAND."
+  (unless (and (slot-boundp application 'provider)
+               (application-provider application))
+    (return-from application--model-command-permission
+      (values ':deny "no provider is available to classify commands")))
+  (let* ((sandbox-available-p
+           (application--command-sandbox-available-p))
+         (user-instructions
+           (application--current-user-instructions application))
+         (cache (application-command-classifications application))
+         (key
+           (format nil "sandbox=~:[unavailable~;available~]~%instructions=~A~%~A~%~A"
+                   sandbox-available-p
+                   (or user-instructions "<unavailable>")
+                   command
+                   (namestring directory)))
+         (cached (gethash key cache)))
+    (if cached
+        (let ((decision
+                (application--automatic-command-decision (car cached))))
+          (values decision
+                  (if (and (eq decision (car cached))
+                           (non-empty-string-p (cdr cached)))
+                      (cdr cached)
+                      "the cached classifier decision was unusable")))
+        (multiple-value-bind (inferred-decision inferred-reason)
+            (permissions-model-classify-command
+             command directory
+             :provider            (application-provider application)
+             :configuration       (application-configuration application)
+             :sandbox-available-p sandbox-available-p
+             :user-instructions   user-instructions)
+          (let* ((decision
+                   (application--automatic-command-decision inferred-decision))
+                 (reason
+                   (if (and (eq inferred-decision decision)
+                            (non-empty-string-p inferred-reason))
+                       inferred-reason
+                       "the model returned an unusable automatic decision")))
+            (setf (gethash key cache) (cons decision reason))
             (values decision reason))))))
 
 (-> application--auto-command-permission
     (application string pathname)
     keyword)
 (defun application--auto-command-permission (application command directory)
-  "Classify COMMAND with the model and ask only when a picker is available."
+  "Classify COMMAND without ever deferring automatic authorization to a picker."
   (multiple-value-bind (decision reason)
       (application--model-command-permission application command directory)
-    (if (eq decision ':ask)
-        (if (application--interactive-command-approval-p application)
-            (application--ask-command-permission application command directory)
-            (application--apply-classified-command-permission
-             application command directory ':deny reason))
-        (application--apply-classified-command-permission
-         application command directory decision reason))))
+    (application--apply-classified-command-permission
+     application command directory decision reason)))
 
 (-> application--apply-command-authorization-choice
     (application string pathname (option string))
@@ -2796,9 +2825,7 @@ sandbox grant is revalidated at this final authorization boundary."
      (multiple-value-bind (decision reason)
          (application--model-command-permission application command directory)
        (application--apply-classified-command-permission
-        application command directory
-        (if (eq decision ':ask) ':deny decision)
-        reason)))
+        application command directory decision reason)))
     ((string= (or choice "") "full")
      (setf (application-permission-mode application) ':full-access)
      ':full-access)
@@ -2886,10 +2913,8 @@ sandbox grant is revalidated at this final authorization boundary."
                (multiple-value-bind (decision reason)
                    (application--model-command-permission
                     application command directory)
-                  (application--apply-classified-command-permission
-                   application command directory
-                   (if (eq decision ':ask) ':deny decision)
-                   reason))))))))
+                 (application--apply-classified-command-permission
+                  application command directory decision reason))))))))
 
 (-> application--tool-authorization-title (tool) string)
 (defun application--tool-authorization-title (tool)

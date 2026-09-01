@@ -629,13 +629,16 @@
          (root (test-configuration-root configuration))
          (terminal (make-instance 'recording-terminal :columns 72))
          (ui (terminal-ui-create :terminal terminal))
-         (state (permissions-load configuration))
-         (application
-           (make-instance 'application
-                          :configuration configuration
-                          :ui ui
-                          :permission-state state
-                          :provider
+          (state (permissions-load configuration))
+          (conversation
+            (conversation-create configuration :identifier "permission-modes"))
+          (application
+            (make-instance 'application
+                           :configuration configuration
+                           :conversation conversation
+                           :ui ui
+                           :permission-state state
+                           :provider
                           (make-instance
                            'rlm-inference-test-provider
                            :results
@@ -666,17 +669,22 @@
     (unwind-protect
          (progn
            (terminal-ui-start ui)
+            (conversation-append-user-message
+             conversation
+             "Fetch dependencies and inspect this workspace.")
             (test-call-with-function-replacements
              (list
-               (list 'permissions-model-classify-command
-                     (lambda (command directory &key provider configuration
-                                                     sandbox-available-p
-                                                     ask-available-p)
-                       (declare (ignore command directory provider
-                                        configuration sandbox-available-p))
-                       (test-assert (not ask-available-p)
-                                    "detached ask mode disables model deferral")
-                       (values ':sandboxed "read-only inspection"))))
+                (list 'permissions-model-classify-command
+                      (lambda (command directory &key provider configuration
+                                                      sandbox-available-p
+                                                      user-instructions)
+                        (declare (ignore command directory provider
+                                         configuration sandbox-available-p))
+                        (test-assert
+                         (string= user-instructions
+                                  "Fetch dependencies and inspect this workspace.")
+                         "application classification receives current user instructions")
+                        (values ':sandboxed "read-only inspection"))))
              (lambda ()
                (test-assert
                 (eq (application-authorize-command
@@ -686,6 +694,28 @@
                (test-assert
                 (eq (application-permission-mode application) ':ask)
                 "noninteractive classification preserves ask mode")))
+            (conversation-append-user-message
+             conversation
+             "Run the exact pending command with the access it needs.")
+            (test-call-with-function-replacements
+             (list
+              (list 'permissions-model-classify-command
+                    (lambda (command directory &key provider configuration
+                                                    sandbox-available-p
+                                                    user-instructions)
+                      (declare (ignore command directory provider configuration
+                                       sandbox-available-p))
+                      (test-assert
+                       (string= user-instructions
+                                "Run the exact pending command with the access it needs.")
+                       "classification cache keys include current user instructions")
+                      (values ':full-access "explicitly requested"))))
+             (lambda ()
+               (test-assert
+                (eq (application-authorize-command
+                     application "printf unknown" root)
+                    ':full-access)
+                "changed user instructions trigger fresh classification")))
             (permissions-allow :configuration configuration
                                :state         state
                                :command       "printf saved"
@@ -738,7 +768,7 @@
             "/permissions full grants full command access for the session")
            (application-command application "/permissions auto")
            (test-assert (eq (application-permission-mode application) ':auto)
-                        "/permissions auto selects pick-for-me mode")
+                         "/permissions auto selects autonomous classification mode")
            (test-assert
             (eq (application-authorize-command
                  application "git status" root)
@@ -754,31 +784,47 @@
               (list 'permissions-model-classify-command
                     (lambda (command directory &key provider configuration
                                                     sandbox-available-p
-                                                    ask-available-p)
+                                                    user-instructions)
                       (declare (ignore command directory provider configuration
-                                       sandbox-available-p))
-                      (test-assert (not ask-available-p)
-                                   "detached auto mode disables model deferral")
-                      (values ':ask "destructive change"))))
+                                       sandbox-available-p user-instructions))
+                      (values ':pick "destructive change"))))
              (lambda ()
                (test-assert
                 (eq (application-authorize-command
                      application "git restore file" root)
                     ':deny)
-                "auto mode denies model deferral without a terminal")))
+                "auto mode rejects a classifier pick decision")))
+            (let ((provider (application-provider application)))
+              (unwind-protect
+                   (progn
+                     (setf (application-provider application) nil)
+                     (test-assert
+                      (eq (application-authorize-command
+                           application "uname -a" root)
+                          ':deny)
+                      "auto mode denies when no classifier is available"))
+                (setf (application-provider application) provider)))
             (let ((capability-checks 0))
               (test-call-with-function-replacements
                (list
                 (list 'sandbox-supported-p
                       (lambda (&optional capability)
                         (declare (ignore capability))
-                        (= (incf capability-checks) 1))))
+                        (= (incf capability-checks) 1)))
+                (list 'application--interactive-command-approval-p
+                      (lambda (ignored)
+                        (declare (ignore ignored))
+                        t))
+                (list 'application--ask-command-permission
+                      (lambda (&rest ignored)
+                        (declare (ignore ignored))
+                        (error "auto mode attempted to open a permission picker"))))
                (lambda ()
                  (test-assert
                   (eq (application-authorize-command
                        application "git diff" root)
                       ':deny)
-                  "auto mode denies when containment disappears noninteractively")
+                  "auto mode denies when containment disappears with a picker available")
                  (test-assert
                   (= capability-checks 2)
                   "a sandbox grant is checked at the final authorization boundary"))))
@@ -827,23 +873,24 @@
                       application "printf saved" root)
                      ':full-access)
                  "auto mode reclassifies saved commands without a sandbox")
-                 (test-assert
-                  (eq (application-authorize-command
-                       application "git log" root)
-                      ':full-access)
-                  "interactive once approval grants full access")
-                 (test-assert
-                  (equal authorization-item-names
-                         '("auto" "once" "always" "full" "deny"))
-                  "the command picker retains full-access approvals without a sandbox")
-                 (test-assert
-                  (eq (application--apply-command-authorization-choice
-                       application "git log" root "once")
-                      ':full-access)
-                  "once grants full access without changing session mode")
-                 (test-assert
-                  (eq (application-permission-mode application) ':auto)
-                  "once does not change the session permission mode")
+                (setf (application-permission-mode application) ':ask)
+                (test-assert
+                 (eq (application-authorize-command
+                      application "git log" root)
+                     ':full-access)
+                 "manual once approval grants full access")
+                (test-assert
+                 (equal authorization-item-names
+                        '("auto" "once" "always" "full" "deny"))
+                 "the manual command picker retains full-access approvals without a sandbox")
+                (test-assert
+                 (eq (application--apply-command-authorization-choice
+                      application "git log" root "once")
+                     ':full-access)
+                 "once grants full access without changing session mode")
+                (test-assert
+                 (eq (application-permission-mode application) ':ask)
+                 "once preserves manual permission mode")
                  (test-assert
                   (eq (application--apply-command-authorization-choice
                        application "git log" root "always")
@@ -853,22 +900,22 @@
                   (permissions-allowed-p state "git log" root)
                   "always persists the exact full-access approval"))))
            (setf (application-permission-mode application) ':ask)
-           (test-call-with-function-replacements
-            (list
+            (test-call-with-function-replacements
+             (list
               (list 'permissions-model-classify-command
                     (lambda (command directory &key provider configuration
                                                     sandbox-available-p
-                                                    ask-available-p)
+                                                    user-instructions)
                       (declare (ignore command directory provider
                                        configuration sandbox-available-p
-                                       ask-available-p))
+                                       user-instructions))
                       (values ':full-access "prints a literal"))))
-            (lambda ()
-              (test-assert
-               (eq (application--apply-command-authorization-choice
-                    application "printf picked" root "auto")
-                   ':full-access)
-               "auto classifies the pending command immediately")))
+             (lambda ()
+               (test-assert
+                (eq (application--apply-command-authorization-choice
+                     application "printf picked" root "auto")
+                    ':full-access)
+                "auto classifies the pending command immediately")))
            (test-assert
             (eq (application-permission-mode application) ':auto)
             "auto stays the session permission mode like full and sandbox")

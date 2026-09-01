@@ -1772,7 +1772,7 @@ are forwarded to TERMINAL-UI-SELECT."
   "Return a user-facing description of command permission MODE."
   (ecase mode
     (:ask "ask before unrecognized commands")
-    (:auto "pick for me; allow safe inspection and ask about the rest")
+    (:auto "classify automatically without prompting")
     (:sandboxed "allow commands inside the workspace sandbox")
     (:full-access "let commands run with full user privileges")))
 
@@ -1791,8 +1791,8 @@ are forwarded to TERMINAL-UI-SELECT."
       (list :name "auto"
             :argument nil
             :description (if (eq current ':auto)
-                             "current; pick for me and save that choice"
-                             "pick for me; allow safe inspection and ask about the rest")))
+                             "current; classify commands automatically without prompting"
+                             "classify commands automatically without prompting")))
      (when sandbox-available-p
        (list
         (list :name "sandbox"
@@ -1848,9 +1848,9 @@ are forwarded to TERMINAL-UI-SELECT."
        (application--set-durable-permission-mode application ':auto)
        (application-present
         application
-        (if (application--command-sandbox-available-p)
-            "Commands will pick for me: safe inspection runs in the sandbox, and the rest asks."
-            "Commands will pick for me: routine commands may use full privileges, and the rest asks.")))
+         (if (application--command-sandbox-available-p)
+             "Commands will be classified automatically as sandboxed, full access, or denied."
+             "Commands will be classified automatically as full access or denied.")))
       ((string= choice "sandbox")
        (unless (application--command-sandbox-available-p)
          (error 'configuration-error
@@ -2224,7 +2224,7 @@ are forwarded to TERMINAL-UI-SELECT."
 (define-application-command application--builtin-permissions-command
     (:name "/permissions"
      :description "choose command access for this session"
-     :tip "chooses how shell commands are authorized, including pick-for-me auto mode."
+     :tip "chooses how shell commands are authorized, including autonomous auto mode."
      :busy-behavior :apply
      :terminal-behavior :exclusive-without-arguments
      :callable t
