@@ -927,6 +927,43 @@ path."
         :authentication-selection (first arguments)
         :authentication-method (second arguments))))))
 
+(-> main--run-job-command () clingon:command)
+(defun main--run-job-command ()
+  "Return the non-interactive single-job command definition."
+  (make-command
+   :name "run-job"
+   :description "run one contracted child-agent job without a terminal"
+   :options
+   (list
+    (make-option ':string :long-name "input" :key ':input
+                 :parameter "FILE" :description "data-only job S-expression")
+    (make-option ':string :long-name "output" :key ':output
+                 :parameter "FILE" :description "atomically installed terminal result"))
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
+       (error 'configuration-error
+              :message "run-job accepts only --input and --output options."))
+     (let ((input (getopt* command ':input))
+           (output (getopt* command ':output)))
+       (unless (non-empty-string-p input)
+         (error 'configuration-error :message "run-job requires --input FILE."))
+       (unless (non-empty-string-p output)
+         (error 'configuration-error :message "run-job requires --output FILE."))
+       (let* ((configuration
+                (configuration-create
+                 :immutable-p (not (null (getopt* command ':immutable)))
+                 :defer-provider-validation-p t))
+              (permission-mode
+                (or (getopt* command ':permissions)
+                    (preferences-permission-mode configuration)
+                    ':auto))
+              (status (run-job-run input output permission-mode
+                                   :configuration configuration)))
+         (unless (zerop status)
+           (uiop:quit status)))))))
+
+
 (-> main--top-level-command () clingon:command)
 (defun main--top-level-command ()
   "Return Autolith's top-level command-line definition."
@@ -941,6 +978,7 @@ select how Autolith starts before this command line is parsed."
    :sub-commands (list (main--resume-command)
                        (main--replay-command)
                        (main--auth-command)
+                       (main--run-job-command)
                        (main-localgroup-command))
    :handler
    (lambda (command)

@@ -378,6 +378,7 @@
     (test-rlm-complete-tool)
     (test-rlm-designator-confinement)
     (test-rlm-permission-classifier)
+    (run-run-job-tests)
     (test-task-orchestration)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)
