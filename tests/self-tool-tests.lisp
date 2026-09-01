@@ -45,6 +45,45 @@
           description
           action))
 
+(defvar *test-self-definition-reader-side-effect-p* nil
+  "Whether a self.redefine test payload executed during reading.")
+
+(-> test-self-definition-reader-boundary () null)
+(defun test-self-definition-reader-boundary ()
+  "Test self.redefine rejects reader evaluation before mutation state exists."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (records-before
+           (length (mutation-journal-read-records configuration))))
+    (unwind-protect
+         (progn
+           (setf *test-self-definition-reader-side-effect-p* nil)
+           (test-assert
+            (handler-case
+                (progn
+                  (self-install-definition
+                   configuration
+                   "#.(progn (setf *test-self-definition-reader-side-effect-p* t) '(defun test-self-definition-reader-target () 99))")
+                  nil)
+              (reader-error ()
+                t))
+            "self.redefine rejects read-time evaluation")
+           (test-assert
+            (null *test-self-definition-reader-side-effect-p*)
+            "rejected reader evaluation has no active-image side effect")
+           (test-assert
+            (not (fboundp 'test-self-definition-reader-target))
+            "rejected reader evaluation installs no returned definition")
+           (test-assert
+            (= records-before
+               (length (mutation-journal-read-records configuration)))
+            "rejected reader evaluation creates no partial mutation record"))
+      (setf *test-self-definition-reader-side-effect-p* nil)
+      (when (fboundp 'test-self-definition-reader-target)
+        (fmakunbound 'test-self-definition-reader-target))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-self-tools () null)
 (defun test-self-tools ()
   "Test active definition installation, inspection, and form-aware persistence."

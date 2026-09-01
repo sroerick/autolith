@@ -659,7 +659,9 @@ protocol."
     (configuration source &key (package (find-package '#:autolith)))
   "Compile and install one exploratory SOURCE definition in PACKAGE."
   (with-live-mutation
-    (let ((definition (self-read-form source :package package))
+    (let ((definition (self-read-form source
+                                      :read-eval nil
+                                      :package package))
           (package-name (package-name package)))
       (unless (definition-form-p definition)
         (error 'source-mutation-error

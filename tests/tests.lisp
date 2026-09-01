@@ -336,6 +336,7 @@
     (test-lisp-execution-jobs)
     (test-lisp-scratchpad-tools)
      (test-lisp-worker-image-snapshot)
+    (test-self-definition-reader-boundary)
     (test-self-tools)
     (test-self-definition-installation-rollback)
     (test-self-application-command-definitions)
