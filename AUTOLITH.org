@@ -42,6 +42,30 @@ a user-local init.lisp change, or a private image commit.
   safe multiline reconstruction comments, or GitHub workflow waits cease to be
   recurring work.
 
+** Persistent transient provider recovery
+
+- Problem: A transient =USOCKET:NS-TRY-AGAIN-ERROR= escaped retry handling when
+  DNS failed during credential refresh or request construction, before response
+  stream opening. The shared provider retry ladder also propagated retryable
+  failures after the finite 1, 2, 4, 8, and 16 second waits, ending active goals
+  and requiring manual =resume= operations.
+- Behavior: Provider transport normalization now wraps the complete logical
+  attempt, including credential acquisition and request construction. DNS,
+  socket, pre-response TLS syscall, and provider retryable conditions preserve
+  the in-flight turn and retry indefinitely with exponential jitter. Delays
+  begin near one second and cap in the 40 to 60 second range. Authentication and
+  definitive TLS failures retain bounded or immediate failure behavior.
+- Scope and location: private image commit
+  =01cf13cf-93f8-4565-a45a-5357813a60af=, private Git commit
+  =4f054957c7451ab64ffa6cb979ef15ff37a8506e=.
+- Verification: clean-process replay passed. Focused active-image exercises
+  verified successful continuation after three retryable provider conditions,
+  bounded jitter delays, rolling retry presentation, and normalization of
+  =USOCKET:NS-TRY-AGAIN-ERROR= into =PROVIDER-RETRYABLE-ERROR=.
+- Removal condition: tracked Autolith normalizes the complete provider attempt
+  and persistently retries transient provider failures with equivalent capped
+  backoff, or this private replay is incorporated into a rebuilt active image.
+
 ** Lisp worker reader boundary
 
 - Problem: The worker protocol disabled =*read-eval*= while reading untrusted
