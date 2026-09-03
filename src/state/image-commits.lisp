@@ -1167,6 +1167,7 @@ the actual proposed sources instead. PATHNAME only labels failures."
            (identifier (make-identifier))
            (mutation-identifiers
              (mapcar (lambda (record) (getf (rest record) :id)) records)))
+      (tuning-experiment-assert-settled configuration "self.commit")
       (unless records
         (error 'image-commit-error
                :message "The active image has no reconstructible mutations to commit."

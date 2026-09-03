@@ -668,6 +668,8 @@ protocol."
                :message "self.redefine accepts one complete supported definition."
                :tool-name "self.redefine"
                :pathname nil))
+      (tuning-experiment-assert-mutation-installable configuration
+                                                       "self.redefine")
       (let ((identifier (make-identifier))
             (key (definition-key definition))
             (previous (self-previous-definition configuration definition))
@@ -762,6 +764,7 @@ protocol."
                           (sbcl-worker-render-value (symbol-value symbol))))
            (previous-bound-p (boundp symbol))
            (previous-value (and (boundp symbol) (symbol-value symbol))))
+       (tuning-experiment-assert-mutation-installable configuration "self.set")
       (mutation-journal-append
        configuration
        (list :mutation

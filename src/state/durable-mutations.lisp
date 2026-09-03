@@ -400,6 +400,8 @@ Historical journals may name tracked src/ files or retired overlay paths."
              (tool-argument arguments "definition" :required t))
            (configuration (tool-context-configuration context))
            (definition (self-read-form definition-source :read-eval nil)))
+      (tuning-experiment-assert-settled
+       configuration "self.persist-definition")
       (unless (definition-form-p definition)
         (error 'source-mutation-error
                :message "The durable source is not a supported complete definition."
