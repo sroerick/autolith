@@ -539,6 +539,10 @@ parent, and borrowed capabilities are released at terminal state."))
 (defclass task-job-tool (task-orchestrator-tool) nil
   (:documentation "Inspect, wait for, or cancel child and tool execution jobs."))
 
+(defmethod tool-storm-guard-exempt-p ((tool task-agents-tool))
+  "Exempt child-role discovery from the mutating-call storm guard."
+  t)
+
 (-> task-run-tool-orchestrator (task-run-tool) task-orchestrator)
 (defun task-run-tool-orchestrator (tool)
   "Return TOOL's shared task orchestrator."
@@ -557,6 +561,11 @@ parent, and borrowed capabilities are released at terminal state."))
 (defclass task-yield-tool (tool) nil
   (:documentation
    "Submit the required terminal result from a child agent."))
+
+
+(defmethod tool-storm-guard-exempt-p ((tool task-yield-tool))
+  "Exempt the required terminal child yield from the mutating-call storm guard."
+  t)
 
 (defmethod tool-execution-policy ((tool task-yield-tool))
   "Execute the terminal child yield without concurrent sibling calls."

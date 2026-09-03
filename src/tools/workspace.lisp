@@ -20,6 +20,10 @@
   "Permit native workspace image inspection inside child agents."
   t)
 
+(defmethod tool-storm-guard-exempt-p ((tool fs-view-image-tool))
+  "Exempt local image inspection from the mutating-call storm guard."
+  t)
+
 
 (defmethod tool-child-safe-p ((tool shell-run-tool))
   "Permit authorized workspace commands inside child agents."

@@ -43,6 +43,10 @@
   "Permit isolated indexed workspace searches inside child agents."
   t)
 
+(defmethod tool-storm-guard-exempt-p ((tool search-tool))
+  "Exempt indexed workspace discovery from the mutating-call storm guard."
+  t)
+
 (defparameter *fff-library-file-name*
   #+darwin "libfff_c.dylib"
   #-darwin "libfff_c.so"

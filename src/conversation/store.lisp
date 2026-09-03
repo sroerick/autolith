@@ -1746,6 +1746,7 @@ copied."
           (:image-attachments list)
           (:content-blocks list)
           (:success-p boolean)
+          (:category (member :success :failure :neutral :mechanics))
           (:cpu-microseconds (option (integer 0)))
           (:real-microseconds (option (integer 0)))
           (:persistence tool-conversation-persistence))
@@ -1753,8 +1754,9 @@ copied."
 (defun conversation-append-tool-result
     (conversation call-id
      &key tool-name output image-attachments content-blocks success-p
+       (category (if success-p ':success ':failure))
        cpu-microseconds real-microseconds (persistence ':durable))
-  "Append one tool OUTPUT, optional ordered content, timing, and PERSISTENCE."
+  "Append one categorized tool OUTPUT, optional content, timing, and PERSISTENCE."
   (when (and image-attachments content-blocks)
     (error 'conversation-invariant-error
            :message
@@ -1805,11 +1807,16 @@ copied."
                 (conversation-append-record
                  conversation
                  (append
-                  (list :tool-result
-                        :call-id call-id
-                        :tool tool-name
-                        :status (if success-p :ok :error)
-                        :output output)
+                   (list :tool-result
+                         :call-id call-id
+                         :tool tool-name
+                         :status (ecase category
+                                   (:success ':ok)
+                                   (:failure ':error)
+                                   (:neutral ':neutral)
+                                   (:mechanics ':mechanics))
+                         :category category
+                         :output output)
                   (when attachments
                     (list
                      :content-blocks

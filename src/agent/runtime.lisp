@@ -132,6 +132,18 @@
 (defparameter *agent-maximum-concurrent-tool-workers* 8
   "Maximum worker threads executing independent calls from one provider batch.")
 
+(defparameter *agent-tool-storm-identical-call-limit* 3
+  "Withhold this many matching non-read-only calls within one user turn.")
+
+(defparameter *agent-tool-storm-signature-window-size* 8
+  "Maximum recent non-read-only call signatures retained by the storm guard.")
+
+(defstruct (agent-tool-storm-state
+            (:constructor agent-tool-storm-state-create ()))
+  "Per-user-turn state for repeated and oscillating tool-call detection."
+  (signatures nil :type list)
+  (consecutive-withholds 0 :type (integer 0)))
+
 
 ;;;; -- Agent Conditions --
 
@@ -648,16 +660,93 @@
 
 (-> agent--sanitize-tool-call-arguments (json-object) (option string))
 (defun agent--sanitize-tool-call-arguments (call)
-  "Make CALL replayable and return a failure message for malformed arguments."
+  "Make CALL replayable and return a mechanics message for malformed arguments."
   (unless (json-object-source-p (json-get call "arguments"))
     (setf (gethash "arguments" call) "{}")
     (format nil
             "Tool ~A was not executed because the provider returned arguments that were not a valid JSON object."
             (function-call-canonical-name call))))
 
-(-> agent--tool-call-plans (agent list) list)
-(defun agent--tool-call-plans (agent calls)
-  "Return CALLS annotated with tools, persistence, and round-trip barriers."
+(-> agent--tool-signature-value (t) t)
+(defun agent--tool-signature-value (value)
+  "Return VALUE in a deterministic tree suitable for EQUALP call comparison."
+  (cond
+    ((json-object-p value)
+     (sort
+      (loop for key being the hash-keys of value
+            using (hash-value child)
+            collect (cons key (agent--tool-signature-value child)))
+      #'string<
+      :key #'first))
+    ((vectorp value)
+     (map 'list #'agent--tool-signature-value value))
+    (t
+     value)))
+
+(-> agent--tool-call-signature (json-object) (option list))
+(defun agent--tool-call-signature (call)
+  "Return CALL's canonical tool and argument signature, or NIL when malformed."
+  (handler-case
+      (let ((arguments (json-decode (json-get call "arguments"))))
+        (when (json-object-p arguments)
+          (list (function-call-canonical-name call)
+                (agent--tool-signature-value arguments))))
+    (error ()
+      nil)))
+
+(-> agent--tool-storm-note-call
+    (agent-tool-storm-state list string)
+    (option string))
+(defun agent--tool-storm-note-call (state signature tool-name)
+  "Record SIGNATURE in STATE and return a mechanics message when it storms."
+  (let* ((history (agent-tool-storm-state-signatures state))
+         (identical-p
+           (>= (count signature history :test #'equalp)
+               (1- *agent-tool-storm-identical-call-limit*)))
+         (history-length (length history))
+         (oscillation-p
+           (and (>= history-length 3)
+                (let ((a (nth (- history-length 3) history))
+                      (b (nth (- history-length 2) history))
+                      (c (nth (1- history-length) history)))
+                  (and (equalp a c)
+                       (equalp signature b)
+                       (not (equalp a b))))))
+         (reason
+           (cond
+             (identical-p
+              (format nil
+                      "Autolith withheld repeated call ~A after ~D matching calls this turn. Reassess the approach before choosing another mutating action."
+                      tool-name
+                      (1- *agent-tool-storm-identical-call-limit*)))
+             (oscillation-p
+              (format nil
+                      "Autolith withheld call ~A because the recent mutating calls formed an A-B-A-B oscillation. Reassess the approach before retrying."
+                      tool-name)))))
+    (setf history (append history (list signature)))
+    (when (> (length history) *agent-tool-storm-signature-window-size*)
+      (setf history
+            (subseq history
+                    (- (length history)
+                       *agent-tool-storm-signature-window-size*))))
+    (setf (agent-tool-storm-state-signatures state) history
+          (agent-tool-storm-state-consecutive-withholds state)
+          (if reason
+              (1+ (agent-tool-storm-state-consecutive-withholds state))
+              0))
+    (when (and reason
+               (> (agent-tool-storm-state-consecutive-withholds state) 1))
+      (setf reason
+            (format nil "~A This is the ~:R consecutive withheld call."
+                    reason
+                    (agent-tool-storm-state-consecutive-withholds state))))
+    reason))
+
+(-> agent--tool-call-plans
+    (agent list &key (:storm-state (option agent-tool-storm-state)))
+    list)
+(defun agent--tool-call-plans (agent calls &key storm-state)
+  "Return CALLS annotated with tools, persistence, barriers, and storm guards."
   (let ((barrier-seen-p nil)
         (plans nil)
         (registry (agent-tool-registry agent)))
@@ -671,6 +760,17 @@
                     (non-empty-string-p name)
                     (tool-registry-find registry namespace name)))
              (blocked-p barrier-seen-p)
+             (signature
+               (and storm-state
+                    tool
+                    (not blocked-p)
+                    (null argument-error)
+                    (not (tool-storm-guard-exempt-p tool))
+                    (agent--tool-call-signature call)))
+             (withheld-reason
+               (and signature
+                    (agent--tool-storm-note-call
+                     storm-state signature (function-call-canonical-name call))))
              (persistence
                (if blocked-p
                    ':next-response
@@ -681,9 +781,11 @@
                     :tool tool
                     :persistence persistence
                     :blocked-p blocked-p
-                    :argument-error argument-error)
+                    :argument-error argument-error
+                    :withheld-reason withheld-reason)
               plans)
         (when (and tool
+                   (null withheld-reason)
                    (tool-provider-round-trip-barrier-p tool))
           (setf barrier-seen-p t))))
     (nreverse plans)))
@@ -835,12 +937,17 @@
          (condition nil))
     (handler-case
         (setf result
-              (if argument-error
-                  (tool-failure argument-error :code ':invalid-arguments)
-                  (tool-registry-execute-call
-                   (agent-tool-registry agent)
-                   call
-                   context)))
+              (cond
+                ((getf plan :withheld-reason)
+                 (tool-mechanics (getf plan :withheld-reason)
+                                 :code ':storm-withheld))
+                (argument-error
+                 (tool-mechanics argument-error :code ':invalid-arguments))
+                (t
+                 (tool-registry-execute-call
+                  (agent-tool-registry agent)
+                  call
+                  context))))
       (serious-condition (failure)
         (setf condition failure)))
     (list
@@ -876,6 +983,7 @@
          :output (tool-result-content result)
          :content-blocks (tool-result-content-blocks result)
          :success-p (tool-result-success-p result)
+          :category (tool-result-category result)
          :cpu-microseconds (getf execution :cpu-microseconds)
          :real-microseconds (getf execution :real-microseconds)
          :persistence (getf plan :persistence))
@@ -886,6 +994,7 @@
                :call-id call-id
                :tool tool-name
                :success-p (tool-result-success-p result)
+                :category (tool-result-category result)
                :cpu-microseconds (getf execution :cpu-microseconds)
                :real-microseconds (getf execution :real-microseconds)
                :output (tool-result-content result)
@@ -1176,6 +1285,7 @@ durable summary remains a handoff for another provider family."
      &key goal-context (tools-p t) tool-allowlist (tool-restriction-p nil))
   "Run provider and optional tool rounds until AGENT's turn completes."
   (let ((seen-call-identifiers (make-hash-table :test #'equal))
+        (storm-state (agent-tool-storm-state-create))
         (request-number 0)
         (tool-rounds 0)
         (tool-calls 0))
@@ -1266,7 +1376,8 @@ durable summary remains a handoff for another provider family."
          calls
          :seen-call-identifiers seen-call-identifiers
          :request-number request-number)
-        (let ((call-plans (agent--tool-call-plans agent calls)))
+        (let ((call-plans
+                (agent--tool-call-plans agent calls :storm-state storm-state)))
           (agent--persist-provider-result
            agent
            result

@@ -1950,6 +1950,18 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
   ()
   (:documentation "Refresh MCP discovery and provider tool schemas."))
 
+(defmethod tool-storm-guard-exempt-p ((tool mcp-resource-tool))
+  "Exempt MCP discovery and resource reads from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool mcp-refresh-tool))
+  "Guard MCP registry refresh because it mutates active discovery state."
+  nil)
+
+(defmethod tool-storm-guard-exempt-p ((tool mcp-provider-tool))
+  "Honor the user's trusted read-only classification for one MCP provider tool."
+  (mcp-provider-tool-trusted-read-only-p tool))
+
 (defmethod tool-authorization-identity-fields ((tool mcp-provider-tool))
   "Identify TOOL by its configured server and exact server-advertised name."
   (list

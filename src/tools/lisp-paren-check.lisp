@@ -12,6 +12,10 @@
   (declare (ignore tool))
   t)
 
+(defmethod tool-storm-guard-exempt-p ((tool lisp-paren-check-tool))
+  "Exempt bounded source delimiter checks from the mutating-call storm guard."
+  t)
+
 (defmethod tool-compact-result-visible-p ((tool lisp-paren-check-tool))
   "Keep successful explicit source checks visible in compact presentation."
   (declare (ignore tool))

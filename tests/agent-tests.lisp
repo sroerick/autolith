@@ -145,6 +145,15 @@
    (format nil "echo: ~A"
            (tool-argument arguments "value" :required t))))
 
+
+(defclass agent-test-read-only-echo-tool (agent-test-echo-tool)
+  ()
+  (:documentation "A deterministic echo tool exempt from mutating-call storm guards."))
+
+(defmethod tool-storm-guard-exempt-p ((tool agent-test-read-only-echo-tool))
+  "Exempt the deterministic read-only echo tool from storm detection."
+  t)
+
 (defclass agent-test-concurrency-state ()
   ((lock
     :initform (make-lock "Autolith agent test tool state")
@@ -278,6 +287,25 @@
       :namespace "test"
       :name "echo"
       :description "Echo a test string."
+      :parameters
+      (tool-object-schema
+       (json-object
+        "value" (tool-string-property "The value to echo."))
+       '("value"))))
+    registry))
+
+
+(-> agent-test-read-only-registry () tool-registry)
+(defun agent-test-read-only-registry ()
+  "Return a registry containing one storm-guard-exempt echo tool."
+  (let ((registry (make-instance 'tool-registry)))
+    (tool-registry-register
+     registry
+     (make-instance
+      'agent-test-read-only-echo-tool
+      :namespace "test"
+      :name "inspect"
+      :description "Echo a read-only test string."
       :parameters
       (tool-object-schema
        (json-object
@@ -1262,6 +1290,164 @@
                  (test-assert
                   (string= (json-get provider-call "arguments") "{}")
                   "recovered legacy history is replayable on the next request")))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
+(-> test-agent-tool-storm-guard () null)
+(defun test-agent-tool-storm-guard ()
+  "Test canonical repetition and oscillation guards while read-only calls remain exempt."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (progn
+           (let ((left
+                   (agent-test-call
+                    :arguments
+                    "{\"second\":1.0,\"first\":{\"b\":2,\"a\":1}}"))
+                 (right
+                   (agent-test-call
+                    :arguments
+                    "{\"first\":{\"a\":1.0,\"b\":2},\"second\":1}")))
+             (test-assert
+              (equalp (agent--tool-call-signature left)
+                      (agent--tool-call-signature right))
+              "storm signatures canonicalize object order and numeric representation"))
+           (flet ((tool-result-records (conversation)
+                    (remove-if-not
+                     (lambda (record)
+                       (and (listp record)
+                            (eq (first record) ':tool-result)))
+                     (conversation--read-records
+                      (conversation-pathname conversation)))))
+             (let* ((conversation
+                      (conversation-create
+                       configuration :identifier "tool-storm-repetition"))
+                    (provider
+                      (make-instance
+                       'scripted-provider
+                       :results
+                       (list
+                        (agent-test-result
+                         "repeat-1"
+                         (list (agent-test-call
+                                :call-id "repeat-1"
+                                :arguments "{\"value\":\"same\"}")))
+                        (agent-test-result
+                         "repeat-2"
+                         (list (agent-test-call
+                                :call-id "repeat-2"
+                                :arguments "{\"value\":\"same\"}")))
+                        (agent-test-result
+                         "repeat-3"
+                         (list (agent-test-call
+                                :call-id "repeat-3"
+                                :arguments "{\"value\":\"same\"}")))
+                         (agent-test-result
+                          "repeat-4"
+                          (list (agent-test-call
+                                 :call-id "repeat-4"
+                                 :arguments "{\"value\":\"same\"}")))
+                        (agent-test-result
+                         "repeat-done"
+                         (list (agent-test-message "repetition handled"))))))
+                    (agent
+                      (agent-create
+                       :configuration configuration
+                       :provider provider
+                       :conversation conversation
+                       :tool-registry (agent-test-registry)
+                       :worker ':unused)))
+               (agent-run-user-turn agent "repeat a mutating call")
+               (let ((outputs (agent-test-tool-outputs conversation))
+                     (records (tool-result-records conversation)))
+                 (test-assert
+                  (equal (subseq outputs 0 2)
+                         '("echo: same" "echo: same"))
+                  "the first two identical mutating calls execute")
+                  (test-assert
+                   (and (= (length outputs) 4)
+                        (search "withheld repeated call" (third outputs)))
+                   "the third identical mutating call is withheld")
+                  (test-assert
+                   (search "second consecutive withheld call" (fourth outputs))
+                   "consecutive withholds escalate their model-visible diagnosis")
+                  (test-assert
+                   (equal (mapcar (lambda (record)
+                                    (getf (rest record) :category))
+                                  records)
+                          '(:success :success :mechanics :mechanics))
+                   "withheld calls persist as mechanics rather than failures")))
+             (let* ((conversation
+                      (conversation-create
+                       configuration :identifier "tool-storm-oscillation"))
+                    (arguments
+                      '("{\"value\":\"a\"}"
+                        "{\"value\":\"b\"}"
+                        "{\"value\":\"a\"}"
+                        "{\"value\":\"b\"}"))
+                    (provider
+                      (make-instance
+                       'scripted-provider
+                       :results
+                       (append
+                        (loop for source in arguments
+                              for index from 1
+                              collect
+                              (agent-test-result
+                               (format nil "oscillate-~D" index)
+                               (list (agent-test-call
+                                      :call-id (format nil "oscillate-~D" index)
+                                      :arguments source))))
+                        (list
+                         (agent-test-result
+                          "oscillate-done"
+                          (list (agent-test-message "oscillation handled")))))))
+                    (agent
+                      (agent-create
+                       :configuration configuration
+                       :provider provider
+                       :conversation conversation
+                       :tool-registry (agent-test-registry)
+                       :worker ':unused)))
+               (agent-run-user-turn agent "oscillate between mutating calls")
+               (let ((outputs (agent-test-tool-outputs conversation)))
+                 (test-assert
+                  (and (= (length outputs) 4)
+                       (search "A-B-A-B oscillation" (fourth outputs)))
+                  "the fourth alternating mutating call is withheld")))
+             (let* ((conversation
+                      (conversation-create
+                       configuration :identifier "tool-storm-read-only"))
+                    (provider
+                      (make-instance
+                       'scripted-provider
+                       :results
+                       (append
+                        (loop for index from 1 to 4
+                              collect
+                              (agent-test-result
+                               (format nil "read-only-~D" index)
+                               (list (agent-test-call
+                                      :call-id (format nil "read-only-~D" index)
+                                      :name "inspect"
+                                      :arguments "{\"value\":\"same\"}"))))
+                        (list
+                         (agent-test-result
+                          "read-only-done"
+                          (list (agent-test-message "inspection complete")))))))
+                    (agent
+                      (agent-create
+                       :configuration configuration
+                       :provider provider
+                       :conversation conversation
+                       :tool-registry (agent-test-read-only-registry)
+                       :worker ':unused)))
+               (agent-run-user-turn agent "repeat a read-only call")
+               (test-assert
+                (equal (agent-test-tool-outputs conversation)
+                       '("echo: same" "echo: same" "echo: same" "echo: same"))
+                "repeated read-only calls remain executable"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2463,6 +2649,7 @@
   (test-agent-provider-request-limit)
   (test-agent-invalid-call-history)
   (test-agent-malformed-tool-arguments)
+  (test-agent-tool-storm-guard)
   (test-agent-tool-failures)
   (test-agent-provider-failure-persistence)
   (test-agent-incomplete-provider-failure-persistence)

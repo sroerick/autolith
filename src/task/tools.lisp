@@ -251,6 +251,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
   (make-instance 'task-tool-result
                  :content content
                  :success-p (and success-p t)
+                 :category (if success-p ':success ':failure)
                  :details details))
 
 (-> task--validate-tool-arguments (t list string) null)

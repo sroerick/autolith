@@ -14,6 +14,10 @@
   ()
   (:documentation "A tool replacing the current workspace plan."))
 
+(defmethod tool-storm-guard-exempt-p ((tool plan-list-tool))
+  "Exempt current-plan inspection from the mutating-call storm guard."
+  t)
+
 (defmethod tool-execution-policy ((tool plan-update-tool))
   "Serialize plan replacement against the rest of one provider batch."
   (declare (ignore tool))

@@ -349,18 +349,32 @@
     :type list
     :documentation
     "Ordered provider-visible strings and image attachments, when multimodal.")
-   (success-p
-    :initarg :success-p
-    :reader tool-result-success-p
-    :type boolean
-    :documentation "True when the tool operation succeeded.")
-   (error-code
-    :initarg :error-code
-    :initform nil
-    :reader tool-result-error-code
-    :type (option keyword)
-    :documentation "The failure's machine-readable code, when one exists."))
+    (success-p
+     :initarg :success-p
+     :reader tool-result-success-p
+     :type boolean
+     :documentation "True when the tool operation succeeded.")
+    (category
+     :initarg :category
+     :reader tool-result-category
+     :type (member :success :failure :neutral :mechanics)
+     :documentation "The semantic outcome category independent of progress or retry policy.")
+    (error-code
+     :initarg :error-code
+     :initform nil
+     :reader tool-result-error-code
+     :type (option keyword)
+     :documentation "The failure's machine-readable code, when one exists."))
   (:documentation "The model-visible outcome of exactly one tool call."))
+
+
+(defmethod initialize-instance :after ((result tool-result) &key)
+  "Derive a compatible default outcome category for specialized result classes."
+  (unless (slot-boundp result 'category)
+    (setf (slot-value result 'category)
+          (if (tool-result-success-p result)
+              ':success
+              ':failure))))
 
 (defgeneric tool-result-details (result)
   (:documentation "Return RESULT's machine-readable details, or NIL when plain.")
@@ -420,7 +434,8 @@
                              *tool-result-overflow-function*)
                    :image-attachments attachments
                    :content-blocks blocks
-                   :success-p t)))
+                   :success-p t
+                   :category ':success)))
 
 (defvar *tool-result-overflow-function* nil
   "Function durably spilling one complete oversized tool result, or NIL.
@@ -449,6 +464,18 @@ spilling is unavailable, in which case the tail is discarded as before.")
                            content
                            :overflow-uri-function *tool-result-overflow-function*)
                  :success-p nil
+                 :category ':failure
+                 :error-code code))
+
+(-> tool-mechanics (t &key (:code (option keyword))) tool-result)
+(defun tool-mechanics (content &key code)
+  "Return a bounded non-executed tool result caused by call mechanics."
+  (make-instance 'tool-result
+                 :content (bounded-string
+                           content
+                           :overflow-uri-function *tool-result-overflow-function*)
+                 :success-p nil
+                 :category ':mechanics
                  :error-code code))
 
 (-> tool-execute (tool tool-context json-object) tool-result)
@@ -476,6 +503,51 @@ spilling is unavailable, in which case the tail is discarded as before.")
 
 (defmethod tool-child-safe-p ((tool lisp-tool))
   "Permit disposable Lisp-worker tools inside child agents."
+  t)
+
+(-> tool-storm-guard-exempt-p (tool) boolean)
+(defgeneric tool-storm-guard-exempt-p (tool)
+  (:documentation
+   "Return true when repeated calls to TOOL must remain available to the model."))
+
+(defmethod tool-storm-guard-exempt-p ((tool tool))
+  "Guard ordinary tools against repeated and oscillating call storms."
+  nil)
+
+(defmethod tool-storm-guard-exempt-p ((tool resource-read-tool))
+  "Exempt revision-gated resource reads from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool web-run-tool))
+  "Exempt read-only web lookup from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool lisp-describe-tool))
+  "Exempt disposable-worker description from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool lisp-source-tool))
+  "Exempt source inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool lisp-repls-tool))
+  "Exempt worker-pool inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool lisp-images-tool))
+  "Exempt saved-worker image inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool self-status-tool))
+  "Exempt active-image status inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool self-diff-tool))
+  "Exempt active-image diff inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool self-generations-tool))
+  "Exempt generation inspection from the mutating-call storm guard."
   t)
 
 (-> tool-conversation-persistence (tool) tool-conversation-persistence)
