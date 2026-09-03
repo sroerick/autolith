@@ -2329,6 +2329,22 @@ are forwarded to TERMINAL-UI-SELECT."
    (skill-status (application-configuration application)))
   ':continue)
 
+(-> application--tool-capability-change-entry (list list) (option list))
+(defun application--tool-capability-change-entry (added-tools removed-tools)
+  "Return a concise transcript entry for a changed runtime tool-name set."
+  (when (or added-tools removed-tools)
+    (list
+     (terminal-span ':hint "∙ tools added: ")
+     (terminal-span (if added-tools ':success ':dim)
+                    (if added-tools
+                        (format nil "~{~A~^, ~}" added-tools)
+                        "none"))
+     (terminal-span ':hint "; removed: ")
+     (terminal-span (if removed-tools ':failure ':dim)
+                    (if removed-tools
+                        (format nil "~{~A~^, ~}" removed-tools)
+                        "none")))))
+
 (define-application-command application--builtin-mcp-command
     (:name "/mcp"
      :description "show or refresh configured MCP servers"
@@ -2338,7 +2354,9 @@ are forwarded to TERMINAL-UI-SELECT."
      :callable t
      :static-options ("refresh" "reload"))
     (application &optional mode)
-  (let ((mode (and mode (string-downcase mode))))
+  (let ((mode (and mode (string-downcase mode)))
+        (added-tools nil)
+        (removed-tools nil))
     (cond
       ((null mode)
        nil)
@@ -2346,10 +2364,16 @@ are forwarded to TERMINAL-UI-SELECT."
        (mcp-tool-registry-refresh
         (application-tool-registry application)))
       ((string= mode "reload")
-       (application-reload-mcp application))
+       (multiple-value-setq (added-tools removed-tools)
+         (application-reload-mcp application)))
       (t
        (error 'configuration-error
               :message "Usage: /mcp, /mcp refresh, or /mcp reload.")))
+    (let ((change-entry
+            (application--tool-capability-change-entry
+             added-tools removed-tools)))
+      (when change-entry
+        (application-present application change-entry)))
     (let ((manager
             (mcp-tool-registry-manager
              (application-tool-registry application))))

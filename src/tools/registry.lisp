@@ -704,6 +704,27 @@ spilling is unavailable, in which case the tail is discarded as before.")
   "Return a fresh list of REGISTRY's tools in presentation order."
   (coerce (ordered-map-values (tool-registry-tool-map registry)) 'list))
 
+(-> tool-registry-canonical-names (tool-registry) list)
+(defun tool-registry-canonical-names (registry)
+  "Return REGISTRY's canonical tool names in deterministic lexical order."
+  (sort (mapcar #'tool-canonical-name (tool-registry-tools registry))
+        #'string<))
+
+(-> tool-registry-capability-diff
+    (tool-registry tool-registry)
+    (values list list))
+(defun tool-registry-capability-diff (old-registry new-registry)
+  "Return deterministic added and removed tool names from OLD-REGISTRY to NEW-REGISTRY."
+  (let ((old-names (tool-registry-canonical-names old-registry))
+        (new-names (tool-registry-canonical-names new-registry)))
+    (values
+     (remove-if (lambda (name)
+                  (member name old-names :test #'string=))
+                new-names)
+     (remove-if (lambda (name)
+                  (member name new-names :test #'string=))
+                old-names))))
+
 (-> tool-runtime-resume (tool tool-registry) null)
 (defgeneric tool-runtime-resume (tool registry)
   (:documentation

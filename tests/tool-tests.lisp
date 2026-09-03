@@ -266,6 +266,30 @@
                (test-assert
                 (null (tool-registry-find immutable-registry "self" name))
                 (format nil "immutable mode omits self.~A" name))))
+            (let ((old-registry (make-instance 'tool-registry))
+                  (new-registry (make-instance 'tool-registry)))
+              (labels ((register-name (candidate canonical-name)
+                         (let ((separator (position #\. canonical-name)))
+                           (tool-registry-register
+                            candidate
+                            (make-instance
+                             'tool
+                             :namespace (subseq canonical-name 0 separator)
+                             :name (subseq canonical-name (1+ separator))
+                              :description "Tool capability diff test."
+                              :parameters (tool-object-schema (json-object) nil))))))
+                (dolist (name '("z.last" "a.keep" "m.remove"))
+                  (register-name old-registry name))
+                (dolist (name '("y.add" "a.keep" "b.add"))
+                  (register-name new-registry name)))
+              (multiple-value-bind (added removed)
+                  (tool-registry-capability-diff old-registry new-registry)
+                (test-assert
+                 (equal added '("b.add" "y.add"))
+                 "tool registry diffs additions in deterministic lexical order")
+                (test-assert
+                 (equal removed '("m.remove" "z.last"))
+                 "tool registry diffs removals in deterministic lexical order")))
            (test-assert
             (and (tool-registry-find registry "resource" "read")
                  (tool-registry-find registry "resource" "edit")

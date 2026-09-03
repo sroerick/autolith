@@ -684,9 +684,9 @@ model's effort choice to CONFIGURATION--CLONE."
                      (configuration-model configuration)))))
   nil)
 
-(-> application-reload-mcp (application) null)
+(-> application-reload-mcp (application) (values list list))
 (defun application-reload-mcp (application)
-  "Reload native extensions and user init registrations into a fresh runtime."
+  "Reload extensions, returning deterministic added and removed tool names."
   (let* ((configuration (application-configuration application))
          (extension-registry-snapshot nil)
          (old-configuration configuration)
@@ -700,6 +700,8 @@ model's effort choice to CONFIGURATION--CLONE."
          (new-provider nil)
          (new-registry nil)
          (new-agent nil)
+         (added-tools nil)
+         (removed-tools nil)
          (application-swapped-p nil)
          (retirement-started-p nil)
          (presentation-disconnected-p nil)
@@ -728,6 +730,8 @@ model's effort choice to CONFIGURATION--CLONE."
                         (application-reasoning-traces-p application))
                        new-registry
                        (application--create-tool-registry configuration))
+                 (multiple-value-setq (added-tools removed-tools)
+                   (tool-registry-capability-diff old-registry new-registry))
                  (setf new-agent
                        (agent-create
                         :configuration configuration
@@ -791,8 +795,8 @@ model's effort choice to CONFIGURATION--CLONE."
            :stage failure-stage
            :cause failure
            :rollback-causes rollback-failures)
-          (error failure))))
-  nil)
+          (error failure)))
+    (values added-tools removed-tools)))
 
 (-> application--conversation-lease-select
     ((option application) configuration string)

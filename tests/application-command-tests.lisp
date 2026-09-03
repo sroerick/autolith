@@ -1179,6 +1179,55 @@
       (terminal-ui-stop ui)))
   nil)
 
+(-> test-application-mcp-reload-capability-change () null)
+(defun test-application-mcp-reload-capability-change ()
+  "Test /mcp reload reports only a changed deterministic tool-name set."
+  (let ((application
+          (make-instance 'application
+                         :tool-registry (make-instance 'tool-registry)))
+        (reload-count 0)
+        (presented nil))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'application-reload-mcp
+       (lambda (candidate)
+         (declare (ignore candidate))
+         (if (= (incf reload-count) 1)
+             (values '("alpha.add" "zeta.add") '("beta.remove"))
+             (values nil nil))))
+      (list
+       'application-present
+       (lambda (candidate entry)
+         (test-assert (eq candidate application)
+                      "/mcp presents capability changes through its application")
+         (push entry presented)
+         t)))
+     (lambda ()
+       (test-assert
+        (eq (application--builtin-mcp-command application "reload") ':continue)
+        "/mcp reload completes after reporting capability changes")
+       (let* ((entries (nreverse presented))
+              (change-entry (first entries)))
+         (test-assert
+          (and (= (length entries) 2)
+               (listp change-entry)
+               (string=
+                (apply #'concatenate
+                       'string
+                       (mapcar #'terminal-span-text change-entry))
+                "∙ tools added: alpha.add, zeta.add; removed: beta.remove")
+               (equal (mapcar #'terminal-span-style change-entry)
+                      '(:hint :success :hint :failure))
+               (string= (second entries) "No MCP servers are configured."))
+          "/mcp reload renders one deterministic added and removed tool chip"))
+       (setf presented nil)
+       (application--builtin-mcp-command application "reload")
+       (test-assert
+        (equal presented '("No MCP servers are configured."))
+        "/mcp reload omits the capability chip when the tool-name set is unchanged")))
+  nil))
+
 (-> run-application-command-tests () boolean)
 (defun run-application-command-tests ()
   "Run application command protocol tests and return true."
@@ -1189,6 +1238,7 @@
   (test-built-in-application-command-policies)
   (test-built-in-application-command-calls)
   (test-application-codex-fast-mode-command)
+  (test-application-mcp-reload-capability-change)
   (test-terminal-authentication-streams)
   (test-application-authentication-command)
   t)
