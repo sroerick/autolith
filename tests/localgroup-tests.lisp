@@ -121,6 +121,47 @@
         (join-thread picker-thread))))
   nil)
 
+(-> test-localgroup-remote-detach-never-pauses-reader () null)
+(defun test-localgroup-remote-detach-never-pauses-reader ()
+  "Test remote detach releases control without trying to join the input reader."
+  (let* ((terminal (localgroup-terminal-create))
+         (application
+           (make-instance 'application
+                          :ui (terminal-ui-create :terminal terminal)))
+         (session
+           (make-instance 'localgroup-session
+                          :application application
+                          :identifier "remote-detach"
+                          :token "token"
+                          :listener nil
+                          :port 1
+                          :registry-pathname #p"remote-detach.sexp"
+                          :created-at (local-time:now)))
+         (attachment
+           (make-instance 'localgroup-attachment
+                          :socket nil
+                          :stream (make-broadcast-stream)
+                          :mode ':control)))
+    (multiple-value-bind (attached-p released-p)
+        (localgroup-terminal-attach
+         terminal attachment
+         :rows 24 :columns 80 :styled-p nil :session-id "remote-detach")
+      (declare (ignore released-p))
+      (test-assert attached-p "the remote detach test attaches its controller"))
+    (test-call-with-function-replacements
+     (list
+      (list 'application-input-controller-call-with-reader-paused
+            (lambda (&rest arguments)
+              (declare (ignore arguments))
+              (error "Remote detach tried to pause the responsive reader."))))
+     (lambda ()
+       (let ((result (localgroup--detach-terminal session)))
+         (test-assert
+          (and (not (getf (rest result) :scheduled-p))
+               (eq (localgroup-terminal-attachment-kind terminal) ':detached))
+          "remote detach releases the controlling client immediately"))))
+  nil))
+
 (-> test-localgroup-blocking-read-lifecycle () null)
 (defun test-localgroup-blocking-read-lifecycle ()
   "Test relay ownership transitions wake or preserve a blocking semantic read."

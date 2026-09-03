@@ -407,6 +407,7 @@
     (run-terminal-tests)
     (test-localgroup-terminal-restart)
     (test-localgroup-picker-waits-for-relayed-input)
+    (test-localgroup-remote-detach-never-pauses-reader)
     (test-localgroup-blocking-read-lifecycle)
     (test-localgroup-detached-terminal-lifecycle)
     (test-localgroup-protocol)

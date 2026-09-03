@@ -600,7 +600,6 @@ forced shutdown does; the conversation stays resumable."
 (defun localgroup--detach-terminal (session)
   "Release SESSION's current controlling terminal or schedule foreground detach."
   (let* ((application (localgroup-session-application session))
-         (controller (application-input-controller application))
          (terminal (localgroup--terminal session)))
     (if (eq (localgroup-terminal-attachment-kind terminal) ':foreground)
         (application-localgroup-request-handoff application ':detach)
@@ -609,10 +608,10 @@ forced shutdown does; the conversation stays resumable."
           ;; attachment thread observing the closure sees a deliberate
           ;; release rather than a vanished client.
           (localgroup--mark-explicit-detach session)
-          (application-input-controller-call-with-reader-paused
-           controller
-           (lambda ()
-             (localgroup-terminal-release-control terminal)))
+          ;; The terminal protocol is internally synchronized. Pausing the
+          ;; responsive reader here deadlocks or rejects /detach when that
+          ;; reader is the thread executing the command.
+          (localgroup-terminal-release-control terminal)
           (list :ok :operation :detach
                 :scheduled-p nil
                 :session-id (localgroup-session-identifier session))))))
