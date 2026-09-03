@@ -402,6 +402,7 @@
     (test-task-retention-and-admission)
     (test-task-evicted-identity-retention)
     (test-task-live-activity-snapshots)
+    (test-task-cumulative-child-usage)
     (test-task-run-native-manifest)
     (test-task-scheduler)
     (run-terminal-tests)

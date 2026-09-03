@@ -180,7 +180,7 @@
     :type (integer 0)
     :documentation "The provider requests started by the child.")
    (usage :initform nil :accessor task-progress-usage :type t
-          :documentation "The newest portable provider usage snapshot.")
+          :documentation "The cumulative portable provider usage for the child.")
    (started-at :initform nil :accessor task-progress-started-at :type t
                :documentation "The internal real time at which execution began.")
    (updated-at :initform (get-internal-real-time) :accessor

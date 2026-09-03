@@ -432,6 +432,50 @@ under the progress lock before releasing it to other threads."
     (setf (task-progress-updated-at progress) (get-internal-real-time)))
   nil)
 
+(-> task-progress--usage-object-p (t) boolean)
+(defun task-progress--usage-object-p (value)
+  "Return true when VALUE is a portable string-keyed provider usage object."
+  (and (listp value)
+       (not (null value))
+       (every (lambda (entry)
+                (and (consp entry)
+                     (stringp (first entry))
+                     (consp (rest entry))
+                     (null (cddr entry))))
+              value)))
+
+(-> task-progress--merge-usage (t t) t)
+(defun task-progress--merge-usage (aggregate usage)
+  "Add portable provider USAGE counters to AGGREGATE without losing metadata."
+  (cond
+    ((null usage)
+     (copy-tree aggregate))
+    ((null aggregate)
+     (copy-tree usage))
+    ((and (task-progress--usage-object-p aggregate)
+          (task-progress--usage-object-p usage))
+     (let ((merged (copy-tree aggregate)))
+       (dolist (entry usage merged)
+         (let* ((name (first entry))
+                (value (second entry))
+                (existing (assoc name merged :test #'string=)))
+           (if existing
+               (let ((old-value (second existing)))
+                 (setf (second existing)
+                       (cond
+                         ((and (typep old-value '(integer 0))
+                               (typep value '(integer 0)))
+                          (+ old-value value))
+                         ((and (task-progress--usage-object-p old-value)
+                               (task-progress--usage-object-p value))
+                          (task-progress--merge-usage old-value value))
+                         (t
+                          (copy-tree value)))))
+               (setf merged
+                     (append merged (list (copy-tree entry)))))))))
+    (t
+     (copy-tree usage))))
+
 (defun task-progress-note-status (job status details)
   "Update JOB's normalized progress from one child observer STATUS event."
   (let ((progress (task-job-progress job))
@@ -444,7 +488,10 @@ under the progress lock before releasing it to other threads."
                (or (getf details :request-number)
                    (1+ (task-progress-request-count progress)))))
         (:provider-request-completed
-         (setf (task-progress-usage progress) (getf details :usage)))
+         (setf (task-progress-usage progress)
+               (task-progress--merge-usage
+                (task-progress-usage progress)
+                (getf details :usage))))
         (:tool-call-started
          (let ((tool (getf details :tool)))
            (setf (task-progress-current-tool progress) tool

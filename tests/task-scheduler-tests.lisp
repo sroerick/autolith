@@ -2460,6 +2460,120 @@ exactly that race."
                                        :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-task-cumulative-child-usage () null)
+(defun test-task-cumulative-child-usage ()
+  "Test cumulative usage across direct and nested child result envelopes."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (orchestrator  (task-tests--orchestrator))
+         (definition
+           (task-agent-definition-create
+            :name "usage-child"
+            :description "Exercise child usage accounting."
+            :instructions "Report usage independently."
+            :source ':test))
+         (primary (task-tests--primary-agent configuration "usage-primary"))
+         (direct nil)
+         (nested nil))
+    (labels ((usage (&key input output cached created)
+               (list (list "input_tokens" input)
+                     (list "output_tokens" output)
+                     (list "total_tokens" (+ input output))
+                     (list "cached_input_tokens" cached)
+                     (list "cache_creation_input_tokens" created)))
+
+             (note-request (job number request-usage)
+               (task-progress-note-status
+                job ':provider-request-started
+                (list :request-number number))
+               (task-progress-note-status
+                job ':provider-request-completed
+                (list :request-number number :usage request-usage))))
+      (unwind-protect
+           (progn
+             (setf direct
+                   (task-tests--register-job
+                    orchestrator primary definition :name "direct-usage"))
+             (setf (conversation-last-total-tokens
+                    (agent-conversation primary))
+                   91)
+             (let ((first-usage
+                     (usage :input 3 :output 2 :cached 1 :created 0)))
+               (note-request direct 1 first-usage)
+               (test-assert
+                (equal (getf (task-progress-snapshot direct) :usage)
+                       first-usage)
+                "one child provider request preserves its normalized usage"))
+             (note-request
+              direct 2 (usage :input 7 :output 4 :cached 2 :created 1))
+             (let* ((expected
+                      (usage :input 10 :output 6 :cached 3 :created 1))
+                    (failed (task--failed-result direct ':failed "provider failed")))
+               (test-assert
+                (and (equal (getf (task-progress-snapshot direct) :usage)
+                            expected)
+                     (equal (getf failed :usage) expected)
+                     (= (conversation-last-total-tokens
+                         (agent-conversation primary))
+                        91))
+                "direct child usage accumulates without changing parent usage")
+               (let* ((viewer (task-tests--child-viewer configuration direct))
+                      (viewer-conversation (agent-conversation viewer)))
+                 (setf (conversation-last-total-tokens viewer-conversation) 37
+                       nested
+                       (task-tests--register-job
+                        orchestrator viewer definition :name "nested-usage"))
+                 (note-request
+                  nested 1 (usage :input 2 :output 1 :cached 0 :created 1))
+                 (note-request
+                  nested 2 (usage :input 5 :output 3 :cached 2 :created 0))
+                 (let* ((nested-usage
+                          (usage :input 7 :output 4 :cached 2 :created 1))
+                        (completed
+                          (task-tests--terminal-result
+                           nested :status ':success :output "nested complete")))
+                   (setf (getf completed :request-count) 2
+                         (getf completed :usage) nested-usage)
+                   (task-tests--publish-terminal nested ':completed completed)
+                   (let* ((snapshot (task-job-snapshot nested))
+                          (native
+                            (session-job-native-record
+                             nested snapshot primary
+                             :preview-limit *task-result-preview-limit*
+                             :include-progress-p t)))
+                     (test-assert
+                      (and (getf native :detached)
+                           (equal (getf (getf native :result) :usage)
+                                  nested-usage)
+                           (equal (getf (getf native :progress) :usage)
+                                  nested-usage)
+                           (= (conversation-last-total-tokens viewer-conversation)
+                              37))
+                      "nested detached results expose cumulative usage beside their parent")))
+               (task-tests--publish-terminal direct ':failed failed)
+               (let* ((snapshot (task-job-snapshot direct))
+                      (native
+                        (session-job-native-record
+                         direct snapshot primary
+                         :preview-limit *task-result-preview-limit*
+                         :include-progress-p t)))
+                 (test-assert
+                  (and (equal (getf (getf native :result) :usage) expected)
+                       (equal (run-job--usage (getf snapshot :result))
+                              '(:input-tokens 10 :output-tokens 6
+                                :provider-requests 2)))
+                  "failed child and durable job projections retain cumulative usage"))))
+        (dolist (job (remove nil (list nested direct)))
+          (unless (job-terminal-p job)
+            (task-tests--publish-terminal
+             job ':aborted
+             (task-tests--terminal-result
+              job :status ':aborted :output "test cleanup"))))
+        (uiop:delete-directory-tree root :validate t
+                                         :if-does-not-exist ':ignore))))
+  nil))
+
+
 (-> task-tests--run-scheduler-case
     (task-test-provider json-object
      &key (:parent-reference-p boolean)

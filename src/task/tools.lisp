@@ -323,17 +323,19 @@ The primary blocking field and legacy inverse async field are mutually exclusive
     (result field &key preview-limit artifact-available-p)
   "Return RESULT FIELD, respecting terminal compaction metadata."
   (let* ((storage-field
-           (ecase field
-             (:output ':output-storage)
-             (:error :error-storage)
-             (:label :label-storage)
-             (:structured-output :structured-output-storage)))
-         (characters-field
-           (ecase field
-             (:output ':output-characters)
-             (:error :error-characters)
-             (:label :label-characters)
-             (:structured-output :structured-output-characters)))
+            (ecase field
+              (:output ':output-storage)
+              (:error ':error-storage)
+              (:label ':label-storage)
+              (:structured-output ':structured-output-storage)
+              (:usage ':usage-storage)))
+          (characters-field
+            (ecase field
+              (:output ':output-characters)
+              (:error ':error-characters)
+              (:label ':label-characters)
+              (:structured-output ':structured-output-characters)
+              (:usage ':usage-characters)))
          (storage (getf result storage-field))
          (characters (getf result characters-field)))
     (cond
@@ -402,6 +404,11 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                        result :structured-output
                        :preview-limit preview-limit
                        :artifact-available-p artifact-available-p))
+                  :usage
+                  (task--retained-result-field
+                   result :usage
+                   :preview-limit preview-limit
+                   :artifact-available-p artifact-available-p)
                  :duration-ms (getf result :duration-ms)
                  :model (getf result :model)
                  :agent-definition
@@ -433,6 +440,12 @@ The primary blocking field and legacy inverse async field are mutually exclusive
                :preview-limit preview-limit
                :artifact-available-p nil)
               :request-count (getf progress :request-count)
+               :usage
+               (task--artifact-field
+                (getf progress :usage)
+                :usage
+                :preview-limit preview-limit
+                :artifact-available-p nil)
               :duration-ms (getf progress :duration-ms)
               :model (getf progress :model)))))))
 
