@@ -14,6 +14,9 @@
 (defparameter *papercut-resolution-limit* 1000
   "The maximum characters in one papercut closure resolution.")
 
+(defparameter *papercut-assessment-note-limit* 1000
+  "The maximum characters in one papercut effectiveness assessment note.")
+
 (defparameter *papercut-short-identifier-length* 8
   "The characters shown when a papercut identifier is abbreviated.")
 
@@ -46,6 +49,21 @@
     :reader papercut-content
     :type non-empty-string
     :documentation "The complete user-visible problem report.")
+    (assessment-verdict
+     :initform nil
+     :accessor papercut-assessment-verdict
+     :type (option (member :improved :worse :unchanged :too-early))
+     :documentation "The verdict from the latest effectiveness assessment, if any.")
+    (assessment-note
+     :initform nil
+     :accessor papercut-assessment-note
+     :type (option string)
+     :documentation "The bounded explanatory note from the latest assessment, if any.")
+    (assessed-at
+     :initform nil
+     :accessor papercut-assessed-at
+     :type (option timestamp)
+     :documentation "The time of the latest effectiveness assessment, if any.")
    (source-conversation
     :initarg :source-conversation
     :reader papercut-source-conversation
@@ -93,6 +111,44 @@
         :id identifier
         :closed-at closed-at
         :resolution resolution))
+
+(-> papercut--assessed-record
+    (string (member :improved :worse :unchanged :too-early) string timestamp)
+    list)
+(defun papercut--assessed-record (identifier verdict note assessed-at)
+  "Return one portable effectiveness assessment record for IDENTIFIER."
+  (list :papercut-assessed
+        :version *papercut-format-version*
+        :id identifier
+        :assessed-at assessed-at
+        :verdict verdict
+        :note note))
+
+(-> papercut--validate-assessed-record (pathname list) list)
+(defun papercut--validate-assessed-record (pathname record)
+  "Validate assessment RECORD from PATHNAME and return its replay values."
+  (let ((version (getf (rest record) :version))
+        (identifier (getf (rest record) :id))
+        (assessed-at (getf (rest record) :assessed-at))
+        (verdict (getf (rest record) :verdict))
+        (note (getf (rest record) :note)))
+    (unless (and (eql version *papercut-format-version*)
+                 (non-empty-string-p identifier)
+                 (typep assessed-at 'timestamp)
+                 (member verdict '(:improved :worse :unchanged :too-early)))
+      (error 'papercut-error
+             :message "A papercut assessment record has invalid metadata."
+             :pathname pathname
+             :identifier (and (stringp identifier) identifier)))
+    (handler-case
+        (papercut--validate-text
+         note "assessment note" *papercut-assessment-note-limit*)
+      (papercut-error (condition)
+        (error 'papercut-error
+               :message (autolith-error-message condition)
+               :pathname pathname
+               :identifier identifier)))
+    (list identifier verdict note assessed-at)))
 
 (-> papercut--validate-closed-record (pathname list) string)
 (defun papercut--validate-closed-record (pathname record)
@@ -229,6 +285,20 @@
                         :identifier identifier))
                (setf (gethash identifier seen) t
                      (gethash identifier active) papercut)))
+              (:papercut-assessed
+               (destructuring-bind (identifier verdict note assessed-at)
+                   (papercut--validate-assessed-record pathname record)
+                 (let ((papercut (gethash identifier active)))
+                   (unless papercut
+                     (error 'papercut-error
+                            :message (format nil
+                                             "Papercut assessment references inactive or unknown identifier ~A."
+                                             identifier)
+                            :pathname pathname
+                            :identifier identifier))
+                   (setf (papercut-assessment-verdict papercut) verdict
+                         (papercut-assessment-note papercut) note
+                         (papercut-assessed-at papercut) assessed-at))))
             (:papercut-closed
              (let ((identifier
                      (papercut--validate-closed-record pathname record)))
@@ -246,6 +316,17 @@
                                          identifier)
                         :pathname pathname
                         :identifier identifier))
+                (when (member
+                       (papercut-assessment-verdict (gethash identifier active))
+                       '(:worse :unchanged :too-early))
+                  (error 'papercut-error
+                         :message (format nil
+                                          "Papercut ~A closure conflicts with its latest ~A assessment."
+                                          identifier
+                                          (papercut-assessment-verdict
+                                           (gethash identifier active)))
+                         :pathname pathname
+                         :identifier identifier))
                (remhash identifier active)))
             (otherwise
              (error 'papercut-error
@@ -370,6 +451,56 @@ matching reports for :AMBIGUOUS."
       (papercut--report-unlocked
        configuration validated-title validated-content source-conversation))))
 
+(-> papercut--assess-unlocked
+    (configuration non-empty-string
+                   (member :improved :worse :unchanged :too-early)
+                   non-empty-string)
+    papercut)
+(defun papercut--assess-unlocked (configuration identifier verdict note)
+  "Assess one active report while the caller holds the papercut lock."
+  (let ((papercut
+          (find identifier
+                (papercut--list-unlocked configuration)
+                :test #'string=
+                :key #'papercut-identifier)))
+    (unless papercut
+      (error 'papercut-error
+             :message (format nil
+                              "No active papercut ~A exists in this workspace."
+                              identifier)
+             :pathname (configuration-papercut-path configuration)
+             :identifier identifier))
+    (let ((assessed-at (get-universal-time)))
+      (papercut--append-record
+       configuration
+       (papercut--assessed-record identifier verdict note assessed-at))
+      (setf (papercut-assessment-verdict papercut) verdict
+            (papercut-assessment-note papercut) note
+            (papercut-assessed-at papercut) assessed-at))
+    papercut))
+
+(-> papercut-assess
+    (configuration string &key (:verdict keyword) (:note string))
+    papercut)
+(defun papercut-assess (configuration identifier &key verdict note)
+  "Append an effectiveness assessment for active papercut IDENTIFIER."
+  (unless (non-empty-string-p identifier)
+    (error 'papercut-error
+           :message "Papercut identifier must be a non-empty string."
+           :pathname (configuration-papercut-path configuration)
+           :identifier nil))
+  (unless (member verdict '(:improved :worse :unchanged :too-early))
+    (error 'papercut-error
+           :message "Papercut assessment verdict must be improved, worse, unchanged, or too-early."
+           :pathname (configuration-papercut-path configuration)
+           :identifier identifier))
+  (let ((validated-note
+          (papercut--validate-text
+           note "assessment note" *papercut-assessment-note-limit*)))
+    (with-lock-held (*papercut-lock*)
+      (papercut--assess-unlocked
+       configuration identifier verdict validated-note))))
+
 (-> papercut--mark-closed-unlocked
     (configuration non-empty-string non-empty-string)
     papercut)
@@ -387,6 +518,15 @@ matching reports for :AMBIGUOUS."
              :message (format nil
                               "No active papercut ~A exists in this workspace."
                               identifier)
+             :pathname (configuration-papercut-path configuration)
+             :identifier identifier))
+    (when (member (papercut-assessment-verdict papercut)
+                  '(:worse :unchanged :too-early))
+      (error 'papercut-error
+             :message (format nil
+                              "Papercut ~A cannot be closed while its latest assessment is ~A."
+                              identifier
+                              (papercut-assessment-verdict papercut))
              :pathname (configuration-papercut-path configuration)
              :identifier identifier))
     (papercut--append-record

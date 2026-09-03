@@ -147,10 +147,11 @@
                 (search "active papercuts: 0" (tool-result-content empty-read))
                 "empty papercut collection rendering reports zero active items")
                (test-assert
-                (equal (papercut-observation-snapshot empty-observation)
-                       (list :kind ':collection
-                             :workspace (papercut--workspace configuration)
-                             :identifiers nil))
+                 (equal (papercut-observation-snapshot empty-observation)
+                        (list :kind ':collection
+                              :workspace (papercut--workspace configuration)
+                              :identifiers nil
+                              :assessments nil))
                 "papercut collections retain a compact exact identifier snapshot")
                (test-assert
                 (not (tool-result-success-p
@@ -222,67 +223,146 @@
                                        empty-revision
                                        report-operation)))
                   "papercut revisions are confined to their observed workspace")
-                 (let* ((item-read (read-resource first-context uri))
-                        (item-revision (revision item-read)))
-                   (test-assert
-                    (and (tool-result-success-p item-read)
-                         (search "Complete resource report content."
-                                 (tool-result-content item-read)))
-                    "exact papercut reads return the complete report")
-                   (test-assert
-                    (not (tool-result-success-p
-                          (edit-resource first-context
-                                         uri
-                                         item-revision
-                                         report-operation)))
-                    "exact papercut items reject collection report operations")
-                   (test-assert
-                    (not (tool-result-success-p
-                          (edit-resource first-context
-                                         "papercut:current"
-                                         (revision
-                                          (read-resource
-                                           first-context "papercut:current"))
-                                         (papercut-resource-tests--operation
-                                          "papercut-close"
-                                          "resolution" "Wrong target."))))
-                    "papercut:current rejects exact-item close operations")
-                   (papercut-report
-                    configuration
-                    :title "Independent collection change"
-                    :content "This must not stale an immutable exact report.")
-                   (let ((closed
+                  (let* ((item-read (read-resource first-context uri))
+                         (item-revision (revision item-read)))
+                    (test-assert
+                     (and (tool-result-success-p item-read)
+                          (search "Complete resource report content."
+                                  (tool-result-content item-read))
+                          (search "assessment: unassessed"
+                                  (tool-result-content item-read)))
+                     "exact papercut reads expose complete reports and assessment state")
+                    (test-assert
+                     (not (tool-result-success-p
+                           (edit-resource first-context
+                                          uri
+                                          item-revision
+                                          report-operation)))
+                     "exact papercut items reject collection report operations")
+                    (test-assert
+                     (not (tool-result-success-p
                            (edit-resource
                             first-context
-                            uri
-                            item-revision
+                            "papercut:current"
+                            (revision
+                             (read-resource first-context "papercut:current"))
                             (papercut-resource-tests--operation
-                             "papercut-close"
-                             "resolution" "Implemented through resources."))))
-                     (test-assert (tool-result-success-p closed)
-                                  "exact papercut resources close active reports")
-                     (test-assert
-                      (search "Implemented through resources."
-                              (tool-result-content closed))
-                      "papercut closure results include the durable resolution")
-                     (test-assert (null (papercut-find
-                                        configuration
-                                        (papercut-identifier papercut)))
-                                  "papercut-close removes the report from active state")
-                     (test-assert
-                      (not (tool-result-success-p
-                            (read-resource first-context uri)))
-                      "closed exact papercut resources become unavailable")
-                     (test-assert
-                      (not (tool-result-success-p
-                            (edit-resource
-                             first-context
-                             uri
-                             item-revision
-                             (papercut-resource-tests--operation
-                              "papercut-close"
-                              "resolution" "Close twice."))))
-                     "closed exact reports reject reuse of their old revision")))))
+                             "papercut-assess"
+                             "verdict" "worse"
+                             "note" "Wrong target."))))
+                     "papercut:current rejects exact-item assessment operations")
+                    (let* ((worse
+                             (edit-resource
+                              first-context
+                              uri
+                              item-revision
+                              (papercut-resource-tests--operation
+                               "papercut-assess"
+                               "verdict" "worse"
+                               "note" "The attempted fix increased failures.")))
+                           (worse-revision (revision worse)))
+                      (test-assert
+                       (and (tool-result-success-p worse)
+                            (search "assessment: worse"
+                                    (tool-result-content worse))
+                            (search "The attempted fix increased failures."
+                                    (tool-result-content worse))
+                            (eq (papercut-assessment-verdict
+                                 (papercut-find
+                                  configuration (papercut-identifier papercut)))
+                                ':worse))
+                       "papercut-assess appends and renders the latest outcome")
+                      (test-assert
+                       (not (tool-result-success-p
+                             (edit-resource
+                              first-context
+                              uri
+                              item-revision
+                              (papercut-resource-tests--operation
+                               "papercut-assess"
+                               "verdict" "unchanged"
+                               "note" "Stale assessment."))))
+                       "papercut assessments require the latest item revision")
+                      (let ((collection
+                              (read-resource first-context "papercut:current")))
+                        (test-assert
+                         (and (search "assessment: worse"
+                                      (tool-result-content collection))
+                              (search "The attempted fix increased failures."
+                                      (tool-result-content collection)))
+                         "papercut collections expose unfavorable outcomes"))
+                      (test-assert
+                       (not (tool-result-success-p
+                             (edit-resource
+                              first-context
+                              uri
+                              worse-revision
+                              (papercut-resource-tests--operation
+                               "papercut-close"
+                               "resolution" "Outcome remains unfavorable."))))
+                       "resource closure rejects worse latest assessments")
+                      (test-assert
+                       (not (tool-result-success-p
+                             (edit-resource
+                              first-context
+                              uri
+                              worse-revision
+                              (papercut-resource-tests--operation
+                               "papercut-assess"
+                               "verdict" "unknown"
+                               "note" "Invalid verdict."))))
+                       "resource assessments reject unknown verdicts")
+                      (let* ((improved
+                               (edit-resource
+                                first-context
+                                uri
+                                worse-revision
+                                (papercut-resource-tests--operation
+                                 "papercut-assess"
+                                 "verdict" "improved"
+                                 "note" "Follow-up confirms the fix.")))
+                             (improved-revision (revision improved)))
+                        (test-assert
+                         (and (tool-result-success-p improved)
+                              (search "assessment: improved"
+                                      (tool-result-content improved)))
+                         "a later improved resource assessment supersedes worse")
+                        (papercut-report
+                         configuration
+                         :title "Independent collection change"
+                         :content "This must not stale an exact assessed report.")
+                        (let ((closed
+                                (edit-resource
+                                 first-context
+                                 uri
+                                 improved-revision
+                                 (papercut-resource-tests--operation
+                                  "papercut-close"
+                                  "resolution" "Implemented through resources."))))
+                          (test-assert (tool-result-success-p closed)
+                                       "improved exact papercuts may be closed")
+                          (test-assert
+                           (search "Implemented through resources."
+                                   (tool-result-content closed))
+                           "papercut closure results include the durable resolution")
+                          (test-assert
+                           (null (papercut-find
+                                  configuration (papercut-identifier papercut)))
+                           "papercut-close removes the report from active state")
+                          (test-assert
+                           (not (tool-result-success-p
+                                 (read-resource first-context uri)))
+                           "closed exact papercut resources become unavailable")
+                          (test-assert
+                           (not (tool-result-success-p
+                                 (edit-resource
+                                  first-context
+                                  uri
+                                  improved-revision
+                                  (papercut-resource-tests--operation
+                                   "papercut-close"
+                                   "resolution" "Close twice."))))
+                           "closed exact reports reject reuse of their old revision"))))))
              (let* ((identifier "custom/id å")
                     (fixture
                       (papercut-resource-tests--persist
@@ -337,13 +417,33 @@
                       (loop for variant across variants
                             for properties = (gethash "properties" variant)
                             for operation = (gethash "op" properties)
-                            collect (aref (gethash "enum" operation) 0))))
+                            collect (aref (gethash "enum" operation) 0)))
+                    (assessment-variant
+                      (find "papercut-assess" variants
+                            :test #'string=
+                            :key (lambda (variant)
+                                   (aref
+                                    (gethash
+                                     "enum"
+                                     (gethash
+                                      "op"
+                                      (gethash "properties" variant)))
+                                    0))))
+                    (verdicts
+                      (gethash
+                       "enum"
+                       (gethash
+                        "verdict"
+                        (gethash "properties" assessment-variant)))))
                (test-assert
                 (and (member "papercut-report" names :test #'string=)
+                     (member "papercut-assess" names :test #'string=)
                      (member "papercut-close" names :test #'string=)
+                     (equalp verdicts
+                             #("improved" "worse" "unchanged" "too-early"))
                      (every (lambda (variant)
                               (eq (gethash "additionalProperties" variant) false))
                             variants))
-                "resource.edit advertises closed papercut operation schemas"))))
+                "resource.edit advertises closed papercut assessment schemas"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
-  nil)
+  nil))

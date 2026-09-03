@@ -164,14 +164,27 @@
 
 ;;;; -- Presentation and Snapshots --
 
+(-> papercut-resource--render-assessment (papercut integer) non-empty-string)
+(defun papercut-resource--render-assessment (papercut note-limit)
+  "Return the latest PAPERCUT assessment with NOTE-LIMIT applied to its note."
+  (if (papercut-assessment-verdict papercut)
+      (format nil
+              "assessment: ~(~A~)~%assessed: ~A~%assessment note: ~A"
+              (papercut-assessment-verdict papercut)
+              (papercut-timestamp-string (papercut-assessed-at papercut))
+              (papercut-excerpt (papercut-assessment-note papercut) note-limit))
+      "assessment: unassessed"))
+
 (-> papercut-resource--render-summary (papercut) non-empty-string)
 (defun papercut-resource--render-summary (papercut)
   "Return one complete collection-summary entry for PAPERCUT."
   (format nil
-          "id: ~A~%uri: ~A~%reported: ~A~%title: ~A~%excerpt: ~A"
+          "id: ~A~%uri: ~A~%reported: ~A~%~A~%title: ~A~%excerpt: ~A"
           (papercut-identifier papercut)
           (resource-item-uri "papercut" (papercut-identifier papercut))
           (papercut-timestamp-string (papercut-reported-at papercut))
+          (papercut-resource--render-assessment
+           papercut *papercut-resource-excerpt-limit*)
           (papercut-title papercut)
           (papercut-excerpt
            (papercut-content papercut)
@@ -192,27 +205,42 @@
 (defun papercut-resource--render-item (papercut)
   "Return complete model-visible data for one active PAPERCUT."
   (format nil
-          "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%title: ~A~2%~A"
+          "id: ~A~%uri: ~A~%reported: ~A~%workspace: ~A~%source conversation: ~A~%~A~%title: ~A~2%~A"
           (papercut-identifier papercut)
           (resource-item-uri "papercut" (papercut-identifier papercut))
           (papercut-timestamp-string (papercut-reported-at papercut))
           (papercut-workspace papercut)
           (or (papercut-source-conversation papercut) "unknown")
+          (papercut-resource--render-assessment
+           papercut *papercut-assessment-note-limit*)
           (papercut-title papercut)
           (papercut-content papercut)))
 
+(-> papercut-resource--assessment-snapshot (papercut) list)
+(defun papercut-resource--assessment-snapshot (papercut)
+  "Return PAPERCUT's detached latest-assessment snapshot."
+  (list :verdict (papercut-assessment-verdict papercut)
+        :note (papercut-assessment-note papercut)
+        :assessed-at (papercut-assessed-at papercut)))
+
 (-> papercut-resource--collection-snapshot (non-empty-string list) list)
 (defun papercut-resource--collection-snapshot (workspace papercuts)
-  "Return a compact exact snapshot of immutable active reports in WORKSPACE."
+  "Return an exact snapshot of active reports and assessments in WORKSPACE."
   (list :kind ':collection
         :workspace workspace
-        :identifiers (mapcar #'papercut-identifier papercuts)))
+        :identifiers (mapcar #'papercut-identifier papercuts)
+        :assessments
+        (mapcar (lambda (papercut)
+                  (list (papercut-identifier papercut)
+                        (papercut-resource--assessment-snapshot papercut)))
+                papercuts)))
 
 (-> papercut-resource--item-snapshot (papercut) list)
 (defun papercut-resource--item-snapshot (papercut)
-  "Return an exact detached snapshot of one immutable active PAPERCUT."
+  "Return an exact detached snapshot of one active PAPERCUT."
   (list :kind ':item
-        :record (papercut--record papercut)))
+        :record (papercut--record papercut)
+        :assessment (papercut-resource--assessment-snapshot papercut)))
 
 (-> papercut-resource--collection-observation-unlocked
     (papercut-collection-resource tool-context)
@@ -316,6 +344,26 @@
                :message (autolith-error-message condition)
                :tool-name "resource.edit")))))
 
+(-> papercut-resource--required-verdict
+    (json-object)
+    (member :improved :worse :unchanged :too-early))
+(defun papercut-resource--required-verdict (arguments)
+  "Return the validated assessment verdict from ARGUMENTS."
+  (let ((value (tool-argument arguments "verdict" :required t)))
+    (cond
+      ((and (stringp value) (string= value "improved"))
+       ':improved)
+      ((and (stringp value) (string= value "worse"))
+       ':worse)
+      ((and (stringp value) (string= value "unchanged"))
+       ':unchanged)
+      ((and (stringp value) (string= value "too-early"))
+       ':too-early)
+      (t
+       (error 'tool-error
+              :message "Papercut assessment verdict must be improved, worse, unchanged, or too-early."
+              :tool-name "resource.edit")))))
+
 (-> papercut-resource--normalize-operation (t) list)
 (defun papercut-resource--normalize-operation (operation)
   "Return one validated normalized papercut resource OPERATION."
@@ -331,16 +379,27 @@
     (cond
       ((string= name "papercut-report")
        (resource-item-validate-operation-fields
-     "Papercut"
+        "Papercut"
         operation '("op" "title" "content") '("op" "title" "content"))
        (list :kind ':report
              :title (papercut-resource--required-text
                      operation "title" "title" *papercut-title-limit*)
              :content (papercut-resource--required-text
                        operation "content" "content" *papercut-content-limit*)))
+      ((string= name "papercut-assess")
+       (resource-item-validate-operation-fields
+        "Papercut"
+        operation '("op" "verdict" "note") '("op" "verdict" "note"))
+       (list :kind ':assess
+             :verdict (papercut-resource--required-verdict operation)
+             :note (papercut-resource--required-text
+                    operation
+                    "note"
+                    "assessment note"
+                    *papercut-assessment-note-limit*)))
       ((string= name "papercut-close")
        (resource-item-validate-operation-fields
-     "Papercut"
+        "Papercut"
         operation '("op" "resolution") '("op" "resolution"))
        (list :kind ':close
              :resolution (papercut-resource--required-text
@@ -351,7 +410,7 @@
       (t
        (error 'tool-error
               :message
-              "Papercut resource operation op must be papercut-report or papercut-close."
+              "Papercut resource operation op must be papercut-report, papercut-assess, or papercut-close."
               :tool-name "resource.edit")))))
 
 (-> papercut-resource--validate-operation-target
@@ -366,9 +425,9 @@
               :message "papercut:current accepts only papercut-report."
               :tool-name "resource.edit")))
     (papercut-item-resource
-     (unless (eq (getf operation :kind) ':close)
+     (unless (member (getf operation :kind) '(:assess :close))
        (error 'tool-error
-              :message "Exact papercut item URIs accept only papercut-close."
+              :message "Exact papercut item URIs accept papercut-assess or papercut-close."
               :tool-name "resource.edit"))))
   nil)
 
@@ -452,6 +511,20 @@
                   (format nil "Reported papercut ~A."
                           (papercut-identifier papercut))
                   (resource-uri item-resource))))
+              (:assess
+               (let ((papercut
+                       (papercut--assess-unlocked
+                        configuration
+                        (papercut-resource-identifier resource)
+                        (getf operation :verdict)
+                        (getf operation :note))))
+                 (values
+                  (papercut-resource--item-observation-from-report
+                   resource papercut)
+                  (format nil "Assessed papercut ~A as ~(~A~)."
+                          (papercut-resource-identifier resource)
+                          (getf operation :verdict))
+                  nil)))
               (:close
                (let* ((resolution (getf operation :resolution))
                       (papercut

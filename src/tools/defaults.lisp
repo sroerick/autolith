@@ -197,6 +197,16 @@
         "content" (tool-string-property "Complete bounded papercut report."))
        '("title" "content"))
       (operation-schema
+       "papercut-assess"
+       (json-object
+        "verdict" (json-object
+                   "type" "string"
+                   "description" "Latest effectiveness verdict."
+                   "enum" (vector "improved" "worse" "unchanged" "too-early"))
+        "note" (tool-string-property
+                "Complete bounded explanatory assessment note."))
+       '("verdict" "note"))
+      (operation-schema
        "papercut-close"
        (json-object
         "resolution" (tool-string-property
@@ -258,7 +268,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-           "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
+            "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property

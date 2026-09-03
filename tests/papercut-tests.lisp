@@ -18,9 +18,133 @@
       "arguments" (json-encode (apply #'json-object arguments)))
      context)))
 
+(-> papercut-tests--error-p (function) boolean)
+(defun papercut-tests--error-p (function)
+  "Return true when FUNCTION signals PAPERCUT-ERROR."
+  (handler-case
+      (progn
+        (funcall function)
+        nil)
+    (papercut-error ()
+      t)))
+
+(-> test-papercut-assessment-state () null)
+(defun test-papercut-assessment-state ()
+  "Test append-only papercut assessment replay, validation, and closure policy."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((report
+                  (papercut-report
+                   configuration
+                   :title "Assessment target"
+                   :content "Measure whether the intervention helped."))
+                (identifier (papercut-identifier report)))
+           (test-assert
+            (and (null (papercut-assessment-verdict report))
+                 (null (papercut-assessment-note report))
+                 (null (papercut-assessed-at report)))
+            "new and legacy papercuts begin unassessed")
+           (dolist (verdict '(:worse :unchanged :too-early))
+             (let* ((note (format nil "Latest outcome is ~A." verdict))
+                    (assessed
+                      (papercut-assess configuration identifier
+                                       :verdict verdict
+                                       :note note))
+                    (replayed (papercut-find configuration identifier)))
+               (test-assert
+                (and (eq (papercut-assessment-verdict assessed) verdict)
+                     (string= (papercut-assessment-note assessed) note)
+                     (typep (papercut-assessed-at assessed) 'timestamp)
+                     (eq (papercut-assessment-verdict replayed) verdict)
+                     (string= (papercut-assessment-note replayed) note))
+                "assessment replay retains the latest verdict, note, and timestamp")
+               (test-assert
+                (papercut-tests--error-p
+                 (lambda ()
+                   (papercut-mark-closed
+                    configuration identifier
+                    :resolution "This outcome does not permit closure.")))
+                "worse, unchanged, and too-early assessments prevent closure")))
+           (test-assert
+            (papercut-tests--error-p
+             (lambda ()
+               (papercut-assess configuration identifier
+                                :verdict ':unknown
+                                :note "Invalid verdict.")))
+            "papercut assessments reject unknown verdicts")
+           (test-assert
+            (papercut-tests--error-p
+             (lambda ()
+               (papercut-assess
+                configuration identifier
+                :verdict ':improved
+                :note (make-string (1+ *papercut-assessment-note-limit*)
+                                   :initial-element #\x))))
+            "papercut assessment notes have a hard size bound")
+           (papercut-assess configuration identifier
+                            :verdict ':improved
+                            :note "The intervention now works reliably.")
+           (test-assert
+            (eq (papercut-assessment-verdict
+                 (papercut-find configuration identifier))
+                ':improved)
+            "a newer improved assessment supersedes an unfavorable verdict")
+           (papercut-mark-closed
+            configuration identifier
+            :resolution "Latest assessment confirms the fix.")
+           (test-assert (null (papercut-find configuration identifier))
+                        "improved papercuts may be closed")
+           (test-assert
+            (papercut-tests--error-p
+             (lambda ()
+               (papercut-assess configuration identifier
+                                :verdict ':improved
+                                :note "Closed reports cannot be reassessed.")))
+            "closed papercuts cannot be assessed")
+           (let ((legacy
+                   (papercut-report
+                    configuration
+                    :title "Legacy closure"
+                    :content "No assessment was recorded.")))
+             (papercut-mark-closed
+              configuration
+              (papercut-identifier legacy)
+              :resolution "Legacy closure remains valid.")
+             (test-assert
+              (null (papercut-find configuration (papercut-identifier legacy)))
+              "unassessed legacy papercuts may be closed")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let ((report
+                 (papercut-report
+                  configuration
+                  :title "Invalid persisted closure"
+                  :content "Replay must enforce assessment closure policy.")))
+           (with-lock-held (*papercut-lock*)
+             (papercut--append-record
+              configuration
+              (papercut--assessed-record
+               (papercut-identifier report) ':worse "It regressed."
+               (get-universal-time)))
+             (papercut--append-record
+              configuration
+              (papercut--closed-record
+               (papercut-identifier report) "Invalid closure."
+               (get-universal-time))))
+           (test-assert
+            (papercut-tests--error-p
+             (lambda () (papercut-list configuration)))
+            "replay rejects closures following unfavorable assessments"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-papercuts () null)
 (defun test-papercuts ()
   "Test papercut persistence, model reporting, presentation, and commands."
+  (test-papercut-assessment-state)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (registry (make-default-tool-registry))
