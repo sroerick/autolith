@@ -66,6 +66,22 @@
     :accessor localgroup-session-handoff-running-p
     :type boolean
     :documentation "Whether a detached replacement is being started.")
+   (detached-explicitly-p
+    :initarg :detached-explicitly-p
+    :initform nil
+    :accessor localgroup-session-detached-explicitly-p
+    :type boolean
+    :documentation "Whether the controlling terminal left through an explicit detach.")
+   (controller-seen-p
+    :initform nil
+    :accessor localgroup-session-controller-seen-p
+    :type boolean
+    :documentation "Whether any controlling client has ever attached to this endpoint.")
+   (attach-watchdog-thread
+    :initform nil
+    :accessor localgroup-session-attach-watchdog-thread
+    :type t
+    :documentation "The bounded thread exiting a launch nobody attaches to, when running.")
    (server-thread
     :initform nil
     :accessor localgroup-session-server-thread
@@ -427,51 +443,93 @@
                  terminal rows columns styled-p)))))))
   nil)
 
-(-> localgroup--session-pristine-p (localgroup-session) boolean)
-(defun localgroup--session-pristine-p (session)
-  "Return true when SESSION holds no user-visible state worth keeping.
+(defparameter *localgroup-first-attach-timeout-seconds* 60
+  "The maximum seconds a launch waits for the client it was started for.")
 
-A pristine session never persisted a conversation record, has no goal,
-no busy or queued controller work, no live tasks, and no remaining
-terminal owner of any kind."
-  (let* ((application (localgroup-session-application session))
-         (configuration (application-configuration application))
-         (controller (application-input-controller application))
-         (terminal (localgroup--terminal session))
-         (conversation (and (slot-boundp application 'conversation)
-                            (application-conversation application))))
-    (and controller
-         conversation
-         (null (application-goal application))
-         (not (application-input-controller-busy-p controller))
-         (not (application-input-controller-turn-active-p controller))
-         (null (conversation-storage-active-pathname
-                (conversation-pathname-for-id
-                 configuration
-                 (conversation-identifier conversation))))
-         (multiple-value-bind (live active)
-             (localgroup--task-counts application)
-           (declare (ignore active))
-           (zerop live))
-         (with-lock-held ((localgroup-terminal-lock terminal))
-           (and (null (localgroup-terminal-controller terminal))
-                (null (localgroup-terminal-observers terminal))
-                (null (localgroup-terminal-direct-terminal terminal)))))))
+(-> localgroup--attach-expected-p (list) boolean)
+(defun localgroup--attach-expected-p (startup-values)
+  "Return true when STARTUP-VALUES promise a controlling client attaches promptly.
 
-(-> localgroup--reap-abandoned-session (localgroup-session) null)
-(defun localgroup--reap-abandoned-session (session)
-  "Exit SESSION when its only client vanished before anything happened.
+Client-first launches and take-over replacements are started for a
+terminal that connects right away; a detach handoff is started to live
+without one."
+  (or (not (null (getf startup-values :attach-expected-p)))
+      (eq (getf startup-values :mode) ':take-over)))
 
-An explicit detach releases control first and never reaches this path,
-so deliberately backgrounded sessions always survive. Only a session
-that lost its controlling attachment while still pristine exits, which
-keeps abandoned launches from accumulating as idle detached processes."
-  (when (localgroup--session-pristine-p session)
-    (let ((controller (application-input-controller
-                       (localgroup-session-application session))))
-      (when controller
-        (application-input-controller--request-exit
-         controller ':localgroup-kill))))
+(-> localgroup--initially-detached-p (list) boolean)
+(defun localgroup--initially-detached-p (startup-values)
+  "Return true when STARTUP-VALUES describe a deliberately detached launch."
+  (and (not (null startup-values))
+       (eq (getf startup-values :mode) ':detach)
+       (not (localgroup--attach-expected-p startup-values))))
+
+(-> localgroup--mark-explicit-detach (localgroup-session) null)
+(defun localgroup--mark-explicit-detach (session)
+  "Record that SESSION's controlling terminal is leaving on purpose."
+  (with-lock-held ((localgroup-session-lock session))
+    (setf (localgroup-session-detached-explicitly-p session) t))
+  nil)
+
+(-> localgroup--note-controller-attached (localgroup-session) null)
+(defun localgroup--note-controller-attached (session)
+  "Record that a controlling client owns SESSION's terminal from now on."
+  (with-lock-held ((localgroup-session-lock session))
+    (setf (localgroup-session-controller-seen-p session) t
+          (localgroup-session-detached-explicitly-p session) nil))
+  nil)
+
+(-> localgroup--exit-abandoned-session (localgroup-session) null)
+(defun localgroup--exit-abandoned-session (session)
+  "Stop SESSION because the terminal it was serving is gone for good."
+  (let ((controller (application-input-controller
+                     (localgroup-session-application session))))
+    (when controller
+      (application-input-controller--request-exit
+       controller ':localgroup-abandoned)))
+  nil)
+
+(-> localgroup--controller-lost (localgroup-session) boolean)
+(defun localgroup--controller-lost (session)
+  "Handle SESSION losing its controlling client and report whether it exits.
+
+A session with no connection left lingers only when its controller left
+through an explicit detach. A closed window, a dropped connection, or a
+client that ended without detaching exits the session instead, so
+abandoned launches never accumulate as idle background processes. The
+exit persists pending input and cancels an active turn the way any
+forced shutdown does; the conversation stays resumable."
+  (let ((exit-p (with-lock-held ((localgroup-session-lock session))
+                  (not (localgroup-session-detached-explicitly-p session)))))
+    (when exit-p
+      (localgroup--exit-abandoned-session session))
+    exit-p))
+
+(-> localgroup--first-attach-overdue-p (localgroup-session) boolean)
+(defun localgroup--first-attach-overdue-p (session)
+  "Return true when SESSION never met the controlling client it was launched for."
+  (let ((terminal (terminal-ui-terminal
+                   (application-ui (localgroup-session-application session)))))
+    (and (not (with-lock-held ((localgroup-session-lock session))
+                (localgroup-session-controller-seen-p session)))
+         (or (not (typep terminal 'localgroup-terminal))
+             (not (localgroup-terminal-attached-p terminal))))))
+
+(-> localgroup--attach-watchdog (localgroup-session) null)
+(defun localgroup--attach-watchdog (session)
+  "Exit SESSION when no controlling client attaches within the first-attach timeout."
+  (let ((deadline (+ (get-internal-real-time)
+                     (* *localgroup-first-attach-timeout-seconds*
+                        internal-time-units-per-second))))
+    (loop
+      (when (with-lock-held ((localgroup-session-lock session))
+              (or (localgroup-session-stopping-p session)
+                  (localgroup-session-controller-seen-p session)))
+        (return))
+      (when (>= (get-internal-real-time) deadline)
+        (when (localgroup--first-attach-overdue-p session)
+          (localgroup--exit-abandoned-session session))
+        (return))
+      (sleep 0.25)))
   nil)
 
 (-> localgroup--serve-attachment
@@ -529,11 +587,13 @@ keeps abandoned launches from accumulating as idle detached processes."
              (declare (ignore released-direct-p))
              (unless attached-p
                (return-from localgroup--serve-attachment nil))
+             (unless (eq mode ':read-only)
+               (localgroup--note-controller-attached session))
              (localgroup--attachment-read-loop terminal attachment))
         (let ((controlled-p (localgroup-terminal-detach terminal attachment)))
           (localgroup-attachment-close attachment)
           (when controlled-p
-            (localgroup--reap-abandoned-session session))))))
+            (localgroup--controller-lost session))))))
   nil)
 
 (-> localgroup--detach-terminal (localgroup-session) list)
@@ -545,6 +605,10 @@ keeps abandoned launches from accumulating as idle detached processes."
     (if (eq (localgroup-terminal-attachment-kind terminal) ':foreground)
         (application-localgroup-request-handoff application ':detach)
         (progn
+          ;; Mark the detach before the controller's stream closes, so the
+          ;; attachment thread observing the closure sees a deliberate
+          ;; release rather than a vanished client.
+          (localgroup--mark-explicit-detach session)
           (application-input-controller-call-with-reader-paused
            controller
            (lambda ()
@@ -712,13 +776,19 @@ keeps abandoned launches from accumulating as idle detached processes."
 (-> localgroup-start
     (application &key (:identifier (option string))
                       (:token (option string))
-                      (:created-at (option timestamp)))
+                      (:created-at (option timestamp))
+                      (:detached-explicitly-p boolean))
     localgroup-session)
-(defun localgroup-start (application &key identifier token created-at)
+(defun localgroup-start
+    (application &key identifier token created-at detached-explicitly-p)
   "Start and publish APPLICATION's authenticated loopback endpoint.
 
-Optional identity values preserve one session across quiescence or process handoff."
-  (let* ((startup-values (and *localgroup-startup-record*
+Optional identity values preserve one session across quiescence or process
+handoff, and DETACHED-EXPLICITLY-P carries a deliberate detach across the
+same boundary. A fresh launch started for a client that never arrives exits
+after the first-attach timeout instead of lingering."
+  (let* ((restart-p (not (null identifier)))
+         (startup-values (and *localgroup-startup-record*
                               (rest *localgroup-startup-record*)))
          (identifier (or identifier (getf startup-values :session-id)))
          (token (or token (getf startup-values :token)))
@@ -761,7 +831,10 @@ Optional identity values preserve one session across quiescence or process hando
                        :port port
                        :registry-pathname
                        (localgroup-registry-pathname configuration identifier)
-                       :created-at created-at)
+                       :created-at created-at
+                       :detached-explicitly-p
+                       (or detached-explicitly-p
+                           (localgroup--initially-detached-p startup-values)))
                       (application-localgroup-session application) session)
                (let ((terminal
                        (terminal-ui-terminal (application-ui application)))
@@ -782,6 +855,12 @@ Optional identity values preserve one session across quiescence or process hando
                       (lambda () (localgroup--serve session))
                       :name "Autolith localgroup endpoint")
                      completed-p t)
+               (when (and (not restart-p)
+                          (localgroup--attach-expected-p startup-values))
+                 (setf (localgroup-session-attach-watchdog-thread session)
+                       (make-thread
+                        (lambda () (localgroup--attach-watchdog session))
+                        :name "Autolith localgroup attach watchdog")))
                (localgroup-handoff-finish-startup application)
                session)))
       (unless completed-p
@@ -808,17 +887,21 @@ Optional identity values preserve one session across quiescence or process hando
     (when session
       (setf (application-localgroup-session application) nil)
       (let ((server-thread nil)
+            (watchdog-thread nil)
             (client-threads nil)
             (client-sockets nil)
             (listener nil))
         (with-lock-held ((localgroup-session-lock session))
           (setf (localgroup-session-stopping-p session) t
                 server-thread (localgroup-session-server-thread session)
+                watchdog-thread
+                (localgroup-session-attach-watchdog-thread session)
                 client-threads
                 (copy-list (localgroup-session-client-threads session))
                 client-sockets
                 (copy-list (localgroup-session-client-sockets session))
                 listener (localgroup-session-listener session)))
+        (localgroup-stop-thread watchdog-thread)
         (when listener
           (localgroup--wake-server session))
         (dolist (socket client-sockets)

@@ -325,9 +325,15 @@ resume command that reopens the conversation the run leaves behind."
                 (application--resume-command application))))
     (format nil
             "~%~A~%~@[To resume this conversation, run:~%  ~A~%~]"
-            (if (eq reason ':turn-cancellation)
-                (application-input-controller--forced-exit-text)
-                "Ctrl-C pressed during shutdown; forcing Autolith to exit.")
+            (case reason
+              (:turn-cancellation
+               (application-input-controller--forced-exit-text))
+              (:localgroup-abandoned
+               "The attached terminal disconnected without detaching; Autolith is exiting.")
+              (:localgroup-kill
+               "A localgroup kill request is stopping Autolith.")
+              (otherwise
+               "Ctrl-C pressed during shutdown; forcing Autolith to exit."))
             resume-command)))
 
 (-> application-input-controller--show-interrupt-hint

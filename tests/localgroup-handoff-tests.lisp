@@ -260,90 +260,162 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
-(-> test-localgroup-abandoned-session-reap () null)
-(defun test-localgroup-abandoned-session-reap ()
-  "Test pristine sessions exiting when their only client vanishes."
+(-> test-localgroup--abandonment-fixture
+    (configuration &key (:persisted-p boolean))
+    (values application application-input-controller localgroup-terminal
+            localgroup-session))
+(defun test-localgroup--abandonment-fixture (configuration &key persisted-p)
+  "Return a started relay APPLICATION whose foreground terminal was released."
+  (configuration-ensure-directories configuration)
+  (multiple-value-bind (application controller relay)
+      (test-localgroup--relay-application configuration
+                                          :persisted-p persisted-p)
+    (let ((session (localgroup-start application)))
+      (localgroup-terminal-release-direct relay)
+      (values application controller relay session))))
+
+(-> test-localgroup--abandonment-cleanup
+    ((option application) (option application-input-controller) pathname)
+    null)
+(defun test-localgroup--abandonment-cleanup (application controller root)
+  "Stop APPLICATION's endpoint and CONTROLLER, then delete ROOT."
+  (when application
+    (localgroup-stop application)
+    (application-release-conversation-lease application))
+  (when controller
+    (application-input-controller-stop controller))
+  (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)
+  nil)
+
+(-> test-localgroup-abandoned-session-exit () null)
+(defun test-localgroup-abandoned-session-exit ()
+  "Test sessions exiting when their client vanishes without an explicit detach."
+  ;; A persisted session with a goal and queued work still exits when its
+  ;; client disappears: lingering is reserved for deliberate detaches.
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)
-         (controller nil)
-         (relay nil)
-         (session nil))
+         (controller nil))
     (unwind-protect
-         (progn
-           (configuration-ensure-directories configuration)
-           (multiple-value-setq (application controller relay)
-             (test-localgroup--relay-application configuration))
-           (setf session (localgroup-start application))
-           (test-assert
-            (not (localgroup--session-pristine-p session))
-            "a session with a foreground terminal is never pristine")
-           (localgroup-terminal-release-control relay)
-           (test-assert
-            (localgroup--session-pristine-p session)
-            "an untouched ownerless session is pristine")
+         (multiple-value-bind (fixture-application fixture-controller
+                               relay session)
+             (test-localgroup--abandonment-fixture configuration
+                                                   :persisted-p t)
+           (declare (ignore relay))
+           (setf application fixture-application
+                 controller fixture-controller)
            (setf (application-goal application)
-                 (list :objective "keep me" :status ':active
+                 (list :objective "keep working" :status ':active
                        :continuations 0))
-           (test-assert
-            (not (localgroup--session-pristine-p session))
-            "a session goal keeps an abandoned session alive")
-           (setf (application-goal application) nil)
            (application-input-controller--enqueue
             controller ':message "queued input")
            (test-assert
-            (not (localgroup--session-pristine-p session))
-            "queued work keeps an abandoned session alive")
-           (application-input-controller--next-work controller)
-           (test-assert
-            (not (localgroup--session-pristine-p session))
-            "an active turn keeps an abandoned session alive")
-           (application-input-controller--finish-work controller)
-           (test-assert
-            (localgroup--session-pristine-p session)
-            "a drained untouched session is pristine again")
-           (localgroup--reap-abandoned-session session)
-           (test-assert
-            (eq (application-input-controller-exit-reason controller)
-                ':localgroup-kill)
-            "losing the only client exits a pristine session"))
-      (when application
-        (localgroup-stop application)
-        (application-release-conversation-lease application))
-      (when controller
-        (application-input-controller-stop controller))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+            (and (localgroup--controller-lost session)
+                 (eq (application-input-controller-exit-reason controller)
+                     ':localgroup-abandoned))
+            "losing the client without a detach exits a persisted busy session"))
+      (test-localgroup--abandonment-cleanup application controller root)))
+  ;; An explicit detach marks the release, so the controller's closure
+  ;; never exits the session; a later client consumes the mark again.
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (application nil)
          (controller nil)
-         (relay nil)
-         (session nil))
+         (socket nil)
+         (attachment nil))
     (unwind-protect
-         (progn
-           (configuration-ensure-directories configuration)
-           (multiple-value-setq (application controller relay)
-             (test-localgroup--relay-application configuration
-                                                 :persisted-p t))
-           (setf session (localgroup-start application))
+         (multiple-value-bind (fixture-application fixture-controller
+                               relay session)
+             (test-localgroup--abandonment-fixture configuration)
+           (setf application fixture-application
+                 controller fixture-controller
+                 socket (make-instance 'sb-bsd-sockets:inet-socket
+                                       :type ':stream
+                                       :protocol ':tcp)
+                 attachment (make-instance 'localgroup-attachment
+                                           :socket socket
+                                           :stream (make-string-output-stream)
+                                           :mode ':control))
+           (test-assert
+            (and (localgroup-terminal-attach relay attachment
+                                             :rows 24
+                                             :columns 80
+                                             :styled-p nil
+                                             :session-id "ABANDON")
+                 (eq (localgroup-terminal-attachment-kind relay) ':remote))
+            "a controlling attachment owns the released relay")
+           (localgroup--note-controller-attached session)
+           (localgroup--mark-explicit-detach session)
            (localgroup-terminal-release-control relay)
            (test-assert
-            (not (localgroup--session-pristine-p session))
-            "a persisted conversation keeps an abandoned session alive")
-           (localgroup--reap-abandoned-session session)
+            (and (with-lock-held ((localgroup-session-lock session))
+                   (localgroup-session-detached-explicitly-p session))
+                 (eq (localgroup-terminal-attachment-kind relay) ':detached)
+                 (not (localgroup--controller-lost session))
+                 (null (application-input-controller-exit-reason controller)))
+            "an explicit detach lets a client-less session linger")
+           (localgroup--note-controller-attached session)
+           (test-assert
+            (and (not (with-lock-held ((localgroup-session-lock session))
+                        (localgroup-session-detached-explicitly-p session)))
+                 (localgroup--controller-lost session)
+                 (eq (application-input-controller-exit-reason controller)
+                     ':localgroup-abandoned))
+            "a later client consumes the detach so its loss exits the session"))
+      (when attachment
+        (localgroup-attachment-close attachment))
+      (when socket
+        (ignore-errors (sb-bsd-sockets:socket-close socket)))
+      (test-localgroup--abandonment-cleanup application controller root)))
+  ;; Launch records decide the initial mark.
+  (test-assert
+   (and (localgroup--initially-detached-p '(:mode :detach))
+        (not (localgroup--initially-detached-p
+              '(:mode :detach :attach-expected-p t)))
+        (not (localgroup--initially-detached-p '(:mode :take-over)))
+        (not (localgroup--initially-detached-p nil))
+        (localgroup--attach-expected-p '(:mode :detach :attach-expected-p t))
+        (localgroup--attach-expected-p '(:mode :take-over))
+        (not (localgroup--attach-expected-p '(:mode :detach))))
+   "only a detach handoff starts deliberately detached")
+  ;; A launch whose client never attaches exits once the first-attach
+  ;; timeout passes, and one that met its client is left alone.
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (controller nil))
+    (unwind-protect
+         (multiple-value-bind (fixture-application fixture-controller
+                               relay session)
+             (test-localgroup--abandonment-fixture configuration)
+           (declare (ignore relay))
+           (setf application fixture-application
+                 controller fixture-controller)
+           (let ((*localgroup-first-attach-timeout-seconds* 0))
+             (localgroup--attach-watchdog session))
+           (test-assert
+            (eq (application-input-controller-exit-reason controller)
+                ':localgroup-abandoned)
+            "a launch nobody attaches to exits after the first-attach timeout"))
+      (test-localgroup--abandonment-cleanup application controller root)))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application nil)
+         (controller nil))
+    (unwind-protect
+         (multiple-value-bind (fixture-application fixture-controller
+                               relay session)
+             (test-localgroup--abandonment-fixture configuration)
+           (declare (ignore relay))
+           (setf application fixture-application
+                 controller fixture-controller)
+           (localgroup--note-controller-attached session)
+           (let ((*localgroup-first-attach-timeout-seconds* 0))
+             (localgroup--attach-watchdog session))
            (test-assert
             (null (application-input-controller-exit-reason controller))
-            "reaping never touches a session with durable history"))
-      (when application
-        (localgroup-stop application)
-        (application-release-conversation-lease application))
-      (when controller
-        (application-input-controller-stop controller))
-      (uiop:delete-directory-tree root
-                                  :validate t
-                                  :if-does-not-exist ':ignore)))
+            "the watchdog leaves a session alone once a client has attached"))
+      (test-localgroup--abandonment-cleanup application controller root)))
   nil)
 
 (-> test-localgroup-client-first-resume () null)

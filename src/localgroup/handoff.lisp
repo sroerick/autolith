@@ -458,6 +458,7 @@ detach is immediate and never interrupts session work."
                    :created-at created-at
                    :mode ':detach
                    :state ':pending
+                   :attach-expected-p t
                    :fresh-conversation-p (and (null conversation-id)
                                               (not resume-command-p))
                    :resume-command-p (not (null resume-command-p))

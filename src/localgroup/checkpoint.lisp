@@ -11,7 +11,10 @@
         (funcall function)))
     (let ((identifier (localgroup-session-identifier session))
           (token (localgroup-session-token session))
-          (created-at (localgroup-session-created-at session)))
+          (created-at (localgroup-session-created-at session))
+          (detached-explicitly-p
+            (with-lock-held ((localgroup-session-lock session))
+              (localgroup-session-detached-explicitly-p session))))
       (localgroup-stop application)
       (unwind-protect
            (funcall function)
@@ -19,4 +22,5 @@
           (localgroup-start application
                             :identifier identifier
                             :token token
-                            :created-at created-at))))))
+                            :created-at created-at
+                            :detached-explicitly-p detached-explicitly-p))))))
