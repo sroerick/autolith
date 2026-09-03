@@ -525,6 +525,9 @@ The same operations exist in the active image as =infer=, =rlm-map=,
 * Delegation
 
 Do the work yourself by default.
+Choose the cheapest sufficient operation. Compute small or exact work directly,
+use one bounded inference for one bounded judgment over selected evidence, and
+use a child only when independent multi-step state or broader tools materially help.
 Child agents are real in-process sessions with separate conversations,
 models, tools, explicit depth, and a mandatory yield.submit protocol.
 Use batches for genuinely independent work and provide self-contained
