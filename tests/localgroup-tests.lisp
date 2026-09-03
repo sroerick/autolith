@@ -46,6 +46,98 @@
            (list :mode mode :rows 31 :columns 91 :styled-p nil)))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(-> test-localgroup--endpoint-record (string (integer 1)) list)
+(defun test-localgroup--endpoint-record (session-id pid)
+  "Return one valid endpoint record for reconciliation tests."
+  (list :localgroup-endpoint
+        :version *localgroup-registry-version*
+        :session-id session-id
+        :pid pid
+        :address "127.0.0.1"
+        :port 12345
+        :token (format nil "token-~A" session-id)
+        :created-at (get-universal-time)))
+
+(-> test-localgroup-orphan-reconciliation () null)
+(defun test-localgroup-orphan-reconciliation ()
+  "Test startup removes dead endpoint records without touching uncertain replacements."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (dead-path     (localgroup-registry-pathname configuration "dead"))
+         (live-path     (localgroup-registry-pathname configuration "live"))
+         (unknown-path  (localgroup-registry-pathname configuration "unknown"))
+         (raced-path    (localgroup-registry-pathname configuration "raced"))
+         (dead-record   (test-localgroup--endpoint-record "dead" 101))
+         (live-record   (test-localgroup--endpoint-record "live" 102))
+         (unknown-record (test-localgroup--endpoint-record "unknown" 103))
+         (raced-record  (test-localgroup--endpoint-record "raced" 104))
+         (replacement   (test-localgroup--endpoint-record "replacement" 105))
+         (application nil)
+         (controller nil)
+         (session nil)
+         (raced-p nil))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (dolist (entry (list (cons dead-path dead-record)
+                                (cons live-path live-record)
+                                (cons unknown-path unknown-record)
+                                (cons raced-path raced-record)))
+             (snapshot-write (first entry) (rest entry)))
+           (multiple-value-setq (application controller)
+             (test-localgroup--application configuration))
+           (test-call-with-function-replacements
+            (list
+             (list 'localgroup-process-state
+                   (lambda (pid)
+                     (case pid
+                       (101 ':dead)
+                       (102 ':alive)
+                       (103 ':unknown)
+                       (104
+                        (unless raced-p
+                          (setf raced-p t)
+                          (snapshot-write raced-path replacement))
+                        ':dead)
+                       (otherwise
+                        ':alive)))))
+            (lambda ()
+              (setf session (localgroup-start application))))
+           (test-assert
+            (and (null (probe-file dead-path))
+                 (probe-file live-path)
+                 (probe-file unknown-path)
+                 (equal (localgroup--read-endpoint-record raced-path)
+                        replacement))
+            "localgroup startup deletes only records whose dead owner is unchanged")
+           (let ((client-reconciled-p nil))
+             (test-call-with-function-replacements
+              (list
+               (list 'configuration-create
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       configuration))
+               (list 'localgroup-reconcile-endpoint-records
+                     (lambda (candidate)
+                       (setf client-reconciled-p (eq candidate configuration))
+                       0)))
+              (lambda ()
+                (test-assert
+                 (eq (localgroup--client-configuration) configuration)
+                 "localgroup client startup retains its reconciled configuration")))
+             (test-assert client-reconciled-p
+                          "localgroup client startup reconciles endpoint records")))
+      (when session
+        (localgroup-stop application))
+      (when controller
+        (application-input-controller-stop controller))
+      (when application
+        (application-release-conversation-lease application))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-localgroup-terminal-restart () null)
 (defun test-localgroup-terminal-restart ()
   "Test that stopping a relay retains its direct terminal for restart."

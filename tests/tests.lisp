@@ -411,6 +411,7 @@
     (test-localgroup-blocking-read-lifecycle)
     (test-localgroup-detached-terminal-lifecycle)
     (test-localgroup-protocol)
+    (test-localgroup-orphan-reconciliation)
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)
     (test-localgroup-handoff-scheduling)

@@ -671,6 +671,7 @@ HEADER-P renders field labels rather than status values."
   "Return a directory-ensured configuration for one localgroup client command."
   (let ((configuration (configuration-create :defer-provider-validation-p t)))
     (configuration-ensure-directories configuration)
+    (localgroup-reconcile-endpoint-records configuration)
     configuration))
 
 (-> localgroup--run-status (&key (:sexp-p boolean)) null)

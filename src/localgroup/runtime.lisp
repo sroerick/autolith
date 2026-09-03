@@ -199,6 +199,44 @@
      :key (lambda (entry)
             (or (ignore-errors (file-write-date (first entry))) 0)))))
 
+(-> localgroup-process-state ((integer 1)) (member :alive :dead :unknown))
+(defun localgroup-process-state (pid)
+  "Return whether PID exists, is absent, or cannot be classified safely."
+  (handler-case
+      (progn
+        (sb-posix:kill pid 0)
+        ':alive)
+    (sb-posix:syscall-error (condition)
+      (let ((errno (sb-posix:syscall-errno condition)))
+        (cond ((= errno sb-posix:esrch)
+               ':dead)
+              ((= errno sb-posix:eperm)
+               ':alive)
+              (t
+               ':unknown))))
+    (error ()
+      ':unknown)))
+
+(-> localgroup--delete-matching-endpoint-record (pathname list) boolean)
+(defun localgroup--delete-matching-endpoint-record (pathname record)
+  "Delete PATHNAME when it still contains RECORD and report whether it vanished."
+  (handler-case
+      (when (equal record (localgroup--read-endpoint-record pathname))
+        (delete-file pathname)
+        t)
+    (error ()
+      nil)))
+
+(-> localgroup-reconcile-endpoint-records (configuration) (integer 0))
+(defun localgroup-reconcile-endpoint-records (configuration)
+  "Delete endpoint records whose owning processes are positively absent."
+  (loop for entry in (localgroup-endpoint-records configuration)
+        for pathname = (first entry)
+        for record = (rest entry)
+        for pid = (getf (rest record) :pid)
+        count (and (eq (localgroup-process-state pid) ':dead)
+                   (localgroup--delete-matching-endpoint-record pathname record))))
+
 (-> application-localgroup-paused-p (application) boolean)
 (defun application-localgroup-paused-p (application)
   "Return true when APPLICATION is deliberately holding queued work."
@@ -786,6 +824,8 @@ Optional identity values preserve one session across quiescence or process
 handoff, and DETACHED-EXPLICITLY-P carries a deliberate detach across the
 same boundary. A fresh launch started for a client that never arrives exits
 after the first-attach timeout instead of lingering."
+  (localgroup-reconcile-endpoint-records
+   (application-configuration application))
   (let* ((restart-p (not (null identifier)))
          (startup-values (and *localgroup-startup-record*
                               (rest *localgroup-startup-record*)))
