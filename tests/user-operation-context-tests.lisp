@@ -134,6 +134,12 @@
                  :tool-namespaces #()
                  :compaction-p t)))
               "side-channel compaction omits recent user-operation context"))
+           (test-assert
+            (and (not (conversation-persisted-p conversation))
+                 (null (conversation-storage-active-pathname
+                        (conversation-pathname conversation))))
+            "local operations alone never persist an unstarted conversation")
+           (conversation-append-user-message conversation "first message")
            (let* ((*conversation-user-operation-source-limit* 1)
                   (*conversation-user-operation-result-limit* 0)
                   (loaded
@@ -146,8 +152,8 @@
                    (equal (mapcar #'user-operation-context-tests--source
                                   loaded-records)
                           '("(setf *example* 1)" "/help"))
-                   (null (conversation-input-items loaded)))
-              "conversation replay reconstructs user-operation context without provider messages"))
+                   (= (length (conversation-input-items loaded)) 1))
+              "the first durable record carries earlier operations into replay"))
            (let ((empty
                    (conversation-create configuration
                                         :identifier "user-operation-empty")))
@@ -216,6 +222,7 @@
            (let ((conversation
                    (conversation-create configuration
                                         :identifier "user-operation-zero-count")))
+             (conversation-append-user-message conversation "start")
              (let ((*conversation-user-operation-count-limit* 0))
                (conversation-append-user-operation
                 conversation
@@ -228,13 +235,14 @@
                         (conversation-pathname conversation))))
                  (test-assert
                   (and (conversation-persisted-p conversation)
-                       (= (conversation-next-sequence conversation) 2)
+                       (= (conversation-next-sequence conversation) 3)
                        (null (conversation-user-operation-snapshot conversation))
                        (null (conversation-user-operation-snapshot loaded)))
                   "a zero count limit preserves durable records but retains no context"))))
            (let ((conversation
                    (conversation-create configuration
                                         :identifier "user-operation-zero-characters")))
+             (conversation-append-user-message conversation "start")
              (let ((*conversation-user-operation-character-limit* 0))
                (conversation-append-user-operation
                 conversation
@@ -247,7 +255,7 @@
                         (conversation-pathname conversation))))
                  (test-assert
                   (and (conversation-persisted-p conversation)
-                       (= (conversation-next-sequence conversation) 2)
+                       (= (conversation-next-sequence conversation) 3)
                        (null (conversation-user-operation-snapshot conversation))
                        (null (conversation-user-operation-snapshot loaded)))
                   "a zero character limit preserves durable records but retains no context"))))
@@ -343,6 +351,7 @@
                           :result ""))
                   (properties (rest record))
                   (tail (last properties)))
+             (conversation-append-user-message conversation "start")
              (conversation-append-user-operation
               conversation
               :kind ':lisp
@@ -373,6 +382,7 @@
            (let ((conversation
                    (conversation-create configuration
                                         :identifier "user-operation-circular-header")))
+             (conversation-append-user-message conversation "start")
              (conversation-append-user-operation
               conversation
               :kind ':lisp

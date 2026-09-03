@@ -168,18 +168,28 @@ Oversized text ends with an explicit truncation marker whenever LIMIT permits it
              :message
              "User operation source and result limits must fit the durable safety bound."))
     (with-recursive-lock-held ((conversation-append-lock conversation))
-      (let ((record
-              (conversation-append-record
-               conversation
-               (list :user-operation
-                     :kind kind
+      (let* ((properties
+               (list :kind kind
                      :source
                      (conversation-user-operation--bounded-text
                       source source-limit)
                      :status status
                      :result
                      (conversation-user-operation--bounded-text
-                      result result-limit)))))
+                      result result-limit)))
+             (record
+               (if (conversation-persisted-p conversation)
+                   (conversation-append-record
+                    conversation (list* :user-operation properties))
+                   ;; Local commands never persist a conversation nobody has
+                   ;; spoken in. The projection keeps them in memory, and the
+                   ;; chunk header written with the first durable record
+                   ;; carries them, so nothing is lost and an unstarted
+                   ;; conversation never reaches disk or the picker.
+                   (list* :user-operation
+                          :seq (conversation-next-sequence conversation)
+                          :time (get-universal-time)
+                          properties))))
         (conversation--project-record :user-operation conversation (rest record))
         record))))
 
