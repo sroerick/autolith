@@ -938,20 +938,25 @@
                     (and (vectorp messages)
                          (search "Read the file" (json-encode messages)))
                     "Chat Completions requests carry projected conversation messages")
-                    (test-assert
-                     (let ((system-messages
-                             (remove-if-not
-                              (lambda (message)
-                                (string= (json-get message "role") "system"))
-                              (coerce messages 'list))))
-                       (and delivery
-                            (= (length system-messages) 1)
-                            (eq (aref messages 0) (first system-messages))
-                            (search "keep the active goal"
-                                    (json-get (first system-messages) "content"))
-                            (search "Temporary context"
-                                    (json-get (first system-messages) "content"))))
-                     "goal and mutable context share one leading system message")
+                   (test-assert
+                    (let* ((system-message (aref messages 0))
+                           (context-message
+                             (aref messages (1- (length messages))))
+                           (system-content
+                             (json-get system-message "content"))
+                           (context-content
+                             (json-get context-message "content")))
+                      (and delivery
+                           (= (length messages) 3)
+                           (string= (json-get system-message "role") "system")
+                           (string= system-content
+                                    (system-prompt provider-configuration))
+                           (null (search "keep the active goal" system-content))
+                           (null (search "Temporary context" system-content))
+                           (string= (json-get context-message "role") "user")
+                           (search "keep the active goal" context-content)
+                           (search "Temporary context" context-content)))
+                    "goal and mutable context trail cacheable conversation history")
                    (test-assert
                     (null (json-get request "prompt_cache_key"))
                     "generic OpenAI-compatible requests omit unsupported cache fields")

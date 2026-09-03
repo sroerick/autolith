@@ -60,26 +60,33 @@
      (json-object "type" "function_call_output" "call_id" "call-1"
                   "output" "{\"text\":\"ok\"}"))
     (multiple-value-bind (request delivery)
-        (provider-request-object provider conversation tools)
-      (declare (ignore delivery))
+        (provider-request-object provider conversation tools
+                                 :goal-context "keep the active goal")
       (let* ((inner (json-get request "request"))
              (contents (json-get inner "contents"))
+             (system-instruction (json-get inner "systemInstruction"))
+             (system-text
+               (json-get (aref (json-get system-instruction "parts") 0)
+                         "text"))
+             (context-content (aref contents (1- (length contents))))
+             (context-text
+               (json-get (aref (json-get context-content "parts") 0) "text"))
              (declarations
                (json-get (aref (json-get inner "tools") 0)
                          "functionDeclarations"))
-              (call-part
-                (loop for content across contents
-                      thereis (loop for part across (json-get content "parts")
-                                    thereis (json-get part "functionCall"))))
-              (response-part
-                (loop for content across contents
-                      thereis (loop for part across (json-get content "parts")
-                                    thereis (json-get part "functionResponse"))))
-              (thought-part
-                (loop for content across contents
-                      thereis (loop for part across (json-get content "parts")
-                                    when (json-get part "thought")
-                                      return part))))
+             (call-part
+               (loop for content across contents
+                     thereis (loop for part across (json-get content "parts")
+                                   thereis (json-get part "functionCall"))))
+             (response-part
+               (loop for content across contents
+                     thereis (loop for part across (json-get content "parts")
+                                   thereis (json-get part "functionResponse"))))
+             (thought-part
+               (loop for content across contents
+                     thereis (loop for part across (json-get content "parts")
+                                   when (json-get part "thought")
+                                     return part))))
         (test-assert
          (string= (json-get (aref declarations 0) "name")
                   (provider-wire-function-name--encode "fs" "read"))
@@ -93,7 +100,16 @@
                   (provider-wire-function-name--encode "fs" "read"))
          "Code Assist matches function responses to calls")
         (test-assert thought-part
-                     "Code Assist preserves thinking parts"))))
+                     "Code Assist preserves thinking parts")
+        (test-assert
+         (and delivery
+              (string= system-text (system-prompt configuration))
+              (null (search "keep the active goal" system-text))
+              (null (search "Temporary context" system-text))
+              (string= (json-get context-content "role") "user")
+              (search "keep the active goal" context-text)
+              (search "Temporary context" context-text))
+         "Code Assist trails volatile context after cacheable conversation input"))))
   nil)
 
 (-> gemini-code-assist-test--stream-fixture () null)

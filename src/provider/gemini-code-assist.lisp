@@ -555,6 +555,16 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
             contents)))))
     (coerce (nreverse contents) 'vector)))
 
+(-> gemini-code-assist--context-content (list) (option json-object))
+(defun gemini-code-assist--context-content (texts)
+  "Return volatile nonempty TEXTS as one trailing Gemini user content."
+  (let ((text
+          (format nil "~{~A~^~%~%~}"
+                  (remove-if-not #'non-empty-string-p texts))))
+    (when (non-empty-string-p text)
+      (json-object "role" "user"
+                   "parts" (json-array (json-object "text" text))))))
+
 (-> gemini-code-assist--function-declarations (vector) vector)
 (defun gemini-code-assist--function-declarations (tool-namespaces)
   "Flatten Autolith tools into Gemini function declarations."
@@ -604,18 +614,25 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                    (remove-if-not
                     #'non-empty-string-p
                     (list (system-prompt configuration)
-                          (and (not compaction-p) goal-context)
-                          (and delivery (context-delivery-rendered delivery))
                           (and compaction-p *compaction-instructions*)))))
+         (contents
+           (gemini-code-assist--content-items
+            (conversation-input-items-for-family
+             conversation (provider-family provider)
+             :include-ephemeral-p (not compaction-p))))
+         (context-content
+           (unless compaction-p
+             (gemini-code-assist--context-content
+              (list goal-context
+                    (and delivery (context-delivery-rendered delivery))))))
          (declarations
            (gemini-code-assist--function-declarations effective-tools))
          (inner
            (json-object
             "contents"
-            (gemini-code-assist--content-items
-             (conversation-input-items-for-family
-              conversation (provider-family provider)
-              :include-ephemeral-p (not compaction-p)))
+            (if context-content
+                (concatenate 'vector contents (vector context-content))
+                contents)
             "systemInstruction"
             (json-object "role" "user"
                          "parts" (json-array (json-object "text" system-text)))

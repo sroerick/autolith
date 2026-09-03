@@ -561,6 +561,15 @@ message, which thinking-mode providers require passed back."
    "content" (format nil "~{~A~^~%~%~}"
                      (remove-if-not #'non-empty-string-p texts))))
 
+(-> openai-compatible--chat-context-message (list) (option json-object))
+(defun openai-compatible--chat-context-message (texts)
+  "Return volatile nonempty TEXTS as one trailing Chat Completions user message."
+  (let ((content
+          (format nil "~{~A~^~%~%~}"
+                  (remove-if-not #'non-empty-string-p texts))))
+    (when (non-empty-string-p content)
+      (json-object "role" "user" "content" content))))
+
 
 ;;;; -- Chat Completions Requests --
 
@@ -590,14 +599,19 @@ message, which thinking-mode providers require passed back."
             conversation
             (provider-family provider)
             :include-ephemeral-p (not compaction-p)))
-          (messages
-            (cons
+         (context-message
+           (unless compaction-p
+             (openai-compatible--chat-context-message
+              (list goal-context
+                    (and delivery (context-delivery-rendered delivery))))))
+         (messages
+           (append
+            (list
              (openai-compatible--chat-system-message
               (list (system-prompt configuration)
-                    (and (not compaction-p) goal-context)
-                    (and delivery (context-delivery-rendered delivery))
-                    (and compaction-p *compaction-instructions*)))
-             (openai-compatible--chat-input-messages input-items)))
+                    (and compaction-p *compaction-instructions*))))
+            (openai-compatible--chat-input-messages input-items)
+            (when context-message (list context-message))))
          (request
            (json-object
             "model" (configuration-model configuration)
