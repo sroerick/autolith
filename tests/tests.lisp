@@ -275,6 +275,7 @@
     (test-conversation-working-seconds)
     (test-conversation-picker-metadata-stability)
     (test-conversation-picker-search)
+     (test-conversation-turn-aborted-boundary)
     (test-conversation-replay)
     (test-conversation-deletion)
     (test-workspace-plan)

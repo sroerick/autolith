@@ -95,6 +95,16 @@
            :tool (getf (rest record) :tool)
            :status (getf (rest record) :status)
            :output (getf (rest record) :output)))
+    (:turn-aborted
+     (list ':turn-aborted
+           :seq (getf (rest record) :seq)
+           :time (getf (rest record) :time)
+           :turn-start-seq (getf (rest record) :turn-start-seq)
+           :last-complete-seq (getf (rest record) :last-complete-seq)
+           :reason (getf (rest record) :reason)
+           :condition-type (getf (rest record) :condition-type)
+           :message (getf (rest record) :message)
+           :request-number (getf (rest record) :request-number)))
     ((:provider :native-compaction)
      nil)
     (otherwise
@@ -225,6 +235,15 @@ whole history when a crash or retention boundary interrupted sequencing."
      (format stream "~A~%~@[~A~%~]"
              (or (getf (rest record) :source) "")
              (getf (rest record) :result)))
+    (:turn-aborted
+     (format stream
+             "durable prefix ~D-~D aborted [~(~A~)]~@[ at provider request ~D~]~%~A: ~A~%"
+             (getf (rest record) :turn-start-seq)
+             (getf (rest record) :last-complete-seq)
+             (getf (rest record) :reason)
+             (getf (rest record) :request-number)
+             (getf (rest record) :condition-type)
+             (getf (rest record) :message)))
     (otherwise
      (format stream "~S~%" record)))
   nil)

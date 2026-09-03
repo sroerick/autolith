@@ -3299,6 +3299,28 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
        (funcall function)
     (application-input-controller-stop controller)))
 
+(-> application--record-turn-aborted
+    (application serious-condition
+     &key (:turn-start-sequence (integer 1))
+          (:reason (member :cancelled :agent-loop :application-error)))
+    (option list))
+(defun application--record-turn-aborted
+    (application condition &key turn-start-sequence reason)
+  "Repair and publish APPLICATION's durable partial turn after CONDITION."
+  (let ((conversation (application-conversation application)))
+    (conversation--repair-incomplete-tool-calls conversation)
+    (conversation-append-turn-aborted
+     conversation
+     :turn-start-sequence turn-start-sequence
+     :reason reason
+     :condition-type (format nil "~S" (class-name (class-of condition)))
+     :message (bounded-string condition
+                              :limit
+                              *conversation-turn-aborted-message-maximum-characters*)
+     :request-number
+     (and (typep condition 'agent-loop-error)
+          (agent-loop-error-request-number condition)))))
+
 (-> application--run-message-input
     (application (or string user-message-input)
      &key (:steering-function (option function))
@@ -3320,7 +3342,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
           tool-allowlist (tool-restriction-p nil) (goal-continuations-p t)
           (fatal-agent-loop-errors-p t))
   "Run model INPUT with established expected, cancellation, and fatal handling."
-  (let ((signal-backtrace nil))
+  (let* ((conversation (application-conversation application))
+         (turn-start-sequence (conversation-next-sequence conversation))
+         (signal-backtrace nil))
     (handler-bind
         ((serious-condition
            (lambda (condition)
@@ -3342,12 +3366,20 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
              :goal-continuations-p goal-continuations-p)
             ':continue)
         (application-turn-cancelled (condition)
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason ':cancelled)
           (error condition))
         (application-input-failed (condition)
           (error condition))
         (rollback-requested (condition)
           (error condition))
         (agent-loop-error (condition)
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason ':agent-loop)
           (if fatal-agent-loop-errors-p
               (application-raise-fatal
                application condition signal-backtrace)
@@ -3359,6 +3391,10 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
          (condition)
           (application-raise-fatal application condition signal-backtrace))
         (autolith-error (condition)
+          (application--record-turn-aborted
+           application condition
+           :turn-start-sequence turn-start-sequence
+           :reason ':application-error)
           (application-handle-expected-error application condition)
           ':failed)
         (serious-condition (condition)

@@ -103,6 +103,26 @@
              :time 101
              :wire-json (make-string 10000 :initial-element #\x))))
      "opaque native compaction payloads are omitted from replay projection")
+    (let* ((record
+             (list ':turn-aborted
+                   :seq 12
+                   :time 102
+                   :turn-start-seq 8
+                   :last-complete-seq 11
+                   :reason ':agent-loop
+                   :condition-type "AGENT-LOOP-ERROR"
+                   :message "provider response was malformed"
+                   :request-number 2))
+           (projected (conversation-replay--project-record record))
+           (output (make-string-output-stream)))
+      (conversation-replay--write-record-body projected output)
+      (let ((rendered (get-output-stream-string output)))
+        (test-assert
+         (and (equal projected record)
+              (search "durable prefix 8-11 aborted [agent-loop]" rendered)
+              (search "provider request 2" rendered)
+              (search "provider response was malformed" rendered))
+         "replay exposes the recoverable prefix and diagnosis of an aborted turn")))
   nil)
 
 (-> test-conversation-replay-storage () null)

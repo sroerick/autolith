@@ -31,6 +31,12 @@
   '("here is " "here's " "i cannot " "i can't " "sorry " "the title " "title:")
   "Lowercase explanatory prefixes rejected from generated session titles.")
 
+(defparameter *conversation-turn-aborted-message-maximum-characters* 1000
+  "The maximum condition-message characters retained by one aborted turn.")
+
+(defparameter *conversation-turn-aborted-condition-type-maximum-characters* 160
+  "The maximum condition-type characters retained by one aborted turn.")
+
 (-> conversation-title--collapse-whitespace (string) string)
 (defun conversation-title--collapse-whitespace (text)
   "Return TEXT with control characters removed and whitespace collapsed."
@@ -227,6 +233,11 @@
     :accessor conversation-next-sequence
     :type integer
     :documentation "The sequence number assigned to the next appended event.")
+    (last-aborted-turn-start-sequence
+     :initform nil
+     :accessor conversation-last-aborted-turn-start-sequence
+     :type (option integer)
+     :documentation "The start sequence of the latest turn-aborted marker in memory.")
    (input-items
     :initarg :input-items
     :accessor conversation-input-items
@@ -1188,6 +1199,71 @@ owner has exited."
           (setf (conversation-latest-goal-record conversation) sequenced)))
       (conversation-picker-metadata-publish conversation)
       sequenced)))
+
+(-> conversation--bounded-turn-abort-text (t string integer) non-empty-string)
+(defun conversation--bounded-turn-abort-text (value field maximum-characters)
+  "Return bounded nonempty string VALUE for aborted-turn FIELD."
+  (unless (non-empty-string-p value)
+    (error 'conversation-invariant-error
+           :message (format nil "Turn-aborted ~A must be a non-empty string." field)
+           :pathname #P"conversation.sexp"
+           :sequence nil))
+  (if (<= (length value) maximum-characters)
+      value
+      (subseq value 0 maximum-characters)))
+
+(-> conversation-append-turn-aborted
+    (conversation
+     &key (:turn-start-sequence (integer 1))
+          (:reason (member :cancelled :agent-loop :application-error))
+          (:condition-type string)
+          (:message string)
+          (:request-number (option (integer 1))))
+    (option list))
+(defun conversation-append-turn-aborted
+    (conversation &key turn-start-sequence reason condition-type message
+                       request-number)
+  "Append one idempotent aborted-turn boundary when its turn has durable work."
+  (with-recursive-lock-held ((conversation-append-lock conversation))
+    (let ((last-complete-sequence (1- (conversation-next-sequence conversation))))
+      (when (or (not (conversation-persisted-p conversation))
+                (< last-complete-sequence turn-start-sequence))
+        (return-from conversation-append-turn-aborted nil))
+      (when (eql turn-start-sequence
+                 (conversation-last-aborted-turn-start-sequence conversation))
+        (return-from conversation-append-turn-aborted nil))
+      (unless (member reason '(:cancelled :agent-loop :application-error))
+        (error 'conversation-invariant-error
+               :message "A turn-aborted record has an unsupported reason."
+               :pathname (conversation-pathname conversation)
+               :sequence (conversation-next-sequence conversation)))
+      (unless (or (null request-number)
+                  (typep request-number '(integer 1)))
+        (error 'conversation-invariant-error
+               :message "A turn-aborted request number must be positive."
+               :pathname (conversation-pathname conversation)
+               :sequence (conversation-next-sequence conversation)))
+      (let ((record
+              (conversation-append-record
+               conversation
+               (list :turn-aborted
+                     :turn-start-seq turn-start-sequence
+                     :last-complete-seq last-complete-sequence
+                     :reason reason
+                     :condition-type
+                     (conversation--bounded-turn-abort-text
+                      condition-type
+                      "condition type"
+                      *conversation-turn-aborted-condition-type-maximum-characters*)
+                     :message
+                     (conversation--bounded-turn-abort-text
+                      message
+                      "message"
+                      *conversation-turn-aborted-message-maximum-characters*)
+                     :request-number request-number))))
+        (setf (conversation-last-aborted-turn-start-sequence conversation)
+              turn-start-sequence)
+        record))))
 
 (-> conversation-title-refresh-due-p (conversation) boolean)
 (defun conversation-title-refresh-due-p (conversation)
@@ -2697,6 +2773,39 @@ later picker searches read it without scanning the log."
        "A persisted conversation model selection is invalid."))
     (setf (conversation-model conversation) model
           (conversation-reasoning-effort conversation) reasoning-effort)))
+
+(defmethod conversation--project-record
+    ((kind (eql :turn-aborted)) conversation properties)
+  "Validate and project one durable aborted-turn boundary."
+  (let ((sequence (getf properties :seq))
+        (turn-start-sequence (getf properties :turn-start-seq))
+        (last-complete-sequence (getf properties :last-complete-seq))
+        (reason (getf properties :reason))
+        (condition-type (getf properties :condition-type))
+        (message (getf properties :message))
+        (request-number (getf properties :request-number)))
+    (unless (and (typep sequence '(integer 1))
+                 (typep turn-start-sequence '(integer 1))
+                 (typep last-complete-sequence '(integer 1))
+                 (<= turn-start-sequence last-complete-sequence)
+                 (< last-complete-sequence sequence)
+                 (member reason '(:cancelled :agent-loop :application-error))
+                 (non-empty-string-p condition-type)
+                 (<= (length condition-type)
+                     *conversation-turn-aborted-condition-type-maximum-characters*)
+                 (non-empty-string-p message)
+                 (<= (length message)
+                     *conversation-turn-aborted-message-maximum-characters*)
+                 (or (null request-number)
+                     (typep request-number '(integer 1))))
+      (conversation--record-error
+       conversation properties "A persisted turn-aborted record is invalid."))
+    (when (eql turn-start-sequence
+               (conversation-last-aborted-turn-start-sequence conversation))
+      (conversation--record-error
+       conversation properties "A persisted turn is marked aborted more than once."))
+    (setf (conversation-last-aborted-turn-start-sequence conversation)
+          turn-start-sequence)))
 
 (-> conversation--repair-provider-item-arguments (json-object) json-object)
 (defun conversation--repair-provider-item-arguments (item)

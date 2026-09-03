@@ -26,6 +26,72 @@
        (push record records)))
     (nreverse records)))
 
+(-> test-conversation-turn-aborted-boundary () null)
+(defun test-conversation-turn-aborted-boundary ()
+  "Test durable aborted-turn boundaries are bounded, idempotent, and replayed."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "turn-aborted")))
+    (unwind-protect
+         (let ((turn-start-sequence
+                 (conversation-next-sequence conversation)))
+           (test-assert
+            (null
+             (conversation-append-turn-aborted
+              conversation
+              :turn-start-sequence turn-start-sequence
+              :reason ':cancelled
+              :condition-type "APPLICATION-TURN-CANCELLED"
+              :message "cancelled"
+              :request-number nil))
+            "an aborted turn without durable work emits no boundary")
+           (conversation-append-user-message conversation "partial turn")
+           (let* ((long-message
+                    (make-string
+                     (+ *conversation-turn-aborted-message-maximum-characters* 40)
+                     :initial-element #\x))
+                  (marker
+                    (conversation-append-turn-aborted
+                     conversation
+                     :turn-start-sequence turn-start-sequence
+                     :reason ':agent-loop
+                     :condition-type "AGENT-LOOP-ERROR"
+                     :message long-message
+                     :request-number 3)))
+             (test-assert
+              (and (eq (first marker) ':turn-aborted)
+                   (= (getf (rest marker) :turn-start-seq)
+                      turn-start-sequence)
+                   (= (getf (rest marker) :last-complete-seq)
+                      turn-start-sequence)
+                   (= (length (getf (rest marker) :message))
+                      *conversation-turn-aborted-message-maximum-characters*)
+                   (= (getf (rest marker) :request-number) 3))
+              "an aborted turn records its durable prefix and bounded diagnosis")
+             (test-assert
+              (null
+               (conversation-append-turn-aborted
+                conversation
+                :turn-start-sequence turn-start-sequence
+                :reason ':agent-loop
+                :condition-type "AGENT-LOOP-ERROR"
+                :message "duplicate"
+                :request-number 3))
+              "one turn cannot append its aborted boundary twice")
+             (let* ((loaded
+                      (conversation-load (conversation-pathname conversation)))
+                    (records (test-conversation--all-records loaded))
+                    (loaded-marker (find :turn-aborted records :key #'first)))
+               (test-assert
+                (and loaded-marker
+                     (= (conversation-last-aborted-turn-start-sequence loaded)
+                        turn-start-sequence)
+                     (= (count :turn-aborted records :key #'first) 1))
+                "loading validates and projects the durable aborted boundary"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-conversation-image-input () null)
 (defun test-conversation-image-input ()
   "Test image validation, durable artifacts, projection, and replay."

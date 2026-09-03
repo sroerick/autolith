@@ -7691,6 +7691,72 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-failed-turn-publishes-durable-wreckage () null)
+(defun test-failed-turn-publishes-durable-wreckage ()
+  "Test a failed model turn repairs calls and publishes its recoverable prefix."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "failed-turn-wreckage"))
+         (registry (make-default-tool-registry))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry)))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'application-run-message
+            (lambda (active-application input &rest arguments)
+              (declare (ignore arguments))
+              (conversation-append-user-message
+               (application-conversation active-application) input)
+              (conversation-append-provider-item
+               (application-conversation active-application)
+               (json-object
+                "type" "function_call"
+                "call_id" "wreckage-call"
+                "namespace" "fs"
+                "name" "read"
+                "arguments" "{}"))
+              (error 'agent-loop-error
+                     :message "provider response was malformed"
+                     :conversation-id
+                     (conversation-identifier
+                      (application-conversation active-application))
+                     :request-number 2)))
+           (list
+            'application-handle-expected-error
+            (lambda (active-application condition)
+              (declare (ignore active-application condition))
+              nil)))
+          (lambda ()
+            (test-assert
+             (eq
+              (application--run-message-input
+               application "partial request" :fatal-agent-loop-errors-p nil)
+              ':failed)
+             "an expected agent-loop failure returns the ordinary failed action")
+            (let* ((records (test-conversation--all-records conversation))
+                   (tool-result (find :tool-result records :key #'first))
+                   (marker (find :turn-aborted records :key #'first)))
+              (test-assert
+               (and tool-result
+                    marker
+                    (eq (getf (rest tool-result) :status) ':error)
+                    (string= (getf (rest tool-result) :output)
+                             *conversation-interrupted-tool-output*)
+                    (= (getf (rest marker) :last-complete-seq)
+                       (getf (rest tool-result) :seq))
+                    (eq (getf (rest marker) :reason) ':agent-loop)
+                    (= (getf (rest marker) :request-number) 2))
+               "failed turns repair incomplete calls before publishing their boundary"))))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> run-application-tests () boolean)
 (defun run-application-tests ()
   "Run focused application presentation tests and return true on success."
@@ -7716,6 +7782,7 @@
   (test-dropped-interrupt-hint-reappears)
   (test-active-cancellation-interrupt-window-expiry)
   (test-cancellation-completion-clears-interrupt-state)
+  (test-failed-turn-publishes-durable-wreckage)
   (test-transcript-entries)
   (test-recovery-cursor-normalization)
   (test-recovery-diagnosis-prompt)
