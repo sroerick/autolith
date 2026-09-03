@@ -175,11 +175,163 @@
      "the replay command starts an immutable selected inspection"))
   nil)
 
+
+(-> test-conversation-fork-storage () null)
+(defun test-conversation-fork-storage ()
+  "Test historical forks preserve state, provenance, artifacts, and source files."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (first-image (test-conversation--write-tiny-png
+                       (merge-pathnames "first.png" root)))
+         (second-image (test-conversation--write-tiny-png
+                        (merge-pathnames "second.png" root)))
+         (source (conversation-create configuration
+                                      :identifier "fork-source"
+                                      :prompt-cache-key "source-cache")))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message
+            source (user-message-input-create :text "first" :image-pathnames (list first-image)))
+           (conversation-append-provider-item
+            source
+            (json-object "type" "message" "role" "assistant"
+                         "content" (vector (json-object "type" "output_text"
+                                                        "text" "answer"))))
+           (conversation-append-record source (list :summary :content "compact"))
+           (conversation-append-provider-item
+            source
+            (json-object "type" "function_call"
+                         "call_id" "call-1"
+                         "name" "demo"
+                         "arguments" "{}"))
+           (conversation-append-tool-result
+            source "call-1" :tool-name "demo" :output "done" :success-p t)
+           (conversation-append-user-message
+            source (user-message-input-create :text "second" :image-pathnames (list second-image)))
+           (let* ((source-records (conversation-fork--raw-records source))
+                  (source-pathnames
+                    (conversation-storage-pathnames
+                     (conversation-pathname source)))
+                  (source-bytes
+                    (mapcar #'uiop:read-file-string source-pathnames))
+                  (fork
+                    (conversation-fork configuration "fork-source"
+                                       :selection '("sequence" "5")
+                                       :identifier "fork-target"))
+                  (records (conversation-fork--raw-records fork))
+                  (provenance (first (last records)))
+                  (artifacts
+                    (uiop:directory-files
+                     (conversation-image-artifact-root fork))))
+             (test-assert
+              (and (string= (conversation-identifier fork) "fork-target")
+                   (not (string= (conversation-prompt-cache-key fork)
+                                 "source-cache"))
+                   (= (length records) 6)
+                   (equal (subseq records 0 5)
+                          (subseq source-records 0 5))
+                   (eq (first provenance) :fork)
+                   (string= (getf (rest provenance) :source-id) "fork-source")
+                   (= (getf (rest provenance) :source-sequence) 5)
+                   (= (length (conversation-input-items fork)) 3)
+                   (= (length artifacts) 1)
+                   (equal source-bytes
+                          (mapcar #'uiop:read-file-string source-pathnames)))
+              "forks retain the selected chunked prefix, state, provenance, one referenced artifact, and immutable source"))
+           (dolist (arguments '(("sequence" "99") ("sequence" "2" "extra")))
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-fork configuration "fork-source"
+                                       :selection arguments
+                                       :identifier "rejected-target")
+                    nil)
+                (error ()
+                  (not (conversation-storage-occupied-p
+                        (conversation-pathname-for-id configuration
+                                                      "rejected-target")))))
+              "invalid or nonexistent fork heads leave no target")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-conversation-fork-rejections () null)
+(defun test-conversation-fork-rejections ()
+  "Test generated identities and gapped source rejection without partial targets."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (progn
+           (let ((source (conversation-create configuration
+                                              :identifier "generated-source"
+                                              :prompt-cache-key "source-cache")))
+             (conversation-append-user-message source "one")
+             (let ((fork (conversation-fork configuration "generated-source")))
+               (test-assert
+                (and (not (string= (conversation-identifier fork)
+                                   "generated-source"))
+                     (not (string= (conversation-prompt-cache-key fork)
+                                   "source-cache")))
+                "a fork without --id receives fresh conversation and cache identities")))
+           (let ((source (conversation-create configuration
+                                              :identifier "gapped-source")))
+             (conversation-append-user-message source "one")
+             (log-append
+              (conversation-log-pathname source)
+              (list :message :seq 3 :time (get-universal-time)
+                    :role :user :content "gap"
+                    :wire-json (json-encode (user-message-item "gap"))))
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-fork configuration "gapped-source"
+                                       :identifier "gapped-target")
+                    nil)
+                (conversation-invariant-error ()
+                  (not (conversation-storage-occupied-p
+                        (conversation-pathname-for-id configuration
+                                                      "gapped-target")))))
+              "a gapped source head is rejected without a partial target")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-conversation-fork-command-line () null)
+(defun test-conversation-fork-command-line ()
+  "Test the fork command creates an explicit target and resumes it."
+  (let ((fork-call nil)
+        (start-call nil))
+    (test-call-with-function-replacements
+     (list
+      (list 'conversation-fork
+            (lambda (configuration source &key selection identifier)
+              (declare (ignore configuration))
+              (setf fork-call (list source selection identifier))
+              (make-instance 'conversation
+                             :identifier identifier
+                             :prompt-cache-key "fork-cache"
+                             :pathname #P"/tmp/cli-fork.sexp"
+                             :log-pathname #P"/tmp/cli-fork.sexp"
+                             :persisted-p t :created-at 1
+                             :next-sequence 1 :input-items nil)))
+      (list 'main--start-session
+            (lambda (command &key resume-requested-p resume-id &allow-other-keys)
+              (declare (ignore command))
+              (setf start-call (list resume-requested-p resume-id)))))
+     (lambda ()
+       (main-dispatch '("fork" "--id" "new-fork" "source" "turn" "2"))))
+    (test-assert
+     (and (equal fork-call '("source" ("turn" "2") "new-fork"))
+          (equal start-call '(t "new-fork")))
+     "the fork CLI forwards the selector and starts the new conversation"))
+  nil)
+
 (-> test-conversation-replay () null)
 (defun test-conversation-replay ()
-  "Run read-only conversation replay tests."
+  "Run read-only replay and durable conversation fork tests."
   (test-conversation-replay-navigation)
   (test-conversation-replay-projection)
   (test-conversation-replay-storage)
   (test-conversation-replay-command-line)
+  (test-conversation-fork-storage)
+  (test-conversation-fork-rejections)
+  (test-conversation-fork-command-line)
   nil)

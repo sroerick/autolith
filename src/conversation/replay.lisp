@@ -631,3 +631,204 @@ A bare HH:MM[:SS] value uses the selected record's local date."
             (error (condition)
               (format output "~A~%" condition)))))))
   nil)
+
+
+;;;; -- Durable Conversation Forks --
+
+(-> conversation-fork--raw-records (conversation) list)
+(defun conversation-fork--raw-records (conversation)
+  "Return every complete durable record in CONVERSATION across all chunks."
+  (let ((records nil)
+        (identity (conversation-pathname conversation)))
+    (dolist (pathname (conversation-storage-pathnames identity))
+      (conversation--from-header
+       identity pathname (conversation--peek-segment-header pathname))
+      (conversation--map-records
+       pathname
+       (lambda (record)
+         (unless (eq (first record) ':conversation)
+           (push record records)))))
+    (nreverse records)))
+
+(-> conversation-fork--selection-session (conversation list)
+    conversation-replay-session)
+(defun conversation-fork--selection-session (conversation records)
+  "Return replay-selector state over exact durable RECORDS."
+  (let ((turn 0)
+        (entries nil))
+    (dolist (record records)
+      (when (and (conversation--record-form-p record)
+                 (conversation-replay--user-turn-record-p record))
+        (incf turn))
+      (push (make-instance 'conversation-replay-record
+                           :record record
+                           :turn turn)
+            entries))
+    (unless entries
+      (error 'conversation-error
+             :message "The conversation contains no durable records to fork."
+             :pathname (conversation-pathname conversation)
+             :sequence nil))
+    (make-instance 'conversation-replay-session
+                   :conversation conversation
+                   :records (coerce (nreverse entries) 'vector))))
+
+(-> conversation-fork--select-head (conversation list list) integer)
+(defun conversation-fork--select-head (conversation records selection)
+  "Return the inclusive durable head selected from RECORDS by SELECTION."
+  (let ((session (conversation-fork--selection-session conversation records)))
+    (if selection
+        (conversation-replay-apply-selection session selection)
+        (setf (conversation-replay-session-position session)
+              (1- (length (conversation-replay-session-records session)))))
+    (let ((sequence
+            (conversation-replay--record-sequence
+             (conversation-replay--current-record session))))
+      (unless (typep sequence '(integer 1))
+        (error 'conversation-invariant-error
+               :message "The selected fork head has no valid durable sequence."
+               :pathname (conversation-pathname conversation)
+               :sequence sequence))
+      sequence)))
+
+(-> conversation-fork--prefix (conversation list integer) list)
+(defun conversation-fork--prefix (conversation records head-sequence)
+  "Return RECORDS through inclusive HEAD-SEQUENCE after contiguous validation."
+  (let ((expected 1)
+        (prefix nil)
+        (found-p nil))
+    (dolist (record records)
+      (when (> expected head-sequence)
+        (return))
+      (unless (conversation--record-form-p record)
+        (error 'conversation-invariant-error
+               :message "A fork source record is not a keyword property list."
+               :pathname (conversation-pathname conversation)
+               :sequence expected))
+      (let ((sequence (getf (rest record) :seq)))
+        (unless (eql sequence expected)
+          (error 'conversation-invariant-error
+                 :message
+                 (format nil "The fork source has a durable sequence gap at ~D."
+                         expected)
+                 :pathname (conversation-pathname conversation)
+                 :sequence sequence))
+        (push (copy-tree record) prefix)
+        (when (= sequence head-sequence)
+          (setf found-p t)
+          (return))
+        (incf expected)))
+    (unless found-p
+      (error 'conversation-error
+             :message (format nil "Fork head sequence ~D does not exist."
+                              head-sequence)
+             :pathname (conversation-pathname conversation)
+             :sequence head-sequence))
+    (nreverse prefix)))
+
+(-> conversation-fork--image-descriptors (list) list)
+(defun conversation-fork--image-descriptors (records)
+  "Return the unique image descriptors referenced by durable RECORDS."
+  (let ((descriptors nil)
+        (seen (make-hash-table :test #'equal)))
+    (labels ((note (descriptor)
+               "Retain DESCRIPTOR once by its artifact basename."
+               (let ((artifact (and (listp descriptor)
+                                    (getf descriptor :artifact))))
+                 (unless (and (non-empty-string-p artifact)
+                              (gethash artifact seen))
+                   (when (non-empty-string-p artifact)
+                     (setf (gethash artifact seen) t))
+                   (push descriptor descriptors)))))
+      (dolist (record records)
+        (let ((properties (rest record)))
+          (dolist (descriptor (getf properties :images))
+            (note descriptor))
+          (dolist (block (getf properties :content-blocks))
+            (when (and (listp block) (getf block :image))
+              (note (getf block :image)))))))
+    (nreverse descriptors)))
+
+(-> conversation-fork--copy-images (conversation conversation list) null)
+(defun conversation-fork--copy-images (source target descriptors)
+  "Validate and copy only DESCRIPTORS from SOURCE into TARGET's artifact root."
+  (let ((source-root (conversation-image-artifact-root source))
+        (target-root (conversation-image-artifact-root target)))
+    (dolist (descriptor descriptors)
+      (let* ((attachment (image-attachment-from-record descriptor source-root))
+             (destination
+               (merge-pathnames (getf descriptor :artifact) target-root)))
+        (ensure-directories-exist destination)
+        (uiop:copy-file (image-attachment-pathname attachment) destination))))
+  nil)
+
+(-> conversation-fork--prompt-cache-key (conversation string) non-empty-string)
+(defun conversation-fork--prompt-cache-key (source target-identifier)
+  "Return a fresh cache key distinct from SOURCE and TARGET-IDENTIFIER."
+  (loop for candidate = (make-identifier)
+        unless (or (string= candidate target-identifier)
+                   (and (conversation-prompt-cache-key source)
+                        (string= candidate
+                                 (conversation-prompt-cache-key source))))
+          return candidate))
+
+(-> conversation-fork
+    (configuration string
+     &key (:selection list) (:identifier (option string)))
+    conversation)
+(defun conversation-fork (configuration source-identifier
+                           &key selection identifier)
+  "Persist and return a fresh conversation forked at inclusive durable SELECTION.
+
+SELECTION uses the replay selector syntax.  A null selection chooses the newest
+complete durable record.  The source is read only and never repaired."
+  (let* ((source (conversation-replay-load configuration source-identifier))
+         (records (conversation-fork--raw-records source))
+         (head-sequence
+           (conversation-fork--select-head source records selection))
+         (prefix
+           (conversation-fork--prefix source records head-sequence))
+         (target
+           (conversation-create
+            configuration
+            :identifier identifier
+            :prompt-cache-key
+            (conversation-fork--prompt-cache-key
+             source (or identifier "generated-fork"))))
+         (target-identity (conversation-pathname target))
+         (target-log (conversation-log-pathname target))
+         (target-artifacts (conversation-image-artifact-root target))
+         (published-p nil))
+    (unwind-protect
+         (progn
+           (conversation-fork--copy-images
+            source target (conversation-fork--image-descriptors prefix))
+           (dolist (record prefix)
+             (conversation--apply-record target record))
+           (let ((provenance
+                   (list :fork
+                         :seq (1+ head-sequence)
+                         :time (get-universal-time)
+                         :source-id (conversation-identifier source)
+                         :source-sequence head-sequence
+                         :selection (and selection (copy-list selection)))))
+             (conversation--apply-record target provenance)
+             (log-append target-log
+                         (first prefix)
+                         :initial-forms
+                         (list (conversation--header-record target
+                                  :chunk-start-sequence 1)))
+             (dolist (record (rest prefix))
+               (log-append target-log record))
+             (log-append target-log provenance))
+           (let ((loaded (conversation-load target-identity)))
+             (setf published-p t)
+             loaded))
+      (unless published-p
+        (dolist (pathname (conversation-storage-pathnames target-identity))
+          (ignore-errors (delete-file pathname)))
+        (when (probe-file target-artifacts)
+          (ignore-errors
+            (uiop:delete-directory-tree target-artifacts
+                                        :validate t
+                                        :if-does-not-exist ':ignore)))))))

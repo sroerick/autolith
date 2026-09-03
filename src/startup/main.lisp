@@ -913,6 +913,42 @@ path."
         (first arguments)
         (rest arguments))))))
 
+(-> main--fork-command () clingon:command)
+(defun main--fork-command ()
+  "Return the durable conversation fork sub-command definition."
+  (make-command
+   :name "fork"
+   :description "fork a saved conversation at a durable historical point"
+   :usage "SOURCE [turn N | date YYYY-MM-DD | time TIME | sequence N]"
+   :options
+   (list
+    (make-option ':string
+                 :long-name "id"
+                 :key ':fork-id
+                 :parameter "ID"
+                 :description "explicit identifier for the new conversation"))
+   :handler
+   (lambda (command)
+     (let ((arguments (command-arguments command)))
+       (unless arguments
+         (error 'configuration-error
+                :message "Fork requires a source conversation identifier."))
+       (when (> (length arguments) 3)
+         (error 'configuration-error
+                :message "Fork accepts a source ID and at most one selector."))
+       (let* ((configuration
+                (configuration-create :defer-provider-validation-p t))
+              (fork
+                (conversation-fork
+                 configuration
+                 (first arguments)
+                 :selection (rest arguments)
+                 :identifier (getopt* command ':fork-id))))
+         (main--start-session
+          command
+          :resume-requested-p t
+          :resume-id (conversation-identifier fork)))))))
+
 (-> main--auth-command () clingon:command)
 (defun main--auth-command ()
   "Return the auth sub-command definition."
@@ -982,6 +1018,7 @@ select how Autolith starts before this command line is parsed."
    :options (main--session-options)
    :sub-commands (list (main--resume-command)
                        (main--replay-command)
+                       (main--fork-command)
                        (main--auth-command)
                        (main--run-job-command)
                        (main-localgroup-command))
