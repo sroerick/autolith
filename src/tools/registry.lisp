@@ -1041,6 +1041,124 @@ a spurious leading dot."
         (format nil "~A.~A" namespace name)
         name)))
 
+
+(-> tool--schema-required-names (t) list)
+(defun tool--schema-required-names (schema)
+  "Return SCHEMA's well-formed top-level required property names."
+  (let ((required (and (json-object-p schema)
+                       (json-get schema "required"))))
+    (cond
+      ((and (vectorp required)
+            (not (stringp required))
+            (every #'stringp required))
+       (coerce required 'list))
+      ((and (listp required)
+            (every #'stringp required))
+       required)
+      (t
+       nil))))
+
+(-> tool--schema-required-groups (json-object) list)
+(defun tool--schema-required-groups (schema)
+  "Return alternative complete required-name groups from top-level SCHEMA."
+  (let* ((base (tool--schema-required-names schema))
+         (alternatives
+           (or (json-get schema "oneOf")
+               (json-get schema "anyOf")))
+         (schemas
+           (cond
+             ((and (vectorp alternatives)
+                   (not (stringp alternatives)))
+              (coerce alternatives 'list))
+             ((listp alternatives)
+              alternatives)
+             (t
+              nil))))
+    (if schemas
+        (mapcar
+         (lambda (alternative)
+           (remove-duplicates
+            (append base (tool--schema-required-names alternative))
+            :test #'string=))
+         schemas)
+        (list base))))
+
+(-> tool--missing-required-names (tool json-object) list)
+(defun tool--missing-required-names (tool arguments)
+  "Return one unsatisfied required-name group for TOOL and ARGUMENTS."
+  (let ((missing-groups
+          (mapcar
+           (lambda (group)
+             (remove-if
+              (lambda (name)
+                (nth-value 1 (gethash name arguments)))
+              group))
+           (tool--schema-required-groups (tool-parameters tool)))))
+    (cond
+      ((some #'null missing-groups)
+       nil)
+      ((and (rest missing-groups)
+            (every (lambda (group) (= (length group) 1)) missing-groups))
+       (cons ':one-of (mapcar #'first missing-groups)))
+      (t
+       (first (sort missing-groups #'< :key #'length))))))
+
+(-> tool--argument-placeholder (t) t)
+(defun tool--argument-placeholder (schema)
+  "Return a conservative JSON placeholder matching property SCHEMA."
+  (let ((enumeration (and (json-object-p schema)
+                          (json-get schema "enum")))
+        (type (and (json-object-p schema)
+                   (json-get schema "type"))))
+    (cond
+      ((and (vectorp enumeration)
+            (not (stringp enumeration))
+            (plusp (length enumeration)))
+       (aref enumeration 0))
+      ((equal type "string")
+       "")
+      ((member type '("integer" "number") :test #'equal)
+       0)
+      ((equal type "boolean")
+       false)
+      ((equal type "array")
+       #())
+      ((equal type "object")
+       (json-object))
+      (t
+       nil))))
+
+(-> tool--missing-arguments-result (tool json-object list) tool-result)
+(defun tool--missing-arguments-result (tool arguments missing-names)
+  "Return a mechanics result with a concrete retry skeleton for MISSING-NAMES."
+  (let* ((one-of-p (eq (first missing-names) ':one-of))
+         (names (if one-of-p (rest missing-names) missing-names))
+         (skeleton-names (if one-of-p (list (first names)) names))
+         (skeleton-arguments (json-object))
+         (properties (json-get (tool-parameters tool) "properties")))
+    (maphash
+     (lambda (name value)
+       (setf (gethash name skeleton-arguments) value))
+     arguments)
+    (dolist (name skeleton-names)
+      (setf (gethash name skeleton-arguments)
+            (tool--argument-placeholder
+             (and (json-object-p properties)
+                  (json-get properties name)))))
+    (tool-mechanics
+     (format nil
+             (if one-of-p
+                 "Tool ~A was not executed because exactly one of ~{~A~^ or ~} is required.~%Call skeleton: ~A"
+                 "Tool ~A was not executed because required arguments are missing: ~{~A~^, ~}.~%Call skeleton: ~A")
+             (tool-canonical-name tool)
+             names
+             (json-encode
+              (json-object
+               "namespace" (tool-namespace tool)
+               "name" (tool-name tool)
+               "arguments" skeleton-arguments)))
+     :code ':missing-required-arguments)))
+
 (-> tool-registry-execute-call
     (tool-registry json-object tool-context)
     tool-result)
@@ -1085,16 +1203,21 @@ signals with the candidate canonical names."
               (error 'tool-error
                      :message (format nil "Unknown tool ~A." canonical-name)
                      :tool-name canonical-name))
-            (let ((arguments
-                    (tool-decode-arguments
-                     tool
-                     (or (json-get call "arguments") "{}"))))
-              (unless (json-object-p arguments)
-                (error 'tool-error
-                       :message (format nil "Arguments for ~A are not a JSON object."
-                                        canonical-name)
-                       :tool-name canonical-name))
-              (tool-execute tool context arguments))))
+             (let ((arguments
+                     (tool-decode-arguments
+                      tool
+                      (or (json-get call "arguments") "{}"))))
+               (unless (json-object-p arguments)
+                 (error 'tool-error
+                        :message (format nil "Arguments for ~A are not a JSON object."
+                                         canonical-name)
+                        :tool-name canonical-name))
+               (let ((missing-names
+                       (tool--missing-required-names tool arguments)))
+                 (if missing-names
+                     (tool--missing-arguments-result
+                      tool arguments missing-names)
+                     (tool-execute tool context arguments))))))
       (rollback-requested (condition)
         (error condition))
       (active-image-corruption (condition)

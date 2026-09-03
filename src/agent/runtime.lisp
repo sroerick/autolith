@@ -140,9 +140,10 @@
 
 (defstruct (agent-tool-storm-state
             (:constructor agent-tool-storm-state-create ()))
-  "Per-user-turn state for repeated and oscillating tool-call detection."
+  "Per-user-turn state for tool storm and retry diagnosis."
   (signatures nil :type list)
-  (consecutive-withholds 0 :type (integer 0)))
+  (consecutive-withholds 0 :type (integer 0))
+  (failures (make-hash-table :test #'equalp) :type hash-table))
 
 
 ;;;; -- Agent Conditions --
@@ -760,29 +761,36 @@
                     (non-empty-string-p name)
                     (tool-registry-find registry namespace name)))
              (blocked-p barrier-seen-p)
-             (signature
+             (call-signature
                (and storm-state
                     tool
-                    (not blocked-p)
                     (null argument-error)
-                    (not (tool-storm-guard-exempt-p tool))
                     (agent--tool-call-signature call)))
+             (storm-signature
+               (and call-signature
+                    (not blocked-p)
+                    (not (tool-storm-guard-exempt-p tool))
+                    call-signature))
              (withheld-reason
-               (and signature
+               (and storm-signature
                     (agent--tool-storm-note-call
-                     storm-state signature (function-call-canonical-name call))))
+                     storm-state
+                     storm-signature
+                     (function-call-canonical-name call))))
              (persistence
                (if blocked-p
                    ':next-response
                    (if tool
                        (tool-conversation-persistence tool)
                        ':durable))))
-        (push (list :call call
-                    :tool tool
-                    :persistence persistence
-                    :blocked-p blocked-p
-                    :argument-error argument-error
-                    :withheld-reason withheld-reason)
+         (push (list :call call
+                     :tool tool
+                     :persistence persistence
+                     :blocked-p blocked-p
+                     :argument-error argument-error
+                     :signature call-signature
+                     :storm-state storm-state
+                     :withheld-reason withheld-reason)
               plans)
         (when (and tool
                    (null withheld-reason)
@@ -963,6 +971,31 @@
           (round (* (- (get-internal-real-time) real-start) 1000000)
                  internal-time-units-per-second)))))
 
+(-> agent--tool-retry-output (list tool-result) string)
+(defun agent--tool-retry-output (plan result)
+  "Return RESULT text with a changed prior failure diagnosis for the same PLAN."
+  (let* ((state     (getf plan :storm-state))
+         (signature (getf plan :signature))
+         (content   (tool-result-content result))
+         (category  (tool-result-category result)))
+    (cond
+      ((and state signature (eq category ':failure))
+       (multiple-value-bind (previous present-p)
+           (gethash signature (agent-tool-storm-state-failures state))
+         (setf (gethash signature (agent-tool-storm-state-failures state))
+               content)
+         (if (and present-p (not (string= previous content)))
+             (bounded-string
+              (format nil
+                      "~A~%Previous failure for this exact call: ~A"
+                      content previous))
+             content)))
+      ((and state signature (eq category ':success))
+       (remhash signature (agent-tool-storm-state-failures state))
+       content)
+      (t
+       content))))
+
 (-> agent--complete-tool-executions
     (agent list agent-observer integer)
     null)
@@ -976,29 +1009,30 @@
            (tool-name (function-call-canonical-name call))
            (result    (getf execution :result)))
       (when result
-        (conversation-append-tool-result
-         (agent-conversation agent)
-         call-id
-         :tool-name tool-name
-         :output (tool-result-content result)
-         :content-blocks (tool-result-content-blocks result)
-         :success-p (tool-result-success-p result)
-          :category (tool-result-category result)
-         :cpu-microseconds (getf execution :cpu-microseconds)
-         :real-microseconds (getf execution :real-microseconds)
-         :persistence (getf plan :persistence))
-        (agent-observer-status
-         observer
-         :tool-call-completed
-         (list :tool-round tool-round
-               :call-id call-id
-               :tool tool-name
-               :success-p (tool-result-success-p result)
-                :category (tool-result-category result)
-               :cpu-microseconds (getf execution :cpu-microseconds)
-               :real-microseconds (getf execution :real-microseconds)
-               :output (tool-result-content result)
-               :details (tool-result-details result))))))
+        (let ((output (agent--tool-retry-output plan result)))
+          (conversation-append-tool-result
+           (agent-conversation agent)
+           call-id
+           :tool-name tool-name
+           :output output
+           :content-blocks (tool-result-content-blocks result)
+           :success-p (tool-result-success-p result)
+           :category (tool-result-category result)
+           :cpu-microseconds (getf execution :cpu-microseconds)
+           :real-microseconds (getf execution :real-microseconds)
+           :persistence (getf plan :persistence))
+          (agent-observer-status
+           observer
+           ':tool-call-completed
+           (list :tool-round tool-round
+                 :call-id call-id
+                 :tool tool-name
+                 :success-p (tool-result-success-p result)
+                 :category (tool-result-category result)
+                 :cpu-microseconds (getf execution :cpu-microseconds)
+                 :real-microseconds (getf execution :real-microseconds)
+                 :output output
+                 :details (tool-result-details result)))))))
   (let ((failure
           (find-if (lambda (execution)
                      (getf execution :condition))

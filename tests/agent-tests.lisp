@@ -154,6 +154,24 @@
   "Exempt the deterministic read-only echo tool from storm detection."
   t)
 
+
+(defclass agent-test-changing-failure-tool (tool)
+  ((attempt-count
+    :initform 0
+    :accessor agent-test-changing-failure-tool-attempt-count
+    :type (integer 0)
+    :documentation "The number of deterministic failures returned so far."))
+  (:documentation "Return a different failed result on each execution."))
+
+(defmethod tool-execute ((tool agent-test-changing-failure-tool)
+                         (context tool-context)
+                         (arguments hash-table))
+  "Return the next deterministic failure text for retry-diagnosis tests."
+  (declare (ignore context arguments))
+  (tool-failure
+   (format nil "changing failure ~D"
+           (incf (agent-test-changing-failure-tool-attempt-count tool)))))
+
 (defclass agent-test-concurrency-state ()
   ((lock
     :initform (make-lock "Autolith agent test tool state")
@@ -310,6 +328,25 @@
       (tool-object-schema
        (json-object
         "value" (tool-string-property "The value to echo."))
+       '("value"))))
+    registry))
+
+
+(-> agent-test-changing-failure-registry () tool-registry)
+(defun agent-test-changing-failure-registry ()
+  "Return a registry containing one stateful deterministic failing tool."
+  (let ((registry (make-instance 'tool-registry)))
+    (tool-registry-register
+     registry
+     (make-instance
+      'agent-test-changing-failure-tool
+      :namespace "test"
+      :name "changing-failure"
+      :description "Return a changing deterministic failure."
+      :parameters
+      (tool-object-schema
+       (json-object
+        "value" (tool-string-property "The stable retry identity."))
        '("value"))))
     registry))
 
@@ -1448,6 +1485,107 @@
                 (equal (agent-test-tool-outputs conversation)
                        '("echo: same" "echo: same" "echo: same" "echo: same"))
                 "repeated read-only calls remain executable"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
+(-> test-agent-tool-retry-guidance () null)
+(defun test-agent-tool-retry-guidance ()
+  "Test missing-argument skeletons and inherited diagnoses for changed failures."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration)))
+    (unwind-protect
+         (progn
+           (let* ((conversation
+                    (conversation-create
+                     configuration :identifier "tool-missing-argument-skeleton"))
+                  (provider
+                    (make-instance
+                     'scripted-provider
+                     :results
+                     (list
+                      (agent-test-result
+                       "missing-argument"
+                       (list (agent-test-call
+                              :call-id "missing-argument"
+                              :arguments "{}")))
+                      (agent-test-result
+                       "complete-argument"
+                       (list (agent-test-call
+                              :call-id "complete-argument"
+                              :arguments "{\"value\":\"fixed\"}")))
+                      (agent-test-result
+                       "argument-done"
+                       (list (agent-test-message "argument repaired"))))))
+                  (agent
+                    (agent-create
+                     :configuration configuration
+                     :provider provider
+                     :conversation conversation
+                     :tool-registry (agent-test-registry)
+                     :worker ':unused)))
+             (agent-run-user-turn agent "repair missing arguments")
+             (let* ((outputs (agent-test-tool-outputs conversation))
+                    (records
+                      (remove-if-not
+                       (lambda (record)
+                         (and (listp record)
+                              (eq (first record) ':tool-result)))
+                       (conversation--read-records
+                        (conversation-pathname conversation)))))
+               (test-assert
+                (and (= (length outputs) 2)
+                     (search "required arguments are missing: value"
+                             (first outputs))
+                     (search "Call skeleton:" (first outputs))
+                     (search "\"value\":\"\"" (first outputs)))
+                "a missing required argument returns a concrete retry skeleton")
+               (test-assert
+                (string= (second outputs) "echo: fixed")
+                "the corrected call executes on the following provider round")
+               (test-assert
+                (eq (getf (rest (first records)) :category) ':mechanics)
+                "missing required arguments are mechanics rather than failures")))
+           (let* ((conversation
+                    (conversation-create
+                     configuration :identifier "tool-retry-diagnosis"))
+                  (provider
+                    (make-instance
+                     'scripted-provider
+                     :results
+                     (list
+                      (agent-test-result
+                       "failure-1"
+                       (list (agent-test-call
+                              :call-id "failure-1"
+                              :name "changing-failure"
+                              :arguments "{\"value\":\"same\"}")))
+                      (agent-test-result
+                       "failure-2"
+                       (list (agent-test-call
+                              :call-id "failure-2"
+                              :name "changing-failure"
+                              :arguments "{\"value\":\"same\"}")))
+                      (agent-test-result
+                       "failure-done"
+                       (list (agent-test-message "failures diagnosed"))))))
+                  (agent
+                    (agent-create
+                     :configuration configuration
+                     :provider provider
+                     :conversation conversation
+                     :tool-registry (agent-test-changing-failure-registry)
+                     :worker ':unused)))
+             (agent-run-user-turn agent "retry the same failed call")
+             (let ((outputs (agent-test-tool-outputs conversation)))
+               (test-assert
+                (string= (first outputs) "changing failure 1")
+                "the initial failure is returned without inherited diagnosis")
+               (test-assert
+                (and (search "changing failure 2" (second outputs))
+                     (search "Previous failure for this exact call: changing failure 1"
+                             (second outputs)))
+                "a changed exact-call failure quotes the previous diagnosis"))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
@@ -2650,6 +2788,7 @@
   (test-agent-invalid-call-history)
   (test-agent-malformed-tool-arguments)
   (test-agent-tool-storm-guard)
+  (test-agent-tool-retry-guidance)
   (test-agent-tool-failures)
   (test-agent-provider-failure-persistence)
   (test-agent-incomplete-provider-failure-persistence)
