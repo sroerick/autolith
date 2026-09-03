@@ -97,42 +97,51 @@
                             (format nil "task augmentation registers job.~A" name)))
              (test-assert (eq registry (task-augment-tool-registry registry))
                           "task augmentation is idempotent")
-             (let* ((orchestrator
-                      (task-run-tool-orchestrator
-                       (tool-registry-find registry "task" "run")))
-                   (definition
-                     (task-find-agent-definition
-                      (task-bundled-agent-definitions)
-                      "task"))
-                   (child-registry
-                     (task-child-tool-registry
-                      registry definition orchestrator 1))
-                   (non-spawning-definition
-                     (task-agent-definition-create
-                      :name "no-spawn-jobs"
-                      :description "Inspect only owned asynchronous work."
-                      :instructions "Do not delegate."
-                      :spawns nil
-                      :source ':test))
-                   (non-spawning-registry
-                     (task-child-tool-registry
-                      registry non-spawning-definition orchestrator 1)))
-               (test-assert
-                (tool-registry-find child-registry "search" "content")
-                "general task children inherit native repository search")
+              (let* ((orchestrator
+                       (task-run-tool-orchestrator
+                        (tool-registry-find registry "task" "run")))
+                     (definition
+                       (task-find-agent-definition
+                        (task-bundled-agent-definitions)
+                        "task"))
+                     (child-registry
+                       (task-child-tool-registry
+                        registry definition orchestrator 1))
+                     (non-spawning-definition
+                       (task-agent-definition-create
+                        :name "no-spawn-jobs"
+                        :description "Inspect no asynchronous work."
+                        :instructions "Do not delegate."
+                        :spawns nil
+                        :source ':test))
+                     (non-spawning-registry
+                       (task-child-tool-registry
+                        registry non-spawning-definition orchestrator 1)))
+                (test-assert
+                 (tool-registry-find child-registry "search" "content")
+                 "general task children inherit native repository search")
                 (test-assert
                  (null (tool-registry-find child-registry "self" "status"))
                  "task children never inherit active-image tools")
                 (test-assert
-                 (and (null
-                       (tool-registry-find non-spawning-registry "task" "run"))
-                      (null
-                       (tool-registry-find non-spawning-registry "task" "agents"))
-                      (every
-                       (lambda (name)
-                         (tool-registry-find non-spawning-registry "job" name))
-                       '("list" "wait" "cancel")))
-                 "children without spawn authority still inherit job inspection")))
+                 (and
+                  (tool-registry-find child-registry "task" "run")
+                  (tool-registry-find child-registry "task" "agents")
+                  (every
+                   (lambda (name)
+                     (tool-registry-find child-registry "job" name))
+                   '("list" "get" "wait" "cancel")))
+                 "spawn authority carries the matching task job controls")
+                (test-assert
+                 (and
+                  (null (tool-registry-find non-spawning-registry "task" "run"))
+                  (null (tool-registry-find non-spawning-registry "task" "agents"))
+                  (every
+                   (lambda (name)
+                     (null
+                      (tool-registry-find non-spawning-registry "job" name)))
+                   '("list" "get" "wait" "cancel")))
+                 "children without spawn authority receive no task job controls")))
            (let* ((registry (make-default-tool-registry))
                   (local-definition
                     (task-agent-definition-create

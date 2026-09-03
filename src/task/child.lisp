@@ -24,6 +24,7 @@
          (and (listp policy) (member child-name policy :test #'string-equal)))
      t)))
 
+
 (defun task--tool-spec-matches-p (spec tool)
   "Return true when agent tool SPEC permits TOOL."
   (let* ((normalized (string-downcase spec))
@@ -77,10 +78,10 @@
       (dolist (name '("run" "agents"))
         (let ((task-tool (tool-registry-find parent-registry "task" name)))
           (when task-tool
-            (tool-registry-register registry task-tool)))))
-    (dolist (tool (tool-registry-tools parent-registry))
-      (when (string= (tool-namespace tool) "job")
-        (tool-registry-register registry tool)))
+            (tool-registry-register registry task-tool))))
+      (dolist (tool (tool-registry-tools parent-registry))
+        (when (string= (tool-namespace tool) "job")
+          (tool-registry-register registry tool))))
     (let ((output (task-agent-definition-output definition)))
       (tool-registry-describe-namespace
        registry "yield"
