@@ -126,10 +126,15 @@ that PATH still names the opened object."
         (coerce (nreverse lines) 'vector))))
 
 (-> text--numbered-line-window
-    (vector (integer 1) (integer 1) (integer 1))
+    (vector (integer 1) (integer 1) (integer 1)
+     &key (:line-anchor-function (option function)))
     (values string list (integer 0) boolean))
-(defun text--numbered-line-window (lines start-line line-count maximum-characters)
-  "Render a bounded numbered LINES window and return its visible range and status."
+(defun text--numbered-line-window
+    (lines start-line line-count maximum-characters &key line-anchor-function)
+  "Render a bounded numbered LINES window and return its visible range and status.
+
+When LINE-ANCHOR-FUNCTION is supplied, render its short annotation beside each
+line number."
   (let* ((total-lines (length lines))
          (last-requested (min total-lines (+ start-line line-count -1)))
          (body (make-array maximum-characters
@@ -140,7 +145,11 @@ that PATH still names the opened object."
          (truncated-p nil))
     (loop for line from start-line to last-requested
           for text = (aref lines (1- line))
-          for rendered = (format nil "~6D  ~A" line text)
+          for anchor = (and line-anchor-function
+                            (funcall line-anchor-function text))
+          for rendered = (if anchor
+                             (format nil "~6D:~A  ~A" line anchor text)
+                             (format nil "~6D  ~A" line text))
           for separator-length = (if visible-start 1 0)
           do
              (if (> (+ (fill-pointer body)

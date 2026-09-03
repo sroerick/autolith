@@ -57,6 +57,13 @@
                           "minimum" 1
                           "description" description))
 
+
+            (anchor-property (description)
+              "Return one optional short hashline anchor schema."
+              (json-object "type" "string"
+                           "pattern" "^[0-9A-Fa-f]{4}$"
+                           "description" description))
+
            (status-property ()
              "Return the closed agenda status schema."
              (json-object
@@ -115,31 +122,43 @@
      "One structured operation for the observed resource type."
      "oneOf"
      (vector
-      (operation-schema
-       "replace-lines"
-       (json-object
-        "start-line" (line-property "First original line to replace.")
-        "end-line" (line-property "Last original line to replace.")
-        "content" (tool-string-property "Replacement text, which may be empty."))
-       '("start-line" "end-line" "content"))
-      (operation-schema
-       "delete-lines"
-       (json-object
-        "start-line" (line-property "First original line to delete.")
-        "end-line" (line-property "Last original line to delete."))
-       '("start-line" "end-line"))
-      (operation-schema
-       "insert-before"
-       (json-object
-        "line" (line-property "Visible original line before which to insert.")
-        "content" (tool-string-property "Non-empty text to insert."))
-       '("line" "content"))
-      (operation-schema
-       "insert-after"
-       (json-object
-        "line" (line-property "Visible original line after which to insert.")
-        "content" (tool-string-property "Non-empty text to insert."))
-       '("line" "content"))
+       (operation-schema
+        "replace-lines"
+        (json-object
+         "start-line" (line-property "First original line to replace.")
+         "start-anchor" (anchor-property
+                         "Optional anchor printed beside the first line; corrects a small transcription offset.")
+         "end-line" (line-property "Last original line to replace.")
+         "end-anchor" (anchor-property
+                       "Optional anchor printed beside the last line; corrects a small transcription offset.")
+         "content" (tool-string-property "Replacement text, which may be empty."))
+        '("start-line" "end-line" "content"))
+       (operation-schema
+        "delete-lines"
+        (json-object
+         "start-line" (line-property "First original line to delete.")
+         "start-anchor" (anchor-property
+                         "Optional anchor printed beside the first line; corrects a small transcription offset.")
+         "end-line" (line-property "Last original line to delete.")
+         "end-anchor" (anchor-property
+                       "Optional anchor printed beside the last line; corrects a small transcription offset."))
+        '("start-line" "end-line"))
+       (operation-schema
+        "insert-before"
+        (json-object
+         "line" (line-property "Visible original line before which to insert.")
+         "anchor" (anchor-property
+                   "Optional anchor printed beside the line; corrects a small transcription offset.")
+         "content" (tool-string-property "Non-empty text to insert."))
+        '("line" "content"))
+       (operation-schema
+        "insert-after"
+        (json-object
+         "line" (line-property "Visible original line after which to insert.")
+         "anchor" (anchor-property
+                   "Optional anchor printed beside the line; corrects a small transcription offset.")
+         "content" (tool-string-property "Non-empty text to insert."))
+        '("line" "content"))
       (operation-schema
        "replace-empty"
        (json-object
@@ -250,7 +269,7 @@
           (list
            'resource-read-tool
            "resource" "read"
-           "Read a model-addressable resource. workspace: URIs return bounded numbered file windows, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. Every read establishes a transient conversation-local revision."
+            "Read a model-addressable resource. workspace: URIs return bounded numbered file windows with short stable line anchors, sorted directory listings, or an observed missing state; scratchpad: URIs expose the current conversation's disposable files through the same bounded observations; agenda:current returns the complete current workspace agenda; memory:relevant, memory:workspace, memory:global, memory:all, and canonical memory:id/<percent-encoded-stable-id> URIs return complete memory observations; papercut:current and canonical papercut:id/<percent-encoded-stable-id> URIs return active current-workspace papercut observations. Memory collection reads optionally accept query and max-results. Direct memory:<id> remains compatible for non-reserved identifiers. inference:<trace-id> and context:<sha256> URIs return bounded numbered read-only windows over recursive-inference trace logs and stored context objects, honoring start-line and line-count. Every read establishes a transient conversation-local revision."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
@@ -268,7 +287,7 @@
           (list
            'resource-edit-tool
            "resource" "edit"
-            "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations, scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
+             "Edit a model-addressable resource at an exact observed revision. workspace: and scratchpad: files accept structured original-line operations with optional anchors from resource.read; anchors validate exact lines or correct only a small line-number transcription offset. scratchpad: resources additionally accept scratchpad-delete, agenda:current accepts one agenda operation, memory:workspace and memory:global create with memory-remember, canonical exact memory:id/<percent-encoded-stable-id> resources accept memory-replace or memory-forget, papercut:current accepts papercut-report, and canonical exact papercut:id/<percent-encoded-stable-id> resources accept papercut-assess or papercut-close. Workspace directories are read-only, and memory:relevant is read-only. Stale or expired revisions require a reread. Successful source-file edits may append a non-fatal delimiter warning."
            (tool-object-schema
             (json-object
              "uri" (tool-string-property

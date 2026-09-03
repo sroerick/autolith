@@ -23,6 +23,9 @@
 (defparameter *workspace-file-resource-maximum-result-characters* 7600
   "The maximum characters constructed for one resource tool result.")
 
+(defparameter *workspace-file-resource-anchor-maximum-offset* 3
+  "The largest line-number transcription offset corrected by a hash anchor.")
+
 (defvar *workspace-file-resource-digest-key* (random-data 16)
   "The process-local key used to identify exact workspace-file snapshots.")
 
@@ -483,6 +486,16 @@ Return NIL when NAME disappears during enumeration."
        t))
 
 
+(-> workspace-file--line-anchor (string) string)
+(defun workspace-file--line-anchor (line)
+  "Return LINE's stable four-hex-character edit anchor."
+  (let ((digest
+          (ironclad:digest-sequence
+           ':sha256
+           (sb-ext:string-to-octets line :external-format ':utf-8))))
+    (format nil "~2,'0X~2,'0X" (aref digest 0) (aref digest 1))))
+
+
 ;;;; -- Bounded Observation Rendering --
 
 (-> workspace-file--format-ranges (list) string)
@@ -571,6 +584,65 @@ Return NIL when NAME disappears during enumeration."
              :tool-name "resource.edit"))
     value))
 
+
+(-> workspace-file--optional-anchor (json-object string) (option string))
+(defun workspace-file--optional-anchor (operation name)
+  "Return optional normalized four-hex anchor NAME from OPERATION."
+  (let ((value (tool-argument operation name)))
+    (when value
+      (unless (and (stringp value)
+                   (= (length value) 4)
+                   (every (lambda (character)
+                            (digit-char-p character 16))
+                          value))
+        (error 'tool-error
+               :message (format nil "Resource edit field ~S must be a four-character hexadecimal line anchor."
+                                name)
+               :tool-name "resource.edit"))
+      (string-upcase value))))
+
+(-> workspace-file--resolve-anchored-line
+    (workspace-file-observation-state (integer 1) (option string) string)
+    (integer 1))
+(defun workspace-file--resolve-anchored-line (state requested-line anchor field-name)
+  "Resolve REQUESTED-LINE through optional visible ANCHOR for FIELD-NAME."
+  (unless anchor
+    (return-from workspace-file--resolve-anchored-line requested-line))
+  (let* ((observation (resource-observation-state-observation state))
+         (lines (workspace-file-observation-lines observation))
+         (candidates
+           (loop for range in (workspace-file-observation-state-visible-ranges state)
+                 append
+                 (loop for line from (first range) to (second range)
+                       when (string= anchor
+                                     (workspace-file--line-anchor
+                                      (aref lines (1- line))))
+                         collect line)))
+         (nearby
+           (remove-if (lambda (line)
+                        (> (abs (- line requested-line))
+                           *workspace-file-resource-anchor-maximum-offset*))
+                      candidates)))
+    (cond
+      ((null candidates)
+       (error 'tool-error
+              :message (format nil "Anchor ~A for ~A does not match any visible line under this revision. Reread the required window."
+                               anchor field-name)
+              :tool-name "resource.edit"))
+      ((null nearby)
+       (error 'tool-error
+              :message (format nil "Anchor ~A for ~A matches only beyond the maximum correction offset of ~D lines. Reread the required window."
+                               anchor field-name
+                               *workspace-file-resource-anchor-maximum-offset*)
+              :tool-name "resource.edit"))
+      ((rest nearby)
+       (error 'tool-error
+              :message (format nil "Anchor ~A for ~A is ambiguous near line ~D; matching visible lines are ~{~D~^, ~}. Reread a narrower window."
+                               anchor field-name requested-line nearby)
+              :tool-name "resource.edit"))
+      (t
+       (first nearby)))))
+
 (-> workspace-file--operation-extra-keys-p (json-object list) boolean)
 (defun workspace-file--operation-extra-keys-p (operation allowed)
   "Return true when OPERATION contains a key outside ALLOWED."
@@ -611,14 +683,26 @@ Return NIL when NAME disappears during enumeration."
                :final-newline-p (workspace-file--final-newline-p content)
                :summary "replace-empty")))
       ((member name '("replace-lines" "delete-lines") :test #'string=)
-       (let* ((start-line (workspace-file--required-positive-line
-                           operation "start-line"))
-              (end-line (workspace-file--required-positive-line
-                         operation "end-line"))
+       (let* ((requested-start-line
+                (workspace-file--required-positive-line operation "start-line"))
+              (requested-end-line
+                (workspace-file--required-positive-line operation "end-line"))
+              (start-line
+                (workspace-file--resolve-anchored-line
+                 state requested-start-line
+                 (workspace-file--optional-anchor operation "start-anchor")
+                 "start-line"))
+              (end-line
+                (workspace-file--resolve-anchored-line
+                 state requested-end-line
+                 (workspace-file--optional-anchor operation "end-anchor")
+                 "end-line"))
               (replace-p (string= name "replace-lines"))
               (allowed (if replace-p
-                           '("op" "start-line" "end-line" "content")
-                           '("op" "start-line" "end-line"))))
+                           '("op" "start-line" "start-anchor"
+                             "end-line" "end-anchor" "content")
+                           '("op" "start-line" "start-anchor"
+                             "end-line" "end-anchor"))))
          (when (workspace-file--operation-extra-keys-p operation allowed)
            (error 'tool-error
                   :message (format nil "Operation ~A contains unsupported fields." name)
@@ -644,10 +728,16 @@ Return NIL when NAME disappears during enumeration."
                           nil)
                :summary (format nil "~A ~D-~D" name start-line end-line))))
       (t
-       (let* ((line (workspace-file--required-positive-line operation "line"))
+       (let* ((requested-line
+                (workspace-file--required-positive-line operation "line"))
+              (line
+                (workspace-file--resolve-anchored-line
+                 state requested-line
+                 (workspace-file--optional-anchor operation "anchor")
+                 "line"))
               (content (workspace-file--operation-content operation "content" t)))
          (when (workspace-file--operation-extra-keys-p
-                operation '("op" "line" "content"))
+                operation '("op" "line" "anchor" "content"))
            (error 'tool-error
                   :message (format nil "Operation ~A contains unsupported fields." name)
                   :tool-name "resource.edit"))
@@ -968,7 +1058,8 @@ the final check-to-rename window. Missing-file publication rejects that race."
              lines
              start-line
              line-count
-             *workspace-file-resource-maximum-result-characters*)
+             *workspace-file-resource-maximum-result-characters*
+             :line-anchor-function #'workspace-file--line-anchor)
           (declare (ignore last-line))
           (when (and (plusp total-lines) (null visible-ranges))
             (error 'tool-error
@@ -1008,11 +1099,12 @@ the final check-to-rename window. Missing-file publication rejects that race."
             (multiple-value-bind (start-line line-count)
                 (workspace-file--operation-window normalized (length lines))
               (multiple-value-bind (body visible-ranges last-line truncated-p)
-                  (text--numbered-line-window
-                   lines
-                   start-line
-                   line-count
-                   *workspace-file-resource-maximum-result-characters*)
+                   (text--numbered-line-window
+                    lines
+                    start-line
+                    line-count
+                    *workspace-file-resource-maximum-result-characters*
+                    :line-anchor-function #'workspace-file--line-anchor)
                 (declare (ignore last-line))
                 (let* ((state
                           (resource-observation-state-ensure

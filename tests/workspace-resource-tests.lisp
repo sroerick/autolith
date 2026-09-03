@@ -27,6 +27,17 @@
       (error "Missing result field ~S in ~S." label content))
     (subseq content value-start end)))
 
+
+(-> workspace-resource-tests--line-anchor (string (integer 1)) string)
+(defun workspace-resource-tests--line-anchor (content line)
+  "Return LINE's rendered hash anchor from resource result CONTENT."
+  (let* ((prefix (format nil "~6D:" line))
+         (start (search prefix content)))
+    (unless start
+      (error "Missing rendered line ~D in ~S." line content))
+    (subseq content (+ start (length prefix))
+            (+ start (length prefix) 4))))
+
 (-> workspace-resource-tests--call
     (tool-registry tool-context string string &rest t)
     tool-result)
@@ -466,7 +477,9 @@
                                (tool-result-content read-result))
                        (search "Elided: 1-1 before; 4-5 after"
                                (tool-result-content read-result))
-                       (search "     2  two" (tool-result-content read-result)))
+                        (search (format nil "     2:~A  two"
+                                        (workspace-file--line-anchor "two"))
+                                (tool-result-content read-result)))
                   "resource.read reports URI, revision, visible range, elisions, and numbered content")
                  (test-assert
                   (not (tool-result-success-p
@@ -516,6 +529,167 @@
                           (zerop (fifo-cache-count
                                   (conversation-resource-observations reloaded))))
                      "resource observations stay out of conversation persistence and expire after reload"))))
+              (let ((path (merge-pathnames "anchors-exact.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "alpha~%beta~%gamma~%delta~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-exact.txt")
+                  (let* ((content (tool-result-content read-result))
+                         (start-anchor
+                           (workspace-resource-tests--line-anchor content 2))
+                         (end-anchor
+                           (workspace-resource-tests--line-anchor content 3))
+                         (result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "replace-lines"
+                              "start-line" 2
+                              "start-anchor" start-anchor
+                              "end-line" 3
+                              "end-anchor" end-anchor
+                              "content" "middle")))))
+                    (test-assert
+                     (and (tool-result-success-p result)
+                          (string= (workspace-file--read-content path)
+                                   (format nil "alpha~%middle~%delta~%")))
+                     "resource.edit accepts exact range-boundary anchors"))))
+              (let ((path (merge-pathnames "anchors-offset.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%four~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-offset.txt")
+                  (let* ((anchor
+                           (workspace-resource-tests--line-anchor
+                            (tool-result-content read-result) 3))
+                         (result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "insert-after"
+                              "line" 2
+                              "anchor" anchor
+                              "content" "three-and-a-half")))))
+                    (test-assert
+                     (and (tool-result-success-p result)
+                          (search "insert-after 3"
+                                  (tool-result-content result))
+                          (string= (workspace-file--read-content path)
+                                   (format nil
+                                           "one~%two~%three~%three-and-a-half~%four~%")))
+                     "resource.edit corrects a small anchored line-number offset"))))
+              (let ((path (merge-pathnames "anchors-large-offset.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%four~%five~%six~%seven~%eight~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-large-offset.txt")
+                  (let* ((anchor
+                           (workspace-resource-tests--line-anchor
+                            (tool-result-content read-result) 8))
+                         (result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "insert-before"
+                              "line" 1
+                              "anchor" anchor
+                              "content" "no")))))
+                    (test-assert
+                     (and (not (tool-result-success-p result))
+                          (search "maximum correction offset"
+                                  (tool-result-content result)))
+                     "resource.edit refuses a large anchored line-number offset"))))
+              (let ((path (merge-pathnames "anchors-ambiguous.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%duplicate~%three~%duplicate~%five~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-ambiguous.txt")
+                  (let* ((anchor
+                           (workspace-resource-tests--line-anchor
+                            (tool-result-content read-result) 2))
+                         (result
+                           (edit-resource
+                            first-context uri revision
+                            (list
+                             (workspace-resource-tests--operation
+                              "insert-before"
+                              "line" 3
+                              "anchor" anchor
+                              "content" "no")))))
+                    (test-assert
+                     (and (not (tool-result-success-p result))
+                          (search "ambiguous" (tool-result-content result)))
+                     "resource.edit refuses an ambiguous nearby anchor"))))
+              (let ((path (merge-pathnames "anchors-missing.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-missing.txt")
+                  (declare (ignore read-result))
+                  (let ((result
+                          (edit-resource
+                           first-context uri revision
+                           (list
+                            (workspace-resource-tests--operation
+                             "insert-after"
+                             "line" 2
+                             "anchor" (workspace-file--line-anchor "absent")
+                             "content" "no")))))
+                    (test-assert
+                     (and (not (tool-result-success-p result))
+                          (search "does not match any visible line"
+                                  (tool-result-content result)))
+                     "resource.edit refuses a missing anchor"))))
+              (let ((path (merge-pathnames "anchors-compatible.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-compatible.txt")
+                  (declare (ignore read-result))
+                  (let ((result
+                          (edit-resource
+                           first-context uri revision
+                           (list
+                            (workspace-resource-tests--operation
+                             "replace-lines"
+                             "start-line" 2
+                             "end-line" 2
+                             "content" "TWO")))))
+                    (test-assert
+                     (and (tool-result-success-p result)
+                          (string= (workspace-file--read-content path)
+                                   (format nil "one~%TWO~%three~%")))
+                     "resource.edit remains compatible when anchors are omitted"))))
+              (let ((path (merge-pathnames "anchors-stale.txt" workspace)))
+                (workspace-resource-tests--write-text
+                 path (format nil "one~%two~%three~%"))
+                (multiple-value-bind (read-result uri revision)
+                    (read-resource first-context "workspace:anchors-stale.txt")
+                  (let ((anchor
+                          (workspace-resource-tests--line-anchor
+                           (tool-result-content read-result) 2)))
+                    (workspace-resource-tests--write-text
+                     path (format nil "external~%two~%three~%"))
+                    (let ((result
+                            (edit-resource
+                             first-context uri revision
+                             (list
+                              (workspace-resource-tests--operation
+                               "replace-lines"
+                               "start-line" 2
+                               "start-anchor" anchor
+                               "end-line" 2
+                               "end-anchor" anchor
+                               "content" "TWO")))))
+                      (test-assert
+                       (and (not (tool-result-success-p result))
+                            (search "stale" (tool-result-content result))
+                            (string= (workspace-file--read-content path)
+                                     (format nil "external~%two~%three~%")))
+                       "resource.edit rejects stale revisions before anchored correction")))))
              (let ((path (merge-pathnames "empty.txt" workspace)))
                (workspace-resource-tests--write-text path "")
                (multiple-value-bind (read-result uri revision)
@@ -1076,12 +1250,27 @@
                            '("replace-lines" "scratchpad-delete" "agenda-add"
                              "memory-remember" "papercut-report")))
                   "resource.edit exposes workspace, scratchpad, agenda, memory, and papercut operations")
-                 (test-assert
-                  (every (lambda (variant)
-                           (and (json-get variant "required")
-                                (eq (json-get variant "additionalProperties") false)))
-                         variants)
-                  "every resource edit operation schema requires its fields and rejects extras")))
+                  (test-assert
+                   (every (lambda (variant)
+                            (and (json-get variant "required")
+                                 (eq (json-get variant "additionalProperties") false)))
+                          variants)
+                   "every resource edit operation schema requires its fields and rejects extras")
+                  (let* ((replace-variant
+                           (find "replace-lines" variants
+                                 :key (lambda (variant)
+                                        (let ((op
+                                                (json-get
+                                                 (json-get variant "properties")
+                                                 "op")))
+                                          (and op (aref (json-get op "enum") 0))))
+                                 :test #'string=))
+                         (replace-properties
+                           (json-get replace-variant "properties")))
+                    (test-assert
+                     (and (json-get replace-properties "start-anchor")
+                          (json-get replace-properties "end-anchor"))
+                     "resource.edit schema exposes optional range-boundary anchors"))))
               (let* ((directory (merge-pathnames "listing/" workspace))
                      (subdirectory (merge-pathnames "nested/" directory))
                      (file (merge-pathnames "alpha.txt" directory))
