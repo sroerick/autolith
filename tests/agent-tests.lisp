@@ -287,7 +287,12 @@
                                :format-control "original failure")
                :restoration-condition
                (make-condition 'simple-error
-                               :format-control "restoration failure"))))
+                               :format-control "restoration failure")))
+             ((equal fatal "job-aborted")
+              (error 'job-aborted
+                     :message "requested job abort test"
+                     :identifier "test-job"
+                     :reason ':test)))
            (tool-success (format nil "completed: ~A" label)))
       (with-lock-held ((agent-test-concurrency-state-lock state))
         (push (list ':finish label)
@@ -2638,9 +2643,10 @@
 
 (-> test-agent-parallel-fatal-propagation () null)
 (defun test-agent-parallel-fatal-propagation ()
-  "Test fatal tool conditions propagate after concurrent siblings complete."
+  "Test serious tool conditions persist unknown outcomes before propagation."
   (dolist (case '(("rollback" rollback-requested)
-                  ("corruption" active-image-corruption)))
+                  ("corruption" active-image-corruption)
+                  ("job-aborted" job-aborted)))
     (destructuring-bind (fatal expected-type) case
       (let* ((configuration (test-configuration))
              (root (test-configuration-root configuration))
@@ -2689,6 +2695,8 @@
                         (rollback-requested (failure)
                           failure)
                         (active-image-corruption (failure)
+                          failure)
+                        (job-aborted (failure)
                           failure))))
                (test-assert
                 (typep condition expected-type)
@@ -2696,10 +2704,11 @@
                (test-assert
                 (agent-test-concurrency-state-overlap-observed-p state)
                 "the fatal call executes concurrently with its sibling")
-               (test-assert
-                (equal (agent-test-tool-outputs conversation)
-                       '("completed: sibling"))
-                "the sibling result persists before fatal propagation"))
+                (test-assert
+                 (equal (agent-test-tool-outputs conversation)
+                        (list *conversation-interrupted-tool-output*
+                              "completed: sibling"))
+                 "unknown and sibling results persist before fatal propagation"))
           (uiop:delete-directory-tree
            root :validate t :if-does-not-exist ':ignore)))))
   nil)
