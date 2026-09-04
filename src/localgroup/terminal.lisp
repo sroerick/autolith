@@ -54,33 +54,44 @@
     :documentation "The bounded asynchronous output writer."))
   (:documentation "One persistent read-only or controlling terminal attachment."))
 
+(-> localgroup-attachment--shutdown-socket (localgroup-attachment) null)
+(defun localgroup-attachment--shutdown-socket (attachment)
+  "Shut down ATTACHMENT's socket I/O without signaling."
+  (ignore-errors
+    (sb-bsd-sockets:socket-shutdown
+     (localgroup-attachment-socket attachment)
+     :direction ':io))
+  nil)
+
 (-> localgroup-attachment--close-stream (localgroup-attachment) null)
 (defun localgroup-attachment--close-stream (attachment)
-  "Close ATTACHMENT's duplex stream without signaling."
-  (ignore-errors (close (localgroup-attachment-stream attachment)))
+  "Shut down and abortively close ATTACHMENT's duplex transport without signaling."
+  (localgroup-attachment--shutdown-socket attachment)
+  (ignore-errors (close (localgroup-attachment-stream attachment) :abort t))
   nil)
 
 (-> localgroup-attachment--writer-loop (localgroup-attachment) null)
 (defun localgroup-attachment--writer-loop (attachment)
   "Write ATTACHMENT's queued packets until closure or transport failure."
-  (handler-case
-      (loop
-        for packet =
-          (with-lock-held ((localgroup-attachment-lock attachment))
-            (loop while (and
-                         (deque-empty-p (localgroup-attachment-queue attachment))
-                         (not (localgroup-attachment-closed-p attachment)))
-                  do (condition-wait
-                      (localgroup-attachment-condition-variable attachment)
-                      (localgroup-attachment-lock attachment)))
-            (when (and (localgroup-attachment-closed-p attachment)
-                       (deque-empty-p (localgroup-attachment-queue attachment)))
-              (return-from localgroup-attachment--writer-loop nil))
-            (deque-pop-front (localgroup-attachment-queue attachment)))
-        do (write-string packet (localgroup-attachment-stream attachment))
-           (finish-output (localgroup-attachment-stream attachment)))
-    (error ()
-      nil))
+  (block write-packets
+    (handler-case
+        (loop
+          for packet =
+            (with-lock-held ((localgroup-attachment-lock attachment))
+              (loop while (and
+                           (deque-empty-p (localgroup-attachment-queue attachment))
+                           (not (localgroup-attachment-closed-p attachment)))
+                    do (condition-wait
+                        (localgroup-attachment-condition-variable attachment)
+                        (localgroup-attachment-lock attachment)))
+              (when (and (localgroup-attachment-closed-p attachment)
+                         (deque-empty-p (localgroup-attachment-queue attachment)))
+                (return-from write-packets nil))
+              (deque-pop-front (localgroup-attachment-queue attachment)))
+          do (write-string packet (localgroup-attachment-stream attachment))
+             (finish-output (localgroup-attachment-stream attachment)))
+      (error ()
+        nil)))
   (with-lock-held ((localgroup-attachment-lock attachment))
     (setf (localgroup-attachment-closed-p attachment) t)
     (deque-clear (localgroup-attachment-queue attachment))
@@ -125,7 +136,7 @@
         (condition-notify
          (localgroup-attachment-condition-variable attachment))))
     (when close-p
-      (localgroup-attachment--close-stream attachment))
+      (localgroup-attachment--shutdown-socket attachment))
     accepted-p))
 
 (-> localgroup-attachment-close (localgroup-attachment) null)

@@ -46,6 +46,208 @@
            (list :mode mode :rows 31 :columns 91 :styled-p nil)))
     (values socket stream (test-localgroup--read-packet stream))))
 
+(defclass test-localgroup-close-stream
+    (sb-gray:fundamental-character-output-stream)
+  ((lock
+    :initform (make-lock "Autolith localgroup close stream")
+    :reader test-localgroup-close-stream-lock
+    :documentation "The lock protecting recorded transport operations.")
+   (operations
+    :initform nil
+    :accessor test-localgroup-close-stream-operations
+    :type list
+    :documentation "The shutdown and close operations observed in call order.")
+   (stall-writes-p
+    :initarg :stall-writes-p
+    :initform nil
+    :reader test-localgroup-close-stream-stall-writes-p
+    :type boolean
+    :documentation "Whether writes wait for socket shutdown before returning.")
+   (write-started-p
+    :initform nil
+    :accessor test-localgroup-close-stream-write-started-p
+    :type boolean
+    :documentation "Whether a stalled write has begun."))
+  (:documentation "A stream double whose ordinary close and selected writes block."))
+
+(defclass test-localgroup-socket ()
+  ((stream
+    :initarg :stream
+    :reader test-localgroup-socket-stream
+    :type test-localgroup-close-stream
+    :documentation "The close stream sharing this socket double's operation log."))
+  (:documentation "A socket double recording shutdown against its paired stream."))
+
+(-> test-localgroup-close-stream--record
+    (test-localgroup-close-stream list)
+    null)
+(defun test-localgroup-close-stream--record (stream operation)
+  "Append OPERATION to STREAM's synchronized transport log."
+  (with-lock-held ((test-localgroup-close-stream-lock stream))
+    (setf (test-localgroup-close-stream-operations stream)
+          (append (test-localgroup-close-stream-operations stream)
+                  (list operation))))
+  nil)
+
+(-> test-localgroup-close-stream-operation-snapshot
+    (test-localgroup-close-stream)
+    list)
+(defun test-localgroup-close-stream-operation-snapshot (stream)
+  "Return a synchronized copy of STREAM's transport operations."
+  (with-lock-held ((test-localgroup-close-stream-lock stream))
+    (copy-tree (test-localgroup-close-stream-operations stream))))
+
+(defmethod sb-gray:stream-write-char
+    ((stream test-localgroup-close-stream) character)
+  "Accept CHARACTER without retaining output."
+  (declare (ignore stream))
+  character)
+
+(defmethod sb-gray:stream-write-string
+    ((stream test-localgroup-close-stream) string &optional (start 0) end)
+  "Accept STRING's selected range, optionally waiting for socket shutdown."
+  (declare (ignore start end))
+  (when (test-localgroup-close-stream-stall-writes-p stream)
+    (with-lock-held ((test-localgroup-close-stream-lock stream))
+      (setf (test-localgroup-close-stream-write-started-p stream) t))
+    (loop until (find ':shutdown
+                      (test-localgroup-close-stream-operation-snapshot stream)
+                      :key #'first)
+          do (sleep 0.001)))
+  string)
+
+(defmethod sb-gray:stream-finish-output ((stream test-localgroup-close-stream))
+  "Accept a finish request without blocking."
+  (declare (ignore stream))
+  nil)
+
+(defmethod close ((stream test-localgroup-close-stream) &key abort)
+  "Record closure and block forever when it is flushing rather than abortive."
+  (test-localgroup-close-stream--record stream (list :close (not (null abort))))
+  (unless abort
+    (loop (sleep 60)))
+  t)
+
+(-> test-localgroup--bounded-call (function) (values boolean t))
+(defun test-localgroup--bounded-call (function)
+  "Call FUNCTION in a thread and report prompt return plus any failure."
+  (let ((completed-p nil)
+        (failure nil)
+        (thread nil))
+    (unwind-protect
+         (progn
+           (setf thread
+                 (make-thread
+                  (lambda ()
+                    (handler-case
+                        (funcall function)
+                      (error (condition)
+                        (setf failure condition)))
+                    (setf completed-p t))
+                  :name "Autolith localgroup bounded close test"))
+           (let ((returned-p
+                   (task-tests--wait-until (lambda () completed-p) 2)))
+             (values returned-p failure)))
+      (localgroup-stop-thread thread))))
+
+(-> test-localgroup-attachment-close-safety () null)
+(defun test-localgroup-attachment-close-safety ()
+  "Test overflow and explicit close use shutdown followed by abortive stream close."
+  (flet ((shutdown-socket (socket &key direction)
+           "Record DIRECTION against SOCKET without performing system I/O."
+           (test-localgroup-close-stream--record
+            (test-localgroup-socket-stream socket)
+            (list :shutdown direction))
+           nil))
+    (let* ((stream (make-instance 'test-localgroup-close-stream))
+           (socket (make-instance 'test-localgroup-socket :stream stream))
+           (attachment
+             (make-instance 'localgroup-attachment
+                            :socket socket
+                            :stream stream
+                            :mode ':read-only)))
+      (test-call-with-function-replacements
+       (list (list 'sb-bsd-sockets:socket-shutdown #'shutdown-socket))
+       (lambda ()
+         (multiple-value-bind (returned-p failure)
+             (test-localgroup--bounded-call
+              (lambda () (localgroup-attachment-close attachment)))
+           (test-assert
+            (and returned-p (null failure))
+            "explicit attachment close returns despite a flushing-close trap"))
+         (test-assert
+          (equal (test-localgroup-close-stream-operation-snapshot stream)
+                 '((:shutdown :io) (:close t)))
+          "explicit attachment close shuts down socket I/O before abortive close"))))
+    (let* ((stream
+             (make-instance 'test-localgroup-close-stream :stall-writes-p t))
+           (socket (make-instance 'test-localgroup-socket :stream stream))
+           (attachment
+             (make-instance 'localgroup-attachment
+                            :socket socket
+                            :stream stream
+                            :mode ':read-only))
+           (terminal (localgroup-terminal-create))
+           (writer nil))
+      (setf (localgroup-terminal-observers terminal) (list attachment))
+      (unwind-protect
+           (test-call-with-function-replacements
+            (list (list 'sb-bsd-sockets:socket-shutdown #'shutdown-socket))
+            (lambda ()
+              (setf writer
+                    (make-thread
+                     (lambda ()
+                       (localgroup-attachment--writer-loop attachment))
+                     :name "Autolith localgroup overflow close test")
+                    (localgroup-attachment-writer-thread attachment) writer)
+              (test-assert
+               (localgroup-attachment-send attachment '(:queued))
+               "the attachment writer accepts output before it stalls")
+              (test-assert
+               (task-tests--wait-until
+                (lambda ()
+                  (with-lock-held ((test-localgroup-close-stream-lock stream))
+                    (test-localgroup-close-stream-write-started-p stream)))
+                2)
+               "the attachment writer stalls inside transport output")
+              (multiple-value-bind (returned-p failure)
+                  (test-localgroup--bounded-call
+                   (lambda ()
+                     (let ((*localgroup-attachment-queue-character-limit* 1))
+                       (terminal--write terminal "overflow"))))
+                (test-assert
+                 (and returned-p (null failure))
+                 "terminal output returns while a stalled attachment is disconnected"))
+              (test-assert
+               (task-tests--wait-until
+                (lambda ()
+                  (find ':close
+                        (test-localgroup-close-stream-operation-snapshot stream)
+                        :key #'first))
+                2)
+               "the disconnected attachment writer closes its stream promptly")
+              (localgroup-stop-thread writer)
+              (let* ((operations
+                       (test-localgroup-close-stream-operation-snapshot stream))
+                     (close-position
+                       (position ':close operations :key #'first)))
+                (test-assert
+                 (and close-position
+                      (plusp close-position)
+                      (every (lambda (operation)
+                               (or (not (eq (first operation) ':close))
+                                   (eq (second operation) t)))
+                             operations)
+                      (eq (first (first operations)) ':shutdown)
+                      (eq (second (first operations)) ':io)
+                      (localgroup-attachment-closed-p attachment)
+                      (deque-empty-p (localgroup-attachment-queue attachment))
+                      (not (thread-alive-p writer)))
+                 "terminal overflow shuts down before abortive writer close"))))
+        (setf (localgroup-terminal-observers terminal) nil)
+        (localgroup-stop-thread writer)))
+  nil))
+
 (-> test-localgroup--endpoint-record (string (integer 1)) list)
 (defun test-localgroup--endpoint-record (session-id pid)
   "Return one valid endpoint record for reconciliation tests."

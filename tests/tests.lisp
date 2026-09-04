@@ -493,6 +493,7 @@
     (test-localgroup-detached-terminal-lifecycle)
     (test-localgroup-protocol)
     (test-localgroup-orphan-reconciliation)
+    (test-localgroup-attachment-close-safety)
     (test-localgroup-attachments)
     (test-localgroup-handoff-records)
     (test-localgroup-handoff-scheduling)
