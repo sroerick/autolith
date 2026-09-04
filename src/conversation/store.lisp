@@ -1756,13 +1756,29 @@ copied."
 (-> conversation--validate-provider-item (conversation json-object) json-object)
 (defun conversation--validate-provider-item (conversation item)
   "Return ITEM after rejecting provider calls that would poison durable replay."
-  (when (and (function-call-item-p item)
-             (not (json-object-source-p (json-get item "arguments"))))
-    (error 'conversation-invariant-error
-           :message
-           "A provider function call has arguments that are not exactly one JSON object."
-           :pathname (conversation-pathname conversation)
-           :sequence (conversation-next-sequence conversation)))
+  (when (function-call-item-p item)
+    (let ((call-id (json-get item "call_id")))
+      (unless (non-empty-string-p call-id)
+        (error 'conversation-invariant-error
+               :message "A provider function call has no call identifier."
+               :pathname (conversation-pathname conversation)
+               :sequence (conversation-next-sequence conversation)))
+      (when (find-if
+             (lambda (previous)
+               (and (function-call-item-p previous)
+                    (string= call-id (or (json-get previous "call_id") ""))))
+             (conversation-input-items conversation))
+        (error 'conversation-invariant-error
+               :message (format nil "A provider response repeats tool call ~S."
+                                call-id)
+               :pathname (conversation-pathname conversation)
+               :sequence (conversation-next-sequence conversation))))
+    (unless (json-object-source-p (json-get item "arguments"))
+      (error 'conversation-invariant-error
+             :message
+             "A provider function call has arguments that are not exactly one JSON object."
+             :pathname (conversation-pathname conversation)
+             :sequence (conversation-next-sequence conversation))))
   item)
 
 (-> conversation-append-provider-item

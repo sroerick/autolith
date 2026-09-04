@@ -59,12 +59,12 @@
     (anthropic-api-key-provider list)
     (option provider-error))
 (defun anthropic-provider-test--request-condition (provider items)
-  "Return the provider condition from translating persisted ITEMS, or NIL."
+  "Return the provider condition from translating conversation ITEMS, or NIL."
   (let ((conversation
           (conversation-create (provider-configuration provider))))
     (conversation-append-user-message conversation "Seed message.")
     (dolist (item items)
-      (conversation-append-provider-item conversation item))
+      (conversation--append-input-item conversation item))
     (handler-case
         (progn
           (provider-request-object provider conversation #())

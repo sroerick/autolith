@@ -1096,6 +1096,16 @@
          (progn
            (conversation-append-user-message conversation "run the check")
            (conversation-append-provider-item conversation call)
+           (let ((next-sequence (conversation-next-sequence conversation)))
+             (test-assert
+              (and (handler-case
+                       (progn
+                         (conversation-append-provider-item conversation call)
+                         nil)
+                     (conversation-invariant-error ()
+                       t))
+                   (= (conversation-next-sequence conversation) next-sequence))
+              "provider append rejects duplicate tool call identifiers before persistence"))
            (conversation-append-tool-result
             conversation
             "call-duplicate"
