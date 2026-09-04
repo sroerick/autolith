@@ -16,6 +16,22 @@
   pathname)
 
 
+(-> test-conversation--write-tiny-jpeg (pathname) pathname)
+(defun test-conversation--write-tiny-jpeg (pathname)
+  "Write a minimal three-by-two JPEG fixture to PATHNAME."
+  (ensure-directories-exist pathname)
+  (with-open-file (stream pathname
+                          :direction ':output
+                          :if-exists ':supersede
+                          :element-type '(unsigned-byte 8))
+    (write-sequence
+     #(255 216
+       255 192 0 11 8 0 2 0 3 1 1 17 0
+       255 217)
+     stream))
+  pathname)
+
+
 (-> test-conversation--all-records (conversation) list)
 (defun test-conversation--all-records (conversation)
   "Return every durable record across CONVERSATION's ordered storage segments."
@@ -96,8 +112,9 @@
 (defun test-conversation-image-input ()
   "Test image validation, durable artifacts, projection, and replay."
   (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
-         (source (merge-pathnames "source image.png" root)))
+         (root          (test-configuration-root configuration))
+         (source        (merge-pathnames "source image.png" root))
+         (jpeg-source   (merge-pathnames "source image.jpg" root)))
     (unwind-protect
          (progn
            (test-assert
@@ -105,6 +122,16 @@
                  (null (user-message-input-image-pathnames "plain input"))
                  (not (eq (user-message-input-copy "plain input") "plain input")))
             "legacy strings satisfy the user input protocol")
+            (test-conversation--write-tiny-jpeg jpeg-source)
+            (multiple-value-bind (format width height)
+                (image-input--inspect jpeg-source)
+              (test-assert
+               (and (eq format ':jpeg) (= width 3) (= height 2))
+               "JPEG inspection returns dimensions from its frame marker"))
+            (test-assert
+             (equal (image-input-validate-pathname jpeg-source)
+                    (truename jpeg-source))
+             "JPEG attachments pass pathname validation")
            (test-conversation--write-tiny-png source)
            (test-assert
             (equal (image-input-recognize-pasted-path

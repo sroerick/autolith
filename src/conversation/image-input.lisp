@@ -183,7 +183,7 @@
     (values integer integer))
 (defun image-input--jpeg-dimensions (bytes)
   "Return JPEG width and height from complete BYTES."
-  (block nil
+  (block image-input--jpeg-dimensions
     (let ((position 2))
       (loop while (< (+ position 3) (length bytes))
             do (if (/= (aref bytes position) #xff)
@@ -216,7 +216,7 @@
                                            '(#xc0 #xc1 #xc2 #xc3 #xc5 #xc6 #xc7
                                              #xc9 #xca #xcb #xcd #xce #xcf))
                                    (<= (+ position 6) (length bytes)))
-                              (return-from nil
+                              (return-from image-input--jpeg-dimensions
                                 (values
                                  (image-input--unsigned-big-endian
                                   bytes (+ position 5) 2)
