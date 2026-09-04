@@ -1369,6 +1369,119 @@
      "empty-prompt Ctrl-C exits without a force window or hint"))
   nil)
 
+(-> test-recalled-follow-up-interrupt () null)
+(defun test-recalled-follow-up-interrupt ()
+  "Test Ctrl-C restores recalled work before cancelling or exiting."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (labels ((call-with-controller (identifier function)
+               (let* ((conversation
+                        (conversation-create configuration :identifier identifier))
+                      (terminal
+                        (make-instance 'recording-terminal :columns 80))
+                      (ui (terminal-ui-create :terminal terminal))
+                      (application
+                        (make-instance 'application
+                                       :configuration configuration
+                                       :conversation conversation
+                                       :ui ui))
+                      (controller nil))
+                 (with-terminal-ui (active-ui ui)
+                   (declare (ignore active-ui))
+                   (setf controller
+                         (application-input-controller-create
+                          application
+                          :load-pending-p nil
+                          :start-reader-p nil))
+                   (unwind-protect
+                        (funcall function controller conversation ui)
+                     (application-input-controller-stop controller))))))
+      (unwind-protect
+           (progn
+             (call-with-controller
+              "recalled-interrupt-active"
+              (lambda (controller conversation ui)
+                (application-input-controller--enqueue
+                 controller ':message "active turn")
+                (application-input-controller--next-work controller)
+                (deque-append
+                 (application-input-controller-work-items controller)
+                 '((:message "first queued") (:message "last queued")))
+                (setf
+                 (application-input-controller-follow-up-edit-index controller) 1
+                 (application-input-controller-follow-up-edit-work controller)
+                 '(:message "recalled queued")
+                 (application-input-controller-steering-promotion-prefix-count
+                  controller)
+                 2)
+                (terminal-ui-set-input ui "edited recalled queued")
+                (application-input-controller--process-event
+                 controller ':interrupt)
+                (test-assert
+                 (and
+                  (application-input-controller-turn-cancellation-p controller)
+                  (application-input-controller-queued-work-paused-p controller)
+                  (null
+                   (application-input-controller-follow-up-edit-index controller))
+                  (null
+                   (application-input-controller-follow-up-edit-work controller))
+                  (= (application-input-controller-steering-promotion-prefix-count
+                      controller)
+                     2)
+                  (string= (line-editor-text (terminal-ui-editor ui)) "")
+                  (equal
+                   (application-input-controller--state controller :work-items)
+                   '((:message "first queued")
+                     (:message "recalled queued")
+                     (:message "last queued"))))
+                 "active Ctrl-C restores recalled FIFO work and cancels the turn")
+                (multiple-value-bind (form complete-p)
+                    (snapshot-read
+                     (configuration-pending-inputs-path
+                      configuration (conversation-pathname conversation)))
+                  (test-assert
+                   (and complete-p
+                        (equal (getf (rest form) :work)
+                               '((:message "first queued")
+                                 (:message "recalled queued")
+                                 (:message "last queued")))
+                        (= (getf (rest form)
+                                 :steering-promotion-prefix-count)
+                           2))
+                   "active Ctrl-C publishes restored work durably in FIFO order"))))
+             (call-with-controller
+              "recalled-interrupt-idle"
+              (lambda (controller conversation ui)
+                (deque-append
+                 (application-input-controller-work-items controller)
+                 '((:message "first queued") (:message "last queued")))
+                (setf
+                 (application-input-controller-follow-up-edit-index controller) 1
+                 (application-input-controller-follow-up-edit-work controller)
+                 '(:message "recalled queued"))
+                (terminal-ui-set-input ui "edited recalled queued")
+                (application-input-controller--process-event
+                 controller ':interrupt)
+                (test-assert
+                 (and (application-input-controller-stopping-p controller)
+                      (eq (application-input-controller-exit-reason controller)
+                          ':interrupt)
+                      (string= (line-editor-text (terminal-ui-editor ui)) ""))
+                 "idle Ctrl-C restores the edit and follows normal exit handling")
+                (multiple-value-bind (form complete-p)
+                    (snapshot-read
+                     (configuration-pending-inputs-path
+                      configuration (conversation-pathname conversation)))
+                  (test-assert
+                   (and complete-p
+                        (equal (getf (rest form) :work)
+                               '((:message "first queued")
+                                 (:message "recalled queued")
+                                 (:message "last queued"))))
+                   "idle Ctrl-C preserves restored FIFO work in pending storage")))))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+  nil)
+
 (-> test-active-turn-stop-keys () null)
 (defun test-active-turn-stop-keys ()
   "Test Ctrl-C and Escape cancel one provider turn and return to the prompt."
@@ -4371,19 +4484,23 @@
         "remaining promoted steering may be recalled while work is active")
        (application-input-controller--process-event controller ':interrupt)
        (test-assert
-        (= (application-input-controller-steering-promotion-prefix-count controller)
-           0)
-        "discarding recalled promoted work removes its prefix slot")
+        (and
+         (= (application-input-controller-steering-promotion-prefix-count controller)
+            1)
+         (equal (application-input-controller--state controller :work-items)
+                '((:message "second promoted steer"))))
+        "interrupting a recalled promoted steer restores its prefix slot")
        (application-input-controller--enqueue
         controller ':message "older follow-up")
        (application-input-controller--finish-work controller)
        (application-input-controller-submit-primary-prompt
-        controller "late prompt after discard")
+        controller "late prompt after restore")
        (test-assert
         (equal (application-input-controller--state controller :work-items)
-               '((:message "late prompt after discard")
+               '((:message "second promoted steer")
+                 (:message "late prompt after restore")
                  (:message "older follow-up")))
-        "discarded prefix leaves no phantom slot ahead of a late prompt")))
+        "restored prefix places a late prompt after promoted steering")))
     (call-with-controller
      (lambda (controller)
        (application-input-controller--enqueue controller ':lisp "(+ 5 6)")
@@ -4721,12 +4838,12 @@
               "Ctrl-C wakes the blocked FIFO consumer")
              (join-thread waiter)
              (setf waiter nil)
-             (test-assert
-              (and
-               (equal waited-work '(:message "later follow-up"))
-               (not
-                (application-input-controller--follow-up-editing-p controller)))
-              "Ctrl-C discards the held follow-up and unblocks newer work"))
+              (test-assert
+               (and
+                (equal waited-work '(:message "held follow-up"))
+                (not
+                 (application-input-controller--follow-up-editing-p controller)))
+               "Ctrl-C restores the held follow-up ahead of newer work"))
         (when (and waiter (thread-alive-p waiter))
           (when controller
             (application-input-controller-stop controller)
@@ -7977,6 +8094,7 @@
   (test-active-turn-interrupt-events)
   (test-active-turn-cancellation-side-effects)
   (test-idle-interrupt-exits-without-force-hint)
+  (test-recalled-follow-up-interrupt)
   (test-active-turn-stop-keys)
   (test-active-command-stop-key)
   (test-active-tool-stop-repairs-unknown-outcome)
