@@ -477,6 +477,18 @@
     :handler handler)))
 
 
+(-> application-command-validate-registration
+    (application-command)
+    application-command)
+(defgeneric application-command-validate-registration (command)
+  (:documentation
+   "Validate COMMAND against loaded operation surfaces and return COMMAND."))
+
+(defmethod application-command-validate-registration ((command t))
+  "Permit COMMAND before operation-specific registration checks are loaded."
+  command)
+
+
 ;;;; -- Layered Registry --
 
 (-> application-command--current-registration-source () keyword)
@@ -546,6 +558,7 @@ different definition may shadow the same canonical command without destroying
 the earlier layer. Identifier collisions among effective commands are rejected
 without changing the registry."
   (application-command--validate command)
+  (application-command-validate-registration command)
   (unless (keywordp source)
     (error 'configuration-error
            :message "An application command registration source must be a keyword."))

@@ -943,6 +943,22 @@ serialized application boundary."
   "Return the AUTOLITH symbol naming canonical operation NAME."
   (intern (string-upcase name) '#:autolith))
 
+(defmethod application-command-validate-registration ((command application-command))
+  "Reject COMMAND when its canonical Lisp operation would shadow a function."
+  (let* ((name (application-operation--command-name command))
+         (symbol (application-operation--function-symbol name))
+         (installed (gethash symbol *application-operation-bindings*))
+         (existing (and (fboundp symbol) (fdefinition symbol))))
+    (when (and existing
+               (not (and installed (eq existing installed))))
+      (error 'configuration-error
+             :message
+             (format nil
+                     "Application command ~A conflicts with existing function ~S."
+                     (application-command-name command)
+                     symbol))))
+  command)
+
 (-> application-operation--binding-function (non-empty-string) function)
 (defun application-operation--binding-function (name)
   "Return the dynamic wrapper function for canonical operation NAME."
@@ -956,9 +972,11 @@ serialized application boundary."
     (apply #'application-operation-call
            *application-operation-application* name arguments)))
 
-(-> application-operation--install-binding (application-operation) symbol)
+(-> application-operation--install-binding
+    (application-operation)
+    (option symbol))
 (defun application-operation--install-binding (operation)
-  "Install OPERATION's canonical function unless an unrelated binding conflicts."
+  "Install OPERATION's canonical function, or return NIL for a conflicting binding."
   (let* ((name (application-operation-name operation))
          (symbol (application-operation--function-symbol name))
          (installed (gethash symbol *application-operation-bindings*))
@@ -967,11 +985,7 @@ serialized application boundary."
       ((and installed (eq existing installed))
        symbol)
       ((fboundp symbol)
-       (error 'configuration-error
-              :message
-              (format nil
-                      "Registered operation ~A conflicts with existing function ~S."
-                      name symbol)))
+       nil)
       (t
        (let ((function (application-operation--binding-function name)))
          (setf (symbol-function symbol) function
@@ -993,7 +1007,9 @@ serialized application boundary."
 
 (-> application-operation-install-bindings (application) list)
 (defun application-operation-install-bindings (application)
-  "Install canonical function bindings for APPLICATION's commands and tools."
+  "Install non-conflicting canonical function bindings for APPLICATION's operations."
   (loop for operation in (application-operation-list application)
-        when (application-operation-binding-eligible-p operation)
-          collect (application-operation--install-binding operation)))
+        for binding = (and (application-operation-binding-eligible-p operation)
+                           (application-operation--install-binding operation))
+        when binding
+          collect binding))

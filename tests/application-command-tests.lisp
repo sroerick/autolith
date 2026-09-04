@@ -385,9 +385,9 @@
                (command
                 (list
                  (application-command-tests--command
-                  :definition-name 'application-command-tests--inspect
-                  :name "/inspect"
-                  :aliases '("/i")
+                   :definition-name 'application-command-tests--peek
+                   :name "/peek"
+                   :aliases '("/i")
                   :busy-behavior ':inspect)
                  (application-command-tests--command
                   :definition-name 'application-command-tests--hold
@@ -405,8 +405,8 @@
            (let* ((inspection
                     (application-command-invocation-parse "  /I  "))
                   (inspection-with-argument
-                    (application-command-invocation-parse
-                     "/inspect alpha beta"))
+                     (application-command-invocation-parse
+                      "/peek alpha beta"))
                   (held
                     (application-command-invocation-parse "/hold"))
                   (conditional
@@ -417,7 +417,7 @@
                (string=
                 (application-command-name
                  (application-command-invocation-command inspection))
-                "/inspect")
+                 "/peek")
                (string=
                 (application-command-invocation-remainder
                  inspection-with-argument)

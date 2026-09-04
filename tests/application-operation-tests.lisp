@@ -475,11 +475,55 @@
    "a non-Boolean value is rejected")
   nil)
 
+(-> test-application-operation-binding-conflicts () null)
+(defun test-application-operation-binding-conflicts ()
+  "Test canonical operation conflicts fail registration and never break evaluation."
+  (let* ((command
+           (application-command-create
+            :definition-name 'application-operation-tests--conflicting-search
+            :name "/search"
+            :aliases nil
+            :argument nil
+            :description "Conflict with the inherited Common Lisp SEARCH function."
+            :tip "exists for binding conflict tests."
+            :busy-behavior ':inspect
+            :terminal-behavior ':shared
+            :lambda-list nil
+            :callable-p nil
+            :static-options nil
+            :handler
+            (lambda (application invocation)
+              (declare (ignore application invocation))
+              ':continue)))
+         (operation (application-operation--from-command command))
+         (symbol (application-operation--function-symbol "search"))
+         (existing (fdefinition symbol))
+         (snapshot (application-command--registry-snapshot)))
+    (test-assert
+     (handler-case
+         (progn
+           (register-application-command command :source ':test)
+           nil)
+       (configuration-error ()
+         t))
+     "command registration rejects canonical Lisp function conflicts")
+    (test-assert
+     (equal snapshot (application-command--registry-snapshot))
+     "rejected canonical binding conflicts leave the command registry unchanged")
+    (test-assert
+     (null (application-operation--install-binding operation))
+     "binding installation skips conflicting legacy operations")
+    (test-assert
+     (eq (fdefinition symbol) existing)
+     "skipped operation bindings preserve the existing function"))
+  nil)
+
 (-> run-application-operation-tests () boolean)
 (defun run-application-operation-tests ()
   "Run focused unified command and tool operation tests."
   (test-prompt-operation)
   (test-tool-boolean-argument)
+  (test-application-operation-binding-conflicts)
   (multiple-value-bind (application root terminal tool)
       (application-operation-tests--application)
     (unwind-protect
