@@ -461,6 +461,7 @@
                 configured
                 :defaults workspace
                 :ensure-absolute t
+                :ensure-directory t
                 :want-directory t
                 :want-existing t))))
     (unless (uiop:directory-exists-p candidate)

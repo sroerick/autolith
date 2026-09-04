@@ -121,6 +121,25 @@
            (test-assert
             (string= (file-namestring pathname) "mcp.sexp")
             "native MCP configuration has one XDG mcp.sexp entry point")
+            (let* ((directory (merge-pathnames "stdio-directory/" root))
+                   (probe (merge-pathnames "probe" directory)))
+              (ensure-directories-exist probe)
+              (let* ((configured
+                       (string-right-trim '(#\/)
+                                          (namestring directory)))
+                     (transport
+                       (make-instance 'mcp-stdio-transport-configuration
+                                      :command "/bin/true"
+                                      :directory configured))
+                     (server
+                       (make-instance 'mcp-server-configuration
+                                      :name "directory-test"
+                                      :transport transport)))
+                (test-assert
+                 (equal (mcp-tools--stdio-directory
+                         server configuration transport)
+                        (truename directory))
+                 "stdio directories do not require a trailing slash")))
             (test-mcp-configuration--write
              pathname
              "(:version 1 :servers ((:name\"adjacent\" :transport (:type :stdio :command\"/bin/true\") :approval :deny :trusted-read-only-tools () :child-tools ())))")
