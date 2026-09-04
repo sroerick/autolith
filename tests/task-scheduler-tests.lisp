@@ -1776,6 +1776,43 @@ exactly that race."
   nil)
 
 
+(-> test-tool-execution-overflow-binding () null)
+(defun test-tool-execution-overflow-binding ()
+  "Test lossless result spilling inside execution-pool worker threads."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool     (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (primary
+           (task-tests--primary-agent
+            configuration "execution-overflow-primary" registry)))
+    (unwind-protect
+         (let* ((*tool-result-overflow-function*
+                  (lambda (text)
+                    (declare (ignore text))
+                    "context:worker-overflow"))
+                (result
+                  (tool-execution-invoke
+                   orchestrator primary
+                   :tool-name "test.overflow"
+                   :summary "Return one oversized worker result."
+                   :operation-function
+                   (lambda ()
+                     (tool-success (make-string 9000 :initial-element #\x)))
+                   :async-p nil)))
+           (test-assert
+            (and (tool-result-success-p result)
+                 (search "context:worker-overflow"
+                         (tool-result-content result)))
+            "execution workers inherit the complete-result spill function"))
+      (ignore-errors (task-orchestrator-close orchestrator))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t
+                                       :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-tool-execution-retention () null)
 (defun test-tool-execution-retention ()
   "Test bounded execution retention and complete two-pool detachment."

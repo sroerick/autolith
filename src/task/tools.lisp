@@ -666,15 +666,19 @@ Only the current primary conversation's artifact root is searched."
     (error 'tool-error
            :message "Inspectable execution requires an executing agent context."
            :tool-name tool-name))
-  (let ((job
-          (task-orchestrator-start-execution-job
-           runtime parent
-           :tool-name tool-name
-           :description description
-           :summary summary
-           :operation-function operation-function
-           :detached-p async-p
-           :parent-call-id parent-call-id)))
+  (let* ((overflow-function *tool-result-overflow-function*)
+         (job
+           (task-orchestrator-start-execution-job
+            runtime parent
+            :tool-name tool-name
+            :description description
+            :summary summary
+            :operation-function
+            (lambda ()
+              (let ((*tool-result-overflow-function* overflow-function))
+                (funcall operation-function)))
+            :detached-p async-p
+            :parent-call-id parent-call-id)))
     (if async-p
         (task--tool-execution-handoff-result job parent ':requested)
         (multiple-value-bind (snapshot terminal-p)

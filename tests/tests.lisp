@@ -474,6 +474,7 @@
     (test-task-durable-job-lookup)
     (test-session-tool-execution-jobs)
     (test-shell-execution-jobs)
+    (test-tool-execution-overflow-binding)
     (test-tool-execution-retention)
     (test-task-job-list-pagination)
     (test-task-refresh-after-delayed-close)
