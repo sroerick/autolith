@@ -804,6 +804,19 @@ without changing the registry."
             '(application--builtin-goal-command)
             :test #'eq))))
 
+(-> application-command--raw-remainder-call-p (application-command) boolean)
+(defun application-command--raw-remainder-call-p (command)
+  "Return whether callable COMMAND receives its slash remainder without tokenizing."
+  (and
+   (application-command-callable-p command)
+   (multiple-value-bind (minimum maximum)
+       (application-command--lambda-list-arity
+        (application-command-lambda-list command))
+     (declare (ignore minimum))
+     (and maximum
+          (= maximum 1)
+          (application-command--raw-remainder-p command)))))
+
 (-> application-command--slash-arguments
     ((option application-command) list string)
     list)
@@ -811,15 +824,9 @@ without changing the registry."
   "Return semantic slash arguments for callable COMMAND and REMAINDER."
   (unless (and command (application-command-callable-p command))
     (return-from application-command--slash-arguments nil))
-  (multiple-value-bind (minimum maximum)
-      (application-command--lambda-list-arity
-       (application-command-lambda-list command))
-    (declare (ignore minimum))
-    (if (and maximum
-             (= maximum 1)
-             (application-command--raw-remainder-p command))
-        (if (zerop (length remainder)) nil (list remainder))
-        parsed-arguments)))
+  (if (application-command--raw-remainder-call-p command)
+      (if (zerop (length remainder)) nil (list remainder))
+      parsed-arguments))
 
 (-> application-command--validate-invocation-arity
     (application-command list)
@@ -869,8 +876,12 @@ without changing the registry."
                (string-trim *application-command-whitespace*
                             (subseq trimmed separator))
                ""))
-         (parsed-arguments (application-command--tokens remainder))
          (command (application-command-find submitted-name))
+         (parsed-arguments
+           (if (and command
+                    (application-command--raw-remainder-call-p command))
+               nil
+               (application-command--tokens remainder)))
          (arguments
            (application-command--slash-arguments
             command parsed-arguments remainder))

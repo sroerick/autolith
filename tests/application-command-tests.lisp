@@ -540,6 +540,15 @@
           (string= (application-command-invocation-argument invocation)
                    objective))
      "single-argument free-form commands preserve their complete remainder"))
+
+  (let* ((objective "Fix the \"widget=")
+         (invocation
+           (application-command-invocation-parse
+            (format nil "/goal ~A" objective))))
+    (test-assert
+     (equal (application-command-invocation-arguments invocation)
+            (list objective))
+     "raw-remainder commands do not tokenize quotation marks"))
   (let ((application (make-instance 'application))
         (objective "fix argument mismatches without crashing the application"))
     (test-call-with-function-replacements
