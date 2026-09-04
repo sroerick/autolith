@@ -172,19 +172,32 @@
 
 (-> gemini-code-assist-test--setup-and-retry () null)
 (defun gemini-code-assist-test--setup-and-retry ()
-  "Test loadCodeAssist project setup and transient non-stream retry."
+  "Test loadCodeAssist project setup and provider-specific HTTP retry."
   (let ((provider (gemini-code-assist-test--provider))
         (attempts 0)
         (*gemini-code-assist-nonstream-retry-delay* 0))
+    (test-assert
+     (and (provider-retryable-status-p provider 499 nil)
+          (provider-retryable-status-p provider 599 nil)
+          (not (provider-retryable-status-p provider 498 nil)))
+     "Code Assist recognizes its additional transient statuses")
     (test-call-with-function-replacements
      (list
       (list
        'gemini-code-assist--post-once
        (lambda (actual-provider credentials method request)
-         (declare (ignore actual-provider credentials request))
+         (declare (ignore credentials method request))
          (incf attempts)
          (if (= attempts 1)
-             (values "{}" 503 nil)
+             (provider-signal-http-failure
+              actual-provider
+              (make-condition
+               'http-request-failed
+               :body "temporary Code Assist failure"
+               :status 599
+               :headers nil
+               :uri nil
+               :method ':post))
              (values
               (json-encode
                (json-object "currentTier" (json-object "id" "free-tier")
@@ -198,7 +211,7 @@
                        :access-token "fixture-token"
                        :expires-at (+ (get-universal-time) 3600)))))
     (test-assert (= attempts 2)
-                 "Code Assist retries one transient setup response")
+                 "Code Assist retries a raised provider-specific HTTP failure")
     (test-assert
      (string= (gemini-code-assist-provider-project provider) "managed-project")
      "Code Assist records the managed project")

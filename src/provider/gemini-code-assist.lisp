@@ -196,10 +196,10 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
   "Return the long-running OPERATION URL."
   (format nil "~A/~A" (gemini-code-assist-provider-endpoint provider) operation))
 
-(-> gemini-code-assist--transient-status-p (integer) boolean)
-(defun gemini-code-assist--transient-status-p (status)
-  "Return true for the non-stream retry statuses used by Gemini CLI."
-  (or (= status 429)
+(defmethod provider-retryable-status-p
+    ((provider gemini-code-assist-provider) (status integer) headers)
+  "Retry the additional transient HTTP statuses used by Gemini Code Assist."
+  (or (call-next-method)
       (= status 499)
       (<= 500 status 599)))
 
@@ -272,7 +272,7 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                    ((<= 200 status 299)
                     (return-from gemini-code-assist--nonstream-request
                       (gemini-code-assist--decode-json-response body stage)))
-                   ((and (gemini-code-assist--transient-status-p status)
+                   ((and (provider-retryable-status-p provider status headers)
                          (< attempt *gemini-code-assist-nonstream-maximum-attempts*))
                     (sleep *gemini-code-assist-nonstream-retry-delay*))
                    (t

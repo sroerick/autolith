@@ -30,6 +30,12 @@
   (declare (ignore provider))
   ':anthropic)
 
+(defmethod provider-retryable-status-p
+    ((provider anthropic-api-key-provider) (status integer) headers)
+  "Retry Anthropic's nonstandard overload status in addition to shared statuses."
+  (or (call-next-method)
+      (= status 529)))
+
 (defmethod provider-family-create
     ((family (eql ':anthropic))
      (configuration configuration)

@@ -916,6 +916,7 @@ are decoded as UTF-8."
         (hint (case status
                 (404 "The requested resource or model is not being served.")
                 (429 "The subscription rate limit was reached; see /status.")
+                (529 "The provider service is overloaded.")
                 ((500 502 503 504 507) "The provider service is having trouble.")
                 (t nil))))
     (format nil "The provider returned HTTP ~D.~@[ ~A~]~@[~%~A~]"
@@ -923,10 +924,18 @@ are decoded as UTF-8."
             hint
             detail)))
 
-(-> provider--retryable-http-status-p (integer) boolean)
-(defun provider--retryable-http-status-p (status)
-  "Return true when provider HTTP STATUS describes a transient failure."
-  (not (null (member status *provider-retryable-http-statuses* :test #'=))))
+(-> provider-retryable-status-p (subscription-provider integer t) boolean)
+(defgeneric provider-retryable-status-p (provider status headers)
+  (:documentation
+   "Return true when PROVIDER reports transient HTTP STATUS and HEADERS."))
+
+(defmethod provider-retryable-status-p
+    ((provider subscription-provider) (status integer) headers)
+  "Retry shared service failures, rate limits, and explicit Retry-After responses."
+  (declare (ignore provider))
+  (or (= status 429)
+      (not (null (member status *provider-retryable-http-statuses* :test #'=)))
+      (non-empty-string-p (response-header headers "retry-after"))))
 
 (-> provider--signal-http-status-failure
     (subscription-provider integer &key (:headers t) (:raw-body t))
@@ -944,7 +953,7 @@ are decoded as UTF-8."
                :status status
                :request-id (provider--response-request-id headers)
                :response nil)
-        (error (if (provider--retryable-http-status-p status)
+        (error (if (provider-retryable-status-p provider status headers)
                    'provider-retryable-error
                    'provider-error)
                :message (provider--http-error-message status body)
@@ -976,7 +985,7 @@ are decoded as UTF-8."
                :status status
                :request-id (provider--response-request-id headers)
                :response nil)
-        (error (if (provider--retryable-http-status-p status)
+        (error (if (provider-retryable-status-p provider status headers)
                    'provider-retryable-error
                    'provider-error)
                :message (provider--http-error-message status body)

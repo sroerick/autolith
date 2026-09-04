@@ -13,13 +13,23 @@
   "Test Anthropic model family resolution and endpoint selection."
   (test-assert (eq (model-family "claude-haiku-4-5-20251001") ':anthropic)
                "Claude identifiers resolve to the Anthropic family")
-  (let ((configuration (anthropic-provider-test--configuration)))
+  (let* ((configuration (anthropic-provider-test--configuration))
+         (provider (anthropic-provider-create configuration)))
     (test-assert
      (string= (configuration-provider-endpoint configuration)
               *anthropic-messages-endpoint*)
      "Anthropic configurations select the Anthropic Messages endpoint")
     (test-assert (= (configuration-context-window configuration) 200000)
-                 "Claude models carry the Anthropic context window"))
+                 "Claude models carry the Anthropic context window")
+    (test-assert
+     (and (handler-case
+              (progn
+                (provider--signal-http-status-failure provider 529)
+                nil)
+            (provider-retryable-error (error)
+              (= (provider-error-status error) 529)))
+          (not (provider-retryable-status-p provider 528 nil)))
+     "Anthropic treats its overload status as retryable"))
   nil)
 
 (-> anthropic-provider-test--credential-source () null)

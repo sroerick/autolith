@@ -48,16 +48,27 @@
             :method ':post)))
     (unwind-protect
          (progn
-           (test-assert
-            (handler-case
-                (progn
-                  (provider-signal-http-failure provider condition)
-                  nil)
-              (provider-error (error)
-                (and (= (provider-error-status error) 429)
-                     (string= (provider-error-request-id error)
-                              "request-429"))))
-            "HTTP 429 remains a typed provider failure")
+            (test-assert
+             (handler-case
+                 (progn
+                   (provider-signal-http-failure provider condition)
+                   nil)
+               (provider-retryable-error (error)
+                 (and (= (provider-error-status error) 429)
+                      (string= (provider-error-request-id error)
+                               "request-429"))))
+             "HTTP 429 is eligible for bounded retry")
+            (test-assert
+             (and (handler-case
+                      (progn
+                        (provider--signal-http-status-failure
+                         provider 408
+                         :headers '(("Retry-After" . "3")))
+                        nil)
+                    (provider-retryable-error (error)
+                      (= (provider-error-status error) 408)))
+                  (not (provider-retryable-status-p provider 408 nil)))
+             "Retry-After makes an otherwise terminal status retryable")
            (test-assert
             (= (getf (getf (provider-rate-limits provider) :primary)
                        :used-percent)
