@@ -1536,12 +1536,12 @@
                      :goal-context nil
                      :compaction-p nil)
                     nil)
-                (response-stream-error ()
-                  t))
-              "cleanup failure preserves the original stream interruption")
+                (provider-protocol-error (condition)
+                  (not (typep condition 'provider-retryable-error))))
+              "cleanup failure preserves the terminal stream protocol failure")
              (test-assert
               (test-failing-close-stream-close-abort-p stream)
-              "interrupted provider streams also close abortively"))
+              "protocol-invalid provider streams also close abortively"))
            (let* ((stream
                     (make-instance
                      'test-failing-close-stream

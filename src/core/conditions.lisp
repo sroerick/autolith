@@ -197,6 +197,10 @@
     :documentation "A bounded provider response safe for display."))
   (:documentation "A model-provider request failed."))
 
+(define-condition provider-protocol-error (provider-error)
+  ()
+  (:documentation "A provider returned a terminal protocol-invalid response."))
+
 (define-condition provider-retryable-error
     (llm-provider-api:provider-retryable-error provider-error)
   ()

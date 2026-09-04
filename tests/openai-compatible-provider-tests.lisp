@@ -1072,6 +1072,7 @@
                     (source
                       (concatenate
                        'string
+                       (format nil "data:~%~%")
                        (test-sse-event-string reasoning-event)
                        (test-sse-event-string text-event)
                        (test-sse-event-string first-tool-event)
@@ -1122,6 +1123,18 @@
                       nil)
                   (response-stream-error () t))
                 "truncated Chat Completions streams remain retryable failures"))
+                (test-assert
+                 (handler-case
+                     (progn
+                       (provider-consume-stream
+                        provider
+                        (make-string-input-stream (format nil "data: {~%~%"))
+                        nil
+                        #'identity)
+                       nil)
+                   (provider-protocol-error (condition)
+                     (not (typep condition 'provider-retryable-error))))
+                 "malformed Chat Completions events are terminal protocol failures")
               (let* ((tool-event
                        (openai-compatible-provider-tests--stream-event
                         (json-object
@@ -1179,17 +1192,20 @@
                           (test-sse-event-string tool-event)
                           (test-sse-event-string finish-event)
                           (format nil "data: [DONE]~%~%"))))
-                  (test-assert
-                   (handler-case
-                       (progn
-                         (provider-consume-stream
-                          provider
-                          (make-string-input-stream source)
-                          nil
-                          #'identity)
-                         nil)
-                     (response-stream-error () t))
-                   (format nil "Chat Completions rejects ~A" (first case)))))
+                    (test-assert
+                     (handler-case
+                         (progn
+                           (provider-consume-stream
+                            provider
+                            (make-string-input-stream source)
+                            nil
+                            #'identity)
+                           nil)
+                       (provider-protocol-error (condition)
+                         (not (typep condition 'provider-retryable-error))))
+                     (format nil
+                             "Chat Completions rejects ~A as a terminal protocol failure"
+                             (first case)))))
               (dolist (item
                        (list
                         (json-object "type" 17 "role" "assistant")
@@ -1230,8 +1246,9 @@
                         nil
                         #'identity)
                        nil)
-                   (response-stream-error () t))
-                 "malformed tool fields become typed stream failures"))
+                    (provider-protocol-error (condition)
+                      (not (typep condition 'provider-retryable-error))))
+                  "malformed tool fields become terminal protocol failures"))
            (let* ((prompt-provider
                     (openai-compatible-provider-create
                      configuration

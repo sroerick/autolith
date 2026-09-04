@@ -1033,6 +1033,20 @@ abandon the looping stream; the default reaction ignores the report."))
          :request-id (provider--response-request-id headers)
          :response nil))
 
+(-> provider--signal-stream-protocol-failure
+    (t string &key (:response (option string)))
+    null)
+(defun provider--signal-stream-protocol-failure (headers message &key response)
+  "Signal a terminal provider stream protocol failure described by MESSAGE."
+  (error 'provider-protocol-error
+         :message message
+         :status nil
+         :request-id (provider--response-request-id headers)
+         :response (and response
+                        (bounded-string
+                         (provider--sanitize-wire-string response)
+                         :limit *provider-error-detail-limit*))))
+
 (-> provider--transport-failure-message (string condition) string)
 (defun provider--transport-failure-message (message condition)
   "Append bounded credential-redacted CONDITION detail to transport MESSAGE."
@@ -1166,9 +1180,11 @@ abandon the looping stream; the default reaction ignores the report."))
 
 (-> provider--read-sse-data (stream t) t)
 (defun provider--read-sse-data (stream headers)
-  "Read one SSE payload and normalize transport EOF into a provider condition."
+  "Read one non-empty SSE payload and normalize transport EOF into a provider condition."
   (handler-case
-      (read-sse-data stream)
+      (loop for data = (read-sse-data stream)
+            unless (and (stringp data) (zerop (length data)))
+              return data)
     (provider-error (condition)
       (error condition))
     (end-of-file ()
@@ -1182,17 +1198,14 @@ abandon the looping stream; the default reaction ignores the report."))
 
 (-> provider--decode-sse-data (string t) t)
 (defun provider--decode-sse-data (data headers)
-  "Decode one SSE DATA payload, normalizing truncation into a provider condition."
+  "Decode one non-empty SSE DATA payload or signal a terminal protocol failure."
   (handler-case
       (provider--sanitize-wire-value (json-decode data))
-    (end-of-file ()
-      (provider--signal-stream-interruption
-       headers
-       "The provider connection closed during an SSE event."))
     (error ()
-      (provider--signal-stream-interruption
+      (provider--signal-stream-protocol-failure
        headers
-       "The provider returned a malformed SSE event."))))
+       "The provider returned a malformed SSE event."
+       :response data))))
 
 (-> provider--event-response (json-object) (option json-object))
 (defun provider--event-response (event)

@@ -769,7 +769,7 @@ message, which thinking-mode providers require passed back."
           (get-output-stream-string
            (openai-compatible-tool-state-arguments-stream state))))
     (unless (and (non-empty-string-p id) (non-empty-string-p name))
-      (provider--signal-stream-interruption
+      (provider--signal-stream-protocol-failure
        headers
        "The provider returned an incomplete tool call."))
     (json-object
