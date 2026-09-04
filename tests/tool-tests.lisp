@@ -519,8 +519,10 @@
 (defun test-workspace-tools ()
   "Test workspace image inspection and bounded shell commands."
   (let* ((registry (make-default-tool-registry))
-         (configuration (test-configuration))
-         (root (test-configuration-root configuration)))
+         (base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration :working-directory root)))
     (unwind-protect
          (let ((conversation (conversation-create configuration
                                                   :identifier "workspace")))

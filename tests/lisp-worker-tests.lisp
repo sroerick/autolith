@@ -349,8 +349,10 @@
 (-> test-lisp-execution-jobs () null)
 (defun test-lisp-execution-jobs ()
   "Test inspectable Lisp jobs, named REPL affinity, cancellation, and restart."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration :working-directory root))
          (pool (lisp-worker-pool-create configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
