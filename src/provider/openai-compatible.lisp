@@ -25,7 +25,13 @@
     :initform nil
     :reader openai-compatible-provider-reasoning-parameter
     :type (option string)
-    :documentation "The optional request field receiving the reasoning effort."))
+    :documentation "The optional request field receiving the reasoning effort.")
+   (stream-usage-p
+    :initarg :stream-usage-p
+    :initform t
+    :reader openai-compatible-provider-stream-usage-p
+    :type boolean
+    :documentation "Whether streaming requests ask the provider to report usage."))
   (:documentation
    "A provider for the streaming OpenAI Chat Completions wire protocol."))
 
@@ -56,13 +62,15 @@
 
 (-> openai-compatible-provider-create
     (configuration &key
-                  (:name non-empty-string)
-                  (:family keyword)
-                  (:headers list)
-                  (:reasoning-parameter (option string)))
+                   (:name non-empty-string)
+                   (:family keyword)
+                   (:headers list)
+                   (:reasoning-parameter (option string))
+                   (:stream-usage-p boolean))
     openai-compatible-provider)
 (defun openai-compatible-provider-create
-    (configuration &key name family headers reasoning-parameter)
+    (configuration &key name family headers reasoning-parameter
+                        (stream-usage-p t))
   "Create one OpenAI-compatible provider from registered endpoint metadata."
   (make-instance
    'openai-compatible-provider
@@ -75,16 +83,19 @@
    :display-name name
    :family family
    :headers (copy-tree headers)
-   :reasoning-parameter reasoning-parameter))
+   :reasoning-parameter reasoning-parameter
+   :stream-usage-p stream-usage-p))
 
 (defmethod provider-reconfiguration-initargs append
     ((provider openai-compatible-provider))
-  "Preserve PROVIDER's display, family, headers, and reasoning parameter."
+  "Preserve PROVIDER's display, family, headers, reasoning, and usage options."
   (list :display-name (openai-compatible-provider-display-name provider)
         :family (openai-compatible-provider-family provider)
         :headers (copy-tree (openai-compatible-provider-headers provider))
         :reasoning-parameter
-        (openai-compatible-provider-reasoning-parameter provider)))
+        (openai-compatible-provider-reasoning-parameter provider)
+        :stream-usage-p
+        (openai-compatible-provider-stream-usage-p provider)))
 
 (-> openai-compatible--authenticate
     (openai-compatible-provider &key
@@ -273,17 +284,19 @@ manager from PROVIDER-NAME."
      (:endpoint non-empty-string)
      (:headers list)
      (:reasoning-parameter (option string))
+     (:stream-usage-p boolean)
      (:source keyword))
     string)
 (defun register-openai-compatible-provider
     (&key name description family models models-endpoint endpoint
-      headers reasoning-parameter
+      headers reasoning-parameter (stream-usage-p t)
       (source (provider--current-registration-source)))
   "Register an OpenAI-compatible Chat Completions provider.
 
 The provider resolves its bearer key from Autolith's private API-key store using
 NAME. MODELS contains optional static strings or model property lists accepted by
-REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers."
+REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers.
+STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
   (unless (or models models-endpoint)
     (error 'configuration-error
            :message
@@ -332,7 +345,8 @@ REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers."
         :name name
         :family effective-family
         :headers headers
-        :reasoning-parameter reasoning-parameter))
+        :reasoning-parameter reasoning-parameter
+        :stream-usage-p stream-usage-p))
      :source source)))
 
 
@@ -617,6 +631,9 @@ message, which thinking-mode providers require passed back."
             "model" (configuration-model configuration)
             "messages" (coerce messages 'vector)
             "stream" t)))
+    (when (openai-compatible-provider-stream-usage-p provider)
+      (setf (gethash "stream_options" request)
+            (json-object "include_usage" t)))
     (when (plusp (length effective-tools))
       (setf (gethash "tools" request) effective-tools
             (gethash "tool_choice" request) "auto"))

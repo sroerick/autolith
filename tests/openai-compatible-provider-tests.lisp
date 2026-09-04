@@ -837,12 +837,13 @@
                             "none"))
               "model selection uses the registered reasoning efforts")
              (test-assert
-               (and (typep provider 'openai-compatible-provider)
-                    (typep provider 'chat-completions-provider)
-                    (eq (provider-wire-protocol provider) ':chat-completions)
-                    (eq (provider-family provider) ':test-openai)
-                    (string= (configuration-provider-endpoint provider-configuration)
-                             "https://provider.invalid/v1/chat/completions"))
+              (and (typep provider 'openai-compatible-provider)
+                   (typep provider 'chat-completions-provider)
+                   (eq (provider-wire-protocol provider) ':chat-completions)
+                   (eq (provider-family provider) ':test-openai)
+                   (openai-compatible-provider-stream-usage-p provider)
+                   (string= (configuration-provider-endpoint provider-configuration)
+                            "https://provider.invalid/v1/chat/completions"))
               "registered models create the configured OpenAI-compatible provider")
               (let* ((reconfiguration
                        (configuration-with-reasoning-effort
@@ -869,7 +870,8 @@
                                (openai-compatible-provider-headers provider)))
                       (string= (openai-compatible-provider-reasoning-parameter
                                 reconfigured)
-                               "reasoning_effort"))
+                               "reasoning_effort")
+                      (openai-compatible-provider-stream-usage-p reconfigured))
                  "OpenAI-compatible reconfiguration composes session and wire initargs"))
              (let ((application
                      (make-instance 'application
@@ -936,6 +938,7 @@
                     :goal-context "keep the active goal"
                     :compaction-p nil)
                  (let* ((messages (json-get request "messages"))
+                        (stream-options (json-get request "stream_options"))
                         (wire-tools (json-get request "tools"))
                         (wire-tool (aref wire-tools 0))
                         (wire-function (json-get wire-tool "function")))
@@ -943,6 +946,10 @@
                     (and (vectorp messages)
                          (search "Read the file" (json-encode messages)))
                     "Chat Completions requests carry projected conversation messages")
+                   (test-assert
+                    (and (json-object-p stream-options)
+                         (eq (json-get stream-options "include_usage") t))
+                    "Chat Completions requests ask for final streaming usage")
                    (test-assert
                     (let* ((system-message (aref messages 0))
                            (context-message
@@ -972,6 +979,31 @@
                          (not (find #\. (json-get wire-function "name")))
                          (json-object-p (json-get wire-function "parameters")))
                     "namespaced tools use a grammar-safe Chat Completions function wrapper"))))
+             (register-openai-compatible-provider
+              :name "test-openai-no-stream-usage"
+              :models '("test/no-stream-usage")
+              :endpoint "https://provider.invalid/v1/chat/completions"
+              :stream-usage-p nil)
+             (let* ((opt-out-configuration
+                      (configuration-with-model
+                       configuration "test/no-stream-usage"))
+                    (opt-out-provider
+                      (provider-create opt-out-configuration))
+                    (opt-out-conversation
+                      (conversation-create
+                       opt-out-configuration
+                       :identifier "openai-compatible-no-stream-usage")))
+               (conversation-append-user-message opt-out-conversation "Hello.")
+               (multiple-value-bind (request delivery)
+                   (provider-request-object opt-out-provider
+                                            opt-out-conversation
+                                            #())
+                 (declare (ignore delivery))
+                 (test-assert
+                  (and (not (openai-compatible-provider-stream-usage-p
+                             opt-out-provider))
+                       (null (json-get request "stream_options")))
+                  "registered providers can omit unsupported stream options")))
               (let ((conversation
                       (conversation-create provider-configuration
                                            :identifier "openai-compatible-compaction")))
@@ -1069,6 +1101,16 @@
                        (json-object)
                        "chat-test"
                        "tool_calls"))
+                     (usage
+                       (json-object
+                        "prompt_tokens" 7
+                        "completion_tokens" 3
+                        "total_tokens" 10))
+                     (usage-event
+                       (json-object
+                        "id" "chat-test"
+                        "choices" #()
+                        "usage" usage))
                     (source
                       (concatenate
                        'string
@@ -1078,6 +1120,7 @@
                        (test-sse-event-string first-tool-event)
                        (test-sse-event-string second-tool-event)
                        (test-sse-event-string finish-event)
+                        (test-sse-event-string usage-event)
                        (format nil "data: [DONE]~%~%")))
                     (events nil)
                     (result
@@ -1090,8 +1133,10 @@
                (test-assert
                 (and (string= (provider-result-response-id result) "chat-test")
                      (eq (provider-result-turn-completion result) ':continue)
-                     (= (length (provider-result-output-items result)) 3))
-                "Chat Completions streams produce a normalized continuing result")
+                     (= (length (provider-result-output-items result)) 3)
+                     (= (json-get (provider-result-usage result) "prompt_tokens") 7)
+                     (= (json-get (provider-result-usage result) "completion_tokens") 3))
+                "Chat Completions streams produce usage-aware continuing results")
                (test-assert
                 (let ((item (first (provider-result-output-items result))))
                   (and (chat-reasoning-item-p item)
