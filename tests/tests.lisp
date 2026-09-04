@@ -354,6 +354,7 @@
     (test-conversation-picker-search)
      (test-conversation-turn-aborted-boundary)
     (test-conversation-replay)
+    (test-conversation-initial-publication-serialization)
     (test-conversation-deletion)
     (test-workspace-plan)
     (test-authentication-store)

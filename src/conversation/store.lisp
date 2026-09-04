@@ -690,27 +690,40 @@ owner has exited."
     (error ()
       nil)))
 
+(-> conversation--initial-publication-lock-pathname (conversation) pathname)
+(defun conversation--initial-publication-lock-pathname (conversation)
+  "Return the shared lock serializing first publication in one storage root."
+  (merge-pathnames
+   ".conversation-publication.lock"
+   (uiop:pathname-directory-pathname (conversation-pathname conversation))))
+
 (-> conversation--write-initial-record (conversation list) null)
 (defun conversation--write-initial-record (conversation record)
   "Atomically publish CONVERSATION's first chunk header and durable RECORD."
   (let ((identity (conversation-pathname conversation))
-        (pathname (conversation-log-pathname conversation)))
-    (when (conversation-storage-occupied-p identity)
-      (error 'conversation-invariant-error
-             :message "A new conversation storage pathname became occupied."
-             :pathname identity
-             :sequence (conversation-next-sequence conversation)))
-    (handler-case
-        (log-append pathname
-                    record
-                    :initial-forms
-                    (list (conversation--header-record
-                           conversation
-                           :chunk-start-sequence 1)))
-      (error (condition)
-        (unless (conversation--published-segment-p
-                 conversation pathname record 1)
-          (error condition))))
+        (pathname (conversation-log-pathname conversation))
+        (lock-pathname
+          (conversation--initial-publication-lock-pathname conversation)))
+    (ensure-directories-exist lock-pathname)
+    (call-with-file-lock
+     lock-pathname
+     (lambda ()
+       (when (conversation-storage-occupied-p identity)
+         (error 'conversation-invariant-error
+                :message "A new conversation storage pathname became occupied."
+                :pathname identity
+                :sequence (conversation-next-sequence conversation)))
+       (handler-case
+           (log-append pathname
+                       record
+                       :initial-forms
+                       (list (conversation--header-record
+                              conversation
+                              :chunk-start-sequence 1)))
+         (error (condition)
+           (unless (conversation--published-segment-p
+                    conversation pathname record 1)
+             (error condition))))))
     (setf (conversation-persisted-p conversation) t
           (conversation-incomplete-tail-p conversation) nil))
   nil)

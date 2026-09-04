@@ -2435,6 +2435,92 @@ assistant needle"))
   nil)
 
 
+(-> test-conversation-initial-publication-serialization () null)
+(defun test-conversation-initial-publication-serialization ()
+  "Test that competing first writes cannot both publish one conversation ID."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (first (conversation-create configuration :identifier "publication-race"))
+         (second (conversation-create configuration :identifier "publication-race"))
+         (pathname (conversation-log-pathname first))
+         (gate (make-lock "conversation initial publication test"))
+         (condition (make-condition-variable))
+         (first-entered-p nil)
+         (release-first-p nil)
+         (second-entered-p nil)
+         (first-succeeded-p nil)
+         (first-condition nil)
+         (second-condition nil)
+         (first-thread nil)
+         (second-thread nil)
+         (log-append-function (symbol-function 'log-append)))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'log-append
+            (lambda (&rest arguments)
+              (when (equal (first arguments) pathname)
+                (with-lock-held (gate)
+                  (if first-entered-p
+                      (setf second-entered-p t)
+                      (progn
+                        (setf first-entered-p t)
+                        (condition-notify condition)
+                        (loop until release-first-p
+                              do (condition-wait condition gate))))))
+              (apply log-append-function arguments))))
+          (lambda ()
+            (setf first-thread
+                  (make-thread
+                   (lambda ()
+                     (handler-case
+                         (progn
+                           (conversation-append-user-message first "first publisher")
+                           (setf first-succeeded-p t))
+                       (error (error)
+                         (setf first-condition error))))
+                   :name "first conversation publisher"))
+            (with-lock-held (gate)
+              (loop until first-entered-p
+                    unless (condition-wait condition gate :timeout 2)
+                      do (error "Timed out waiting for initial publication.")))
+            (setf second-thread
+                  (make-thread
+                   (lambda ()
+                     (handler-case
+                         (conversation-append-user-message second "second publisher")
+                       (error (error)
+                         (setf second-condition error))))
+                   :name "second conversation publisher"))
+            (sleep 0.05)
+            (with-lock-held (gate)
+              (test-assert
+               (not second-entered-p)
+               "a competing first write waits before publishing its segment"))
+            (with-lock-held (gate)
+              (setf release-first-p t)
+              (condition-notify condition))
+            (join-thread first-thread)
+            (join-thread second-thread)
+            (test-assert
+             (and first-succeeded-p
+                  (null first-condition)
+                  (typep second-condition 'conversation-invariant-error)
+                  (conversation-persisted-p first)
+                  (not (conversation-persisted-p second)))
+             "exactly one competing first write publishes the conversation")))
+      (with-lock-held (gate)
+        (setf release-first-p t)
+        (condition-notify condition))
+      (when (and first-thread (thread-alive-p first-thread))
+        (join-thread first-thread))
+      (when (and second-thread (thread-alive-p second-thread))
+        (join-thread second-thread))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-conversation-deletion () null)
 (defun test-conversation-deletion ()
   "Test deletion ownership checks and private artifact cleanup."
