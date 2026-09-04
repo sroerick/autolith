@@ -43,8 +43,10 @@
     (values application pathname recording-terminal application-operation-test-tool))
 (defun application-operation-tests--application ()
   "Return one isolated application and its local operation test resources."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration :working-directory root))
          (conversation
            (conversation-create configuration :identifier "operation-surface"))
          (registry (make-default-tool-registry))
