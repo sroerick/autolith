@@ -44,7 +44,10 @@
   "The maximum combined output characters returned by shell.run.")
 
 (defparameter *workspace-tool-readable-roots* nil
-  "Optional pathname roots confining workspace-tool reads for the current call.")
+  "Pathname roots confining workspace-tool access for the current call.
+
+Agent turns bind this to the configured workspace and source roots. Specialized
+resources may extend or replace that boundary dynamically.")
 
 (defvar *workspace-file-mutation-lock*
   (make-recursive-lock "Autolith workspace file mutations")
@@ -131,22 +134,24 @@ or filesystem failures as absence."
 (defun workspace-tool-path (context path)
   "Return PATH resolved against CONTEXT's working directory.
 
-When *WORKSPACE-TOOL-READABLE-ROOTS* is non-NIL, reject paths outside those
-roots after resolving existing symlinks and the nearest existing parent."
-  (let* ((working-directory (configuration-working-directory
-                             (tool-context-configuration context)))
-          (resolved
-            (if (non-empty-string-p path)
-                (merge-pathnames (uiop:parse-native-namestring path)
-                                 working-directory)
-                working-directory))
+When *WORKSPACE-TOOL-READABLE-ROOTS* is NIL, confine access to CONTEXT's
+workspace and source roots. Otherwise use the dynamically supplied roots. Resolve
+existing symlinks and the nearest existing parent before checking the boundary."
+  (let* ((configuration (tool-context-configuration context))
+         (working-directory (configuration-working-directory configuration))
+         (roots (or *workspace-tool-readable-roots*
+                    (list working-directory
+                          (configuration-source-root configuration))))
+         (resolved
+           (if (non-empty-string-p path)
+               (merge-pathnames (uiop:parse-native-namestring path)
+                                working-directory)
+               working-directory))
          (canonical (workspace-tool--canonical-path resolved)))
-    (when (and *workspace-tool-readable-roots*
-               (not (workspace-tool--read-path-allowed-p
-                     canonical *workspace-tool-readable-roots*)))
+    (unless (workspace-tool--read-path-allowed-p canonical roots)
       (error 'tool-error
              :message
-             (format nil "Path ~A is outside the readable workspace and source roots."
+             (format nil "Path ~A is outside the allowed workspace roots."
                      canonical)
              :tool-name "resource"))
     canonical))

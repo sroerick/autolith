@@ -936,12 +936,11 @@
             (lambda (tool arguments)
               (agent-observer-authorize-tool observer tool arguments))))
          (*workspace-tool-readable-roots*
-           (and tool-restriction-p
-                (list
-                 (configuration-working-directory
-                  (agent-configuration agent))
-                 (configuration-source-root
-                  (agent-configuration agent)))))
+           (list
+            (configuration-working-directory
+             (agent-configuration agent))
+            (configuration-source-root
+             (agent-configuration agent))))
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))
          (real-start (get-internal-real-time))

@@ -429,40 +429,38 @@
                       (non-empty-string-p revision)
                       (search "Kind: directory" (tool-result-content result)))
                  "workspace:. reads the workspace root as a canonical directory resource"))
-             (let ((*workspace-tool-readable-roots* (list workspace)))
-               (test-assert
-                (handler-case
-                    (progn
-                      (resource-registry-resolve
-                       (tool-registry-resource-registry registry)
-                       (format nil "workspace:~A"
-                               (workspace-file--encode-identifier
-                                (namestring (user-homedir-pathname))))
-                       first-context)
-                      nil)
-                  (tool-error () t))
-                "workspace resource URIs do not bypass readable-root confinement"))
+             (test-assert
+              (handler-case
+                  (progn
+                    (resource-registry-resolve
+                     (tool-registry-resource-registry registry)
+                     (format nil "workspace:~A"
+                             (workspace-file--encode-identifier
+                              (namestring (user-homedir-pathname))))
+                     first-context)
+                    nil)
+                (tool-error () t))
+              "workspace resource URIs do not bypass primary-agent confinement")
              (let ((escape (merge-pathnames "escape" workspace)))
                (unwind-protect
                     (progn
                       (sb-posix:symlink
                        (namestring (user-homedir-pathname))
                        (namestring escape))
-                      (let ((*workspace-tool-readable-roots* (list workspace)))
-                        (dolist (uri '("workspace:escape"
-                                       "workspace:escape/new.txt"))
-                          (test-assert
-                           (handler-case
-                               (progn
-                                 (resource-registry-resolve
-                                  (tool-registry-resource-registry registry)
-                                  uri
-                                  first-context)
-                                 nil)
-                             (tool-error () t))
-                           (format nil
-                                   "workspace resource resolution rejects symlink escape ~A"
-                                   uri)))))
+                      (dolist (uri '("workspace:escape"
+                                     "workspace:escape/new.txt"))
+                        (test-assert
+                         (handler-case
+                             (progn
+                               (resource-registry-resolve
+                                (tool-registry-resource-registry registry)
+                                uri
+                                first-context)
+                               nil)
+                           (tool-error () t))
+                        (format nil
+                                "workspace resource resolution rejects symlink escape ~A"
+                                uri))))
                  (when (probe-file escape)
                    (sb-posix:unlink (namestring escape)))))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
