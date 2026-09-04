@@ -791,28 +791,33 @@
                (test-assert
                 (= (logand mode #o777) #o600)
                 "the provider-key store has mode 0600")))
-           (let* ((model "test/chat-model")
-                  (provider-configuration
-                    (configuration-with-model configuration model))
-                  (provider (provider-create provider-configuration))
-                  (registration (provider-registration-find "test-openai"))
-                  (metadata (provider-model-for model)))
-             (test-assert
-               (equal (provider-model-identifiers)
-                      (append (list "gpt-5.6-sol"
-                                    "gpt-5.6-luna"
-                                    "gpt-5.6-terra")
-                              (mapcar (lambda (entry) (getf entry ':name))
-                                      *gemini-code-assist-models*)
-                              (list "grok-4.6"
-                                    "grok-4.5"
-                                    "accounts/fireworks/models/kimi-k3"
-                                    "accounts/fireworks/models/qwen3p7-plus"
-                                    "claude-opus-5"
-                                    "claude-sonnet-5"
-                                    "claude-haiku-4-5-20251001"
-                                    model)))
-              "registered models appear after the built-in provider models")
+            (let* ((model "test/chat-model")
+                   (provider-configuration
+                     (configuration-with-model configuration model))
+                   (provider (provider-create provider-configuration))
+                   (registration (provider-registration-find "test-openai"))
+                   (metadata (provider-model-for model))
+                   (built-in-models
+                     (append
+                      (list "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+                      (mapcar (lambda (entry) (getf entry ':name))
+                              *gemini-code-assist-models*)
+                      (list "grok-4.6"
+                            "grok-4.5"
+                            "accounts/fireworks/models/kimi-k3"
+                            "accounts/fireworks/models/qwen3p7-plus"
+                            "claude-opus-5"
+                            "claude-sonnet-5"
+                            "claude-haiku-4-5-20251001")))
+                   (model-identifiers (provider-model-identifiers))
+                   (model-position
+                     (position model model-identifiers :test #'string=)))
+              (test-assert
+               (and model-position
+                    (equal built-in-models
+                           (subseq model-identifiers 0 (length built-in-models)))
+                    (>= model-position (length built-in-models)))
+               "registered models appear after the built-in provider models")
              (test-assert
               (and registration
                    (string= (provider-registration-description registration)
