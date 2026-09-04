@@ -659,7 +659,7 @@
                      '(("(help)" :execute)
                        ("(prompt \"text\")" :execute)
                        ("(prompt (read-file \"/tmp/example\"))" :execute)
-                       ("(goal \"pause\")" :apply)
+                        ("(goal \"pause\")" :hold)
                        ("(quit)" :cancel)
                        ("(update)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
