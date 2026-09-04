@@ -1862,6 +1862,10 @@ re-arms a window that a wedged turn may never let ordinary shutdown reach."
             do (push (deque-pop-front items) drained))
       (nreverse drained))))
 
+(-> application--run-command-input
+    (application string &key (:interactive-p boolean))
+    keyword)
+
 (-> application-input-controller--apply-pending-commands
     (application-input-controller &key (:agent t))
     null)
@@ -1878,8 +1882,8 @@ reaches the very next provider request."
       (dolist (input inputs)
         (if (terminal-ui--lisp-draft-p input)
             (application-run-lisp-input application input :interactive-p nil)
-            (let ((*application-command-interactive-p* nil))
-              (application--run-command-input application input))))
+            (application--run-command-input
+             application input :interactive-p nil)))
       (when agent
         (application--agent-adopt-runtime application agent))))
   nil)
@@ -3400,8 +3404,7 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
         (serious-condition (condition)
           (application-raise-fatal application condition signal-backtrace))))))
 
-(-> application--run-command-input (application string) keyword)
-(defun application--run-command-input (application input)
+(defun application--run-command-input (application input &key (interactive-p t))
   "Run command INPUT through the local restart debugger."
   (let ((invocation (application-command-invocation-parse input)))
     (application-command--call-with-presentation
@@ -3410,8 +3413,9 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
        (multiple-value-bind (result condition)
            (application--call-with-command-debugger
             application
-            (lambda ()
-              (application-handle-input application input))
+             (lambda ()
+               (application-handle-input
+                application input :interactive-p interactive-p))
             :source input
             :operation-kind ':command
             :retry-p t

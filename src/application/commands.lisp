@@ -2540,10 +2540,12 @@ are forwarded to TERMINAL-UI-SELECT."
 
 ;;;; -- Command Dispatch --
 
-(-> application-command (application string) keyword)
-(defun application-command (application input)
+(-> application-command
+    (application string &key (:interactive-p boolean))
+    keyword)
+(defun application-command (application input &key (interactive-p t))
   "Execute slash command INPUT for APPLICATION and return its loop action."
-  (let* ((*application-command-interactive-p* t)
+  (let* ((*application-command-interactive-p* interactive-p)
          (invocation (application-command-invocation-parse input))
          (command (application-command-invocation-command invocation)))
     (application-command--call-with-presentation
@@ -2558,8 +2560,10 @@ are forwarded to TERMINAL-UI-SELECT."
                       (application-command-invocation-name invocation)))
              ':continue))))))
 
-(-> application-handle-input (application string) keyword)
-(defun application-handle-input (application input)
+(-> application-handle-input
+    (application string &key (:interactive-p boolean))
+    keyword)
+(defun application-handle-input (application input &key (interactive-p t))
   "Handle submitted INPUT and return :CONTINUE or :QUIT."
   (cond
     ((not (non-empty-string-p input))
@@ -2568,7 +2572,7 @@ are forwarded to TERMINAL-UI-SELECT."
      (application-run-message application (subseq input 1))
      :continue)
     ((uiop:string-prefix-p "/" input)
-     (application-command application input))
+     (application-command application input :interactive-p interactive-p))
     (t
      (application-run-message application input)
      :continue)))

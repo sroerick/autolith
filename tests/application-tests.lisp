@@ -3910,6 +3910,27 @@
                      controller))
                    (eq (getf (application-goal application) :status) ':paused))
               "applying pending commands executes their effects")
+              (application-input-controller--handle-submission
+               controller "/model gpt-5.6-luna")
+              (let ((picker-opened-p nil))
+                (test-call-with-function-replacements
+                 (list
+                  (list
+                   'application-set-model
+                   (lambda (candidate model)
+                     (declare (ignore candidate model))
+                     nil))
+                  (list
+                   'application--pick-reasoning-effort
+                   (lambda (candidate)
+                     (declare (ignore candidate))
+                     (setf picker-opened-p t)
+                     nil)))
+                 (lambda ()
+                   (application-input-controller--apply-pending-commands controller)))
+                (test-assert
+                 (not picker-opened-p)
+                 "boundary-applied commands never open interactive pickers"))
              (application-input-controller--handle-submission
               controller "(goal \"resume\")")
              (test-assert
