@@ -2435,6 +2435,92 @@ assistant needle"))
   nil)
 
 
+(-> test-conversation-tail-repair-interruptibility () null)
+(defun test-conversation-tail-repair-interruptibility ()
+  "Test that torn-tail repair can be interrupted before appending new work."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "interruptible-repair"))
+         (gate (make-lock "conversation repair interrupt test"))
+         (condition (make-condition-variable))
+         (repair-entered-p nil)
+         (release-repair-p nil)
+         (append-condition nil)
+         (thread nil)
+         (log-write-function (symbol-function 'log-write)))
+    (unwind-protect
+         (progn
+           (conversation-append-user-message conversation "before torn tail")
+           (with-open-file (stream (conversation-log-pathname conversation)
+                                   :direction ':output
+                                   :if-exists ':append
+                                   :external-format ':utf-8)
+             (write-string "(:interrupted" stream))
+           (let* ((loaded (conversation-load (conversation-pathname conversation)))
+                  (next-sequence (conversation-next-sequence loaded)))
+             (test-assert (conversation-incomplete-tail-p loaded)
+                          "the fixture loads with an incomplete active tail")
+             (unwind-protect
+                  (test-call-with-function-replacements
+                   (list
+                    (list
+                     'log-write
+                     (lambda (&rest arguments)
+                       (with-lock-held (gate)
+                         (setf repair-entered-p t)
+                         (condition-notify condition)
+                         (loop until release-repair-p
+                               do (condition-wait condition gate)))
+                       (apply log-write-function arguments))))
+                   (lambda ()
+                     (setf thread
+                           (make-thread
+                            (lambda ()
+                              (handler-case
+                                  (conversation-append-user-message
+                                   loaded "after interrupted repair")
+                                (error (error)
+                                  (setf append-condition error))))
+                            :name "interruptible conversation repair"))
+                     (with-lock-held (gate)
+                       (loop until repair-entered-p
+                             unless (condition-wait condition gate :timeout 2)
+                               do (error "Timed out waiting for tail repair.")))
+                     (sb-thread:interrupt-thread
+                      thread
+                      (lambda ()
+                        (error "simulated repair interruption")))
+                     (multiple-value-bind (value join-status)
+                         (sb-thread:join-thread thread
+                                                :timeout 1
+                                                :default ':timed-out)
+                       (declare (ignore value))
+                       (test-assert
+                        (not (eq join-status ':timeout))
+                        "tail repair responds to an asynchronous interruption"))
+                     (test-assert
+                      (and append-condition
+                           (conversation-incomplete-tail-p loaded)
+                           (= (conversation-next-sequence loaded) next-sequence))
+                      "interrupted repair leaves the new record uncommitted")))
+               (with-lock-held (gate)
+                 (setf release-repair-p t)
+                 (condition-notify condition))
+               (when (and thread (thread-alive-p thread))
+                 (sb-thread:terminate-thread thread))
+               (when thread
+                 (ignore-errors
+                   (sb-thread:join-thread thread :timeout 0.2 :default nil))))
+             (conversation-append-user-message loaded "after successful repair")
+             (test-assert
+              (and (not (conversation-incomplete-tail-p loaded))
+                   (= (conversation-next-sequence loaded) (1+ next-sequence)))
+              "a later append repairs the tail and commits exactly one record")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-conversation-initial-publication-serialization () null)
 (defun test-conversation-initial-publication-serialization ()
   "Test that competing first writes cannot both publish one conversation ID."

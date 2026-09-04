@@ -603,6 +603,7 @@
                 #:log-append
                 #:log-map
                 #:log-read
+                #:log-write
                 #:make-record
                 #:record-check
                 #:record-property

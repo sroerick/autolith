@@ -1191,6 +1191,25 @@ a crash may leave one that a later lease acquisition can reuse safely."
                    :next-sequence 1
                    :input-items nil)))
 
+(-> conversation--repair-incomplete-tail (conversation) null)
+(defun conversation--repair-incomplete-tail (conversation)
+  "Repair CONVERSATION's active torn tail while interrupts remain enabled."
+  (let ((pathname (conversation-log-pathname conversation)))
+    (handler-case
+        (multiple-value-bind (forms incomplete-tail-p) (log-read pathname)
+          (when incomplete-tail-p
+            (log-write pathname forms)
+            (incf (conversation-log-generation conversation)))
+          (setf (conversation-incomplete-tail-p conversation) nil))
+      (error (condition)
+        (error 'conversation-invariant-error
+               :message
+               (format nil "Could not repair incomplete conversation tail: ~A"
+                       condition)
+               :pathname pathname
+               :sequence (conversation-next-sequence conversation)))))
+  nil)
+
 (-> conversation-append-record (conversation list) list)
 (defgeneric conversation-append-record (conversation record)
   (:documentation "Append portable RECORD to CONVERSATION and return the sequenced form."))
@@ -1203,8 +1222,10 @@ a crash may leave one that a later lease acquisition can reuse safely."
              :message "A conversation record must begin with a keyword."
              :pathname (conversation-pathname conversation)
              :sequence (conversation-next-sequence conversation)))
+    (when (and (conversation-persisted-p conversation)
+               (conversation-incomplete-tail-p conversation))
+      (conversation--repair-incomplete-tail conversation))
     (let* ((sequence (conversation-next-sequence conversation))
-           (repair-tail-p (conversation-incomplete-tail-p conversation))
            (sequenced (list* (first record)
                              :seq sequence
                              :time (get-universal-time)
@@ -1227,12 +1248,8 @@ a crash may leave one that a later lease acquisition can reuse safely."
                   (if (conversation--compaction-record-p sequenced)
                       (conversation--write-rotated-record conversation sequenced)
                       (progn
-                        (log-append pathname
-                                    sequenced
-                                    :repair-tail-p repair-tail-p)
-                        (setf (conversation-incomplete-tail-p conversation) nil)
-                        (when repair-tail-p
-                          (incf (conversation-log-generation conversation))))))
+                        (log-append pathname sequenced :repair-tail-p nil)
+                        (setf (conversation-incomplete-tail-p conversation) nil))))
                 (conversation--write-initial-record conversation sequenced))
           (error (condition)
             (when (and (not (conversation-persisted-p conversation))
