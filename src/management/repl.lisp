@@ -640,7 +640,12 @@
                        :output-truncated-p
                        (management-repl-output-truncated-p output)))))
       (handler-case
-          (let ((remaining (management-repl--remaining-seconds request)))
+          (let ((remaining (management-repl--remaining-seconds request))
+                (debugger-hook
+                  (lambda (condition hook)
+                    (declare (ignore hook))
+                    (return-from management-repl--evaluate-request
+                      (condition-response condition nil)))))
             (when (<= remaining 0)
               (error 'management-repl-capacity-error
                      :message "Management evaluation expired before execution."
@@ -656,10 +661,8 @@
                                  (make-string-input-stream "") output))
                     (*terminal-io* (make-two-way-stream
                                     (make-string-input-stream "") output))
-                    (*debugger-hook*
-                      (lambda (condition hook)
-                        (declare (ignore hook))
-                        (error condition))))
+                    (sb-ext:*invoke-debugger-hook* debugger-hook)
+                    (*debugger-hook* debugger-hook))
                 (let ((values
                         (multiple-value-list
                          (eval

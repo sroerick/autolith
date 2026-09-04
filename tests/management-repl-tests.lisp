@@ -220,6 +220,38 @@
    "management authentication rejects unequal proofs")
   nil)
 
+(-> test-management-repl-debugger-hook () null)
+(defun test-management-repl-debugger-hook ()
+  "Test management evaluation intercepts debugger entry before the process hook."
+  (let* ((root (uiop:ensure-directory-pathname
+                (merge-pathnames
+                 (format nil "management-debugger-~A/" (make-identifier))
+                 (uiop:temporary-directory))))
+         (configuration (management-repl-test-configuration root))
+         (application (make-instance 'application :configuration configuration))
+         (runtime (make-instance 'management-repl-runtime
+                                 :configuration configuration
+                                 :application application
+                                 :listener nil))
+         (request (make-instance 'management-repl-request
+                                 :source "(break \"management test\")"
+                                 :deadline (+ (get-internal-real-time)
+                                              (* 2 internal-time-units-per-second))))
+         (outer-hook-called-p nil))
+    (let ((sb-ext:*invoke-debugger-hook*
+            (lambda (condition hook)
+              (declare (ignore condition hook))
+              (setf outer-hook-called-p t)
+              (error "The process debugger hook was invoked."))))
+      (let ((response (management-repl--evaluate-request runtime request)))
+        (test-assert
+         (and (not outer-hook-called-p)
+              (eq (getf (rest response) :status) ':condition)
+              (search "management test" (getf (rest response) :report)))
+         "management evaluation intercepts BREAK before the process debugger hook"))))
+  nil)
+
+
 (-> test-management-repl-unix-lifecycle () null)
 (defun test-management-repl-unix-lifecycle ()
   "Test Unix authentication, active-image evaluation, quiescence, and shutdown."
@@ -496,6 +528,7 @@
   "Run focused management endpoint configuration, protocol, and lifecycle tests."
   (test-management-repl-configuration)
   (test-management-repl-protocol)
+  (test-management-repl-debugger-hook)
   (test-management-repl-adversarial-protocol)
   (test-management-repl-client-bounds)
   (test-management-repl-unix-lifecycle)
