@@ -2493,6 +2493,38 @@ assistant needle"))
               (conversation-error ()
                 t))
             "deleting a missing conversation signals a conversation error")
+           (let* ((failed-initial
+                    (conversation-create
+                     configuration
+                     :identifier "initial-write-failure"))
+                  (failed-initial-pathname
+                    (conversation-pathname failed-initial))
+                  (failed-initial-sidecars
+                    (conversation-picker-sidecar-pathnames
+                     failed-initial-pathname)))
+             (test-call-with-function-replacements
+              (list
+               (list
+                'conversation--write-initial-record
+                (lambda (target record)
+                  (declare (ignore target record))
+                  (error "simulated initial write failure"))))
+              (lambda ()
+                (test-assert
+                 (handler-case
+                     (progn
+                       (conversation-append-user-message
+                        failed-initial "temporary")
+                       nil)
+                   (conversation-invariant-error ()
+                     t))
+                 "an initial conversation write failure reaches the caller")))
+             (test-assert
+              (and (not (conversation-persisted-p failed-initial))
+                   (not (conversation-storage-occupied-p
+                         failed-initial-pathname))
+                   (notany #'probe-file failed-initial-sidecars))
+              "a failed initial write removes unpublished picker sidecars"))
            (let* ((failed
                     (conversation-create
                      configuration

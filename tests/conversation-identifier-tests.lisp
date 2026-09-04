@@ -122,6 +122,8 @@ match a new library version is never the correct repair."
                    configuration other "second legacy conversation"))
                 (old-path (conversation-pathname conversation))
                 (old-active (conversation-log-pathname conversation))
+                (old-sidecars
+                  (conversation-picker-sidecar-pathnames old-path))
                 (old-image-root
                   (merge-pathnames (format nil "conversation-images/~A/" old)
                                    (configuration-data-root configuration)))
@@ -156,6 +158,9 @@ match a new library version is never the correct repair."
                             :scope ':global
                             :tags nil
                             :source-conversation old)
+           (conversation-picker-search-close conversation)
+           (test-assert (every #'probe-file old-sidecars)
+                        "legacy conversation setup publishes picker sidecars")
            (with-open-file (stream old-active
                                    :direction ':output
                                    :if-exists ':append
@@ -199,6 +204,8 @@ match a new library version is never the correct repair."
                    new-active
                    (= (file-write-date new-active) old-write-date))
               "conversation replacement preserves chunk identity and activity time")
+             (test-assert (notany #'probe-file old-sidecars)
+                          "migration removes picker sidecars under the legacy identifier")
              (test-assert
               (string= (conversation-identifier
                         (conversation-load-by-id

@@ -1185,6 +1185,12 @@ owner has exited."
                           (incf (conversation-log-generation conversation))))))
                 (conversation--write-initial-record conversation sequenced))
           (error (condition)
+            (when (and (not (conversation-persisted-p conversation))
+                       (not (conversation-storage-occupied-p
+                             (conversation-pathname conversation))))
+              (ignore-errors
+                (conversation-picker-sidecars-delete
+                 (conversation-pathname conversation))))
             (error 'conversation-invariant-error
                    :message
                    (format nil

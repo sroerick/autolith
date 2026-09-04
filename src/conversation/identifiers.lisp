@@ -229,3 +229,11 @@ would let a second allocation in the same second choose the same identifier."
         (conversation-picker-revision-pathname conversation-pathname)
         (conversation-picker-search-pathname conversation-pathname)
         (conversation-picker-search-revision-pathname conversation-pathname)))
+
+(-> conversation-picker-sidecars-delete (pathname) null)
+(defun conversation-picker-sidecars-delete (conversation-pathname)
+  "Delete every picker sidecar owned by CONVERSATION-PATHNAME."
+  (dolist (pathname (conversation-picker-sidecar-pathnames conversation-pathname))
+    (when (probe-file pathname)
+      (delete-file pathname)))
+  nil)
