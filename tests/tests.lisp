@@ -415,6 +415,7 @@
     (test-lisp-scratchpad-tools)
      (test-lisp-worker-image-snapshot)
     (test-self-definition-reader-boundary)
+    (test-mutation-journal-tail-repair)
     (test-self-tools)
     (test-self-definition-installation-rollback)
     (test-self-application-command-definitions)

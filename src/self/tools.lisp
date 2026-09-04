@@ -143,22 +143,13 @@
 
 (-> mutation-journal-append (configuration list) list)
 (defun mutation-journal-append (configuration record)
-  "Append portable mutation RECORD to CONFIGURATION's journal."
+  "Append portable mutation RECORD, repairing an interrupted journal tail."
   (let ((pathname (configuration-journal-path configuration))
         (entry (list* (first record)
                       :time (get-universal-time)
                       (rest record))))
     (ensure-directories-exist pathname)
-    (with-open-file (stream pathname
-                            :direction ':output
-                            :if-exists ':append
-                            :if-does-not-exist ':create
-                            :external-format ':utf-8)
-      (let ((*print-circle* t)
-            (*print-readably* t))
-        (prin1 entry stream)
-        (terpri stream)
-        (finish-output stream)))
+    (log-append pathname entry)
     entry))
 
 

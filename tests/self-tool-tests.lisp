@@ -84,6 +84,43 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-mutation-journal-tail-repair () null)
+(defun test-mutation-journal-tail-repair ()
+  "Test interrupted mutation journal tails are ignored and repaired before append."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (pathname      (configuration-journal-path configuration)))
+    (unwind-protect
+         (progn
+           (mutation-journal-append
+            configuration
+            '(:mutation :id "complete-before" :result :pending))
+           (with-open-file (stream pathname
+                                   :direction ':output
+                                   :if-exists ':append
+                                   :if-does-not-exist ':error
+                                   :external-format ':utf-8)
+             (write-string "(:mutation :id \"interrupted" stream)
+             (finish-output stream))
+           (let ((records (mutation-journal-read-records configuration)))
+             (test-assert
+              (equal (mapcar (lambda (record) (getf (rest record) :id)) records)
+                     '("complete-before"))
+              "an interrupted final mutation record is ignored while reading"))
+           (mutation-journal-append
+            configuration
+            '(:mutation :id "complete-after" :result :durable))
+           (multiple-value-bind (records incomplete-final-form-p)
+               (log-read pathname)
+             (test-assert
+              (and (not incomplete-final-form-p)
+                   (equal (mapcar (lambda (record) (getf (rest record) :id))
+                                  records)
+                          '("complete-before" "complete-after")))
+              "the next mutation append atomically repairs the interrupted tail")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-self-tools () null)
 (defun test-self-tools ()
   "Test active definition installation, inspection, and form-aware persistence."

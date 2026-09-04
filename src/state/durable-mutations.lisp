@@ -252,24 +252,16 @@ so it is opt-in rather than the default commit gate."))
   "Read complete portable records from CONFIGURATION's mutation journal."
   (let ((pathname (configuration-journal-path configuration)))
     (if (probe-file pathname)
-        (with-open-file (stream pathname
-                                :direction ':input
-                                :external-format ':utf-8)
-          (let ((*read-eval* nil)
-                (end-marker (cons nil nil))
-                (records nil))
-            (handler-case
-                (loop for record = (read stream nil end-marker)
-                      until (eq record end-marker)
-                      do (push record records))
-              (end-of-file ()
-                nil)
-              (reader-error (condition)
-                (error 'source-mutation-error
-                       :message (format nil "Malformed mutation journal: ~A" condition)
-                       :tool-name "self.status"
-                       :pathname pathname)))
-            (nreverse records)))
+        (handler-case
+            (multiple-value-bind (records incomplete-final-form-p)
+                (log-read pathname)
+              (declare (ignore incomplete-final-form-p))
+              records)
+          (store-error (condition)
+            (error 'source-mutation-error
+                   :message (format nil "Malformed mutation journal: ~A" condition)
+                   :tool-name "self.status"
+                   :pathname pathname)))
         nil)))
 
 (-> durable-mutation-journal-record-p (t) boolean)
