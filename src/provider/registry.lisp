@@ -620,12 +620,8 @@ The default startup path never performs remote model discovery."
   (provider-load-model-cache configuration)
   (when refresh-p
     (provider-refresh-models configuration))
-  (let ((model (configuration-model configuration)))
-    (configuration-with-model
-     configuration
-     (if (configuration--model-supported-p model)
-         model
-         *default-model*))))
+  (configuration-with-model configuration
+                            (configuration-model configuration)))
 
 (defparameter *provider-name-aliases*
   '(("codex" . "chatgpt")

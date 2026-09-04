@@ -756,6 +756,12 @@ initialization registers the selected model."
                (uiop:getenv "AUTOLITH_MANAGEMENT_REPL_TCP_ADDRESS")
                "127.0.0.1")))
     (unless defer-provider-validation-p
+      (unless (configuration--model-supported-p selected-model)
+        (error 'configuration-error
+               :message
+               (format nil "Unsupported model ~S. The choices are ~{~A~^, ~}."
+                       selected-model
+                       *supported-models*)))
       (unless (member selected-effort
                       (configuration--reasoning-efforts-for selected-model)
                       :test #'string=)

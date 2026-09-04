@@ -66,6 +66,41 @@
       (tests--restore-environment variable saved)))
   nil)
 
+(-> test-model-environment-validation () null)
+(defun test-model-environment-validation ()
+  "Test that configured models are validated after provider registration."
+  (let ((variable "AUTOLITH_MODEL")
+        (saved    (uiop:getenv "AUTOLITH_MODEL"))
+        (root     (asdf:system-source-directory :autolith)))
+    (unwind-protect
+         (progn
+           (sb-posix:setenv variable "gpt-5.6-typo" 1)
+           (test-assert
+            (handler-case
+                (progn
+                  (configuration-create :source-root root
+                                        :working-directory root)
+                  nil)
+              (configuration-error ()
+                t))
+            "AUTOLITH_MODEL rejects unsupported models")
+           (let ((configuration
+                   (configuration-create
+                    :source-root root
+                    :working-directory root
+                    :defer-provider-validation-p t)))
+             (test-assert
+              (handler-case
+                  (progn
+                    (provider-bootstrap-configuration configuration)
+                    nil)
+                (configuration-error ()
+                  t))
+              "deferred model validation rejects unsupported models after bootstrap")))
+      (tests--restore-environment variable saved)))
+  nil)
+
+
 (-> test-xdg-directory-selection () null)
 (defun test-xdg-directory-selection ()
   "Test XDG roots reject invalid values, report state, and use private modes."
@@ -156,6 +191,7 @@
   (setf *test-count* 0)
   (test-xdg-directory-selection)
   (test-context-window-environment)
+  (test-model-environment-validation)
   (let ((configuration (configuration-create
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith))))
