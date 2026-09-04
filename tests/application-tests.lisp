@@ -3772,15 +3772,16 @@
              (application-input-controller--handle-submission
               controller "/goal")
              (let ((output (recording-terminal-output terminal)))
-               (test-assert
-                (eq
-                 (let* ((invocation
-                          (application-command-invocation-parse "/goal pause"))
-                        (command
-                          (application-command-invocation-command invocation)))
-                   (application-command-busy-action command invocation))
-                 ':apply)
-                "goal mutations apply at the next serialized safe boundary")
+                (dolist (input '("/goal pause"
+                                 "/goal resume"
+                                 "/goal update revised objective"
+                                 "/goal revised objective"))
+                  (let* ((invocation (application-command-invocation-parse input))
+                         (command
+                           (application-command-invocation-command invocation)))
+                    (test-assert
+                     (eq (application-command-busy-action command invocation) ':hold)
+                     (format nil "busy ~A waits for the active turn" input))))
                (test-assert
                 (search "finish the migration" output)
                 "/goal renders the active goal while a turn is running")
@@ -3792,6 +3793,16 @@
                  (length
                   (line-editor-text (terminal-ui-editor ui))))
                 "/goal does not return to the editor after inspection"))
+              (application-input-controller--handle-submission
+               controller "/goal pause")
+              (test-assert
+               (equal (application-input-controller--state controller :work-items)
+                      (list (list ':command "/goal pause")))
+               "goal mutations wait in the idle queue while a turn is active")
+              (test-assert
+               (deque-empty-p
+                (application-input-controller-pending-apply-items controller))
+               "goal mutations never enter the active turn boundary queue")
               (recording-terminal-reset terminal)
               (let* ((invocation
                        (application-command-invocation-parse
@@ -3831,7 +3842,7 @@
                     ("/mcp refresh" :apply)
                     ("/permissions full" :apply)
                     ("/hurry-up on" :apply)
-                    ("/goal pause" :apply)
+                    ("/goal pause" :hold)
                     ("/mcp" :execute)
                     ("/hurry-up" :execute)
                     ("/model" :hold)
@@ -3868,11 +3879,11 @@
              (application-input-controller--enqueue
               controller ':message "active turn")
              (application-input-controller--next-work controller)
-             (application-input-controller--handle-submission
-              controller "/goal pause")
-             (let* ((output (recording-terminal-output terminal))
-                    (command-position (search "/goal pause" output))
-                    (apply-position (search "next safe point" output)))
+              (application-input-controller--handle-submission
+               controller "/timestamps on")
+              (let* ((output (recording-terminal-output terminal))
+                     (command-position (search "/timestamps on" output))
+                     (apply-position (search "next safe point" output)))
                (test-assert
                 (and command-position
                      apply-position
@@ -3901,14 +3912,14 @@
               (equal (deque->list
                       (application-input-controller-pending-apply-items
                        controller))
-                     (list "/goal pause"))
+                     (list "/timestamps on"))
               "state changes queue for the next safe boundary instead")
              (application-input-controller--apply-pending-commands controller)
              (test-assert
               (and (deque-empty-p
                     (application-input-controller-pending-apply-items
                      controller))
-                   (eq (getf (application-goal application) :status) ':paused))
+                     (application-turn-timestamps-p application))
               "applying pending commands executes their effects")
               (application-input-controller--handle-submission
                controller "/model gpt-5.6-luna")
@@ -3931,19 +3942,19 @@
                 (test-assert
                  (not picker-opened-p)
                  "boundary-applied commands never open interactive pickers"))
-             (application-input-controller--handle-submission
-              controller "(goal \"resume\")")
-             (test-assert
-              (equal (deque->list
-                      (application-input-controller-pending-apply-items controller))
-                     (list "(goal \"resume\")"))
-              "canonical Lisp state changes queue for the next safe boundary")
-             (application-input-controller--apply-pending-commands controller)
-             (test-assert
-              (eq (getf (application-goal application) :status) ':active)
-              "canonical Lisp pending changes execute noninteractively")
-             (application-input-controller--handle-submission
-              controller "/goal resume")
+              (application-input-controller--handle-submission
+               controller "(timestamps \"off\")")
+              (test-assert
+               (equal (deque->list
+                       (application-input-controller-pending-apply-items controller))
+                      (list "(timestamps \"off\")"))
+               "canonical Lisp state changes queue for the next safe boundary")
+              (application-input-controller--apply-pending-commands controller)
+              (test-assert
+               (not (application-turn-timestamps-p application))
+               "canonical Lisp pending changes execute noninteractively")
+              (application-input-controller--handle-submission
+               controller "/timestamps on")
              (application-input-controller--finish-work controller)
              (test-assert
               (equal (application-input-controller--next-work controller)
@@ -4632,12 +4643,11 @@
              (application-input-controller--process-event controller ':submit)
              (test-assert
               (and
-               (equal (application-input-controller--state controller :work-items)
-                      '((:message "older follow-up")))
-               (equal (deque->list
-                       (application-input-controller-pending-apply-items
-                        controller))
-                      '("/goal pause"))
+                (equal (application-input-controller--state controller :work-items)
+                       '((:message "older follow-up")
+                         (:command "/goal pause")))
+                (deque-empty-p
+                 (application-input-controller-pending-apply-items controller))
                (not
                 (application-input-controller--follow-up-editing-p controller)))
               "recalled Enter commands use active-turn busy policy"))
@@ -7432,6 +7442,31 @@
                   (test-assert (zerop (getf (application-goal application)
                                             :continuations))
                                "updating restarts the continuation budget")))))
+            (setf (application-goal application)
+                  (list :objective "persist continuation count"
+                        :status ':active
+                        :continuations 0
+                        :created-at (get-universal-time)))
+            (let ((recorded-counts nil))
+              (test-call-with-function-replacements
+               (list
+                (list
+                 'application--record-goal
+                 (lambda (candidate)
+                   (push (getf (application-goal candidate) :continuations)
+                         recorded-counts)
+                   nil))
+                (list
+                 'application--run-turn
+                 (lambda (candidate &rest arguments)
+                   (declare (ignore arguments))
+                   (setf (getf (application-goal candidate) :status) ':paused)
+                   nil)))
+               (lambda ()
+                 (application--run-goal-continuations application)))
+              (test-assert
+               (equal (nreverse recorded-counts) '(1))
+               "automatic continuations record their incremented durable count"))
            (setf (application-goal application)
                  (list :objective "endless"
                        :status ':active

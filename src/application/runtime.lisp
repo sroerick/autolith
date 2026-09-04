@@ -3411,6 +3411,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                  *application-goal-continuation-limit*))
         (return))
       (incf (getf (application-goal application) :continuations))
+       (application--record-goal application)
       (application--run-turn application
                              *application-goal-continuation-prompt*
                              :continuation-p t

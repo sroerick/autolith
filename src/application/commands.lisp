@@ -2248,7 +2248,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :argument "[OBJECTIVE]"
      :description "set or view the session goal"
      :tip "sets the objective Autolith should pursue across continuations."
-     :busy-behavior :apply
+     :busy-behavior :inspect
      :terminal-behavior :shared
      :callable t)
     (application &optional (remainder ""))
