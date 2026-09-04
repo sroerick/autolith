@@ -2529,6 +2529,8 @@ assistant needle"))
          (conversation
            (conversation-create configuration :identifier "delete-me"))
          (pathname (conversation-pathname conversation))
+         (lease-pathname
+           (conversation--lease-pathname configuration "delete-me"))
          (sidecars (conversation-picker-sidecar-pathnames pathname))
          (image-root
            (merge-pathnames "conversation-images/delete-me/"
@@ -2548,6 +2550,8 @@ assistant needle"))
            (snapshot-write (merge-pathnames "task/result.sexp" task-root)
                            '(:task))
            (setf lease (conversation-lease-acquire configuration "delete-me"))
+           (test-assert (probe-file lease-pathname)
+                        "acquiring a conversation lease creates its lock file")
            (test-assert
             (handler-case
                 (progn
@@ -2559,6 +2563,9 @@ assistant needle"))
            (test-assert (conversation-storage-occupied-p pathname)
                         "refused deletion preserves conversation storage")
            (conversation-lease-release lease)
+           (conversation-lease-release lease)
+           (test-assert (not (probe-file lease-pathname))
+                        "normal lease release removes its empty lock file")
            (setf lease nil)
            (test-assert (equal (conversation-delete configuration "delete-me")
                                pathname)

@@ -459,6 +459,16 @@ items is pruned here rather than retained for the session."
     :reader conversation-lease-identifier
     :type non-empty-string
     :documentation "The normalized conversation identifier held by this lease.")
+   (lock-pathname
+    :initarg :lock-pathname
+    :reader conversation-lease--lock-pathname
+    :type pathname
+    :documentation "The per-conversation lock file removed after a normal release.")
+   (guard-pathname
+    :initarg :guard-pathname
+    :reader conversation-lease--guard-pathname
+    :type pathname
+    :documentation "The shared lock serializing per-conversation lock-file lifecycle.")
    (lock-lease
     :initarg :lock-lease
     :reader conversation-lease--lock-lease
@@ -475,6 +485,12 @@ items is pruned here rather than retained for the session."
    (merge-pathnames
     "conversation-leases/"
     (configuration-state-root configuration))))
+
+(-> conversation--lease-guard-pathname (configuration) pathname)
+(defun conversation--lease-guard-pathname (configuration)
+  "Return the shared lock serializing conversation lease-file lifecycle."
+  (merge-pathnames "conversation-leases.lock"
+                   (configuration-state-root configuration)))
 
 (-> conversation--lease-in-use (string pathname pathname) null)
 (defun conversation--lease-in-use
@@ -507,20 +523,28 @@ items is pruned here rather than retained for the session."
 (defun conversation-lease-acquire (configuration identifier)
   "Acquire the primary process lease for IDENTIFIER without waiting.
 
-The kernel lock is authoritative. Its empty file may remain after normal exit
-or a crash, and a later process can immediately reuse it after the former
-owner has exited."
+The kernel lock is authoritative. Normal release removes its empty per-ID file;
+a crash may leave one that a later lease acquisition can reuse safely."
   (let* ((normalized
            (conversation-identifier-migration-resolve
             configuration identifier))
          (conversation-pathname
            (conversation-pathname-for-id configuration normalized))
          (lease-pathname
-           (conversation--lease-pathname configuration normalized)))
+           (conversation--lease-pathname configuration normalized))
+         (guard-pathname
+           (conversation--lease-guard-pathname configuration)))
     (handler-case
-        (make-instance 'conversation-lease
-                       :identifier normalized
-                       :lock-lease (lease-acquire lease-pathname))
+        (progn
+          (ensure-directories-exist lease-pathname)
+          (call-with-file-lock
+           guard-pathname
+           (lambda ()
+             (make-instance 'conversation-lease
+                            :identifier normalized
+                            :lock-pathname lease-pathname
+                            :guard-pathname guard-pathname
+                            :lock-lease (lease-acquire lease-pathname)))))
       (file-lock-busy ()
         (conversation--lease-in-use
          normalized conversation-pathname lease-pathname))
@@ -539,8 +563,20 @@ owner has exited."
 
 (-> conversation-lease-release (conversation-lease) null)
 (defun conversation-lease-release (lease)
-  "Release LEASE idempotently."
-  (lease-release (conversation-lease--lock-lease lease))
+  "Release LEASE idempotently and remove its empty per-ID lock file."
+  (let ((lock-lease (conversation-lease--lock-lease lease)))
+    (when (lease-held-p lock-lease)
+      (handler-case
+          (call-with-file-lock
+           (conversation-lease--guard-pathname lease)
+           (lambda ()
+             (lease-release lock-lease)
+             (ignore-errors
+               (let ((pathname (conversation-lease--lock-pathname lease)))
+                 (when (probe-file pathname)
+                   (delete-file pathname))))))
+        (error ()
+          (lease-release lock-lease)))))
   nil)
 
 
