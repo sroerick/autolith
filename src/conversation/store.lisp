@@ -840,23 +840,26 @@ owner has exited."
       (when (and (conversation--record-form-p record)
                  (eq (first record) :conversation-picker-metadata)
                  (= (or (getf (rest record) :version) 0) 3))
-        (let ((source-segment (getf (rest record) :source-segment))
-              (source-size (getf (rest record) :source-size))
-              (source-write-date (getf (rest record) :source-write-date))
-              (source-revision (getf (rest record) :source-revision))
-              (working-seconds (getf (rest record) :working-seconds))
-              (user-turn-count (getf (rest record) :user-turn-count))
-              (title (getf (rest record) :title))
-              (search-message-count (getf (rest record) :search-message-count))
-              (preview (getf (rest record) :preview))
-              (incomplete-tail-p (getf (rest record) :incomplete-tail-p)))
+        (let* ((source-segment (getf (rest record) :source-segment))
+               (source-size (getf (rest record) :source-size))
+               (source-write-date (getf (rest record) :source-write-date))
+               (source-revision (getf (rest record) :source-revision))
+               (working-seconds (getf (rest record) :working-seconds))
+               (user-turn-count (getf (rest record) :user-turn-count))
+               (title (getf (rest record) :title))
+               (normalized-title
+                 (and (stringp title)
+                      (conversation-title-normalize title)))
+               (search-message-count (getf (rest record) :search-message-count))
+               (preview (getf (rest record) :preview))
+               (incomplete-tail-p (getf (rest record) :incomplete-tail-p)))
           (when (and (non-empty-string-p source-segment)
                      (typep source-size '(integer 0))
                      (typep source-write-date '(integer 0))
                      (typep source-revision '(integer 0))
                      (typep working-seconds '(integer 0))
                      (typep user-turn-count '(integer 0))
-                     (or (null title) (conversation-title-valid-p title))
+                     (or (null title) normalized-title)
                      (typep search-message-count '(integer 0))
                      (or (null preview) (stringp preview))
                      (typep incomplete-tail-p 'boolean))
@@ -867,7 +870,7 @@ owner has exited."
                            :source-revision source-revision
                            :working-seconds working-seconds
                            :user-turn-count user-turn-count
-                           :title title
+                           :title normalized-title
                            :search-message-count search-message-count
                            :preview preview
                            :incomplete-tail-p incomplete-tail-p))))
@@ -2093,6 +2096,12 @@ before the repaired projection can be sent to the provider."
                  *supported-reasoning-efforts*
                  :test #'string=)))))
 
+(-> conversation--persisted-model-selection-p (t t) boolean)
+(defun conversation--persisted-model-selection-p (model reasoning-effort)
+  "Return true when MODEL and REASONING-EFFORT are a possible stored selection."
+  (and (non-empty-string-p model)
+       (non-empty-string-p reasoning-effort)))
+
 (-> conversation-set-model-selection (conversation string string) null)
 (defun conversation-set-model-selection (conversation model reasoning-effort)
   "Remember MODEL and REASONING-EFFORT without persisting an empty conversation."
@@ -2617,15 +2626,18 @@ later picker searches read it without scanning the log."
 
 (defmethod conversation--project-record
     ((kind (eql :title)) conversation properties)
-  (let ((title (getf properties :value))
-        (source (getf properties :source)))
-    (unless (and (conversation-title-valid-p title)
+  (let* ((title (getf properties :value))
+         (normalized-title
+           (and (stringp title)
+                (conversation-title-normalize title)))
+         (source (getf properties :source)))
+    (unless (and normalized-title
                  (member source '(:initial :generated))
                  (conversation--title-transition-valid-p
                   (conversation-title-source conversation) source))
       (conversation--record-error
        conversation properties "A persisted conversation title is invalid."))
-    (setf (conversation-title conversation) (copy-seq title)
+    (setf (conversation-title conversation) (copy-seq normalized-title)
           (conversation-title-source conversation) source)))
 
 (defmethod conversation--project-record
@@ -2767,7 +2779,7 @@ later picker searches read it without scanning the log."
     ((kind (eql :configuration)) conversation properties)
   (let ((model (getf properties :model))
         (reasoning-effort (getf properties :reasoning-effort)))
-    (unless (conversation--model-selection-p model reasoning-effort)
+    (unless (conversation--persisted-model-selection-p model reasoning-effort)
       (conversation--record-error
        conversation properties
        "A persisted conversation model selection is invalid."))
@@ -2935,6 +2947,9 @@ later picker searches read it without scanning the log."
            (identity-identifier (pathname-name identity))
            (directory (getf properties :directory))
            (title (and (= version 2) (getf properties :title)))
+           (normalized-title
+             (and (stringp title)
+                  (conversation-title-normalize title)))
            (title-source (and (= version 2) (getf properties :title-source)))
            (model (getf properties :model))
            (reasoning-effort (getf properties :reasoning-effort))
@@ -2973,7 +2988,7 @@ later picker searches read it without scanning the log."
              (and (= version 2)
                   (getf properties :latest-goal-record))))
       (unless (or (and (null title) (null title-source))
-                  (and (conversation-title-valid-p title)
+                  (and normalized-title
                        (member title-source '(:initial :generated))))
         (invalid "The conversation header has an invalid title."))
       (unless (and (stringp identity-identifier)
@@ -2981,7 +2996,7 @@ later picker searches read it without scanning the log."
         (invalid
          "The conversation header identifier disagrees with its storage identity."))
       (unless (or (and (null model) (null reasoning-effort))
-                  (conversation--model-selection-p model reasoning-effort))
+                  (conversation--persisted-model-selection-p model reasoning-effort))
         (invalid "The conversation header has an invalid model selection."))
       (when (and prompt-cache-key
                  (not (non-empty-string-p prompt-cache-key)))
@@ -3021,7 +3036,8 @@ later picker searches read it without scanning the log."
                              :created-at (getf properties :created-at)
                              :origin-directory
                              (and (stringp directory) directory)
-                             :title (and title (copy-seq title))
+                             :title (and normalized-title
+                                         (copy-seq normalized-title))
                              :title-source title-source
                              :model (and (non-empty-string-p model) model)
                              :reasoning-effort

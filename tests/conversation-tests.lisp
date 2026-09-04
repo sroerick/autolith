@@ -988,6 +988,17 @@
              (test-assert
               (string= (conversation-reasoning-effort reloaded) "low")
               "conversation replay restores the latest effort"))
+             (let ((*supported-reasoning-efforts*
+                     (remove-if
+                      (lambda (effort)
+                        (member effort '("high" "low") :test #'string=))
+                      *supported-reasoning-efforts*)))
+               (let ((reloaded
+                       (conversation-load-by-id configuration "model-choice")))
+                 (test-assert
+                  (and (string= (conversation-model reloaded) "gpt-5.6-terra")
+                       (string= (conversation-reasoning-effort reloaded) "low"))
+                  "conversation replay accepts retired reasoning efforts")))
            (let ((legacy (conversation-pathname-for-id configuration "legacy-model")))
              (snapshot-write
               legacy
@@ -2636,6 +2647,20 @@ assistant needle"))
                             "Automatic session titles")
                    (eq (conversation-title-source reloaded) ':generated))
               "conversation replay restores the latest generated title"))
+             (let* ((*conversation-title-maximum-characters* 20)
+                    (expected
+                      (conversation-title-normalize "Automatic session titles"))
+                    (reloaded
+                      (conversation-load-by-id configuration "titles"))
+                    (metadata
+                      (conversation-picker-metadata-read
+                       (conversation-pathname conversation))))
+               (test-assert
+                (and (string= (conversation-title reloaded) expected)
+                     (eq (conversation-title-source reloaded) ':generated)
+                     metadata
+                     (string= (conversation-picker-metadata-title metadata) expected))
+                "conversation reads normalize titles under current display policy"))
            (let ((duplicate
                    (conversation-create configuration
                                         :identifier "duplicate-generated-title")))
