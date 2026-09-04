@@ -203,13 +203,13 @@
   (:documentation "A transient provider failure eligible for bounded retry.
 Inherits the library condition so the shared retry ladder recognizes it."))
 
-(define-condition provider-incomplete-response (provider-retryable-error)
+(define-condition provider-incomplete-response (provider-error)
   ((reason
     :initarg :reason
     :reader provider-incomplete-response-reason
     :type non-empty-string
     :documentation "The provider's incomplete response reason, or unknown."))
-  (:documentation "A retryable provider response that ended incomplete."))
+  (:documentation "A terminal provider response that ended incomplete."))
 
 (define-condition provider-resample-requested
     (llm-provider-api:provider-resample-requested provider-retryable-error)

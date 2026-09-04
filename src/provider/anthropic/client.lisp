@@ -567,7 +567,7 @@ second value is consumed only after a completed response."
     null)
 (defun anthropic--signal-incomplete-response
     (reason &key headers response-id data)
-  "Signal Anthropic's retryable incomplete response REASON."
+  "Signal Anthropic's terminal incomplete response REASON."
   (error 'provider-incomplete-response
          :message
          (format nil "The provider returned an incomplete response (~A)." reason)

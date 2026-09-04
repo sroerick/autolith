@@ -1303,7 +1303,7 @@ abandon the looping stream; the default reaction ignores the report."))
     null)
 (defun provider--signal-incomplete-response
     (event &key data headers response-id)
-  "Signal retryable EVENT with its structured incomplete reason."
+  "Signal terminal EVENT with its structured incomplete reason."
   (let ((reason (provider--event-incomplete-reason event)))
     (error 'provider-incomplete-response
            :message (format nil "The provider returned an incomplete response (~A)."

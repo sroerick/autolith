@@ -1134,14 +1134,14 @@
                error))))
     (test-assert
      (and condition
-          (typep condition 'provider-retryable-error)
+          (not (typep condition 'provider-retryable-error))
           (string= (provider-error-code condition) "response_incomplete")
           (string= (provider-incomplete-response-reason condition)
                    "max_output_tokens")
           (string= (provider-error-response-id condition)
                    "incomplete-response")
           (search "max_output_tokens" (format nil "~A" condition)))
-     "response.incomplete retains its reason and retries as a typed failure"))
+     "response.incomplete retains its reason as a typed terminal failure"))
   (dolist (code '("server_is_overloaded" "slow_down" "rate_limit_exceeded"))
     (let* ((source
              (test-sse-event-string
@@ -2085,6 +2085,34 @@
                  "persistent provider recovery uses bounded jitter delays")
     (test-assert (= (length events) 6)
                  "each retry reports its wait and resumed attempt"))
+  (let ((attempts 0)
+        (events nil)
+        (sleeps nil))
+    (test-assert
+     (handler-case
+         (progn
+           (provider--call-with-transient-retries
+            (lambda ()
+              (incf attempts)
+              (error 'provider-incomplete-response
+                     :message "Injected incomplete response."
+                     :reason "max_output_tokens"
+                     :status nil
+                     :code "response_incomplete"
+                     :request-id nil
+                     :response-id nil
+                     :response nil))
+            (lambda (event)
+              (push event events))
+            :sleep-function (lambda (delay) (push delay sleeps)))
+           nil)
+       (provider-incomplete-response ()
+         t))
+     "incomplete provider responses fail without entering the retry ladder")
+    (test-assert (= attempts 1)
+                 "incomplete provider responses make exactly one attempt")
+    (test-assert (and (null events) (null sleeps))
+                 "incomplete provider responses emit no retry activity"))
   (test-assert
    (handler-case
        (progn
