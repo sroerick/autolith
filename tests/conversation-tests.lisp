@@ -275,6 +275,25 @@
                       (json-get (aref loaded-tool-output 2) "text")
                       "After image."))
                 "conversation replay reconstructs ordered image tool output")))
+              (let* ((artifact-root
+                       (conversation-image-artifact-root conversation))
+                     (orphan
+                       (merge-pathnames
+                        (make-pathname :name (make-identifier) :type "png")
+                        artifact-root)))
+                (uiop:copy-file source orphan)
+                (multiple-value-bind (owned lease acquired-p)
+                    (application--conversation-load-owned
+                     nil configuration "images")
+                  (declare (ignore owned))
+                  (unwind-protect
+                       (test-assert
+                        (and acquired-p
+                             (probe-file artifact)
+                             (not (probe-file orphan)))
+                        "owned conversation loading prunes unreferenced image artifacts")
+                    (when acquired-p
+                      (conversation-lease-release lease)))))
              (delete-file artifact)
              (test-assert
               (handler-case

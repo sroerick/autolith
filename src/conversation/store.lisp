@@ -254,6 +254,11 @@
     :type list
     :documentation
     "Request-local provider items and owned attachments awaiting one response.")
+    (image-artifact-names
+     :initform (make-hash-table :test #'equal)
+     :reader conversation-image-artifact-names
+     :type hash-table
+     :documentation "The basenames of image artifacts referenced by durable records.")
    (resource-observations
     :initform (make-fifo-cache
                :test            #'equal
@@ -1732,6 +1737,45 @@ copied."
              (conversation-identifier conversation))
      data-root)))
 
+(-> conversation--remember-image-attachment
+    (conversation image-attachment)
+    image-attachment)
+(defun conversation--remember-image-attachment (conversation attachment)
+  "Record ATTACHMENT as durably referenced by CONVERSATION."
+  (setf (gethash (file-namestring (image-attachment-pathname attachment))
+                 (conversation-image-artifact-names conversation))
+        t)
+  attachment)
+
+(-> conversation--remember-image-attachments (conversation list) list)
+(defun conversation--remember-image-attachments (conversation attachments)
+  "Record ATTACHMENTS as durably referenced by CONVERSATION."
+  (dolist (attachment attachments)
+    (conversation--remember-image-attachment conversation attachment))
+  attachments)
+
+(-> conversation--image-artifact-pathnames (pathname) list)
+(defun conversation--image-artifact-pathnames (root)
+  "Return every prepared or temporary image artifact immediately below ROOT."
+  (when (uiop:directory-exists-p root)
+    (remove-duplicates
+     (mapcan
+      (lambda (pattern)
+        (uiop:directory-files root pattern))
+      '("*.png" "*.jpg" "*.webp" "*.tmp"))
+     :test #'equal)))
+
+(-> conversation--prune-unreferenced-image-artifacts (conversation) null)
+(defun conversation--prune-unreferenced-image-artifacts (conversation)
+  "Delete image artifacts not referenced by CONVERSATION's durable records."
+  (let ((references (conversation-image-artifact-names conversation)))
+    (dolist (pathname
+             (conversation--image-artifact-pathnames
+              (conversation-image-artifact-root conversation)))
+      (unless (gethash (file-namestring pathname) references)
+        (delete-file pathname))))
+  nil)
+
 (-> user-message-item (string &optional list) json-object)
 (defun user-message-item (content &optional attachments)
   "Return a Responses API user message containing CONTENT and ATTACHMENTS."
@@ -1820,6 +1864,7 @@ copied."
                                (mapcar #'image-attachment-record attachments)))
                        (unless attachments
                          (list :wire-json (json-encode item))))))
+                (conversation--remember-image-attachments conversation attachments)
                (setf durable-p t
                      (conversation-turn-state conversation) nil)
                (values (conversation--append-input-item conversation item)
@@ -1997,6 +2042,7 @@ copied."
                           :real-microseconds real-microseconds))
                   (unless attachments
                     (list :wire-json (json-encode item)))))
+                 (conversation--remember-image-attachments conversation attachments)
                 (setf retained-p t)
                 (conversation--append-input-item conversation item))
                (:next-response
@@ -2666,9 +2712,11 @@ later picker searches read it without scanning the log."
     ((and (listp descriptor)
           (getf descriptor :image)
           (null (getf descriptor :text)))
-     (image-attachment-from-record
-      (getf descriptor :image)
-      (conversation-image-artifact-root conversation)))
+     (conversation--remember-image-attachment
+      conversation
+      (image-attachment-from-record
+       (getf descriptor :image)
+       (conversation-image-artifact-root conversation))))
     (t
      (conversation--record-error
       conversation properties "A persisted tool content block is invalid."))))
@@ -2681,12 +2729,14 @@ later picker searches read it without scanning the log."
 
 (-> conversation--record-images (conversation list) list)
 (defun conversation--record-images (conversation descriptors)
-  "Restore image DESCRIPTORS for CONVERSATION."
-  (mapcar
-   (lambda (descriptor)
-     (image-attachment-from-record
-      descriptor (conversation-image-artifact-root conversation)))
-   descriptors))
+  "Restore and remember image DESCRIPTORS for CONVERSATION."
+  (conversation--remember-image-attachments
+   conversation
+   (mapcar
+    (lambda (descriptor)
+      (image-attachment-from-record
+       descriptor (conversation-image-artifact-root conversation)))
+    descriptors)))
 
 (-> conversation--project-record (keyword conversation list) t)
 (defgeneric conversation--project-record (kind conversation properties)
