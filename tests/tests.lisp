@@ -41,6 +41,31 @@
       (sb-posix:unsetenv name))
   nil)
 
+
+(-> test-context-window-environment () null)
+(defun test-context-window-environment ()
+  "Test that context-window overrides accept only positive integers."
+  (let ((variable "AUTOLITH_CONTEXT_WINDOW")
+        (saved    (uiop:getenv "AUTOLITH_CONTEXT_WINDOW")))
+    (unwind-protect
+         (progn
+           (sb-posix:setenv variable "200000" 1)
+           (test-assert
+            (= (configuration--context-window-for "unknown-model") 200000)
+            "AUTOLITH_CONTEXT_WINDOW accepts a positive integer")
+           (dolist (invalid '("200k" "abc" "0" "-1"))
+             (sb-posix:setenv variable invalid 1)
+             (test-assert
+              (handler-case
+                  (progn
+                    (configuration--context-window-for "unknown-model")
+                    nil)
+                (configuration-error ()
+                  t))
+              (format nil "AUTOLITH_CONTEXT_WINDOW rejects ~S" invalid))))
+      (tests--restore-environment variable saved)))
+  nil)
+
 (-> test-xdg-directory-selection () null)
 (defun test-xdg-directory-selection ()
   "Test XDG roots reject invalid values, report state, and use private modes."
@@ -130,6 +155,7 @@
   "Run Autolith's dependency-free unit tests and return true on success."
   (setf *test-count* 0)
   (test-xdg-directory-selection)
+  (test-context-window-environment)
   (let ((configuration (configuration-create
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith))))

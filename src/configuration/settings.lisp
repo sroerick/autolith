@@ -640,14 +640,12 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
   "Return MODEL's context window from the environment, registry, or fallback."
-  (let ((override (uiop:getenv "AUTOLITH_CONTEXT_WINDOW")))
-    (or (and (non-empty-string-p override)
-             (let ((parsed (parse-integer override :junk-allowed t)))
-               (and parsed (plusp parsed) parsed)))
-        (and (fboundp 'provider-model-context-window-for)
-             (provider-model-context-window-for model))
-        (rest (assoc model *model-context-windows* :test #'string=))
-        *default-context-window*)))
+  (environment-positive-integer
+   "AUTOLITH_CONTEXT_WINDOW"
+   (or (and (fboundp 'provider-model-context-window-for)
+            (provider-model-context-window-for model))
+       (rest (assoc model *model-context-windows* :test #'string=))
+       *default-context-window*)))
 
 (-> configuration--compaction-threshold () integer)
 (defun configuration--compaction-threshold ()
