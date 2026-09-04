@@ -1102,6 +1102,7 @@ newly acquired lease."
                    (permission-mode ':ask))
   "Build and commit a replacement using PERMISSION-MODE without damaging APPLICATION."
   (let* ((previous (application-configuration application))
+         (hurry-up-p (application-hurry-up-p application))
          (effective-immutable-p
            (if immutable-p-supplied-p
                immutable-p
@@ -1209,11 +1210,12 @@ newly acquired lease."
                       (setf worker (lisp-worker-pool-create configuration)
                             registry (application--create-tool-registry configuration))
                       (let* ((agent
-                              (agent-create :configuration configuration
-                                            :provider provider
-                                            :conversation conversation
-                                            :tool-registry registry
-                                            :worker worker))
+                               (agent-create :configuration configuration
+                                             :provider provider
+                                             :conversation conversation
+                                             :tool-registry registry
+                                             :hurry-up-p hurry-up-p
+                                             :worker worker))
                              (ui (application-terminal-ui-create)))
                         (setf new-application
                               (make-instance
@@ -1228,6 +1230,7 @@ newly acquired lease."
                                :ui ui
                                :permission-state permission-state
                                :permission-mode permission-mode
+                               :hurry-up-p hurry-up-p
                                :reasoning-traces-p reasoning-traces-p
                                :compact-view-p compact-view-p
                                :turn-timestamps-p turn-timestamps-p

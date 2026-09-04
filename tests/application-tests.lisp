@@ -2686,6 +2686,7 @@
                                          (terminal-ui-terminal ui)))
                                "the first application paint includes its context meter")
                   (terminal-ui-stop ui))
+                (application-set-hurry-up application t)
                 (publish-recovery-context)
                 (setf application
                       (application-reconnect
@@ -2697,6 +2698,8 @@
                    (conversation-identifier
                     (application-conversation application))
                    (conversation-identifier explicit))
+                  (application-hurry-up-p application)
+                  (agent-hurry-up-p (application-agent application))
                   (zerop (application-rendered-sequence application))
                   (null (application-history-floor-sequence application)))
                  "explicit resume overrides recovery conversation and cursor state")
@@ -2708,6 +2711,8 @@
                    (conversation-identifier
                     (application-conversation application))
                    (conversation-identifier recovered))
+                  (application-hurry-up-p application)
+                  (agent-hurry-up-p (application-agent application))
                   (= (application-rendered-sequence application) 2)
                   (= (application-history-floor-sequence application) 1))
                  "retained-generation reconnect restores recovery state")
