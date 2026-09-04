@@ -2772,6 +2772,7 @@ assistant needle"))
                                          :identifier "published-title"))
                   (log-append-function (symbol-function 'log-append)))
              (conversation-append-user-message published "publish title safely")
+              (sleep 1)
              (let ((title-sequence (conversation-next-sequence published)))
                (test-call-with-function-replacements
                 (list
@@ -2789,11 +2790,15 @@ assistant needle"))
              (conversation-append-user-message published "continue after title")
              (let ((reloaded
                      (conversation-load-by-id configuration "published-title")))
-               (test-assert
-                (and (string= (conversation-title reloaded)
-                              "Durable generated title")
-                     (= (conversation-user-turn-count reloaded) 2))
-                "later records remain contiguous after an ambiguous title append")))
+                (test-assert
+                 (and (string= (conversation-title reloaded)
+                               "Durable generated title")
+                      (= (conversation-user-turn-count reloaded) 2)
+                      (= (conversation-working-seconds published)
+                         (conversation-working-seconds reloaded))
+                      (= (conversation-last-activity-at published)
+                         (conversation-last-activity-at reloaded)))
+                 "ambiguous title recovery preserves activity before later records")))
            (let* ((header-only
                     (conversation-create configuration
                                          :identifier "header-title")))

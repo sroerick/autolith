@@ -1301,12 +1301,12 @@ owner has exited."
     (setf (conversation-title-refresh-in-progress-p conversation) nil))
   nil)
 
-(-> conversation--published-title-record-p
+(-> conversation--published-title-record
     (conversation (integer 1) non-empty-string keyword)
-    boolean)
-(defun conversation--published-title-record-p
+    (option list))
+(defun conversation--published-title-record
     (conversation sequence title source)
-  "Return true when CONVERSATION's active log ends with the expected title record."
+  "Return the expected final title record when it was durably published."
   (handler-case
       (multiple-value-bind (forms incomplete-tail-p)
           (log-read (conversation-log-pathname conversation))
@@ -1317,7 +1317,7 @@ owner has exited."
                (= (or (getf (rest record) :seq) 0) sequence)
                (string= (or (getf (rest record) :value) "") title)
                (eq (getf (rest record) :source) source)
-               t)))
+               record)))
     (error ()
       nil)))
 
@@ -1369,17 +1369,20 @@ owner has exited."
                conversation
                (list :title :value normalized :source source))
             (error (condition)
-              (if (conversation--published-title-record-p
-                   conversation sequence normalized source)
-                  (progn
-                    (setf (conversation-next-sequence conversation) (1+ sequence)
-                          (conversation-incomplete-tail-p conversation) nil)
-                    (ignore-errors
-                      (conversation-picker-metadata-publish conversation)))
-                  (progn
-                    (setf (conversation-title conversation) current-title
-                          (conversation-title-source conversation) current-source)
-                    (error condition))))))))
+              (let ((published-record
+                      (conversation--published-title-record
+                       conversation sequence normalized source)))
+                (if published-record
+                    (progn
+                      (setf (conversation-next-sequence conversation) (1+ sequence)
+                            (conversation-incomplete-tail-p conversation) nil)
+                      (conversation--note-activity conversation published-record)
+                      (ignore-errors
+                        (conversation-picker-metadata-publish conversation)))
+                    (progn
+                      (setf (conversation-title conversation) current-title
+                            (conversation-title-source conversation) current-source)
+                      (error condition)))))))))
     normalized))
 
 (-> conversation--append-input-item (conversation json-object) json-object)
