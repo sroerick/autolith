@@ -429,6 +429,7 @@
      (:provider (option model-provider))
      (:conversation (option conversation))
      (:tool-registry (option tool-registry))
+     (:hurry-up-p boolean)
      (:worker t))
     agent)
 (defun agent-create
@@ -437,6 +438,7 @@
        provider
        conversation
        tool-registry
+       (hurry-up-p nil)
        worker)
   "Create an agent, filling unspecified provider, conversation, registry, and worker roles."
   (unless (typep configuration 'configuration)
@@ -449,6 +451,7 @@
                                    (conversation-create configuration))
                  :tool-registry (or tool-registry
                                     (make-default-tool-registry))
+                 :hurry-up-p hurry-up-p
                  :worker (or worker (lisp-worker-pool-create configuration))))
 
 (-> agent-run-user-turn

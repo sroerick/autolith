@@ -738,6 +738,7 @@ model's effort choice to CONFIGURATION--CLONE."
                         :provider new-provider
                         :conversation (application-conversation application)
                         :tool-registry new-registry
+                         :hurry-up-p (application-hurry-up-p application)
                         :worker (application-worker application))
                        retirement-started-p t
                        failure-stage ':retire)
@@ -1382,6 +1383,7 @@ newly acquired lease."
                               :conversation active-conversation
                               :tool-registry (application-tool-registry
                                               application)
+                               :hurry-up-p (application-hurry-up-p application)
                               :worker (application-worker application))))
     (setf (application-configuration application) configuration
           (application-conversation application) active-conversation
@@ -1435,6 +1437,7 @@ command replaced the active conversation."
                     :provider provider
                     :conversation conversation
                     :tool-registry registry
+                     :hurry-up-p (application-hurry-up-p application)
                     :worker (application-worker application))))
              (setf completed-p t)
              (values provider registry agent)))

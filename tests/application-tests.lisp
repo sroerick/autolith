@@ -7659,8 +7659,10 @@
          (application (make-instance 'application
                                      :configuration configuration
                                      :conversation conversation
+                                     :provider (agent-provider agent)
                                      :tool-registry registry
                                      :agent agent
+                                     :worker ':unused
                                      :ui ui))
          (orchestrator (application--task-orchestrator application)))
     (unwind-protect
@@ -7681,11 +7683,17 @@
                         "hurry-up caps child concurrency at two")
            (test-assert (terminal-ui-notice ui)
                         "hurry-up presents a transient live notice")
+           (application-set-model application "gpt-5.6-luna")
+           (test-assert
+            (and (application-hurry-up-p application)
+                 (agent-hurry-up-p (application-agent application)))
+            "configuration replacement preserves hurry-up mode")
            (application-command application "/hurry-up off")
-           (test-assert (and (not (application-hurry-up-p application))
-                             (not (agent-hurry-up-p agent))
-                             (not (task-orchestrator-hurry-up-p orchestrator)))
-                        "/hurry-up off restores ordinary session policy"))
+           (test-assert
+            (and (not (application-hurry-up-p application))
+                 (not (agent-hurry-up-p (application-agent application)))
+                 (not (task-orchestrator-hurry-up-p orchestrator)))
+            "/hurry-up off restores ordinary session policy"))
       (ignore-errors (terminal-ui-stop ui))
       (ignore-errors (tool-registry-close-runtime-state registry))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
