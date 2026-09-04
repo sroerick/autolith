@@ -152,13 +152,12 @@
 (-> workspace-file--encode-identifier (string) string)
 (defun workspace-file--encode-identifier (identifier)
   "Percent-encode IDENTIFIER while retaining readable path separators."
-  (with-output-to-string (stream)
-    (loop for octet across (sb-ext:string-to-octets identifier
-                                                    :external-format ':utf-8)
-          do
-             (if (workspace-file--uri-safe-octet-p octet)
-                 (write-char (code-char octet) stream)
-                 (format stream "%~2,'0X" octet)))))
+  (resource-uri-encode identifier #'workspace-file--uri-safe-octet-p))
+
+(-> workspace-file--decode-identifier (string string) string)
+(defun workspace-file--decode-identifier (scheme identifier)
+  "Decode percent escapes in a workspace-like URI IDENTIFIER."
+  (resource-uri-decode (format nil "~A:~A" scheme identifier) identifier))
 
 (-> workspace-file--canonical-uri (tool-context pathname) string)
 (defun workspace-file--canonical-uri (context path)
@@ -181,7 +180,9 @@
     ((resolver workspace-file-resolver) identifier context)
   "Resolve IDENTIFIER through WORKSPACE-TOOL-PATH without granting authority."
   (declare (ignore resolver))
-  (let ((path (workspace-tool-path context (url-decode identifier))))
+  (let ((path (workspace-tool-path
+               context (workspace-file--decode-identifier
+                        "workspace" identifier))))
     (make-instance 'workspace-file-resource
                    :uri      (workspace-file--canonical-uri context path)
                    :pathname path)))

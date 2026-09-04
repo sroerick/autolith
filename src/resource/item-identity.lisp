@@ -7,8 +7,8 @@
 ;;; exact items. The scheme-independent machinery lives here once; each
 ;;; resource supplies its identity protocol methods and nouns.
 
-(-> resource-item-unreserved-octet-p ((unsigned-byte 8)) boolean)
-(defun resource-item-unreserved-octet-p (octet)
+(-> resource-uri-unreserved-octet-p ((unsigned-byte 8)) boolean)
+(defun resource-uri-unreserved-octet-p (octet)
   "Return true when OCTET is an RFC 3986 unreserved ASCII character."
   (and (or (<= (char-code #\A) octet (char-code #\Z))
            (<= (char-code #\a) octet (char-code #\z))
@@ -16,16 +16,66 @@
            (member octet '(#x2D #x2E #x5F #x7E)))
        t))
 
+(-> resource-uri-encode (string function) string)
+(defun resource-uri-encode (value literal-octet-p)
+  "Percent-encode VALUE, retaining octets accepted by LITERAL-OCTET-P."
+  (with-output-to-string (stream)
+    (loop for octet across
+          (sb-ext:string-to-octets value :external-format ':utf-8)
+          do
+             (if (funcall literal-octet-p octet)
+                 (write-char (code-char octet) stream)
+                 (format stream "%~2,'0X" octet)))))
+
+(-> resource-uri-decode
+    (string string &key (:literal-character-p (option function)))
+    string)
+(defun resource-uri-decode (uri encoded &key literal-character-p)
+  "Decode percent escapes in ENCODED for URI without form-style plus handling."
+  (let ((octets
+          (make-array (length encoded)
+                      :element-type '(unsigned-byte 8)
+                      :adjustable t
+                      :fill-pointer 0)))
+    (labels ((malformed (reason)
+               (error 'resource-uri-malformed :uri uri :reason reason))
+
+             (append-character (character)
+               (loop for octet across
+                     (sb-ext:string-to-octets
+                      (string character) :external-format ':utf-8)
+                     do (vector-push-extend octet octets))))
+      (loop with index = 0
+            while (< index (length encoded))
+            for character = (char encoded index)
+            do
+               (cond
+                 ((char= character #\%)
+                  (when (> (+ index 3) (length encoded))
+                    (malformed "a percent escape is incomplete"))
+                  (let ((high (digit-char-p (char encoded (1+ index)) 16))
+                        (low  (digit-char-p (char encoded (+ index 2)) 16)))
+                    (unless (and high low)
+                      (malformed
+                       "a percent escape contains a non-hexadecimal digit"))
+                    (vector-push-extend (+ (* high 16) low) octets)
+                    (incf index 3)))
+                 ((and literal-character-p
+                       (not (funcall literal-character-p character)))
+                  (malformed
+                   "URI characters outside the permitted literal set must be percent encoded"))
+                 (t
+                  (append-character character)
+                  (incf index))))
+      (handler-case
+          (sb-ext:octets-to-string octets :external-format ':utf-8)
+        (error ()
+          (malformed "the percent-encoded identifier is not valid UTF-8"))))))
+
 (-> resource-item-encode-identifier (non-empty-string) non-empty-string)
 (defun resource-item-encode-identifier (identifier)
   "Return IDENTIFIER as one canonical percent-encoded URI path segment."
-  (with-output-to-string (stream)
-    (loop for octet across
-          (sb-ext:string-to-octets identifier :external-format ':utf-8)
-          do
-             (if (resource-item-unreserved-octet-p octet)
-                 (write-char (code-char octet) stream)
-                 (format stream "%~2,'0X" octet)))))
+  (resource-uri-encode identifier #'resource-uri-unreserved-octet-p))
 
 (-> resource-item--malformed-identifier
     (string string non-empty-string)
@@ -43,50 +93,20 @@
     (resource-item--malformed-identifier
      scheme encoded
      (format nil "the exact ~A identifier must not be empty" noun)))
-  (let ((octets
-          (make-array (length encoded)
-                      :element-type '(unsigned-byte 8)
-                      :fill-pointer 0)))
-    (loop with index = 0
-          while (< index (length encoded))
-          for character = (char encoded index)
-          do
-             (cond
-               ((char= character #\%)
-                (when (> (+ index 3) (length encoded))
-                  (resource-item--malformed-identifier
-                   scheme encoded "a percent escape is incomplete"))
-                (let ((high (digit-char-p (char encoded (1+ index)) 16))
-                      (low (digit-char-p (char encoded (+ index 2)) 16)))
-                  (unless (and high low)
-                    (resource-item--malformed-identifier
-                     scheme encoded
-                     "a percent escape contains a non-hexadecimal digit"))
-                  (vector-push (+ (* high 16) low) octets)
-                  (incf index 3)))
-               ((and (< (char-code character) 128)
-                     (resource-item-unreserved-octet-p
-                      (char-code character)))
-                (vector-push (char-code character) octets)
-                (incf index))
-               (t
-                (resource-item--malformed-identifier
-                 scheme encoded
-                 (format nil
-                         "exact ~A identifiers must use percent encoding outside RFC 3986 unreserved characters"
-                         noun)))))
-    (let ((identifier
-            (handler-case
-                (sb-ext:octets-to-string octets :external-format ':utf-8)
-              (error ()
-                (resource-item--malformed-identifier
-                 scheme encoded
-                 "the percent-encoded identifier is not valid UTF-8")))))
-      (unless (non-empty-string-p identifier)
-        (resource-item--malformed-identifier
-         scheme encoded
-         (format nil "the exact ~A identifier must not be empty" noun)))
-      identifier)))
+  (let ((identifier
+          (resource-uri-decode
+           (format nil "~A:id/~A" scheme encoded)
+           encoded
+           :literal-character-p
+           (lambda (character)
+             (and (< (char-code character) 128)
+                  (resource-uri-unreserved-octet-p
+                   (char-code character)))))))
+    (unless (non-empty-string-p identifier)
+      (resource-item--malformed-identifier
+       scheme encoded
+       (format nil "the exact ~A identifier must not be empty" noun)))
+    identifier))
 
 (-> resource-item-uri (string non-empty-string) non-empty-string)
 (defun resource-item-uri (scheme identifier)

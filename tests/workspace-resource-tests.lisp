@@ -188,6 +188,16 @@
                             "uri" uri
                             "base-revision" revision
                             "operations" (coerce operations 'vector))))
+               (let ((path (merge-pathnames "src/c++/x.cpp" workspace)))
+                 (workspace-resource-tests--write-text path "plus path")
+                 (multiple-value-bind (result canonical-uri revision)
+                     (read-resource first-context "workspace:src/c++/x.cpp")
+                   (declare (ignore revision))
+                   (test-assert
+                    (and (tool-result-success-p result)
+                         (string= canonical-uri "workspace:src/c%2B%2B/x.cpp")
+                         (search "plus path" (tool-result-content result)))
+                    "workspace URIs preserve literal plus characters")))
               (let ((path (merge-pathnames "descriptor-growth.txt" workspace)))
                 (workspace-resource-tests--write-text path "before")
                 (test-assert

@@ -779,6 +779,12 @@
                 (and (tool-result-success-p result)
                      (search "λ café" (tool-result-content result)))
                 "scratchpad resources decode exact UTF-8 content"))
+              (create-resource context "scratchpad:c++/x.lisp" "(+ 1 2)")
+              (let ((result (read-resource context "scratchpad:c++/x.lisp")))
+                (test-assert
+                 (and (tool-result-success-p result)
+                      (search "(+ 1 2)" (tool-result-content result)))
+                 "scratchpad URIs preserve literal plus characters"))
              (create-resource context "scratchpad:oversized.txt" "123456789")
              (let* ((*workspace-file-resource-maximum-bytes* 8)
                     (result (read-resource context "scratchpad:oversized.txt")))

@@ -129,7 +129,9 @@
   (declare (ignore resolver))
   (let* ((root (workspace-tool--canonical-path
                 (lisp-scratchpad-root context)))
-         (path (lisp-scratchpad-path context (url-decode identifier))))
+          (path (lisp-scratchpad-path
+                 context (workspace-file--decode-identifier
+                          "scratchpad" identifier))))
     (make-instance 'scratchpad-resource
                    :uri      (scratchpad-resource--canonical-uri root path)
                    :pathname path
