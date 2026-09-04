@@ -2752,10 +2752,50 @@ sources keeps the tests deterministic under an interactive terminal."
          "UI shutdown closes one unfinished execution with failure status"))))
   nil)
 
+(-> test-terminal-nonblocking-lock-interrupt () null)
+(defun test-terminal-nonblocking-lock-interrupt ()
+  "Test deferred interrupts cannot strand the nonblocking UI lock."
+  (let* ((ui
+           (terminal-ui-create
+            :terminal (make-instance 'recording-terminal :columns 80)))
+         (lock (terminal-ui-lock ui))
+         (grab-mutex (symbol-function 'sb-thread:grab-mutex))
+         (interrupted-p nil)
+         (function-ran-p nil))
+    (handler-case
+        (test-call-with-function-replacements
+         (list
+          (list
+           'sb-thread:grab-mutex
+           (lambda (mutex &rest arguments)
+             (prog1 (apply grab-mutex mutex arguments)
+               (sb-thread:interrupt-thread
+                (current-thread)
+                (lambda ()
+                  (error "Injected deferred UI-lock interrupt.")))))))
+         (lambda ()
+           (terminal-ui--call-with-lock-if-available
+            ui
+            (lambda ()
+              (setf function-ran-p t)))))
+      (error ()
+        (setf interrupted-p t)))
+    (let ((available-p (sb-thread:grab-mutex lock :waitp nil)))
+      (unwind-protect
+           (test-assert
+            (and interrupted-p
+                 (not function-ran-p)
+                 available-p)
+            "a deferred interrupt releases the acquired nonblocking UI lock")
+        (when available-p
+          (sb-thread:release-mutex lock)))))
+  nil)
+
 (-> run-terminal-tests () boolean)
 (defun run-terminal-tests ()
   "Run focused terminal seam tests and return true when every assertion succeeds."
   (test-terminal-primary-screen-controls)
+  (test-terminal-nonblocking-lock-interrupt)
   (test-terminal-prompt-markers)
   (test-terminal-finalized-batch)
   (test-terminal-untrusted-text)

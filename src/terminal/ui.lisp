@@ -221,15 +221,14 @@
 
 The second value reports whether FUNCTION ran. This nonblocking path keeps
 emergency terminal input responsive while another thread owns presentation."
-  (let* ((lock (terminal-ui-lock ui))
-         (acquired-p
-           (sb-sys:without-interrupts
-             (sb-thread:grab-mutex lock :waitp nil))))
-    (if acquired-p
-        (unwind-protect
-             (values (funcall function) t)
-          (sb-thread:release-mutex lock))
-        (values nil nil))))
+  (let ((lock (terminal-ui-lock ui)))
+    (sb-sys:without-interrupts
+      (if (sb-thread:grab-mutex lock :waitp nil)
+          (unwind-protect
+               (sb-sys:with-interrupts
+                 (values (funcall function) t))
+            (sb-thread:release-mutex lock))
+        (values nil nil)))))
 
 
 ;;;; -- Terminal Presentation --
