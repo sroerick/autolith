@@ -419,9 +419,9 @@
 (defun test-localgroup-remote-detach-never-pauses-reader ()
   "Test remote detach releases control without trying to join the input reader."
   (let* ((terminal (localgroup-terminal-create))
+         (ui (terminal-ui-create :terminal terminal))
          (application
-           (make-instance 'application
-                          :ui (terminal-ui-create :terminal terminal)))
+           (make-instance 'application :ui ui))
          (session
            (make-instance 'localgroup-session
                           :application application
@@ -442,6 +442,10 @@
          :rows 24 :columns 80 :styled-p nil :session-id "remote-detach")
       (declare (ignore released-p))
       (test-assert attached-p "the remote detach test attaches its controller"))
+    (terminal-ui-start ui)
+    (terminal-ui-set-status ui "working")
+    (test-assert (plusp (terminal-ui-live-row-count ui))
+                 "the attached relay paints transient live rows")
     (test-call-with-function-replacements
      (list
       (list 'application-input-controller-call-with-reader-paused
@@ -453,7 +457,10 @@
          (test-assert
           (and (not (getf (rest result) :scheduled-p))
                (eq (localgroup-terminal-attachment-kind terminal) ':detached))
-          "remote detach releases the controlling client immediately"))))
+          "remote detach releases the controlling client immediately")
+         (test-assert (zerop (terminal-ui-live-row-count ui))
+                      "remote detach retracts the stale live region"))))
+    (terminal-ui-stop ui)
   nil))
 
 (-> test-localgroup-blocking-read-lifecycle () null)

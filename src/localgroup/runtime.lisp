@@ -570,6 +570,14 @@ forced shutdown does; the conversation stays resumable."
       (sleep 0.25)))
   nil)
 
+(-> localgroup--detach-live-region (application) null)
+(defun localgroup--detach-live-region (application)
+  "Retract APPLICATION's live terminal rows after controlling ownership ends."
+  (let ((ui (application-ui application)))
+    (when ui
+      (terminal-ui-detach ui)))
+  nil)
+
 (-> localgroup--serve-attachment
     (localgroup-session sb-bsd-sockets:socket stream list)
     null)
@@ -629,6 +637,8 @@ forced shutdown does; the conversation stays resumable."
                (localgroup--note-controller-attached session))
              (localgroup--attachment-read-loop terminal attachment))
         (let ((controlled-p (localgroup-terminal-detach terminal attachment)))
+          (when controlled-p
+            (localgroup--detach-live-region application))
           (localgroup-attachment-close attachment)
           (when controlled-p
             (localgroup--controller-lost session))))))
@@ -650,6 +660,7 @@ forced shutdown does; the conversation stays resumable."
           ;; responsive reader here deadlocks or rejects /detach when that
           ;; reader is the thread executing the command.
           (localgroup-terminal-release-control terminal)
+          (localgroup--detach-live-region application)
           (list :ok :operation :detach
                 :scheduled-p nil
                 :session-id (localgroup-session-identifier session))))))

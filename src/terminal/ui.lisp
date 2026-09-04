@@ -2586,6 +2586,14 @@ no terminal input is ready."
       (terminal-ui--paint-live ui)))
   ui)
 
+(-> terminal-ui-detach (terminal-ui) terminal-ui)
+(defun terminal-ui-detach (ui)
+  "Retract UI's live region after its terminal loses interactive ownership."
+  (with-terminal-ui-locked (ui)
+    (when (terminal-ui-started-p ui)
+      (live-region-suspend (terminal-ui-live-region ui))))
+  ui)
+
 (-> terminal-ui-stop (terminal-ui) terminal-ui)
 (defun terminal-ui-stop (ui)
   "Erase UI's unfinished rows and restore its terminal even after partial startup."
