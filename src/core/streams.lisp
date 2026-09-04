@@ -74,12 +74,13 @@ that PATH still names the opened object."
                               :input t
                               :element-type '(unsigned-byte 8)
                               :buffering ':none
-                              :auto-close nil))
+                              :auto-close nil)
+                             file-descriptor nil)
                        (unless (= (read-sequence octets stream) length)
                          (changed))
                        (unless (file-stat--stable-p
                                 stat
-                                (sb-posix:fstat file-descriptor))
+                                (sb-posix:fstat (sb-sys:fd-stream-fd stream)))
                          (changed))
                        (handler-case
                            (sb-ext:octets-to-string octets :external-format ':utf-8)
