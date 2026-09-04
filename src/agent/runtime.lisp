@@ -567,6 +567,8 @@
             collect (list key (agent--portable-value child)))
       #'string<
       :key #'first))
+    ((stringp value)
+     value)
     ((vectorp value)
      (loop for child across value
            collect (agent--portable-value child)))

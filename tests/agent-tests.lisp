@@ -2772,9 +2772,20 @@
   nil))
 
 
+(-> test-agent-portable-value () null)
+(defun test-agent-portable-value ()
+  "Test portable provider metadata preserves strings and projects vectors."
+  (test-assert
+   (equal (agent--portable-value (vector "label" 7))
+          '("label" 7))
+   "portable provider metadata preserves strings inside vectors")
+  nil)
+
+
 (-> run-agent-tests () boolean)
 (defun run-agent-tests ()
   "Run focused agent-loop tests and return true on success."
+  (test-agent-portable-value)
   (test-agent-tool-loop)
   (test-agent-shell-authorization-unavailable)
   (test-agent-tool-free-turn)
