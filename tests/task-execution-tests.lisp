@@ -460,6 +460,114 @@
   nil)
 
 
+(-> test-task-child-cancels-lisp-executions () null)
+(defun test-task-child-cancels-lisp-executions ()
+  "Test child cleanup aborts asynchronous Lisp work before stopping its REPL pool."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (marker        (merge-pathnames "child-lisp-started" root))
+         (worker-pool   (lisp-worker-pool-create configuration))
+         (registry      (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool      (tool-registry-find registry "task" "run"))
+         (orchestrator  (task-run-tool-orchestrator run-tool))
+         (definition
+           (task-agent-definition-create
+            :name "lisp-cleanup"
+            :description "Exercise asynchronous Lisp cleanup."
+            :instructions "Start asynchronous Lisp work, then finish."
+            :tools '("lisp.eval")
+            :spawns ':all
+            :source ':test))
+         (parent
+           (agent-create
+            :configuration configuration
+            :provider (make-instance 'model-provider)
+            :conversation (conversation-create configuration)
+            :tool-registry registry
+            :worker nil))
+         (job
+           (task-tests--make-job
+            orchestrator
+            :identifier "lisp-cleanup-child"
+            :definition definition
+            :item (list :task "Exercise asynchronous Lisp cleanup.")
+            :parent-agent parent))
+         (child-registry
+           (task-child-tool-registry registry definition orchestrator 1))
+         (child
+           (make-instance
+            'task-child-agent
+            :configuration configuration
+            :provider (make-instance 'model-provider)
+            :conversation (conversation-create configuration)
+            :tool-registry child-registry
+            :worker worker-pool
+            :definition definition
+            :identity (task-job-identity job)
+            :depth 1
+            :completion (make-instance 'task-completion)
+            :orchestrator orchestrator
+            :job job))
+         (context
+           (make-instance
+            'tool-context
+            :configuration configuration
+            :worker worker-pool
+            :conversation (agent-conversation child)
+            :registry child-registry
+            :agent child
+            :call-id "child-lisp-cleanup"))
+         (execution nil)
+         (worker nil))
+    (with-lock-held ((cl-jobpond::job--lock job))
+      (setf (job-state job) ':running))
+    (task-job--set-progress-state job ':running)
+    (unwind-protect
+         (let* ((form
+                  (format nil
+                          "(progn (with-open-file (stream ~A :direction :output :if-exists :supersede :if-does-not-exist :create) (write-string \"started\" stream)) (loop (sleep 1)))"
+                          (prin1-to-string marker)))
+                (result
+                  (tool-execute
+                   (tool-registry-find child-registry "lisp" "eval")
+                   context
+                   (json-object "form" form
+                                "repl" "child-cleanup"
+                                "async" t)))
+                (details (tool-result-details result))
+                (record (and (listp details) (getf (rest details) :job)))
+                (identifier (and record (getf record :id))))
+           (setf execution
+                 (and identifier
+                      (task-orchestrator-find-visible-job
+                       orchestrator identifier child "lisp.eval")))
+           (test-assert
+            (and execution
+                 (task-tests--wait-until (lambda () (probe-file marker)) 5))
+            "a child asynchronous Lisp evaluation starts before cleanup")
+           (setf worker (lisp-worker-pool-worker worker-pool "child-cleanup"))
+           (test-assert
+            (member execution
+                    (task-job-cancel-execution-descendants job ':parent-finished)
+                    :test #'eq)
+            "child cleanup finds and cancels its asynchronous execution")
+           (multiple-value-bind (snapshot terminal-p)
+               (session-job-await execution 5)
+             (test-assert
+              (and terminal-p
+                   (eq (getf snapshot :state) ':aborted)
+                   (not (lisp-worker-running-p worker)))
+              "child cleanup joins the aborted execution and detaches its REPL"))
+           (lisp-worker-pool-stop-all worker-pool))
+      (ignore-errors
+        (task-job-cancel-execution-descendants job ':test-cleanup))
+      (when (and execution (not (job-terminal-p execution)))
+        (job-cancel execution :reason ':test-cleanup))
+      (ignore-errors (lisp-worker-pool-stop-all worker-pool))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-task-child-shared-agent-loop () null)
 (defun test-task-child-shared-agent-loop ()
   "Test child yield uses the ordinary provider and tool execution path."

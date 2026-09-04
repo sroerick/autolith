@@ -553,6 +553,19 @@ boundary cannot fit within that budget."
       (task-progress-note-status job status details))
   nil)
 
+(-> task-job-cancel-execution-descendants (task-job keyword) list)
+(defun task-job-cancel-execution-descendants (job reason)
+  "Cancel and join every live tool execution owned by JOB's task subtree."
+  (let ((executions
+          (job-pool-descendant-jobs
+           (task-orchestrator-execution-pool (task-job-orchestrator job))
+           (job-identifier job))))
+    (dolist (execution executions)
+      (job-cancel execution :reason reason :cascade-p t))
+    (dolist (execution executions)
+      (job-await execution))
+    executions))
+
 (defun task-run-child (job)
   "Create and run JOB's real in-process child session through terminal yield."
   (let* ((parent (task-job-parent-agent job))
@@ -617,4 +630,5 @@ boundary cannot fit within that budget."
                     :goal-context (task-child-goal-context job configuration))))
              (task--assemble-child-result
               job result child conversation completion)))
+      (task-job-cancel-execution-descendants job ':parent-finished)
       (ignore-errors (lisp-worker-pool-stop-all worker)))))

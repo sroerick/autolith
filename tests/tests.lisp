@@ -461,6 +461,7 @@
     (test-rlm-permission-classifier)
     (run-run-job-tests)
     (test-task-orchestration)
+     (test-task-child-cancels-lisp-executions)
     (test-task-child-shared-agent-loop)
     (test-task-default-detachment)
     (test-task-running-cancellation)
