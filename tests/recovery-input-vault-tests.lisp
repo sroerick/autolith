@@ -632,19 +632,22 @@
             "restore reports a typed failure when vault deletion fails")
            (test-assert provenance-observed-p
                         "restore publishes capture provenance before deleting the vault")
-           (test-assert
-            (and (probe-file vault-pathname)
-                 (equal (application-input-controller--state controller :work-items)
-                        '((:message "existing work"))))
-            "failed restore leaves the vault and prior in-memory queue intact")
-           (multiple-value-bind (form complete-p)
-               (snapshot-read pending-pathname)
-             (test-assert
-              (and complete-p
-                   (null (getf (rest form) :vault-capture-identifiers))
-                   (equal (getf (rest form) :work)
-                          '((:message "existing work"))))
-              "failed restore republishes the prior pending snapshot")))
+            (test-assert
+             (and (probe-file vault-pathname)
+                  (equal (application-input-controller--state controller :work-items)
+                         '((:message "restored work")
+                           (:message "existing work"))))
+             "failed vault deletion keeps committed restored and concurrent queue state")
+            (multiple-value-bind (form complete-p)
+                (snapshot-read pending-pathname)
+              (test-assert
+               (and complete-p
+                    (equal (getf (rest form) :vault-capture-identifiers)
+                           '("rollback-capture"))
+                    (equal (getf (rest form) :work)
+                           '((:message "restored work")
+                             (:message "existing work"))))
+               "failed deletion preserves one provenance-bearing pending snapshot")))
       (setf (symbol-function 'application-recovery-input-vault--write-captures)
             original-writer)
       (when controller
@@ -655,7 +658,7 @@
 
 (-> test-recovery-input-vault-post-delete-rollback () null)
 (defun test-recovery-input-vault-post-delete-rollback ()
-  "Test failed post-delete rollback leaves one importable provenance snapshot."
+  "Test a failed final publication preserves the provenance snapshot."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (terminal (make-instance 'waiting-recording-terminal :columns 80))
@@ -675,11 +678,10 @@
            (configuration-pending-inputs-path
             configuration (conversation-pathname conversation)))
          (controller nil)
-         (persist-call-count 0)
-         (original-persist
-           (symbol-function 'application-input-controller--persist-pending))
-         (original-writer
-           (symbol-function 'application-recovery-input-vault--write-captures)))
+         (publication-count 0)
+         (original-publisher
+           (symbol-function
+            'application-input-controller--publish-pending-publication-locked)))
     (unwind-protect
          (progn
            (configuration-ensure-directories configuration)
@@ -704,20 +706,14 @@
                     :work '((:message "restored work")))))
             :mode #o600)
            (setf
-            (symbol-function 'application-input-controller--persist-pending)
-              (lambda (writer-controller &key (error-p nil) (sync-vault-p t))
-                (incf persist-call-count)
-                (if (= persist-call-count 2)
-                    (error "forced final pending publication failure")
-                    (funcall original-persist
-                             writer-controller
-                             :error-p error-p
-                             :sync-vault-p sync-vault-p)))
-            (symbol-function 'application-recovery-input-vault--write-captures)
-            (lambda (writer-application captures)
-              (if captures
-                  (error "forced vault rollback publication failure")
-                  (funcall original-writer writer-application captures))))
+            (symbol-function
+             'application-input-controller--publish-pending-publication-locked)
+            (lambda (writer-controller publication error-p)
+              (incf publication-count)
+              (if (= publication-count 2)
+                  (error "forced final pending publication failure")
+                  (funcall original-publisher
+                           writer-controller publication error-p))))
            (test-assert
             (handler-case
                 (progn
@@ -725,19 +721,13 @@
                   nil)
               (recovery-input-vault-error ()
                 t))
-            "restore reports a typed failure after vault deletion and rollback failure")
-           (let ((failure
-                   (application-recovery-input-vault-failure application)))
-             (test-assert
-              (and (= persist-call-count 2)
-                   (typep failure 'recovery-input-vault-error)
-                   (eq (recovery-input-vault-error-operation failure)
-                       ':restore-rollback)
-                   (not (probe-file vault-pathname))
-                   (not
-                    (application-input-controller-pending-persistence-enabled-p
-                     controller)))
-              "failed post-delete rollback blocks ingress and leaves the vault absent"))
+            "restore reports a typed failure after vault deletion")
+           (test-assert
+            (and (= publication-count 2)
+                 (not (probe-file vault-pathname))
+                 (application-input-controller-pending-persistence-enabled-p
+                  controller))
+            "failed final publication leaves ingress enabled and the vault absent")
            (multiple-value-bind (form complete-p)
                (snapshot-read pending-pathname)
              (test-assert
@@ -747,12 +737,11 @@
                    (equal (getf (rest form) :work)
                           '((:message "restored work")
                             (:message "existing work"))))
-              "failed post-delete rollback retains restored work with provenance"))
+              "failed final publication retains restored work with provenance"))
            (setf
-            (symbol-function 'application-input-controller--persist-pending)
-            original-persist
-            (symbol-function 'application-recovery-input-vault--write-captures)
-            original-writer)
+            (symbol-function
+             'application-input-controller--publish-pending-publication-locked)
+            original-publisher)
            (test-assert
             (application-recovery-input-vault-import application)
             "the provenance-bearing snapshot remains importable")
@@ -763,14 +752,12 @@
                    (equal (getf (first captures) :work-items)
                           '((:message "restored work")
                             (:message "existing work")))
-                   (not (probe-file pending-pathname))
-                   (null (application-recovery-input-vault-failure application)))
+                   (not (probe-file pending-pathname)))
               "recovery reconstructs exactly one capture without loss or duplication")))
       (setf
-       (symbol-function 'application-input-controller--persist-pending)
-       original-persist
-       (symbol-function 'application-recovery-input-vault--write-captures)
-       original-writer)
+       (symbol-function
+        'application-input-controller--publish-pending-publication-locked)
+       original-publisher)
       (when controller
         (ignore-errors (application-input-controller-stop controller)))
       (ignore-errors (terminal-ui-stop ui))
@@ -1481,9 +1468,9 @@
                    (equal (application-recovery-input-vault--capture-work capture)
                           '((:message "live follow-up"))))
               "accepted primary follow-up is persisted and vaulted immediately"))
-           (with-lock-held ((application-input-controller-lock controller))
-             (deque-clear (application-input-controller-work-items controller))
-             (application-input-controller--persist-pending controller))
+            (with-lock-held ((application-input-controller-lock controller))
+              (deque-clear (application-input-controller-work-items controller)))
+            (application-input-controller--persist-pending controller)
            (test-assert
             (and (not (probe-file pending-pathname))
                  (null (application-recovery-input-vault-captures application)))
@@ -1536,6 +1523,150 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-recovery-input-vault-capture-during-restore () null)
+(defun test-recovery-input-vault-capture-during-restore ()
+  "Test a child capture cannot be deleted by a concurrent vault restore."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (conversation
+           (conversation-create
+            configuration :identifier "recovery-vault-capture-during-restore"))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (vault-pathname
+           (configuration-recovery-input-vault-path
+            configuration (conversation-pathname conversation)))
+         (gate (make-lock "Autolith vault restore capture test"))
+         (condition
+           (make-condition-variable :name "Autolith vault restore capture test"))
+         (capture-gate-condition
+           (make-condition-variable :name "Autolith vault capture completion test"))
+         (restore-read-p nil)
+         (release-restore-p nil)
+         (capture-started-p nil)
+         (capture-completed-p nil)
+         (capture-completed-before-release-p nil)
+         (restore-count nil)
+         (restore-condition nil)
+         (capture-condition nil)
+         (controller nil)
+         (restore-thread nil)
+         (capture-thread nil)
+         (original-captures
+           (symbol-function 'application-recovery-input-vault-captures)))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (conversation-append-user-message conversation "seed")
+           (terminal-ui-start ui)
+           (setf controller
+                 (application-input-controller-create
+                  application :load-pending-p nil :start-reader-p nil))
+           (ensure-directories-exist vault-pathname)
+           (snapshot-write
+            vault-pathname
+            (recovery-input-vault-tests--vault-form
+             conversation
+             (list
+              (list :id "restore-capture"
+                    :captured-at 10
+                    :active-work nil
+                    :steering-in-flight nil
+                    :steering nil
+                    :work '((:message "restore me")))))
+            :mode #o600)
+           (setf (symbol-function 'application-recovery-input-vault-captures)
+                 (lambda (target-application)
+                   (let ((captures (funcall original-captures target-application)))
+                     (when (eq target-application application)
+                       (with-lock-held (gate)
+                         (unless restore-read-p
+                           (setf restore-read-p t)
+                           (condition-notify condition)
+                           (loop until release-restore-p
+                                 do (condition-wait condition gate)))))
+                     captures))
+                 restore-thread
+                 (make-thread
+                  (lambda ()
+                    (handler-case
+                        (setf restore-count
+                              (application-input-controller-vault-restore controller))
+                      (error (error)
+                        (setf restore-condition error))))
+                  :name "Blocked recovery vault restore"))
+           (with-lock-held (gate)
+             (loop until restore-read-p
+                   unless (condition-wait condition gate :timeout 2)
+                     do (error "Timed out waiting for vault restore read.")))
+           (setf capture-thread
+                 (make-thread
+                  (lambda ()
+                    (with-lock-held (gate)
+                      (setf capture-started-p t)
+                     (condition-notify capture-gate-condition))
+                    (handler-case
+                        (application-recovery-input-vault-capture-message
+                         application "concurrent child prompt"
+                         :identifier "concurrent-child-capture")
+                      (error (error)
+                        (setf capture-condition error)))
+                    (with-lock-held (gate)
+                      (setf capture-completed-p t)
+                     (condition-notify capture-gate-condition)))
+                  :name "Concurrent recovery vault capture"))
+           (with-lock-held (gate)
+             (loop until capture-started-p
+                   unless (condition-wait capture-gate-condition gate :timeout 2)
+                     do (error "Timed out starting concurrent vault capture."))
+             (setf capture-completed-before-release-p
+                   (loop until capture-completed-p
+                         unless (condition-wait capture-gate-condition gate :timeout 1)
+                           do (return nil)
+                         finally (return t))))
+           (test-assert
+            (not capture-completed-before-release-p)
+            "a concurrent child capture waits behind the restore publication boundary")
+           (with-lock-held (gate)
+             (setf release-restore-p t)
+             (condition-notify condition))
+           (join-thread restore-thread)
+           (setf restore-thread nil)
+           (join-thread capture-thread)
+           (setf capture-thread nil)
+           (when restore-condition
+             (error restore-condition))
+           (when capture-condition
+             (error capture-condition))
+           (let* ((captures (funcall original-captures application))
+                  (capture (first captures)))
+             (test-assert
+              (and (= restore-count 1)
+                   (= (length captures) 1)
+                   (string= (getf capture :id) "concurrent-child-capture")
+                   (equal (application-recovery-input-vault--capture-work capture)
+                          '((:message "concurrent child prompt"))))
+              "the child capture written after restore survives vault deletion")))
+      (setf (symbol-function 'application-recovery-input-vault-captures)
+            original-captures)
+      (with-lock-held (gate)
+        (setf release-restore-p t)
+        (condition-notify condition))
+      (when restore-thread
+        (ignore-errors (join-thread restore-thread)))
+      (when capture-thread
+        (ignore-errors (join-thread capture-thread)))
+      (when controller
+        (ignore-errors (application-input-controller-stop controller)))
+      (ignore-errors (terminal-ui-stop ui))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> run-recovery-input-vault-tests () boolean)
 (defun run-recovery-input-vault-tests ()
   "Run focused recovery input vault tests and return true on success."
@@ -1555,4 +1686,5 @@
   (test-recovery-input-vault-ordinary-startup)
   (test-recovery-input-vault-live-primary-submit)
   (test-recovery-input-vault-capture-message)
+  (test-recovery-input-vault-capture-during-restore)
   t)

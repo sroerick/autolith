@@ -7826,6 +7826,140 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-pending-publication-lock-boundaries () null)
+(defun test-pending-publication-lock-boundaries ()
+  "Test external publication releases the controller lock and rejects stale state."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (terminal (make-instance 'waiting-recording-terminal :columns 80))
+         (ui (terminal-ui-create :terminal terminal))
+         (conversation
+           (conversation-create configuration :identifier "pending-publication-locks"))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :ui ui))
+         (controller nil)
+         (gate (make-lock "Pending publication test gate"))
+         (condition (make-condition-variable :name "Pending publication test gate"))
+         (entered-p nil)
+         (released-p nil)
+         (publisher nil)
+         (original-setter (symbol-function 'terminal-ui-set-pending-inputs))
+         (original-publisher
+           (symbol-function 'application-input-controller--publish-pending-publication)))
+    (unwind-protect
+         (progn
+           (configuration-ensure-directories configuration)
+           (conversation-append-user-message conversation "seed")
+           (terminal-ui-start ui)
+           (setf controller
+                 (application-input-controller-create
+                  application :load-pending-p nil :start-reader-p nil))
+           (with-lock-held ((application-input-controller-lock controller))
+             (deque-append
+              (application-input-controller-work-items controller)
+              '((:message "blocked publication"))))
+           (setf (symbol-function 'terminal-ui-set-pending-inputs)
+                 (lambda (target-ui steering queued)
+                   (when (eq target-ui ui)
+                     (with-lock-held (gate)
+                       (setf entered-p t)
+                       (condition-notify condition)
+                       (loop until released-p
+                             do (condition-wait condition gate))))
+                   (funcall original-setter target-ui steering queued))
+                 publisher
+                 (make-thread
+                  (lambda ()
+                    (application-input-controller--publish-counts controller))
+                  :name "Blocked pending publication"))
+           (with-lock-held (gate)
+             (loop until entered-p
+                   unless (condition-wait condition gate :timeout 2)
+                     do (error "Timed out waiting for pending publication.")))
+           (let ((available-p
+                   (sb-thread:grab-mutex
+                    (application-input-controller-lock controller) :waitp nil)))
+             (unwind-protect
+                  (test-assert available-p
+                               "blocked external publication releases the controller lock")
+               (when available-p
+                 (sb-thread:release-mutex
+                  (application-input-controller-lock controller)))))
+           (with-lock-held (gate)
+             (setf released-p t)
+             (condition-notify condition))
+           (join-thread publisher)
+           (setf publisher nil
+                 (symbol-function 'terminal-ui-set-pending-inputs) original-setter)
+           (let ((old-publication
+                   (with-lock-held ((application-input-controller-lock controller))
+                     (application-input-controller--capture-pending-publication-locked
+                      controller
+                      (application-input-controller--next-publication-generation-locked
+                       controller)
+                      nil))))
+             (setf entered-p nil
+                   released-p nil
+                   (symbol-function
+                    'application-input-controller--publish-pending-publication)
+                   (lambda (writer-controller publication error-p)
+                     (when (eq publication old-publication)
+                       (with-lock-held (gate)
+                         (setf entered-p t)
+                         (condition-notify condition)
+                         (loop until released-p
+                               do (condition-wait condition gate))))
+                     (funcall original-publisher
+                              writer-controller publication error-p))
+                   publisher
+                   (make-thread
+                    (lambda ()
+                      (application-input-controller--publish-pending-publication
+                       controller old-publication t))
+                    :name "Delayed stale pending publication"))
+             (with-lock-held (gate)
+               (loop until entered-p
+                     unless (condition-wait condition gate :timeout 2)
+                       do (error "Timed out waiting for stale publication.")))
+             (with-lock-held ((application-input-controller-lock controller))
+               (deque-clear (application-input-controller-work-items controller))
+               (deque-append
+                (application-input-controller-work-items controller)
+                '((:message "final shutdown"))))
+             (application-input-controller--prepare-shutdown controller ':interrupt)
+             (with-lock-held (gate)
+               (setf released-p t)
+               (condition-notify condition))
+             (join-thread publisher)
+             (setf publisher nil)
+             (multiple-value-bind (form complete-p)
+                 (snapshot-read
+                  (configuration-pending-inputs-path
+                   configuration (conversation-pathname conversation)))
+               (test-assert
+                (and complete-p
+                     (equal (getf (rest form) :work)
+                            '((:message "final shutdown"))))
+                "an older delayed publication cannot replace the shutdown snapshot"))))
+      (setf (symbol-function 'terminal-ui-set-pending-inputs) original-setter
+            (symbol-function 'application-input-controller--publish-pending-publication)
+            original-publisher)
+      (when publisher
+        (ignore-errors
+          (with-lock-held (gate)
+            (setf released-p t)
+            (condition-notify condition)))
+        (ignore-errors (join-thread publisher)))
+      (when controller
+        (ignore-errors (application-input-controller-stop controller)))
+      (ignore-errors (terminal-ui-stop ui))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> run-application-tests () boolean)
 (defun run-application-tests ()
   "Run focused application presentation tests and return true on success."
@@ -7887,5 +8021,6 @@
   (test-working-directory-command)
   (test-effort-switch)
   (test-session-goal)
+  (test-pending-publication-lock-boundaries)
   (test-pending-input-persistence)
   t)

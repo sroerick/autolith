@@ -52,6 +52,26 @@
     :reader application-input-controller-lock
     :type t
     :documentation "The lock protecting work, reader, and exit state.")
+   (publication-lock
+    :initform (make-lock "Autolith input publication")
+    :reader application-input-controller-publication-lock
+    :type t
+    :documentation "The lock serializing terminal and durable pending publication.")
+   (publication-generation
+    :initform 0
+    :accessor application-input-controller-publication-generation
+    :type (integer 0)
+    :documentation "The latest detached external-publication generation.")
+   (published-ui-generation
+    :initform 0
+    :accessor application-input-controller-published-ui-generation
+    :type (integer 0)
+    :documentation "The newest generation admitted to terminal publication.")
+   (published-pending-generation
+    :initform 0
+    :accessor application-input-controller-published-pending-generation
+    :type (integer 0)
+    :documentation "The newest generation admitted to durable publication.")
    (condition-variable
     :initform (make-condition-variable :name "Autolith input controller")
     :reader application-input-controller-condition-variable
@@ -154,6 +174,16 @@
     :type list
     :documentation
     "Vault captures transactionally represented by the current pending snapshot.")
+   (vault-restore-work-items
+    :initform nil
+    :accessor application-input-controller-vault-restore-work-items
+    :type list
+    :documentation "Recovered work staged for durable publication before queue admission.")
+   (vault-restore-capture-identifiers
+    :initform nil
+    :accessor application-input-controller-vault-restore-capture-identifiers
+    :type list
+    :documentation "Vault capture identifiers staged with pending recovered work.")
    (steering-promotion-prefix-count
     :initform 0
     :accessor application-input-controller-steering-promotion-prefix-count
@@ -416,6 +446,7 @@ The first value reports whether a model or command turn needs cancellation. The
 second reports whether shutdown was prepared."
   (let ((active-p nil)
         (prepared-p nil)
+        (pending-publication nil)
         (message
           (application-input-controller--forced-exit-message controller reason)))
     (with-lock-held ((application-input-controller-lock controller))
@@ -431,9 +462,14 @@ second reports whether shutdown was prepared."
                 (application-input-controller-turn-cancellation-delivery-pending-p
                  controller)
                 t))
-        ;; Persist every accepted input before clearing process-local queues so
+        ;; Capture every accepted input before clearing process-local queues so
         ;; an ordinary restart can restore it for this conversation.
-        (application-input-controller--persist-pending controller)
+        (setf pending-publication
+              (application-input-controller--capture-pending-publication-locked
+               controller
+               (application-input-controller--next-publication-generation-locked
+                controller)
+               t))
         (mapc #'deque-clear
               (application-input-controller--queues controller))
         (setf (application-input-controller-stopping-p controller) t
@@ -445,8 +481,11 @@ second reports whether shutdown was prepared."
               (application-input-controller-follow-up-edit-index controller) nil
               (application-input-controller-follow-up-edit-work controller) nil)
         (sb-thread:condition-broadcast
-         (application-input-controller-condition-variable controller)))
-      (values active-p prepared-p))))
+         (application-input-controller-condition-variable controller))))
+    (when pending-publication
+      (application-input-controller--publish-pending-publication
+       controller pending-publication nil))
+    (values active-p prepared-p)))
 
 (-> application--message-input
     ((or string user-message-input))
@@ -529,7 +568,7 @@ second reports whether shutdown was prepared."
     (application-input-controller)
     list)
 (defun application-input-controller--virtual-work-items (controller)
-  "Return CONTROLLER's FIFO work including its recalled follow-up.
+  "Return CONTROLLER's FIFO work including restore and recalled follow-ups.
 
 The caller must hold CONTROLLER's lock."
   (let ((work-items
@@ -540,7 +579,9 @@ The caller must hold CONTROLLER's lock."
           (application-input-controller-follow-up-edit-work controller)))
     (when (and index work)
       (deque-insert work-items (min index (deque-count work-items)) work))
-    (deque->list work-items)))
+    (append
+     (application-input-controller-vault-restore-work-items controller)
+     (deque->list work-items))))
 
 (-> application-input-controller--state
     (application-input-controller &optional keyword)
@@ -857,12 +898,23 @@ lock."
           :steering-promotion-prefix-count
           (or (getf state :steering-promotion-prefix-count) 0))))
 
-(-> application-input-controller--persist-pending
-    (application-input-controller &key (:error-p boolean) (:sync-vault-p boolean))
-    boolean)
-(defun application-input-controller--persist-pending
-    (controller &key (error-p nil) (sync-vault-p t))
-  "Atomically publish CONTROLLER's accepted but unprocessed input."
+(-> application-input-controller--next-publication-generation-locked
+    (application-input-controller)
+    (integer 1))
+(defun application-input-controller--next-publication-generation-locked (controller)
+  "Return CONTROLLER's next external-publication generation.
+
+The caller must hold CONTROLLER's lock."
+  (incf (application-input-controller-publication-generation controller)))
+
+(-> application-input-controller--capture-pending-publication-locked
+    (application-input-controller (integer 1) boolean)
+    (option list))
+(defun application-input-controller--capture-pending-publication-locked
+    (controller generation sync-vault-p)
+  "Return a detached durable pending publication for CONTROLLER.
+
+The caller must hold CONTROLLER's lock."
   (block nil
     (unless (application-input-controller-pending-persistence-enabled-p controller)
       (return nil))
@@ -872,70 +924,183 @@ lock."
                   (application-configuration application)))
            (conversation
              (and (slot-boundp application 'conversation)
-                  (application-conversation application)))
-           (old-snapshot-identifier
-             (application-input-controller-pending-snapshot-identifier
-              controller)))
+                  (application-conversation application))))
       (unless (and (typep configuration 'configuration)
                    (typep conversation 'conversation))
         (return nil))
-      (handler-case
-          (let* ((pathname
-                   (configuration-pending-inputs-path
-                    configuration (conversation-pathname conversation)))
-                 (state
-                  (application-input-controller--state controller))
-                 (work
-                   (application-input-controller--virtual-work-items controller))
-                 (pending-p
-                   (or (getf state :active-work)
-                       (getf state :steering-in-flight-items)
-                       (getf state :steering-items)
-                       work)))
-            (setf (getf state :work-items) work)
-            (if (null pending-p)
-                (progn
-                  (when (probe-file pathname)
-                    (delete-file pathname))
-                  (setf
-                   (application-input-controller-pending-snapshot-identifier
-                    controller)
-                   nil
-                   (application-input-controller-vault-capture-identifiers
-                    controller)
-                   nil
-                   (application-input-controller-steering-promotion-prefix-count
-                    controller)
-                   0)
-                  (when (and sync-vault-p
-                             (non-empty-string-p old-snapshot-identifier))
-                    (application-recovery-input-vault--replace-capture
-                     application old-snapshot-identifier nil)))
-                (let ((snapshot-identifier
-                        (or
-                         (getf state :snapshot-identifier)
-                         (setf
-                          (application-input-controller-pending-snapshot-identifier
-                           controller)
-                          (make-identifier)))))
-                  (setf (getf state :snapshot-identifier) snapshot-identifier)
-                  (ensure-directories-exist pathname)
-                  (snapshot-write
-                   pathname
-                   (application-input-controller--pending-state-form
-                    state (conversation-identifier conversation))
-                   :mode #o600)
-                  (when sync-vault-p
-                    (application-recovery-input-vault-sync-pending
-                     application state
-                     :create-p
-                     (application-input-controller-live-vault-sync-p
-                      controller)))))
-            t)
-        (error (condition)
-          (when error-p
-            (error condition))
-          nil)))))
+      (let* ((conversation-identifier (conversation-identifier conversation))
+             (pathname
+               (configuration-pending-inputs-path
+                configuration (conversation-pathname conversation)))
+             (old-snapshot-identifier
+               (application-input-controller-pending-snapshot-identifier controller))
+             (old-vault-capture-identifiers
+               (application-input-controller-vault-capture-identifiers controller))
+             (old-steering-promotion-prefix-count
+               (application-input-controller-steering-promotion-prefix-count controller))
+             (restore-work
+               (application-input-controller-vault-restore-work-items controller))
+             (state (application-input-controller--state controller))
+             (work (application-input-controller--virtual-work-items controller))
+             (pending-p
+               (not
+                (null
+                 (or (getf state :active-work)
+                     (getf state :steering-in-flight-items)
+                     (getf state :steering-items)
+                     work)))))
+        (setf (getf state :work-items) work
+              (getf state :vault-capture-identifiers)
+              (remove-duplicates
+               (append
+                old-vault-capture-identifiers
+                (application-input-controller-vault-restore-capture-identifiers
+                 controller))
+               :test #'string=)
+              (getf state :steering-promotion-prefix-count)
+              (+ old-steering-promotion-prefix-count (length restore-work)))
+        (if pending-p
+            (let ((snapshot-identifier
+                    (or (getf state :snapshot-identifier)
+                        (setf
+                         (application-input-controller-pending-snapshot-identifier
+                          controller)
+                         (make-identifier)))))
+              (setf (getf state :snapshot-identifier) snapshot-identifier)
+              (let* ((form
+                       (application-input-controller--pending-state-form
+                        state conversation-identifier))
+                     (detached-state
+                       (application-input-controller--pending-state
+                        form conversation-identifier)))
+                (list :generation generation
+                      :application application
+                      :pathname pathname
+                      :pending-p t
+                      :form form
+                      :state detached-state
+                      :sync-vault-p sync-vault-p
+                      :create-vault-p
+                      (application-input-controller-live-vault-sync-p controller))))
+            (list :generation generation
+                  :application application
+                  :pathname pathname
+                  :pending-p nil
+                  :old-snapshot-identifier
+                  (and old-snapshot-identifier
+                       (copy-seq old-snapshot-identifier))
+                  :old-vault-capture-identifiers
+                  (mapcar #'copy-seq old-vault-capture-identifiers)
+                  :old-steering-promotion-prefix-count
+                  old-steering-promotion-prefix-count
+                  :sync-vault-p sync-vault-p))))))
+
+(-> application-input-controller--commit-empty-publication-locked
+    (application-input-controller list)
+    null)
+(defun application-input-controller--commit-empty-publication-locked
+    (controller publication)
+  "Clear pending metadata after an empty PUBLICATION succeeds.
+
+The caller must hold CONTROLLER's publication lock."
+  (with-lock-held ((application-input-controller-lock controller))
+    (let* ((state (application-input-controller--state controller))
+           (work (application-input-controller--virtual-work-items controller))
+           (pending-p
+             (or (getf state :active-work)
+                 (getf state :steering-in-flight-items)
+                 (getf state :steering-items)
+                 work)))
+      (when (and
+             (null pending-p)
+             (= (getf publication :generation)
+                (application-input-controller-publication-generation controller))
+             (equal (getf publication :old-snapshot-identifier)
+                    (application-input-controller-pending-snapshot-identifier controller))
+             (equal (getf publication :old-vault-capture-identifiers)
+                    (application-input-controller-vault-capture-identifiers controller))
+             (= (getf publication :old-steering-promotion-prefix-count)
+                (application-input-controller-steering-promotion-prefix-count controller)))
+        (setf
+         (application-input-controller-pending-snapshot-identifier controller) nil
+         (application-input-controller-vault-capture-identifiers controller) nil
+         (application-input-controller-steering-promotion-prefix-count controller) 0))))
+  nil)
+
+(-> application-input-controller--publish-pending-publication-locked
+    (application-input-controller list boolean)
+    boolean)
+(defun application-input-controller--publish-pending-publication-locked
+    (controller publication error-p)
+  "Publish detached pending PUBLICATION while holding CONTROLLER's publication lock."
+  (let ((generation (getf publication :generation)))
+    (when (<= generation
+              (application-input-controller-published-pending-generation controller))
+      (return-from application-input-controller--publish-pending-publication-locked
+        t))
+    (setf (application-input-controller-published-pending-generation controller)
+          generation)
+    (handler-case
+        (let ((application (getf publication :application))
+              (pathname (getf publication :pathname)))
+          (if (getf publication :pending-p)
+              (progn
+                (ensure-directories-exist pathname)
+                (snapshot-write pathname (getf publication :form) :mode #o600)
+                (when (getf publication :sync-vault-p)
+                  (application-recovery-input-vault--sync-pending-locked
+                   application
+                   (getf publication :state)
+                   :create-p (getf publication :create-vault-p))))
+              (progn
+                (when (probe-file pathname)
+                  (delete-file pathname))
+                (when (and (getf publication :sync-vault-p)
+                           (non-empty-string-p
+                            (getf publication :old-snapshot-identifier)))
+                  (application-recovery-input-vault--replace-capture-locked
+                   application
+                   (getf publication :old-snapshot-identifier)
+                   nil))
+                (application-input-controller--commit-empty-publication-locked
+                 controller publication)))
+          t)
+      (error (condition)
+        (when error-p
+          (error condition))
+        nil))))
+
+(-> application-input-controller--publish-pending-publication
+    (application-input-controller list boolean)
+    boolean)
+(defun application-input-controller--publish-pending-publication
+    (controller publication error-p)
+  "Serialize and publish detached pending PUBLICATION for CONTROLLER."
+  (with-lock-held ((application-input-controller-publication-lock controller))
+    (application-input-controller--publish-pending-publication-locked
+     controller publication error-p)))
+
+(-> application-input-controller--persist-pending
+    (application-input-controller &key (:error-p boolean) (:sync-vault-p boolean))
+    boolean)
+(defun application-input-controller--persist-pending
+    (controller &key (error-p nil) (sync-vault-p t))
+  "Atomically publish CONTROLLER's accepted but unprocessed input."
+  (handler-case
+      (let ((publication
+              (with-lock-held ((application-input-controller-lock controller))
+                (application-input-controller--capture-pending-publication-locked
+                 controller
+                 (application-input-controller--next-publication-generation-locked
+                  controller)
+                 sync-vault-p))))
+        (and publication
+             (application-input-controller--publish-pending-publication
+              controller publication error-p)))
+    (error (condition)
+      (when error-p
+        (error condition))
+      nil)))
 
 (-> application-input-controller--load-pending
     (application-input-controller)
@@ -979,7 +1144,8 @@ lock."
                              (application-input-controller-steering-items
                               controller))
                            (work
-                             (application-input-controller-work-items controller)))
+                             (application-input-controller-work-items controller))
+                           (pending-publication nil))
                       (with-lock-held
                           ((application-input-controller-lock controller))
                         (setf
@@ -1006,39 +1172,66 @@ lock."
                          (getf filtered-state :steering-in-flight-items)
                          :key #'agent-steering-input-content)
                         (deque-prepend work (getf filtered-state :work-items))
-                          (when active-work
-                            (deque-push-front work active-work))
-                          (application-input-controller--persist-pending
-                           controller :sync-vault-p nil))
+                        (when active-work
+                          (deque-push-front work active-work))
+                        (setf pending-publication
+                              (application-input-controller--capture-pending-publication-locked
+                               controller
+                               (application-input-controller--next-publication-generation-locked
+                                controller)
+                               nil)))
+                      (when pending-publication
+                        (application-input-controller--publish-pending-publication
+                         controller pending-publication nil))
                       (when (equal source-pathname legacy-pathname)
                         (when (probe-file pathname)
                           (delete-file legacy-pathname)))))))
             (error ()
-              nil))))))
-  nil)
+              nil)))))
+  nil))
 
 (-> application-input-controller--publish-counts
     (application-input-controller)
     null)
 (defun application-input-controller--publish-counts (controller)
-  "Publish CONTROLLER's pending input previews through its serialized UI.
-
-A stopping controller has already finalized its durable pending-input snapshot.
-Skipping a later publisher prevents an accepted enqueue from deleting that
-snapshot after shutdown cleared the process-local queues."
-  (with-lock-held ((application-input-controller-lock controller))
-    (terminal-ui-set-pending-inputs
-     (application-ui (application-input-controller-application controller))
-     (mapcar #'user-message-input-text
-             (deque->list
-              (application-input-controller-steering-items controller)))
-     (loop for work in
-           (deque->list (application-input-controller-work-items controller))
-           for input = (second work)
-           when (typep input '(or string user-message-input))
-             collect (user-message-input-text input)))
-    (unless (application-input-controller-stopping-p controller)
-      (application-input-controller--persist-pending controller)))
+  "Publish detached pending input previews and durable state in generation order."
+  (let ((generation nil)
+        (ui nil)
+        (steering-inputs nil)
+        (queued-inputs nil)
+        (pending-publication nil))
+    (with-lock-held ((application-input-controller-lock controller))
+      (setf generation
+            (application-input-controller--next-publication-generation-locked
+             controller)
+            ui
+            (application-ui
+             (application-input-controller-application controller))
+            steering-inputs
+            (mapcar (lambda (input)
+                      (copy-seq (user-message-input-text input)))
+                    (deque->list
+                     (application-input-controller-steering-items controller)))
+            queued-inputs
+            (loop for work in
+                  (deque->list
+                   (application-input-controller-work-items controller))
+                  for input = (second work)
+                  when (typep input '(or string user-message-input))
+                    collect (copy-seq (user-message-input-text input)))
+            pending-publication
+            (unless (application-input-controller-stopping-p controller)
+              (application-input-controller--capture-pending-publication-locked
+               controller generation t))))
+    (with-lock-held ((application-input-controller-publication-lock controller))
+      (when (> generation
+               (application-input-controller-published-ui-generation controller))
+        (setf (application-input-controller-published-ui-generation controller)
+              generation)
+        (terminal-ui-set-pending-inputs ui steering-inputs queued-inputs))
+      (when pending-publication
+        (application-input-controller--publish-pending-publication-locked
+         controller pending-publication nil))))
   nil)
 
 (-> application-input-controller-turn-active-p
@@ -1152,18 +1345,21 @@ snapshot after shutdown cleared the process-local queues."
 (defun application-input-controller--record-failure
     (controller condition backtrace)
   "Record reader CONDITION, preserve pending input, and wake the main thread."
-  (let ((active-p nil))
+  (let ((active-p nil)
+        (persist-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (unless (application-input-controller-failure controller)
         (setf (application-input-controller-failure controller) condition
               (application-input-controller-failure-backtrace controller) backtrace
-              (application-input-controller-stopping-p controller) t)
-        ;; A reader failure is a fatal process failure. Publish every accepted input
-        ;; before later stopping-state publishers begin skipping persistence.
-        (application-input-controller--persist-pending controller))
+              (application-input-controller-stopping-p controller) t
+              persist-p t))
       (setf active-p (application-input-controller-active-p controller))
       (sb-thread:condition-broadcast
        (application-input-controller-condition-variable controller)))
+    (when persist-p
+      ;; A reader failure is a fatal process failure. Publish every accepted input
+      ;; before later stopping-state publishers begin skipping persistence.
+      (application-input-controller--persist-pending controller))
     (application-input-controller--publish-counts controller)
     (when active-p
       (handler-case
@@ -1542,10 +1738,11 @@ the ordinary FIFO queue."
                      :identifier (make-identifier)
                      :content input)))
           (declare (ignore ignored-target ignored-evicted))
-          (setf entries (coerce moved 'list)))
-        ;; The old snapshot still contains queued steering if this atomic
-        ;; replacement fails, while the new snapshot names every in-flight item.
-        (application-input-controller--persist-pending controller)))
+          (setf entries (coerce moved 'list)))))
+    (when entries
+      ;; The old snapshot still contains queued steering if this atomic
+      ;; replacement fails, while the new snapshot names every in-flight item.
+      (application-input-controller--persist-pending controller))
     (application-input-controller--publish-counts controller)
     entries))
 
@@ -1590,8 +1787,9 @@ work receive steering as soon as possible instead of as follow-ups."
                       "")))
         (setf (application-input-controller-active-work controller) nil
               (application-input-controller-active-work-identifier controller) nil
-              acknowledged-p t)
-        (application-input-controller--persist-pending controller)))
+              acknowledged-p t)))
+    (when acknowledged-p
+      (application-input-controller--persist-pending controller))
     acknowledged-p))
 
 (-> application-input-controller--acknowledge-steering
@@ -1609,8 +1807,9 @@ work receive steering as soon as possible instead of as follow-ups."
            :test #'string=)
         (declare (ignore entry))
         (when present-p
-          (setf acknowledged-p t)
-          (application-input-controller--persist-pending controller))))
+          (setf acknowledged-p t))))
+    (when acknowledged-p
+      (application-input-controller--persist-pending controller))
     acknowledged-p))
 
 (-> application-input-controller--request-exit
@@ -1702,8 +1901,6 @@ unacknowledged steer before every older queued input after cancellation."
           (setf promoted-p
                 (application-input-controller--promote-newest-steering-locked
                  controller)))
-        (when promoted-p
-          (application-input-controller--persist-pending controller))
         (when force-exit-window-p
           (let ((now
                   (funcall
@@ -1715,6 +1912,8 @@ unacknowledged steer before every older queued input after cancellation."
                   (+ now *application-interrupt-hint-delay-seconds*)
                   (application-input-controller-forced-exit-message controller)
                   message)))))
+    (when promoted-p
+      (application-input-controller--persist-pending controller))
     (when accepted-p
       (let ((application
               (application-input-controller-application controller)))
@@ -3031,7 +3230,8 @@ sandbox grant is revalidated at this final authorization boundary."
 (defun application-input-controller--next-work (controller)
   "Wait for and return CONTROLLER's next work item, or NIL after exit."
   (let ((application (application-input-controller-application controller))
-        (work nil))
+        (work nil)
+        (persist-p nil))
     (with-lock-held ((application-input-controller-lock controller))
       (setf (application-input-controller-active-work-kind controller) nil
             (application-input-controller-active-work-interactive-p controller) nil)
@@ -3120,9 +3320,8 @@ sandbox grant is revalidated at this final authorization boundary."
              (decf
               (application-input-controller-steering-promotion-prefix-count
                controller)))
-           ;; The prior snapshot retains queued WORK until this atomic replacement
-           ;; durably represents it as active work.
-           (application-input-controller--persist-pending controller)
+            ;; Publish active WORK after releasing the controller lock.
+            (setf persist-p t)
            (return)))
         (let ((wait-seconds
                 (and (application-localgroup-handoff-pending-p application)
@@ -3143,6 +3342,8 @@ sandbox grant is revalidated at this final authorization boundary."
          'application-input-failed
          :original-condition (application-input-controller-failure controller)
          :backtrace (application-input-controller-failure-backtrace controller))))
+    (when persist-p
+      (application-input-controller--persist-pending controller))
     (application-input-controller--publish-counts controller)
     work))
 
