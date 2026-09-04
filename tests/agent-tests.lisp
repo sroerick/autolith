@@ -1769,8 +1769,8 @@
              (test-assert
               (string= (getf failure :incomplete-reason) "max_output_tokens")
               "incomplete failure metadata retains its structured reason")
-             (test-assert (getf failure :retryable-p)
-                          "incomplete failure metadata remains retryable")
+              (test-assert (null (getf failure :retryable-p))
+                           "incomplete failure metadata is terminal")
              (test-assert
               (string= (getf failure :request-id) "request-incomplete")
               "incomplete failure metadata retains its request identifier")
