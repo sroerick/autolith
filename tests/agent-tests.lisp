@@ -2716,8 +2716,10 @@
 (-> test-agent-shell-authorization-unavailable () null)
 (defun test-agent-shell-authorization-unavailable ()
   "Test unavailable shell approval returns a failed tool result and continues the turn."
-  (let* ((configuration (test-configuration))
-         (root (test-configuration-root configuration))
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration :working-directory root))
          (marker (merge-pathnames "unavailable-shell-ran" root))
          (conversation
            (conversation-create configuration :identifier "shell-authorization"))
