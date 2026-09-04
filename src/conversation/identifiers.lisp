@@ -13,6 +13,27 @@
              "A conversation identifier must contain seven case-sensitive Bitcoin Base58 characters, with an optional hyphen after the first."
              :value value))))
 
+(-> conversation-identifier-path-component-p (t) boolean)
+(defun conversation-identifier-path-component-p (value)
+  "Return true when VALUE is one literal, non-wild pathname component."
+  (and (non-empty-string-p value)
+       (not (member value '("." "..") :test #'string=))
+       (notany
+        (lambda (character)
+          (member character '(#\/ #\\ #\* #\? #\[ #\] #\Null)))
+        value)
+       t))
+
+(-> conversation-identifier-validate-path-component (t) string)
+(defun conversation-identifier-validate-path-component (value)
+  "Return VALUE after rejecting path separators, traversal, and wildcards."
+  (unless (conversation-identifier-path-component-p value)
+    (error 'conversation-identifier-error
+           :message
+           "A conversation identifier must be one literal pathname component without traversal or wildcard syntax."
+           :value value))
+  value)
+
 (-> conversation-identifier-display (string) string)
 (defun conversation-identifier-display (identifier)
   "Return IDENTIFIER with its visual hyphen, retaining legacy values verbatim."

@@ -1113,8 +1113,9 @@ owner has exited."
                 (or storage-root
                     (configuration-conversation-root configuration))))
          (conversation-id
-           (or identifier
-               (conversation-identifier-generate root :timestamp created-at)))
+           (conversation-identifier-validate-path-component
+            (or identifier
+                (conversation-identifier-generate root :timestamp created-at))))
          (origin-directory (namestring
                             (configuration-working-directory configuration)))
          (identity (merge-pathnames

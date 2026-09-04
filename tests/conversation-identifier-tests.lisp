@@ -135,6 +135,29 @@ match a new library version is never the correct repair."
                   (merge-pathnames "crashes/legacy.sexp"
                                    (configuration-state-root configuration))))
            (declare (ignore other-conversation))
+           (test-assert
+            (string= (conversation-identifier-migration-resolve
+                      configuration "fixture-name")
+                     "fixture-name")
+            "literal legacy identifiers remain available to internal callers")
+           (dolist (invalid '("." ".." "../outside" "bad/name"
+                              "bad\\name" "*" "bad?name" "bad[name" "bad]name"))
+             (test-assert
+              (handler-case
+                  (progn
+                    (conversation-pathname-for-id configuration invalid)
+                    nil)
+                (conversation-identifier-error ()
+                  t))
+              (format nil "unsafe conversation identifier ~S is rejected" invalid)))
+           (test-assert
+            (handler-case
+                (progn
+                  (conversation-create configuration :identifier "../outside")
+                  nil)
+              (conversation-identifier-error ()
+                t))
+            "explicit conversation creation rejects escaping identifiers")
            (ensure-directories-exist (merge-pathnames "image.png" old-image-root))
            (with-open-file (stream (merge-pathnames "image.png" old-image-root)
                                    :direction ':output

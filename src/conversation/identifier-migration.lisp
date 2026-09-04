@@ -771,12 +771,13 @@ map for old resume commands and retained generations."
     string)
 (defun conversation-identifier-migration-resolve (configuration identifier)
   "Resolve new display syntax or a retained legacy alias to stored form."
-  (handler-case
-      (conversation-identifier-normalize identifier)
-    (conversation-identifier-error ()
-      (let* ((record (conversation-identifier-migration--read configuration))
-             (entry
-               (and record
-                    (conversation-identifier-migration--entry-for-old
-                     identifier (getf (rest record) :entries)))))
-        (if entry (getf entry :new) identifier)))))
+  (conversation-identifier-validate-path-component
+   (handler-case
+       (conversation-identifier-normalize identifier)
+     (conversation-identifier-error ()
+       (let* ((record (conversation-identifier-migration--read configuration))
+              (entry
+                (and record
+                     (conversation-identifier-migration--entry-for-old
+                      identifier (getf (rest record) :entries)))))
+         (if entry (getf entry :new) identifier))))))
