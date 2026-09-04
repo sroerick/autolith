@@ -101,6 +101,20 @@
   nil)
 
 
+(-> test-text-line-splitting () null)
+(defun test-text-line-splitting ()
+  "Test line splitting distinguishes CRLF delimiters from a final bare CR."
+  (test-assert
+   (equalp (text--split-lines (format nil "first~C~Csecond" #\Return #\Newline))
+           #("first" "second"))
+   "line splitting removes CRLF delimiters")
+  (let ((content (format nil "last~C" #\Return)))
+    (test-assert
+     (equalp (text--split-lines content) (vector content))
+     "line splitting preserves a final bare carriage return"))
+  nil)
+
+
 (-> test-xdg-directory-selection () null)
 (defun test-xdg-directory-selection ()
   "Test XDG roots reject invalid values, report state, and use private modes."
@@ -192,6 +206,7 @@
   (test-xdg-directory-selection)
   (test-context-window-environment)
   (test-model-environment-validation)
+  (test-text-line-splitting)
   (let ((configuration (configuration-create
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith))))

@@ -112,7 +112,8 @@ that PATH still names the opened object."
         (loop
           for newline = (position #\Newline content :start start)
           for end = (or newline length)
-          for logical-end = (if (and (> end start)
+          for logical-end = (if (and newline
+                                     (> end start)
                                      (char= (char content (1- end)) #\Return))
                                 (1- end)
                                 end)
