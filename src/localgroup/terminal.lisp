@@ -401,8 +401,7 @@ only dimension writer that keeps both in step and repaints."
   (with-lock-held ((localgroup-terminal-lock terminal))
     (setf (terminal-interactive-p terminal) t
           (terminal-styled-p terminal) (not (null styled-p))))
-  (when (and (plusp rows) (plusp columns))
-    (setf *terminal-relayed-resize* (cons rows columns)))
+  (terminal-relayed-resize-publish rows columns)
   nil)
 
 (-> localgroup-terminal-release-direct (localgroup-terminal) boolean)
@@ -478,7 +477,7 @@ only dimension writer that keeps both in step and repaints."
         (when (not (eq mode ':read-only))
           (setf (terminal-interactive-p terminal) t
                 (terminal-styled-p terminal) (not (null styled-p)))
-          (setf *terminal-relayed-resize* (cons next-rows next-columns)))))
+          (terminal-relayed-resize-publish next-rows next-columns))))
     (when direct
       (ignore-errors (terminal-stop direct)))
     (when (and old-controller (not (eq old-controller attachment)))

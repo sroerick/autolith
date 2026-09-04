@@ -360,11 +360,10 @@
 A relayed client size takes precedence over local measurement: a
 relayed session cannot measure its terminal, so the packet is the only
 truthful source of dimensions."
-  (let ((relayed *terminal-relayed-resize*))
+  (let ((relayed (terminal-relayed-resize-consume)))
     (cond
       (relayed
-       (setf *terminal-relayed-resize* nil
-             *terminal-resize-pending-p* nil)
+       (setf *terminal-resize-pending-p* nil)
        relayed)
       (*terminal-resize-pending-p*
        (setf *terminal-resize-pending-p* nil)

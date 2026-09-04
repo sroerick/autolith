@@ -53,6 +53,27 @@ clients therefore relay exact dimensions, and the interactive reader
 applies them through TERMINAL-UI-RESIZE, the one writer that changes
 the composed width and the live-region geometry together.")
 
+(defvar *terminal-relayed-resize-lock*
+  (make-lock "Autolith relayed terminal resize")
+  "The lock making relayed resize publication and consumption atomic.")
+
+(-> terminal-relayed-resize-publish (integer integer) null)
+(defun terminal-relayed-resize-publish (rows columns)
+  "Publish positive ROWS and COLUMNS for one relayed terminal resize."
+  (when (and (plusp rows) (plusp columns))
+    (with-lock-held (*terminal-relayed-resize-lock*)
+      (setf *terminal-relayed-resize* (cons rows columns))))
+  nil)
+
+(-> terminal-relayed-resize-consume
+    ()
+    (option (cons (integer 1) (integer 1))))
+(defun terminal-relayed-resize-consume ()
+  "Atomically consume and return the newest relayed terminal size."
+  (with-lock-held (*terminal-relayed-resize-lock*)
+    (prog1 *terminal-relayed-resize*
+      (setf *terminal-relayed-resize* nil))))
+
 (defclass terminal ()
   ((rows
     :initarg :rows

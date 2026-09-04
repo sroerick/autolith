@@ -421,6 +421,30 @@
                  "consuming a relayed size clears both pending signals")
     (test-assert (null (application-pending-terminal-size))
                  "a consumed relayed size does not repeat")
+    (setf *terminal-relayed-resize* (cons 30 100)
+          *terminal-resize-pending-p* t)
+    (let ((consume (symbol-function 'terminal-relayed-resize-consume))
+          (published-p nil))
+      (test-call-with-function-replacements
+       (list
+        (list
+         'terminal-relayed-resize-consume
+         (lambda ()
+           (prog1 (funcall consume)
+             (unless published-p
+               (setf published-p t)
+               (terminal-relayed-resize-publish 31 101))))))
+       (lambda ()
+         (test-assert
+          (equal (application-pending-terminal-size) '(30 . 100))
+          "the consumer returns the resize it atomically removed")
+         (test-assert
+          (equal (application-pending-terminal-size) '(31 . 101))
+          "a resize published during consumption remains pending")
+         (test-assert
+          (and (null *terminal-relayed-resize*)
+               (not *terminal-resize-pending-p*))
+          "both resize signals clear after consuming the newer relay"))))
     (let* ((terminal (make-instance 'recording-terminal :columns 60))
            (ui (terminal-ui-create :terminal terminal)))
       (with-terminal-ui (active-ui ui)
