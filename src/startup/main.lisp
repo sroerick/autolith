@@ -390,6 +390,7 @@
                                       (namestring (first failure))
                                       (rest failure)))))
                     (application-render-records application)
+                    (setf (application-recovery-startup-p application) nil)
                     (when initial-input
                       (terminal-ui-set-input ui initial-input))
                     (setf (application-project-adaptation-offer-p application)

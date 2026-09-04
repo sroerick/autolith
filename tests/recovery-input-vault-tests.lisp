@@ -1128,6 +1128,9 @@
                    (not (probe-file pending-pathname))
                    (probe-file vault-pathname))
               "recovery vaulting precedes nonloading controller creation without a reader")
+              (test-assert
+               (not (application-recovery-startup-p application))
+               "recovery startup consumes its one-shot transcript replay state")
              (test-assert
               (and (equal observed-first-work
                           '(:recovery-diagnosis "diagnose recovered crash"))
