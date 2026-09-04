@@ -713,6 +713,31 @@ spilling is unavailable, in which case the tail is discarded as before.")
   (:documentation
    "Edit RESOURCE for the model through TOOL under CONTEXT and ARGUMENTS."))
 
+(-> resource-tool--ensure-capability (resource tool-context keyword) null)
+(defun resource-tool--ensure-capability (resource context operation)
+  "Require RESOURCE to advertise OPERATION under CONTEXT."
+  (unless (member operation (resource-capabilities resource context) :test #'eq)
+    (error 'resource-operation-unsupported
+           :uri       (resource-uri resource)
+           :operation operation))
+  nil)
+
+(defmethod resource-tool-read :around
+    ((resource resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Reject model-facing reads excluded by RESOURCE's explicit capabilities."
+  (declare (ignore tool arguments))
+  (resource-tool--ensure-capability resource context ':read)
+  (call-next-method))
+
+(defmethod resource-tool-edit :around
+    ((resource resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Reject model-facing edits excluded by RESOURCE's explicit capabilities."
+  (declare (ignore tool arguments))
+  (resource-tool--ensure-capability resource context ':edit)
+  (call-next-method))
+
 (defmethod resource-tool-edit
     ((resource resource) (tool resource-edit-tool)
      (context tool-context) (arguments hash-table))

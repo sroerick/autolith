@@ -39,6 +39,11 @@
                  :identifier identifier
                  :marker     (test-resource-resolver-marker resolver)))
 
+(defmethod resource-capabilities ((resource test-resource) context)
+  "Permit fixture reads and edits under any test CONTEXT."
+  (declare (ignore resource context))
+  '(:read :edit))
+
 (defmethod resource-tool-read
     ((resource test-resource) (tool resource-read-tool)
      (context tool-context) (arguments hash-table))
@@ -106,8 +111,9 @@
                    "resource resolution dispatches to the registered resolver")
       (test-assert (eq (test-resource-resolver-last-context first-resolver) context)
                    "resource resolution passes explicit authority context unchanged")
-      (test-assert (null (resource-capabilities resource context))
-                   "abstract resources advertise no default capabilities")
+      (test-assert (equal (resource-capabilities resource context)
+                          '(:read :edit))
+                   "concrete resources advertise model-facing capabilities")
       (test-assert
        (handler-case
            (progn

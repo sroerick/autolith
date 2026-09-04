@@ -1299,14 +1299,17 @@
                           (< (search "nested/" content)
                              (search "alpha.txt" content)))
                      "resource.read returns sorted directory kinds and byte sizes"))
-                  (test-assert
-                   (not (tool-result-success-p
-                         (edit-resource
-                          first-context uri revision
-                          (list
-                           (workspace-resource-tests--operation
-                            "replace-empty" "content" "no")))))
-                   "workspace directory resources are read-only"))
+                  (let ((edit-result
+                          (edit-resource
+                           first-context uri revision
+                           (list
+                            (workspace-resource-tests--operation
+                             "replace-empty" "content" "no")))))
+                    (test-assert
+                     (and (not (tool-result-success-p edit-result))
+                          (eq (tool-result-error-code edit-result)
+                              ':operation-unsupported))
+                     "workspace directory resources are read-only through capabilities")))
                 (unwind-protect
                      (progn
                        (sb-posix:mkfifo (namestring fifo) #o600)
