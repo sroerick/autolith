@@ -409,7 +409,8 @@
     (:request
      (let ((identifier (json-get value "id" :absent))
            (method (json-get value "method")))
-       (when (and (integerp identifier)
+       (when (and (or (integerp identifier)
+                      (stringp identifier))
                   (stringp method)
                   (string= method "ping"))
          (json-object

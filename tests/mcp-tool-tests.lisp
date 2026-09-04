@@ -2358,22 +2358,23 @@
                "method" "notifications/progress"
                "params" (json-object "secret" "raw progress"))))
             "credential stdio drops unrelated notifications")
-           (let* ((request
-                    (json-object
-                     "jsonrpc" "2.0"
-                     "id" 7
-                     "method" "ping"
-                     "params" (json-object "secret" "raw request")))
-                  (projected
-                    (funcall credential-projector ':request request)))
-             (test-assert
-              (and
-               (hash-table-p projected)
-               (not (eq request projected))
-               (= (json-get projected "id") 7)
-               (string= (json-get projected "method") "ping")
-               (eq (json-get projected "params" :absent) :absent))
-              "credential stdio retains only a detached integer ping request"))
+           (dolist (identifier '(7 "ping-7"))
+             (let* ((request
+                      (json-object
+                       "jsonrpc" "2.0"
+                       "id" identifier
+                       "method" "ping"
+                       "params" (json-object "secret" "raw request")))
+                    (projected
+                      (funcall credential-projector ':request request)))
+               (test-assert
+                (and
+                 (hash-table-p projected)
+                 (not (eq request projected))
+                 (equal (json-get projected "id") identifier)
+                 (string= (json-get projected "method") "ping")
+                 (eq (json-get projected "params" :absent) :absent))
+                "credential stdio retains detached numeric and string ping requests")))
            (test-assert
             (null
              (funcall
