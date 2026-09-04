@@ -198,6 +198,35 @@
                          (string= canonical-uri "workspace:src/c%2B%2B/x.cpp")
                          (search "plus path" (tool-result-content result)))
                     "workspace URIs preserve literal plus characters")))
+              (let* ((relative "src/notes*[1]?\\x.md")
+                     (path
+                       (merge-pathnames
+                        (uiop:parse-native-namestring relative) workspace)))
+                (workspace-resource-tests--write-text path "native path")
+                (multiple-value-bind (result canonical-uri revision)
+                    (read-resource
+                     first-context "workspace:src/notes*[1]?\\x.md")
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (string=
+                         canonical-uri
+                         "workspace:src/notes%2A%5B1%5D%3F%5Cx.md")
+                        (search "native path" (tool-result-content result)))
+                   "workspace resources preserve native pathname metacharacters")
+                  (let ((edited
+                          (edit-resource
+                           first-context canonical-uri revision
+                           (list
+                            (workspace-resource-tests--operation
+                             "replace-lines"
+                             "start-line" 1
+                             "end-line" 1
+                             "content" "edited native path")))))
+                    (test-assert
+                     (and (tool-result-success-p edited)
+                          (search "edited native path"
+                                  (tool-result-content edited)))
+                     "resource.edit publishes files with native pathname metacharacters"))))
               (let ((path (merge-pathnames "descriptor-growth.txt" workspace)))
                 (workspace-resource-tests--write-text path "before")
                 (test-assert

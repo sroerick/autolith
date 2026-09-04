@@ -785,6 +785,17 @@
                  (and (tool-result-success-p result)
                       (search "(+ 1 2)" (tool-result-content result)))
                  "scratchpad URIs preserve literal plus characters"))
+              (create-resource
+               context "scratchpad:notes*[1]?\\x.lisp" "(+ 2 3)")
+              (let ((result
+                      (read-resource
+                       context "scratchpad:notes*[1]?\\x.lisp")))
+                (test-assert
+                 (and (tool-result-success-p result)
+                      (search "URI: scratchpad:notes%2A%5B1%5D%3F%5Cx.lisp"
+                              (tool-result-content result))
+                      (search "(+ 2 3)" (tool-result-content result)))
+                 "scratchpad resources preserve native pathname metacharacters"))
              (create-resource context "scratchpad:oversized.txt" "123456789")
              (let* ((*workspace-file-resource-maximum-bytes* 8)
                     (result (read-resource context "scratchpad:oversized.txt")))

@@ -66,7 +66,7 @@ or filesystem failures as absence."
                (file-error (condition)
                  (handler-case
                      (progn
-                       (sb-posix:lstat (namestring candidate))
+                      (sb-posix:lstat (uiop:native-namestring candidate))
                        (error 'tool-error
                               :message (format nil "Could not resolve workspace path ~A: ~A"
                                                candidate condition)
@@ -135,9 +135,11 @@ When *WORKSPACE-TOOL-READABLE-ROOTS* is non-NIL, reject paths outside those
 roots after resolving existing symlinks and the nearest existing parent."
   (let* ((working-directory (configuration-working-directory
                              (tool-context-configuration context)))
-         (resolved (if (non-empty-string-p path)
-                       (merge-pathnames (pathname path) working-directory)
-                       working-directory))
+          (resolved
+            (if (non-empty-string-p path)
+                (merge-pathnames (uiop:parse-native-namestring path)
+                                 working-directory)
+                working-directory))
          (canonical (workspace-tool--canonical-path resolved)))
     (when (and *workspace-tool-readable-roots*
                (not (workspace-tool--read-path-allowed-p

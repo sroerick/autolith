@@ -167,12 +167,14 @@
             (configuration-working-directory
              (tool-context-configuration context))))
          (canonical-path (workspace-tool--canonical-path path))
-         (identifier
-           (if (uiop:subpathp canonical-path working-directory)
-               (let ((relative
-                       (enough-namestring canonical-path working-directory)))
-                 (if (zerop (length relative)) "." relative))
-               (namestring canonical-path))))
+          (identifier
+            (if (uiop:subpathp canonical-path working-directory)
+                (let ((relative
+                        (uiop:native-namestring
+                         (uiop:enough-pathname
+                          canonical-path working-directory))))
+                  (if (zerop (length relative)) "." relative))
+                (uiop:native-namestring canonical-path))))
     (format nil "workspace:~A"
             (workspace-file--encode-identifier identifier))))
 
@@ -222,12 +224,13 @@
                     :tool-name "resource.read")))
     (handler-case
         (mode->kind
-         (sb-posix:stat-mode (sb-posix:stat (namestring path))))
+          (sb-posix:stat-mode
+           (sb-posix:stat (uiop:native-namestring path))))
       (sb-posix:syscall-error (condition)
         (if (= (sb-posix:syscall-errno condition) sb-posix:enoent)
             (handler-case
                 (progn
-                  (sb-posix:lstat (namestring path))
+                  (sb-posix:lstat (uiop:native-namestring path))
                   ':other)
               (sb-posix:syscall-error (link-condition)
                 (if (= (sb-posix:syscall-errno link-condition) sb-posix:enoent)
@@ -248,7 +251,7 @@
    :validation-function
    (and context
         (lambda ()
-          (workspace-tool-path context (namestring path))))))
+          (workspace-tool-path context (uiop:native-namestring path))))))
 
 (-> workspace-file--directory-entry-row (pathname string) (option string))
 (defun workspace-file--directory-entry-row (directory name)
@@ -258,7 +261,8 @@ Return NIL when NAME disappears during enumeration."
   (handler-case
       (let* ((metadata
                (sb-posix:lstat
-                (concatenate 'string (namestring directory) name)))
+                (concatenate 'string
+                             (uiop:native-namestring directory) name)))
              (mode (sb-posix:stat-mode metadata)))
         (cond
           ((sb-posix:s-isdir mode)
@@ -294,7 +298,8 @@ Return NIL when NAME disappears during enumeration."
       (handler-case
           (unwind-protect
                (progn
-                 (setf handle (sb-posix:opendir (namestring path)))
+                 (setf handle
+                       (sb-posix:opendir (uiop:native-namestring path)))
                  (loop for name = (next-name)
                        while name
                        do (if (>= entry-count
@@ -842,11 +847,15 @@ Return NIL when NAME disappears during enumeration."
 (-> workspace-file--temporary-path (pathname) pathname)
 (defun workspace-file--temporary-path (path)
   "Return a fresh same-directory temporary pathname for PATH."
-  (merge-pathnames
-   (format nil ".~A.autolith-resource-~A.tmp"
-           (file-namestring path)
-           (subseq (daemon-random-token) 0 16))
-   (uiop:pathname-directory-pathname path)))
+  (let ((native-file
+          (uiop:native-namestring
+           (make-pathname :directory nil :defaults path))))
+    (merge-pathnames
+     (uiop:parse-native-namestring
+      (format nil ".~A.autolith-resource-~A.tmp"
+              native-file
+              (subseq (daemon-random-token) 0 16)))
+     (uiop:pathname-directory-pathname path))))
 
 (-> workspace-file--replacement-octets (string) (simple-array (unsigned-byte 8) (*)))
 (defun workspace-file--replacement-octets (content)
@@ -864,13 +873,15 @@ Return NIL when NAME disappears during enumeration."
 (-> workspace-file--rename-overwriting-target (pathname pathname) null)
 (defun workspace-file--rename-overwriting-target (source target)
   "Atomically replace exact TARGET with SOURCE without pathname defaulting."
-  (sb-posix:rename (namestring source) (namestring target))
+  (sb-posix:rename (uiop:native-namestring source)
+                   (uiop:native-namestring target))
   nil)
 
 (-> workspace-file--link-new-target (pathname pathname) null)
 (defun workspace-file--link-new-target (source target)
   "Atomically publish SOURCE as absent TARGET without overwriting a race."
-  (sb-posix:link (namestring source) (namestring target))
+  (sb-posix:link (uiop:native-namestring source)
+                 (uiop:native-namestring target))
   (delete-file source)
   nil)
 
@@ -895,10 +906,11 @@ Return NIL when NAME disappears during enumeration."
     (write-sequence octets stream)
     (finish-output stream))
   (ignore-errors
-    (sb-posix:chmod (namestring temporary)
+    (sb-posix:chmod (uiop:native-namestring temporary)
                     (logand #o7777
                             (sb-posix:stat-mode
-                             (sb-posix:stat (namestring target))))))
+                             (sb-posix:stat
+                              (uiop:native-namestring target))))))
   nil)
 
 (-> workspace-file--same-observation-p

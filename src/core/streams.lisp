@@ -29,74 +29,70 @@
 
 VALIDATION-FUNCTION runs after opening the descriptor and before confirming
 that PATH still names the opened object."
-  (labels ((fail (control &rest arguments)
-             (error 'tool-error
-                    :message (apply #'format nil control arguments)
-                    :tool-name tool-name))
+  (let ((native-path (uiop:native-namestring path)))
+    (labels ((fail (control &rest arguments)
+               (error 'tool-error
+                      :message (apply #'format nil control arguments)
+                      :tool-name tool-name))
 
-           (changed ()
-             (fail "~A ~A changed while it was being read. Reread it and retry."
-                   description
-                   (namestring path))))
-    (let ((file-descriptor nil)
-          (stream nil))
-      (unwind-protect
-           (handler-case
-               (progn
-                 (setf file-descriptor
-                       (sb-posix:open (namestring path)
-                                      (logior sb-posix:o-rdonly
-                                              sb-posix:o-nonblock
-                                              sb-posix:o-nofollow)))
-                 (let ((stat (sb-posix:fstat file-descriptor)))
-                   (unless (sb-posix:s-isreg (sb-posix:stat-mode stat))
-                     (fail "~A ~A is not a regular file."
-                           description
-                           (namestring path)))
-                   (when (> (sb-posix:stat-size stat) maximum-bytes)
-                     (fail "~A ~A is ~:D bytes; ~A reads exact UTF-8 files only up to ~:D bytes."
-                           description
-                           (namestring path)
-                           (sb-posix:stat-size stat)
-                           tool-name
-                           maximum-bytes))
-                   (when validation-function
-                     (funcall validation-function))
-                   (unless (file-stat--same-object-p
-                            stat
-                            (sb-posix:stat (namestring path)))
-                     (changed))
-                   (let* ((length (sb-posix:stat-size stat))
-                          (octets (make-array length
-                                              :element-type '(unsigned-byte 8))))
-                     (setf stream
-                           (sb-sys:make-fd-stream
-                            file-descriptor
-                            :input t
-                            :element-type '(unsigned-byte 8)
-                            :buffering ':none
-                            :auto-close nil))
-                     (unless (= (read-sequence octets stream) length)
-                       (changed))
-                     (unless (file-stat--stable-p
+             (changed ()
+               (fail "~A ~A changed while it was being read. Reread it and retry."
+                     description native-path)))
+      (let ((file-descriptor nil)
+            (stream nil))
+        (unwind-protect
+             (handler-case
+                 (progn
+                   (setf file-descriptor
+                         (sb-posix:open native-path
+                                        (logior sb-posix:o-rdonly
+                                                sb-posix:o-nonblock
+                                                sb-posix:o-nofollow)))
+                   (let ((stat (sb-posix:fstat file-descriptor)))
+                     (unless (sb-posix:s-isreg (sb-posix:stat-mode stat))
+                       (fail "~A ~A is not a regular file."
+                             description native-path))
+                     (when (> (sb-posix:stat-size stat) maximum-bytes)
+                       (fail "~A ~A is ~:D bytes; ~A reads exact UTF-8 files only up to ~:D bytes."
+                             description
+                             native-path
+                             (sb-posix:stat-size stat)
+                             tool-name
+                             maximum-bytes))
+                     (when validation-function
+                       (funcall validation-function))
+                     (unless (file-stat--same-object-p
                               stat
-                              (sb-posix:fstat file-descriptor))
+                              (sb-posix:stat native-path))
                        (changed))
-                     (handler-case
-                         (sb-ext:octets-to-string octets :external-format ':utf-8)
-                       (error ()
-                         (fail "~A ~A is not valid UTF-8 text."
-                               description
-                               (namestring path)))))))
-             (sb-posix:syscall-error (condition)
-               (fail "Could not read ~A ~A as an exact regular file: ~A"
-                     description
-                     (namestring path)
-                     condition)))
-        (when stream
-          (close stream))
-        (when file-descriptor
-          (ignore-errors (sb-posix:close file-descriptor)))))))
+                     (let* ((length (sb-posix:stat-size stat))
+                            (octets (make-array length
+                                                :element-type '(unsigned-byte 8))))
+                       (setf stream
+                             (sb-sys:make-fd-stream
+                              file-descriptor
+                              :input t
+                              :element-type '(unsigned-byte 8)
+                              :buffering ':none
+                              :auto-close nil))
+                       (unless (= (read-sequence octets stream) length)
+                         (changed))
+                       (unless (file-stat--stable-p
+                                stat
+                                (sb-posix:fstat file-descriptor))
+                         (changed))
+                       (handler-case
+                           (sb-ext:octets-to-string octets :external-format ':utf-8)
+                         (error ()
+                           (fail "~A ~A is not valid UTF-8 text."
+                                 description native-path))))))
+               (sb-posix:syscall-error (condition)
+                 (fail "Could not read ~A ~A as an exact regular file: ~A"
+                       description native-path condition)))
+          (when stream
+            (close stream))
+          (when file-descriptor
+            (ignore-errors (sb-posix:close file-descriptor))))))))
 
 
 ;;;; -- Bounded Text Windows --

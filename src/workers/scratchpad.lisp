@@ -71,7 +71,7 @@
                (lisp-scratchpad-root context))))
     (when (string= relative-path ".")
       (return-from lisp-scratchpad-path root))
-    (let* ((relative  (pathname relative-path))
+    (let* ((relative  (uiop:parse-native-namestring relative-path))
            (directory (pathname-directory relative)))
       (when (or (uiop:absolute-pathname-p relative)
                 (wild-pathname-p relative)
@@ -94,7 +94,8 @@
 (-> scratchpad-resource--canonical-uri (pathname pathname) string)
 (defun scratchpad-resource--canonical-uri (root path)
   "Return PATH's canonical scratchpad URI relative to ROOT."
-  (let ((relative (enough-namestring path root)))
+  (let ((relative
+          (uiop:native-namestring (uiop:enough-pathname path root))))
     (format nil "scratchpad:~A"
             (workspace-file--encode-identifier
              (if (zerop (length relative)) "." relative)))))
