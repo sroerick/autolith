@@ -1333,10 +1333,13 @@ durable summary remains a handoff for another provider family."
                      :compaction-p t))
            (summary (provider-result-assistant-text result)))
       (unless (non-empty-string-p summary)
-        (error 'agent-loop-error
+        (error 'provider-protocol-error
                :message "Compaction produced no summary text."
-               :conversation-id (conversation-identifier conversation)
-               :request-number nil))
+               :status nil
+               :code nil
+               :request-id nil
+               :response-id (provider-result-response-id result)
+               :response nil))
       (if native-item
           (conversation-append-native-compaction
            conversation native-item

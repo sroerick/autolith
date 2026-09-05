@@ -7877,6 +7877,54 @@
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-protocol-failure-is-recoverable () null)
+(defun test-provider-protocol-failure-is-recoverable ()
+  "Test provider protocol failures do not enter fatal application recovery."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration
+                                :identifier "recoverable-provider-protocol"))
+         (registry (make-default-tool-registry))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :conversation conversation
+                          :tool-registry registry))
+         (handled-condition nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'application-run-message
+            (lambda (active-application input &rest arguments)
+              (declare (ignore active-application input arguments))
+              (error 'provider-protocol-error
+                     :message "Compaction produced no summary text."
+                     :status nil
+                     :code nil
+                     :request-id nil
+                     :response-id "compact-empty"
+                     :response nil)))
+           (list
+            'application-handle-expected-error
+            (lambda (active-application condition)
+              (declare (ignore active-application))
+              (setf handled-condition condition))))
+          (lambda ()
+            (test-assert
+             (eq (application--run-message-input application "new question")
+                 ':failed)
+             "provider protocol failures return the ordinary failed action")
+            (test-assert
+             (and (typep handled-condition 'provider-protocol-error)
+                  (string= (provider-error-response-id handled-condition)
+                           "compact-empty"))
+             "provider protocol failures use expected error presentation")))
+      (ignore-errors (tool-registry-close-runtime-state registry))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-failed-turn-publishes-durable-wreckage () null)
 (defun test-failed-turn-publishes-durable-wreckage ()
   "Test a failed model turn repairs calls and publishes its recoverable prefix."
@@ -8169,6 +8217,7 @@
   (test-chunked-transcript-replay)
   (test-hidden-reasoning-does-not-crowd-replay)
   (test-paged-transcript-history)
+  (test-provider-protocol-failure-is-recoverable)
   (test-compaction-presentation-lifecycle)
   (test-streaming-presentation)
   (test-provider-retry-presentation)

@@ -2226,6 +2226,56 @@
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-compaction-missing-summary () null)
+(defun test-agent-compaction-missing-summary ()
+  "Test empty compaction output is a recoverable provider protocol failure."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration
+                                       :identifier "agent-empty-compaction"))
+                (provider
+                  (make-instance
+                   'scripted-provider
+                   :results
+                   (list (agent-test-result "compact-empty" nil
+                                            :turn-completion ':end))))
+                (agent (agent-create :configuration configuration
+                                     :provider provider
+                                     :conversation conversation
+                                     :tool-registry (agent-test-registry)
+                                     :worker nil))
+                (records-before
+                  (conversation--read-records
+                   (conversation-pathname conversation)))
+                (failure
+                  (handler-case
+                      (progn
+                        (agent-compact-conversation
+                         agent (make-instance 'agent-observer))
+                        nil)
+                    (provider-protocol-error (condition)
+                      condition))))
+           (test-assert
+            (and failure
+                 (string= (autolith-error-message failure)
+                          "Compaction produced no summary text.")
+                 (string= (provider-error-response-id failure)
+                          "compact-empty")
+                 (null (provider-error-status failure))
+                 (null (provider-error-code failure))
+                 (null (provider-error-request-id failure))
+                 (null (provider-error-response failure)))
+            "empty compaction output is a structured provider protocol error")
+           (test-assert
+            (equal records-before
+                   (conversation--read-records
+                    (conversation-pathname conversation)))
+            "failed compaction persists no partial summary state"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-compaction () null)
 (defun test-agent-compaction ()
   "Test threshold-triggered compaction through the scripted provider."
@@ -2820,6 +2870,7 @@
   (test-agent-unbounded-tool-calls)
   (test-agent-default-turn-has-no-step-guillotine)
   (test-agent-skill-provider-barrier)
+  (test-agent-compaction-missing-summary)
   (test-agent-compaction)
   (test-agent-native-compaction)
   (test-agent-parallel-tool-wave)
