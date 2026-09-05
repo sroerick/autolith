@@ -552,7 +552,8 @@ name is bounded here, because only the identifier derived from it was."
 (defun task-job-response-promotion-pending-count (job)
   "Return JOB's accepted steering prompts still awaiting a verbal response."
   (with-lock-held ((task-job-steering-lock job))
-    (deque-count (task-job-response-promotion-identifiers job))))
+    (+ (deque-count (task-job-response-promotion-pending-identifiers job))
+       (deque-count (task-job-response-promotion-identifiers job)))))
 
 (-> task-job-enqueue-steering
     (task-job (or string user-message-input)
@@ -561,8 +562,8 @@ name is bounded here, because only the identifier derived from it was."
 (defun task-job-enqueue-steering (job content &key (promote-response-p nil))
   "Atomically accept CONTENT for running JOB, returning an entry and reason.
 
-When PROMOTE-RESPONSE-P is true, acceptance also reserves one FIFO token for
-JOB's first later durable verbal response."
+When PROMOTE-RESPONSE-P is true, durable acknowledgment reserves one FIFO token
+for JOB's next verbal response."
   (block nil
     (let* ((copy (user-message-input-copy content))
            (characters (length (user-message-input-text copy))))
@@ -589,8 +590,10 @@ JOB's first later durable verbal response."
                       (task-job-steering-in-flight-items job)))))
             (when (or (>= count *task-steering-maximum-items*)
                       (and promote-response-p
-                           (>= (deque-count
-                                (task-job-response-promotion-identifiers job))
+                           (>= (+ (deque-count
+                                   (task-job-response-promotion-pending-identifiers job))
+                                  (deque-count
+                                   (task-job-response-promotion-identifiers job)))
                                *task-response-promotion-maximum-items*))
                       (> (+ retained-characters characters)
                          *task-steering-maximum-total-characters*))
@@ -602,7 +605,7 @@ JOB's first later durable verbal response."
             (deque-push-back (task-job-steering-items job) entry)
             (when promote-response-p
               (deque-push-back
-               (task-job-response-promotion-identifiers job)
+               (task-job-response-promotion-pending-identifiers job)
                (agent-steering-input-identifier entry)))
             (values entry ':accepted)))))))
 
@@ -618,15 +621,27 @@ JOB's first later durable verbal response."
 
 (-> task-job-acknowledge-steering (task-job non-empty-string) boolean)
 (defun task-job-acknowledge-steering (job identifier)
-  "Forget one in-flight steering IDENTIFIER after its child append is durable."
+  "Forget one in-flight steering IDENTIFIER and activate its response promotion."
   (with-lock-held ((task-job-steering-lock job))
-    (nth-value
-     1
-     (deque-delete
-      identifier
-      (task-job-steering-in-flight-items job)
-      :key #'agent-steering-input-identifier
-      :test #'string=))))
+    (multiple-value-bind (entry present-p)
+        (deque-delete
+         identifier
+         (task-job-steering-in-flight-items job)
+         :key #'agent-steering-input-identifier
+         :test #'string=)
+      (declare (ignore entry))
+      (when present-p
+        (multiple-value-bind (pending-identifier promoted-p)
+            (deque-delete
+             identifier
+             (task-job-response-promotion-pending-identifiers job)
+             :test #'string=)
+          (declare (ignore pending-identifier))
+          (when promoted-p
+            (deque-push-back
+             (task-job-response-promotion-identifiers job)
+             identifier))))
+      present-p)))
 
 (-> task-job-note-verbal-response (task-job string timestamp) boolean)
 (defun task-job-note-verbal-response (job text timestamp)
@@ -662,6 +677,7 @@ JOB's first later durable verbal response."
       (setf (task-job-steering-closed-p job) t)
       (deque-clear (task-job-steering-items job))
       (deque-clear (task-job-steering-in-flight-items job))
+       (deque-clear (task-job-response-promotion-pending-identifiers job))
       (deque-clear (task-job-response-promotion-identifiers job))
       count)))
 

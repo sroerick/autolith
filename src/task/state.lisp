@@ -342,6 +342,11 @@ nesting depth, and lifecycle listeners."))
      :reader task-job-steering-in-flight-items
      :type deque
      :documentation "Steering entries drained but not yet durably acknowledged.")
+     (response-promotion-pending-identifiers
+      :initform (make-deque)
+      :reader task-job-response-promotion-pending-identifiers
+      :type deque
+      :documentation "Promoted steering identifiers waiting for durable acknowledgment.")
     (response-promotion-identifiers
      :initform (make-deque)
      :reader task-job-response-promotion-identifiers

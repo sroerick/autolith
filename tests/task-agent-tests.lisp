@@ -1438,6 +1438,22 @@
                                   (= (task-job-response-promotion-pending-count job)
                                      2))
                              "promoted steering reserves one FIFO token per accepted prompt")
+                             (task-job-note-agent-status
+                              job ':assistant-response-persisted
+                              (list :text "pre-steering answer" :time first-time))
+                             (test-assert
+                              (and (null events)
+                                   (= (task-job-response-promotion-pending-count job)
+                                      2))
+                              "a response already in flight does not consume unacknowledged promotions")
+                             (task-job-take-steering job)
+                             (test-assert
+                              (and
+                               (task-job-acknowledge-steering
+                                job (agent-steering-input-identifier first))
+                               (task-job-acknowledge-steering
+                                job (agent-steering-input-identifier second)))
+                              "durable steering acknowledgments activate response promotions")
                             (task-job-note-agent-status
                              job ':provider-request-started
                              (list :request-number 1))
