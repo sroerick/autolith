@@ -679,7 +679,8 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (when (plusp (length declarations))
       (setf (gethash "tools" inner)
             (json-array (json-object "functionDeclarations" declarations))))
-    (when *provider-maximum-output-tokens*
+    (when (and *provider-maximum-output-tokens*
+               (provider-output-ceiling-p provider))
       (setf (gethash "maxOutputTokens" generation)
             *provider-maximum-output-tokens*))
     (let ((effort (configuration-reasoning-effort configuration)))

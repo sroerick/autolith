@@ -288,23 +288,22 @@ request accounting, so disabling it keeps the budget invariant exact."
 
 Each request atomically reserves one call and an output tranche before it
 starts, so an exhausted subtree stops the frame's agent loop mid-turn and
-concurrent frames can never overspend the pool. The reserved tranche is
-installed as the request's provider output ceiling through the caller's
-dynamic binding. The second value flushes an unsettled tranche after an
-aborted turn."
+concurrent frames can never overspend the pool. The callback returns the
+reserved tranche to the agent as the next request's output ceiling. The second
+value flushes an unsettled tranche after an aborted turn."
   (let ((tranche nil)
         (request-count 0))
     (values
      (lambda (status details)
        (case status
          (:provider-request-started
-          (setf tranche (rlm-budget-acquire-request budget :task task)
-                *provider-maximum-output-tokens* tranche)
+          (setf tranche (rlm-budget-acquire-request budget :task task))
           (rlm--note-activity
            activity-callback
            (format nil "request ~D · ~D calls left"
                    (incf request-count)
-                   (rlm-budget-remaining-calls budget))))
+                   (rlm-budget-remaining-calls budget)))
+          tranche)
          (:provider-request-completed
           (when tranche
             (rlm-budget-settle-output budget (shiftf tranche nil)
@@ -313,8 +312,7 @@ aborted turn."
          (:tool-call-progress
           (let ((activity (getf details ':activity)))
             (when (non-empty-string-p activity)
-              (rlm--note-activity activity-callback activity)))))
-       nil)
+              (rlm--note-activity activity-callback activity))))))
      (lambda ()
        (when tranche
          (rlm-budget-settle-output budget (shiftf tranche nil) nil))
@@ -349,8 +347,7 @@ aborted turn."
                 (let ((*agent-restricted-maximum-tool-rounds*
                         (max 0
                              (min *rlm-frame-maximum-tool-rounds*
-                                  (1- (rlm-budget-remaining-calls budget)))))
-                      (*provider-maximum-output-tokens* nil))
+                                  (1- (rlm-budget-remaining-calls budget))))))
                   (unwind-protect
                        (agent-run-user-turn agent request
                                             :observer observer

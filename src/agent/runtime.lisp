@@ -172,9 +172,10 @@
 (defgeneric agent-observer-reasoning (observer text)
   (:documentation "Present one visible reasoning TEXT fragment through OBSERVER."))
 
-(-> agent-observer-status (agent-observer keyword list) null)
+(-> agent-observer-status (agent-observer keyword list) t)
 (defgeneric agent-observer-status (observer status details)
-  (:documentation "Present STATUS and portable DETAILS through OBSERVER."))
+  (:documentation
+   "Present STATUS and portable DETAILS, returning a positive request output ceiling or NIL."))
 
 (-> agent-observer-take-steering (agent-observer) list)
 (defgeneric agent-observer-take-steering (observer)
@@ -274,8 +275,7 @@
            (type list details))
   (let ((callback (callback-agent-observer-status-callback observer)))
     (when callback
-      (funcall callback status details)))
-  nil)
+      (funcall callback status details))))
 
 (defmethod agent-observer-take-steering ((observer callback-agent-observer))
   "Drain steering messages through OBSERVER's configured callback."
@@ -1364,7 +1364,8 @@ durable summary remains a handoff for another provider family."
         (storm-state (agent-tool-storm-state-create))
         (request-number 0)
         (tool-rounds 0)
-        (tool-calls 0))
+        (tool-calls 0)
+        (maximum-output-tokens nil))
     (loop
       (when (>= request-number *agent-maximum-provider-requests-per-turn*)
         (error 'agent-loop-error
@@ -1385,11 +1386,16 @@ durable summary remains a handoff for another provider family."
          (agent-tool-registry agent)
          :only-dirty-p t))
       (incf request-number)
-      (agent-observer-status
-       observer
-       :provider-request-started
-       (list :request-number request-number
-             :tool-rounds tool-rounds))
+      (let ((output-limit
+              (agent-observer-status
+               observer
+               :provider-request-started
+               (list :request-number request-number
+                     :tool-rounds tool-rounds))))
+        (setf maximum-output-tokens
+              (and (integerp output-limit)
+                   (plusp output-limit)
+                   output-limit)))
       (let* ((conversation (agent-conversation agent))
              (tool-schemas-p
                (and tools-p
@@ -1400,6 +1406,7 @@ durable summary remains a handoff for another provider family."
                (handler-case
                    (let ((*provider-hosted-tools-enabled-p*
                             (not tool-restriction-p))
+                         (*provider-maximum-output-tokens* maximum-output-tokens)
                           (*request-context-hurry-up-p*
                             (agent-hurry-up-p agent))
                           (*context-request-contributions*

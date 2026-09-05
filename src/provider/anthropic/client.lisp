@@ -30,6 +30,11 @@
   (declare (ignore provider))
   ':anthropic)
 
+(defmethod provider-output-ceiling-p ((provider anthropic-api-key-provider))
+  "Anthropic Messages requires and accepts max_tokens."
+  (declare (ignore provider))
+  t)
+
 (defmethod provider-retryable-status-p
     ((provider anthropic-api-key-provider) (status integer) headers)
   "Retry Anthropic's nonstandard overload status in addition to shared statuses."
@@ -476,10 +481,11 @@ second value is consumed only after a completed response."
            (request
              (json-object
               "model" (configuration-model configuration)
-              "max_tokens" (if *provider-maximum-output-tokens*
-                               (min *provider-maximum-output-tokens*
-                                    *anthropic-maximum-output-tokens*)
-                               *anthropic-maximum-output-tokens*)
+               "max_tokens" (if (and *provider-maximum-output-tokens*
+                                     (provider-output-ceiling-p provider))
+                                (min *provider-maximum-output-tokens*
+                                     *anthropic-maximum-output-tokens*)
+                                *anthropic-maximum-output-tokens*)
               "messages" (coerce messages 'vector)
               "stream" t))
            (system

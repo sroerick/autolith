@@ -13,13 +13,18 @@
          :activity-callback
          (lambda (activity)
            (push activity activities)))
+      (test-assert
+       (= (funcall status-callback ':provider-request-started nil) 25)
+       "framed inference returns the reserved output tranche to the agent")
       (funcall status-callback
                ':tool-call-progress
                (list ':activity "rlm.infer · request 1 · 1 call left"))
       (funcall flush-tranche)
       (test-assert
-       (equal activities '("rlm.infer · request 1 · 1 call left"))
-       "framed inference forwards nested RLM tool progress")))
+       (equal activities
+              '("rlm.infer · request 1 · 1 call left"
+                "request 1 · 1 calls left"))
+       "framed inference forwards provider and nested RLM progress")))
   nil)
 
 (-> test-rlm-context-designators () null)

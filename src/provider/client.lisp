@@ -556,7 +556,7 @@ so authentication can bootstrap credentials before model discovery."
 (defparameter *provider-hosted-tools-enabled-p* t
   "Whether the current provider request may advertise hosted provider tools.")
 
-(defvar *provider-maximum-output-tokens* nil
+(defparameter *provider-maximum-output-tokens* nil
   "An optional output token ceiling for the current provider request.
 
 Inference frames bind this to their reserved output tranche so one
