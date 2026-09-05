@@ -151,6 +151,26 @@
                   "task" "Enter the blocking ordinary tool.")
      nil
      :blocking-role-p t))
+    (let* ((orchestrator (task-tests--orchestrator))
+           (synchronous
+             (task-tests--make-job
+              orchestrator :identifier "cleanup-synchronous" :detached-p nil))
+           (detached
+             (task-tests--make-job
+              orchestrator :identifier "cleanup-detached" :detached-p t))
+           (cancelled nil))
+      (test-call-with-function-replacements
+       (list
+        (list 'task-job-cancel
+              (lambda (job reason)
+                (declare (ignore reason))
+                (push job cancelled))))
+       (lambda ()
+         (task-run--cancel-synchronous-jobs
+          (list synchronous detached))))
+      (test-assert
+       (equal cancelled (list synchronous))
+       "task.run failure cleanup preserves deliberately detached jobs"))
   nil)
 
 (-> test-task-running-cancellation () null)

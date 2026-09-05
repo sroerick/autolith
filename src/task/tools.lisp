@@ -828,6 +828,14 @@ Only the current primary conversation's artifact root is searched."
                    :jobs selected)))
       (values form (task--write-readable-sexp form :pretty-p t)))))
 
+(-> task-run--cancel-synchronous-jobs (list) null)
+(defun task-run--cancel-synchronous-jobs (jobs)
+  "Cancel unfinished synchronous JOBS after task.run exits non-locally."
+  (dolist (job jobs)
+    (unless (task-job-detached-p job)
+      (task-job-cancel job :signal)))
+  nil)
+
 (defmethod tool-execute ((tool task-run-tool) (context tool-context) arguments)
   "Validate, fan out, and aggregate synchronous and detached child agents."
   (let ((parent (tool-context-agent context)))
@@ -899,9 +907,8 @@ Only the current primary conversation's artifact root is searched."
                     :success-p success-p)
                  (setf completed-p t)
                  (task-tool-result content form success-p))))
-          (unless completed-p
-            (dolist (job jobs)
-              (task-job-cancel job :signal))))))))
+           (unless completed-p
+             (task-run--cancel-synchronous-jobs jobs)))))))
 
 (defmethod tool-execute
     ((tool task-agents-tool) (context tool-context) arguments)
