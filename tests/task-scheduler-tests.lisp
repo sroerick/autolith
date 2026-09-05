@@ -2467,6 +2467,22 @@ exactly that race."
                                  collect (format nil "tool.~D" index))
                            (list "lisp.eval"))))
               "tool completion clears timing and preserves the newest eight tools"))
+             (let ((definition-summary
+                     (task-job-definition-summary running)))
+               (with-lock-held ((cl-jobpond::job--lock running))
+                 (setf (task-job-definition-summary running)
+                       '(:name "activity" :source :test)
+                       (task-job-definition running) nil))
+               (unwind-protect
+                    (let ((snapshot (task-progress-snapshot running)))
+                      (test-assert
+                       (and (string= (getf snapshot :agent) "activity")
+                            (null (getf snapshot :model)))
+                       "progress snapshots tolerate terminal field compaction"))
+                 (with-lock-held ((cl-jobpond::job--lock running))
+                   (setf (task-job-definition running) definition
+                         (task-job-definition-summary running)
+                         definition-summary))))
            (task-tests--publish-terminal
             queued
             ':completed

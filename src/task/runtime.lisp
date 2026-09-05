@@ -713,46 +713,55 @@ handed rather than storing a second copy."
         (getf (task-job-definition-summary job) :source))))
 
 (-> task-progress--snapshot
-    (task-job &key (:parent t) (:result t) (:ended-at t))
+    (task-job &key (:result t) (:ended-at t))
     list)
-(defun task-progress--snapshot (job &key parent result ended-at)
+(defun task-progress--snapshot (job &key result ended-at)
   "Return JOB progress using lifecycle values captured under the job lock."
-  (let ((progress (task-job-progress job)))
-    (with-lock-held ((task-progress-lock progress))
-      (let ((now (or ended-at (get-internal-real-time))))
-        (list :id (job-identifier job)
-              :agent (task-job-agent-name job)
-              :status (task-progress-status progress)
-              :current-tool (task-progress-current-tool progress)
-              :current-tool-duration-ms
-              (and (task-progress-current-tool-started-at progress)
-                   (task--milliseconds-between
-                    (task-progress-current-tool-started-at progress)
-                    now))
-              :recent-tools
-              (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
-              :recent-output (copy-seq (task-progress-output-tail progress))
-              :request-count (task-progress-request-count progress)
-              :usage (copy-tree (task-progress-usage progress))
-              :duration-ms
-              (and (task-progress-started-at progress)
-                   (task--milliseconds-between
-                    (task-progress-started-at progress)
-                    now))
-              :model
-              (or (getf result :model)
-                  (and parent
-                       (configuration-model
-                        (task-configuration-for-definition
-                         (agent-configuration parent)
-                         (task-job-definition job))))))))))
+  (multiple-value-bind (parent definition agent-name)
+      (with-lock-held ((cl-jobpond::job--lock job))
+        (let ((definition (task-job-definition job)))
+          (values
+           (task-job-parent-agent job)
+           definition
+           (if definition
+               (task-agent-definition-name definition)
+               (getf (task-job-definition-summary job) :name)))))
+    (let ((progress (task-job-progress job)))
+      (with-lock-held ((task-progress-lock progress))
+        (let ((now (or ended-at (get-internal-real-time))))
+          (list :id (job-identifier job)
+                :agent agent-name
+                :status (task-progress-status progress)
+                :current-tool (task-progress-current-tool progress)
+                :current-tool-duration-ms
+                (and (task-progress-current-tool-started-at progress)
+                     (task--milliseconds-between
+                      (task-progress-current-tool-started-at progress)
+                      now))
+                :recent-tools
+                (coerce (deque->vector (task-progress-recent-tools progress)) 'list)
+                :recent-output (copy-seq (task-progress-output-tail progress))
+                :request-count (task-progress-request-count progress)
+                :usage (copy-tree (task-progress-usage progress))
+                :duration-ms
+                (and (task-progress-started-at progress)
+                     (task--milliseconds-between
+                      (task-progress-started-at progress)
+                      now))
+                :model
+                (or (getf result :model)
+                    (and parent
+                         definition
+                         (configuration-model
+                          (task-configuration-for-definition
+                           (agent-configuration parent)
+                           definition))))))))))
 
 (-> task-progress-snapshot (task-job) list)
 (defun task-progress-snapshot (job)
   "Return a coherent portable snapshot of JOB's current progress."
   (let ((snapshot (job-snapshot job)))
     (task-progress--snapshot job
-                             :parent (task-job-parent-agent job)
                              :result (getf snapshot :result)
                              :ended-at (getf snapshot :ended-at))))
 
@@ -763,20 +772,22 @@ handed rather than storing a second copy."
 The lifecycle fields are read once through the pool snapshot so they cannot mix
 values from either side of a terminal transition."
   (let* ((snapshot (job-snapshot job))
-         (result (copy-tree (getf snapshot :result))))
+         (result (copy-tree (getf snapshot :result)))
+         (agent-name
+           (with-lock-held ((cl-jobpond::job--lock job))
+             (task-job-agent-name job))))
     (list :job-id (session-job-identifier job)
           :execution-id (task-job-execution-identifier job)
           :type :task
           :state (getf snapshot :state)
           :pending-prompt-count (task-job-steering-pending-count job)
           :detached (task-job-detached-p job)
-          :agent (task-job-agent-name job)
+          :agent agent-name
           :assignment
           (bounded-string (getf (task-job-item job) :task)
                           :limit *task-retained-assignment-limit*)
           :progress
           (task-progress--snapshot job
-                                   :parent (task-job-parent-agent job)
                                    :result result
                                    :ended-at (getf snapshot :ended-at))
           :result result
