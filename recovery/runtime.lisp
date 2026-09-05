@@ -747,8 +747,19 @@ generation. Its validator carries this image's own stricter checks."
     (recovery-context list)
     list)
 (defun recovery-normalize-forwarded-arguments (context arguments)
-  "Return application ARGUMENTS with an explicit resume identifier resolved."
-  (let ((normalized (copy-list arguments)))
+  "Return restart-safe application ARGUMENTS with an explicit resume ID resolved."
+  (let ((normalized nil)
+        (remaining arguments))
+    (loop while remaining
+          for argument = (pop remaining)
+          do (if (and (stringp argument)
+                      (string= argument "--localgroup-handoff"))
+                 ;; This one-shot startup record was claimed before the active
+                 ;; process failed and cannot be reused by recovery.
+                 (when remaining
+                   (pop remaining))
+                 (push argument normalized)))
+    (setf normalized (nreverse normalized))
     (loop for remaining on normalized
           when (and (stringp (first remaining))
                     (string= (first remaining) "resume")

@@ -199,6 +199,20 @@
              (test-assert
               (string= (third arguments) legacy)
               "recovery does not mutate the caller's forwarded arguments"))
+            (let ((arguments
+                    (list "--permissions" "full"
+                          "--localgroup-handoff" "/state/consumed.sexp"
+                          "resume" legacy)))
+              (test-assert
+               (equal (recovery-normalize-forwarded-arguments context arguments)
+                      (list "--permissions" "full" "resume" current))
+               "recovery removes consumed localgroup handoff arguments")
+              (test-assert
+               (equal arguments
+                      (list "--permissions" "full"
+                            "--localgroup-handoff" "/state/consumed.sexp"
+                            "resume" legacy))
+               "handoff removal does not mutate the caller's arguments"))
            (recovery-tests--write-form
             migration-pathname
             (recovery-tests--migration-record
