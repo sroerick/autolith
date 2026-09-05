@@ -3622,18 +3622,18 @@
                     "boundary"
                     (mcp-tools--identifier-map
                      '("boundary")
-                     :limit 18))))
+                     :limit 12))))
              (test-assert
-              (= (length minimum) 18)
+              (= (length minimum) 12)
               "the minimum MCP provider identifier limit preserves one base character"))
            (test-assert
             (handler-case
                 (progn
-                  (mcp-tools--identifier-map '("boundary") :limit 17)
+                  (mcp-tools--identifier-map '("boundary") :limit 11)
                   nil)
               (configuration-error ()
                 t))
-            "an MCP provider identifier limit below the 64-bit suffix fails closed")
+            "an MCP provider identifier limit below the compact suffix fails closed")
            (let* ((namespace
                     (gethash
                      "braiins-docs"
@@ -3653,6 +3653,8 @@
                          *mcp-provider-identifier-limit*)
                      (<= (length name)
                          *mcp-provider-identifier-limit*)
+                     (uiop:string-prefix-p "mcp__braiins_" namespace)
+                     (uiop:string-prefix-p "list_docs_" name)
                      (= (length (mcp-tools--identifier-hash "braiins-docs"))
                         16)
                      (= (length (mcp-tools--identifier-hash "list_docs"))
@@ -3661,7 +3663,7 @@
                          *openai-compatible-wire-tool-name-maximum-length*)
                      (string= decoded-namespace namespace)
                      (string= decoded-name name))
-                "MCP identifiers keep 64-bit identities in one reversible wire name")))
+                "MCP identifiers retain readable names and reversible stable identities")))
            (let* ((registry (make-instance 'tool-registry))
                   (conversation
                     (conversation-create

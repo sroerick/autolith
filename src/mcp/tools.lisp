@@ -565,6 +565,9 @@
 (defparameter *mcp-provider-identifier-limit* 23
   "The maximum MCP namespace or tool identifier length for Chat Completions.")
 
+(defparameter *mcp-provider-identifier-hash-characters* 10
+  "The hexadecimal hash characters retained in one readable MCP identifier.")
+
 (defparameter *mcp-maximum-retained-input-schema-bytes* (* 8 1024 1024)
   "The maximum encoded input schema bytes retained across one MCP manager.")
 
@@ -657,13 +660,20 @@
              (length (remove-duplicates raw-names :test #'string=)))
     (error 'configuration-error
            :message "An MCP server advertised duplicate raw tool names."))
-  (when (< limit 18)
+  (when (< limit (+ *mcp-provider-identifier-hash-characters* 2))
     (error 'configuration-error
-           :message "An MCP provider identifier limit must be at least 18."))
+           :message
+           (format nil
+                   "An MCP provider identifier limit must be at least ~D."
+                   (+ *mcp-provider-identifier-hash-characters* 2))))
   (let ((used (make-hash-table :test #'equal))
         (result (make-hash-table :test #'equal)))
     (dolist (raw raw-names)
-      (let* ((suffix (format nil "_~A" (mcp-tools--identifier-hash raw)))
+      (let* ((hash (mcp-tools--identifier-hash raw))
+             (suffix
+               (format nil
+                       "_~A"
+                       (subseq hash 0 *mcp-provider-identifier-hash-characters*)))
              (base
                (mcp-tools--identifier-base
                 raw
