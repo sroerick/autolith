@@ -423,6 +423,16 @@ configuration can be created before executable user initialization loads."
     :reader configuration-cache-root
     :type pathname
     :documentation "The root for replaceable caches and temporary artifacts.")
+    (preferences-lock
+     :initform (make-lock "Autolith preferences cache")
+     :reader configuration-preferences-lock
+     :type t
+     :documentation "The lock serializing preference cache reads and updates.")
+    (preferences-cache
+     :initform nil
+     :accessor configuration-preferences-cache
+     :type t
+     :documentation "The cached preference file signature and validated state.")
    (codex-auth-path
     :initarg :codex-auth-path
     :reader configuration-codex-auth-path

@@ -150,6 +150,21 @@
           :permission-mode
           (preference-state-permission-mode preferences)))
 
+(-> preferences--file-signature (pathname) (values t boolean))
+(defun preferences--file-signature (pathname)
+  "Return a cheap change signature for PATHNAME and whether it is usable."
+  (handler-case
+      (if (probe-file pathname)
+          (with-open-file (stream pathname
+                                  :direction ':input
+                                  :element-type '(unsigned-byte 8))
+            (values (list (file-write-date pathname)
+                          (file-length stream))
+                    t))
+          (values nil t))
+    (error ()
+      (values nil nil))))
+
 (-> preferences--read
     (configuration)
     (values preference-state integer))
@@ -184,9 +199,9 @@
                  :operation ':read
                  :cause cause))))))
 
-(-> preferences-load (configuration) preference-state)
-(defun preferences-load (configuration)
-  "Return validated preferences, warning and using defaults after corruption."
+(-> preferences--load-uncached (configuration) preference-state)
+(defun preferences--load-uncached (configuration)
+  "Return freshly validated preferences, warning and defaulting after corruption."
   (handler-case
       (multiple-value-bind (preferences version)
           (preferences--read configuration)
@@ -201,6 +216,27 @@
             :pathname (preferences-error-pathname condition)
             :cause condition)
       (make-instance 'preference-state))))
+
+(-> preferences-load (configuration) preference-state)
+(defun preferences-load (configuration)
+  "Return cached validated preferences, reloading them after the file changes."
+  (with-lock-held ((configuration-preferences-lock configuration))
+    (multiple-value-bind (signature signature-p)
+        (preferences--file-signature
+         (configuration-preferences-path configuration))
+      (let ((cache (configuration-preferences-cache configuration)))
+        (if (and signature-p
+                 cache
+                 (equal signature (first cache)))
+            (second cache)
+            (let ((preferences (preferences--load-uncached configuration)))
+              (multiple-value-bind (current-signature current-signature-p)
+                  (preferences--file-signature
+                   (configuration-preferences-path configuration))
+                (setf (configuration-preferences-cache configuration)
+                      (and current-signature-p
+                           (list current-signature preferences))))
+              preferences))))))
 
 (-> preferences-reasoning-traces-p (configuration) boolean)
 (defun preferences-reasoning-traces-p (configuration)
@@ -269,20 +305,24 @@ model no provider can serve."
 
 (-> preferences--write (configuration preference-state) null)
 (defun preferences--write (configuration preferences)
-  "Atomically write PREFERENCES under CONFIGURATION's private state root."
+  "Atomically write and cache PREFERENCES under CONFIGURATION's state root."
   (let ((pathname (configuration-preferences-path configuration)))
-    (handler-case
-        (snapshot-write
-         pathname
-         (preferences--state-form preferences))
-      (error (cause)
-        (error 'preferences-error
-               :message (format nil "Could not persist preferences at ~A: ~A"
-                                pathname
-                                cause)
-               :pathname pathname
-               :operation ':write
-               :cause cause))))
+    (with-lock-held ((configuration-preferences-lock configuration))
+      (handler-case
+          (progn
+            (snapshot-write pathname (preferences--state-form preferences))
+            (multiple-value-bind (signature signature-p)
+                (preferences--file-signature pathname)
+              (setf (configuration-preferences-cache configuration)
+                    (and signature-p (list signature preferences)))))
+        (error (cause)
+          (error 'preferences-error
+                 :message (format nil "Could not persist preferences at ~A: ~A"
+                                  pathname
+                                  cause)
+                 :pathname pathname
+                 :operation ':write
+                 :cause cause)))))
   nil)
 
 (-> preferences--copy

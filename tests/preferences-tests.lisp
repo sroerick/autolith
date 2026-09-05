@@ -63,7 +63,10 @@
                "missing preferences enable generated session titles")
               (test-assert
                (null (preference-state-permission-mode preferences))
-               "missing preferences have no saved command-permission mode"))
+               "missing preferences have no saved command-permission mode")
+              (test-assert
+               (eq preferences (preferences-load configuration))
+               "unchanged missing preferences reuse their validated state"))
             (preferences-tests--without-model-environment
              (lambda ()
                (sb-posix:setenv "AUTOLITH_CODEX_FAST_MODE" "on" 1)
@@ -116,6 +119,9 @@
               (test-assert
                (not (preference-state-codex-fast-mode-p preferences))
                "version three preferences default Codex Fast mode to disabled")
+              (test-assert
+               (eq preferences (preferences-load configuration))
+               "normalized preferences reuse their validated state")
               (multiple-value-bind (form sole-form-p)
                   (snapshot-read pathname)
                 (test-assert sole-form-p
