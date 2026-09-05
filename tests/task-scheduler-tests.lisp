@@ -3027,7 +3027,7 @@ exactly that race."
                    (= (getf observation :job-count) 2)
                    (getf observation :all-terminal-p)
                    (= (getf observation :provider-request-count) 4)
-                   (= (getf observation :provider-worker-count) 1)
+                   (= (getf observation :provider-worker-count) 2)
                    (getf observation :scheduler-idle-p)
                    (zerop (getf observation :active-count))
                    (zerop (getf observation :live-count))
@@ -3035,7 +3035,7 @@ exactly that race."
                             (eq (getf artifact :status) :success))
                           artifacts)
                    (< (getf observation :duration-ms) 1000))
-              "a child can await detached work at concurrency one without starvation"))
+               "a child can await detached work through a helper at concurrency one"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999" 1)
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert

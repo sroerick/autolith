@@ -1069,7 +1069,12 @@ Only the current primary conversation's artifact root is searched."
                (when (and (plusp timeout)
                           (typep viewer 'task-child-agent)
                           (typep job 'task-job))
-                 (job-run-inline job))
+                 (handler-case
+                     (make-thread
+                      (lambda () (job-run-inline job))
+                      :name (format nil "Autolith job.wait ~A" identifier))
+                   (error ()
+                     nil)))
                (multiple-value-bind (snapshot terminal-p)
                    (session-job-await job timeout)
                  (multiple-value-bind (form content)
