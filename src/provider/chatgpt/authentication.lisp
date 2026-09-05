@@ -350,21 +350,27 @@
   "POST one form-encoded request to OpenAI's OAuth token endpoint."
   (handler-case
       (multiple-value-bind (body status headers uri stream)
-          (dexador:post
-           url
-           :headers
-           (list (cons "Content-Type" "application/x-www-form-urlencoded")
-                 (cons "Accept" "application/json")
-                 (cons "User-Agent" (authentication-user-agent))
-                 (cons "originator" *openai-oauth-originator*))
-           :content content
-           :force-string t
-           :connect-timeout 30
-           :read-timeout 60)
+          (provider-call-with-response-deadline
+           60
+           (lambda ()
+             (dexador:post
+              url
+              :headers
+              (list (cons "Content-Type" "application/x-www-form-urlencoded")
+                    (cons "Accept" "application/json")
+                    (cons "User-Agent" (authentication-user-agent))
+                    (cons "originator" *openai-oauth-originator*))
+              :content content
+              :force-string t
+              :connect-timeout 30
+              :read-timeout 60)))
         (declare (ignore uri stream))
         (values body status headers))
+    (sb-sys:deadline-timeout ()
+      (error 'authentication-error
+             :message "OpenAI OAuth exceeded its response deadline."))
     (http-request-failed (condition)
-      (values (or (response-body condition) "")
+      (values (or (provider--error-body-text (response-body condition)) "")
               (response-status condition)
               (response-headers condition)))))
 

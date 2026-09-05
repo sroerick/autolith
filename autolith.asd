@@ -61,6 +61,7 @@
                              (:file "state/updates")
                              (:file "configuration/preferences")
                              (:file "configuration/permissions")
+                              (:file "provider/transport")
                              (:file "provider/authentication")
                              (:file "provider/chatgpt/authentication")
                              (:file "provider/gemini/authentication")

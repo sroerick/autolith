@@ -169,12 +169,15 @@
   (declare (type oauth-credentials credentials)
            (type conversation conversation)
            (ignore provider conversation))
-  (dexador:post
-   (nous-messages-endpoint)
-   :headers (nous-messages--request-headers credentials)
-   :content (json-encode-utf8 request)
-   :want-stream t
-   :force-string t
-   :keep-alive nil
-   :connect-timeout 30
-   :read-timeout 300))
+  (provider-call-with-response-deadline
+   300
+   (lambda ()
+     (dexador:post
+      (nous-messages-endpoint)
+      :headers (nous-messages--request-headers credentials)
+      :content (json-encode-utf8 request)
+      :want-stream t
+      :force-string t
+      :keep-alive nil
+      :connect-timeout 30
+      :read-timeout 300))))

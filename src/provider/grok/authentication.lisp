@@ -173,19 +173,28 @@
                         (cons "grant_type" "refresh_token")
                         (cons "refresh_token" refresh-token)
                         (cons "client_id" *grok-oauth-client-id*))))
-             (body (dexador:post
-                    (grok-oauth-token-endpoint)
-                    :headers '(("Content-Type"
-                                . "application/x-www-form-urlencoded")
-                               ("Accept" . "application/json"))
-                    :content content
-                    :force-string t
-                    :connect-timeout 30
-                    :read-timeout 60)))
+             (body
+               (provider-call-with-response-deadline
+                60
+                (lambda ()
+                  (dexador:post
+                   (grok-oauth-token-endpoint)
+                   :headers '(("Content-Type"
+                               . "application/x-www-form-urlencoded")
+                              ("Accept" . "application/json"))
+                   :content content
+                   :force-string t
+                   :connect-timeout 30
+                   :read-timeout 60)))))
         (values (grok-refresh-response-credentials manager credentials body)
                 t))
+    (sb-sys:deadline-timeout ()
+      (error 'token-refresh-failed
+             :message "Grok OAuth token refresh exceeded its response deadline."
+             :status nil
+             :response nil))
     (http-request-failed (condition)
-      (let* ((body (response-body condition))
+      (let* ((body (provider--error-body-text (response-body condition)))
              (raw-code (oauth-error-code body))
              (code
                (and

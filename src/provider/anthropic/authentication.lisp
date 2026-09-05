@@ -59,15 +59,18 @@
   (api-key-validate-probe
    "Anthropic"
    (lambda ()
-     (dexador:get
-      *anthropic-models-endpoint*
-      :headers (list (cons "x-api-key" key)
-                     (cons "anthropic-version" *anthropic-api-version*)
-                     (cons "User-Agent" (provider-user-agent)))
-      :force-string t
-      :keep-alive nil
-      :connect-timeout 30
-      :read-timeout 60))))
+     (provider-call-with-response-deadline
+      60
+      (lambda ()
+        (dexador:get
+         *anthropic-models-endpoint*
+         :headers (list (cons "x-api-key" key)
+                        (cons "anthropic-version" *anthropic-api-version*)
+                        (cons "User-Agent" (provider-user-agent)))
+         :force-string t
+         :keep-alive nil
+         :connect-timeout 30
+         :read-timeout 60))))))
 
 (-> anthropic-api-key-login
     (anthropic-credential-manager &key (:stream t))

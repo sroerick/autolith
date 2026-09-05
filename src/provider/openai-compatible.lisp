@@ -238,27 +238,36 @@ manager from PROVIDER-NAME."
      (lambda (credentials)
        (multiple-value-bind (body status response-headers)
            (handler-case
-               (dexador:get
-                endpoint
-                :headers
-                (openai-compatible--authenticated-headers
-                 credentials
-                 :accept "application/json"
-                 :custom headers)
-                :force-string t
-                :connect-timeout 10
-                :read-timeout 30)
-             (dexador.error:http-request-unauthorized ()
-               (openai-compatible--signal-model-discovery-status
-                provider-name manager 401))
-             (http-request-failed (condition)
-               (let ((status (response-status condition)))
-                 (if (integerp status)
-                     (openai-compatible--signal-model-discovery-status
-                      provider-name manager status)
-                     (error 'configuration-error
-                            :message
-                            "The model discovery endpoint could not be reached."))))
+              (provider-call-with-response-deadline
+               30
+               (lambda ()
+                 (dexador:get
+                  endpoint
+                  :headers
+                  (openai-compatible--authenticated-headers
+                   credentials
+                   :accept "application/json"
+                   :custom headers)
+                  :force-string t
+                  :connect-timeout 10
+                  :read-timeout 30)))
+            (sb-sys:deadline-timeout ()
+              (error 'configuration-error
+                     :message
+                     "The model discovery endpoint could not be reached."))
+              (dexador.error:http-request-unauthorized (condition)
+                (provider--error-body-text (response-body condition))
+                (openai-compatible--signal-model-discovery-status
+                 provider-name manager 401))
+              (http-request-failed (condition)
+                (provider--error-body-text (response-body condition))
+                (let ((status (response-status condition)))
+                  (if (integerp status)
+                      (openai-compatible--signal-model-discovery-status
+                       provider-name manager status)
+                      (error 'configuration-error
+                             :message
+                             "The model discovery endpoint could not be reached."))))
              (error ()
                (error 'configuration-error
                       :message
@@ -670,15 +679,18 @@ message, which thinking-mode providers require passed back."
   "Open one authenticated streaming Chat Completions request."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (dexador:post
-   (configuration-provider-endpoint (provider-configuration provider))
-   :headers (openai-compatible--request-headers provider credentials conversation)
-   :content (json-encode-utf8 request)
-   :want-stream t
-   :force-string t
-   :keep-alive nil
-   :connect-timeout 30
-   :read-timeout 300))
+  (provider-call-with-response-deadline
+   300
+   (lambda ()
+     (dexador:post
+      (configuration-provider-endpoint (provider-configuration provider))
+      :headers (openai-compatible--request-headers provider credentials conversation)
+      :content (json-encode-utf8 request)
+      :want-stream t
+      :force-string t
+      :keep-alive nil
+      :connect-timeout 30
+      :read-timeout 300))))
 
 
 ;;;; -- Chat Completions Stream Decoding --

@@ -686,16 +686,19 @@ stay outside it."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (let ((configuration (provider-configuration provider)))
-    (dexador:post
-     (configuration-provider-endpoint configuration)
-     :headers (provider--codex-request-headers
-               provider credentials conversation :accept "text/event-stream")
-     :content (json-encode-utf8 request)
-     :want-stream t
-     :force-string t
-     :keep-alive nil
-     :connect-timeout 30
-     :read-timeout 300)))
+    (provider-call-with-response-deadline
+     300
+     (lambda ()
+       (dexador:post
+        (configuration-provider-endpoint configuration)
+        :headers (provider--codex-request-headers
+                  provider credentials conversation :accept "text/event-stream")
+        :content (json-encode-utf8 request)
+        :want-stream t
+        :force-string t
+        :keep-alive nil
+        :connect-timeout 30
+        :read-timeout 300)))))
 
 (defmethod provider-open-native-compaction
     ((provider codex-subscription-provider)
@@ -704,15 +707,18 @@ stay outside it."
   "POST a JSON native compaction REQUEST to the ChatGPT Codex endpoint."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (dexador:post
-   (provider--native-compaction-endpoint provider)
-   :headers (provider--codex-request-headers
-             provider credentials conversation :accept "application/json")
-   :content (json-encode-utf8 request)
-   :force-string t
-   :keep-alive nil
-   :connect-timeout 30
-   :read-timeout 300))
+  (provider-call-with-response-deadline
+   300
+   (lambda ()
+     (dexador:post
+      (provider--native-compaction-endpoint provider)
+      :headers (provider--codex-request-headers
+                provider credentials conversation :accept "application/json")
+      :content (json-encode-utf8 request)
+      :force-string t
+      :keep-alive nil
+      :connect-timeout 30
+      :read-timeout 300))))
 
 
 ;;;; -- SSE Decoding --
@@ -835,58 +841,6 @@ act on instead of blocking on a dead connection indefinitely."
       (setf (provider-rate-limits provider) snapshot))
     snapshot))
 
-(-> provider--close-response-stream (stream) null)
-(defun provider--close-response-stream (stream)
-  "Abortively close STREAM without allowing cleanup failure to escape."
-  (handler-case
-      (when (open-stream-p stream)
-        (close stream :abort t))
-    (error ()
-      nil))
-  nil)
-
-(-> provider--drain-error-body (stream) (option string))
-(defun provider--drain-error-body (stream)
-  "Read and return a bounded error body from STREAM, closing it afterwards.
-
-Both decoded character streams and undecoded byte streams are accepted,
-because the dependency chooses the element type from response headers."
-  (unwind-protect
-       (handler-case
-           (if (subtypep (stream-element-type stream) 'character)
-               (let* ((buffer (make-string 4000))
-                      (end (read-character-sequence buffer stream)))
-                 (and (plusp end) (subseq buffer 0 end)))
-               (let* ((buffer (make-array 4000 :element-type '(unsigned-byte 8)))
-                      (end (read-sequence buffer stream)))
-                 (and (plusp end)
-                      (sb-ext:octets-to-string (subseq buffer 0 end)
-                                               :external-format ':utf-8))))
-         (error ()
-           nil))
-    (provider--close-response-stream stream)))
-
-(-> provider--error-body-text (t) (option string))
-(defun provider--error-body-text (content)
-  "Return dependency error CONTENT as displayable text, when it carries any.
-
-A streaming request leaves the dependency's failure body as an undrained
-character stream rather than a string, so every shape is normalized here:
-strings pass through, streams are drained and closed, and octet vectors
-are decoded as UTF-8."
-  (handler-case
-      (cond
-        ((stringp content)
-         (and (plusp (length content)) content))
-        ((streamp content)
-         (provider--drain-error-body content))
-        ((and (vectorp content) (plusp (length content)))
-         (sb-ext:octets-to-string (coerce content '(vector (unsigned-byte 8)))
-                                  :external-format ':utf-8))
-        (t
-         nil))
-    (error ()
-      nil)))
 
 (-> provider--error-body-detail ((option string)) (option string))
 (defun provider--error-body-detail (body)
@@ -1597,6 +1551,12 @@ abandon the looping stream; the default reaction ignores the report."))
   "Call ATTEMPT-FUNCTION and normalize dependency transport conditions."
   (handler-case
       (funcall attempt-function)
+    (sb-sys:deadline-timeout (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The provider response exceeded its deadline."
+        condition)
+       :retryable-p t))
     (ssl-error-syscall (condition)
       (provider--signal-transport-failure
        (provider--transport-failure-message

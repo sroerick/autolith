@@ -281,13 +281,16 @@ instead of an empty assistant turn."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (let ((configuration (provider-configuration provider)))
-    (dexador:post
-     (configuration-provider-endpoint configuration)
-     :headers (grok--request-headers
-               provider credentials conversation :accept "text/event-stream")
-     :content (json-encode-utf8 request)
-     :want-stream t
-     :force-string t
-     :keep-alive nil
-     :connect-timeout 30
-     :read-timeout 300)))
+    (provider-call-with-response-deadline
+     300
+     (lambda ()
+       (dexador:post
+        (configuration-provider-endpoint configuration)
+        :headers (grok--request-headers
+                  provider credentials conversation :accept "text/event-stream")
+        :content (json-encode-utf8 request)
+        :want-stream t
+        :force-string t
+        :keep-alive nil
+        :connect-timeout 30
+        :read-timeout 300)))))

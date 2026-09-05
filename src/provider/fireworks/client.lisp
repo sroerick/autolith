@@ -97,18 +97,21 @@ request builder to omit the reasoning object entirely."
   "Open a direct authenticated SSE request to the Fireworks Responses API."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
-  (dexador:post
-   (configuration-provider-endpoint (provider-configuration provider))
-   :headers (list
-             (cons "Authorization"
-                   (format nil "Bearer ~A"
-                           (oauth-credentials-access-token credentials)))
-             (cons "Content-Type" "application/json")
-             (cons "Accept" "text/event-stream")
-             (cons "User-Agent" (provider-user-agent)))
-   :content (json-encode-utf8 request)
-   :want-stream t
-   :force-string t
-   :keep-alive nil
-   :connect-timeout 30
-   :read-timeout 300))
+  (provider-call-with-response-deadline
+   300
+   (lambda ()
+     (dexador:post
+      (configuration-provider-endpoint (provider-configuration provider))
+      :headers (list
+                (cons "Authorization"
+                      (format nil "Bearer ~A"
+                              (oauth-credentials-access-token credentials)))
+                (cons "Content-Type" "application/json")
+                (cons "Accept" "text/event-stream")
+                (cons "User-Agent" (provider-user-agent)))
+      :content (json-encode-utf8 request)
+      :want-stream t
+      :force-string t
+      :keep-alive nil
+      :connect-timeout 30
+      :read-timeout 300))))

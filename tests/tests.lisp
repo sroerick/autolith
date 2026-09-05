@@ -378,6 +378,7 @@
     (test-provider-authentication-retries)
     (test-provider-persistent-transient-retries)
     (test-provider-stream-inactivity-deadline)
+    (test-provider-response-deadlines)
     (test-provider-stream-retries)
     (test-grok-provider)
     (test-openai-compatible-provider-bootstrap)

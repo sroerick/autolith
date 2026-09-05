@@ -73,18 +73,21 @@
               "input" "Reply with the single word: ok"
               "store" false
               "stream" false)))
-       (dexador:post
-        (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
-            *fireworks-responses-endpoint*)
-        :headers (list (cons "Authorization" (format nil "Bearer ~A" key))
-                       (cons "Content-Type" "application/json")
-                       (cons "Accept" "application/json")
-                       (cons "User-Agent" (provider-user-agent)))
-        :content (json-encode-utf8 request)
-        :force-string t
-        :keep-alive nil
-        :connect-timeout 30
-        :read-timeout 60)))))
+        (provider-call-with-response-deadline
+         60
+         (lambda ()
+           (dexador:post
+            (or (uiop:getenv "AUTOLITH_FIREWORKS_PROVIDER_ENDPOINT")
+                *fireworks-responses-endpoint*)
+            :headers (list (cons "Authorization" (format nil "Bearer ~A" key))
+                           (cons "Content-Type" "application/json")
+                           (cons "Accept" "application/json")
+                           (cons "User-Agent" (provider-user-agent)))
+            :content (json-encode-utf8 request)
+            :force-string t
+            :keep-alive nil
+            :connect-timeout 30
+            :read-timeout 60)))))))
 
 (-> fireworks-api-key-login
     (fireworks-credential-manager &key

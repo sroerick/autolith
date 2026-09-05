@@ -172,16 +172,23 @@
            :message "Nous OAuth transport supports only HTTP POST requests."))
   (handler-case
       (multiple-value-bind (body status response-headers)
-          (dexador:post url
-                        :headers headers
-                        :content content
-                        :force-string t
-                        :keep-alive nil
-                        :connect-timeout 30
-                        :read-timeout 60)
+          (provider-call-with-response-deadline
+           60
+           (lambda ()
+             (dexador:post
+              url
+              :headers headers
+              :content content
+              :force-string t
+              :keep-alive nil
+              :connect-timeout 30
+              :read-timeout 60)))
         (values body status response-headers))
+    (sb-sys:deadline-timeout ()
+      (error 'authentication-error
+             :message "Nous OAuth exceeded its response deadline."))
     (http-request-failed (condition)
-      (values (or (response-body condition) "")
+      (values (or (provider--error-body-text (response-body condition)) "")
               (response-status condition)
               (response-headers condition)))))
 

@@ -52,13 +52,16 @@
   (api-key-validate-probe
    "Mistral"
    (lambda ()
-     (dexador:get
-      (mistral-models-endpoint)
-      :headers (list (cons "Authorization" (concatenate 'string "Bearer " key)))
-      :force-string t
-      :keep-alive nil
-      :connect-timeout 30
-      :read-timeout 60))))
+     (provider-call-with-response-deadline
+      60
+      (lambda ()
+        (dexador:get
+         (mistral-models-endpoint)
+         :headers (list (cons "Authorization" (concatenate 'string "Bearer " key)))
+         :force-string t
+         :keep-alive nil
+         :connect-timeout 30
+         :read-timeout 60))))))
 
 (-> mistral-api-key-login
     (mistral-credential-manager &key (:stream stream))

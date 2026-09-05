@@ -258,6 +258,47 @@ its protocol-level close operation."
 
 ;;;; -- Credential Manager --
 
+(defclass credential-refresh-generation ()
+  ((number
+    :initarg :number
+    :reader credential-refresh-generation-number
+    :type (integer 1)
+    :documentation "The manager-local sequence number for this refresh attempt.")
+   (lock
+    :initform (make-lock "Autolith OAuth refresh generation")
+    :reader credential-refresh-generation-lock
+    :documentation "The lock protecting this generation's terminal outcome.")
+   (completion
+    :initform (make-condition-variable :name "Autolith OAuth refresh generation completion")
+    :reader credential-refresh-generation-completion
+    :documentation "The condition variable notified when this generation terminates.")
+   (completed-p
+    :initform nil
+    :accessor credential-refresh-generation-completed-p
+    :type boolean
+    :documentation "Whether this generation has reached an immutable terminal outcome.")
+   (outcome-kind
+    :initform nil
+    :accessor credential-refresh-generation-outcome-kind
+    :type (member nil :success :failure :abandoned)
+    :documentation "The immutable terminal outcome kind, or NIL before completion.")
+   (result
+    :initform nil
+    :accessor credential-refresh-generation-result
+    :type (option oauth-credentials)
+    :documentation "The successful credential result shared by every waiter.")
+   (failure
+    :initform nil
+    :accessor credential-refresh-generation-failure
+    :type (option condition)
+    :documentation "The typed failure shared by every waiter after failure.")
+   (waiter-count
+    :initform 0
+    :accessor credential-refresh-generation-waiter-count
+    :type (integer 0)
+    :documentation "The number of callers currently awaiting this generation."))
+  (:documentation "One immutable, independently waitable OAuth refresh outcome."))
+
 (defclass credential-manager (cl-rfc8628:credential-manager)
   ((primary-source
     :initarg :primary-source
@@ -274,6 +315,25 @@ its protocol-level close operation."
     :initform (make-lock "Autolith OAuth refresh")
     :reader credential-manager-refresh-lock
     :documentation "The in-process serialization lock for token rotation.")
+   (refresh-in-progress-p
+    :initform nil
+    :accessor credential-manager--refresh-in-progress-p
+    :type boolean
+    :documentation "Whether one thread is exchanging this manager's refresh token.")
+   (refresh-completion
+    :initform (make-condition-variable :name "Autolith OAuth refresh completion")
+    :reader credential-manager--refresh-completion
+    :documentation "The condition variable notified after manager refresh-state changes.")
+   (refresh-epoch
+    :initform 0
+    :accessor credential-manager--refresh-epoch
+    :type (integer 0)
+    :documentation "The monotonically increasing in-process refresh generation.")
+   (refresh-generation
+    :initform nil
+    :accessor credential-manager--refresh-generation
+    :type (option credential-refresh-generation)
+    :documentation "The current in-process refresh generation, when one exists.")
    (account-id
     :initform nil
     :accessor credential-manager-account-id
@@ -332,6 +392,20 @@ its protocol-level close operation."
 The first value is the account-continuous refreshed credentials. The second
 value is true when the caller must publish them to the primary store, and
 false when a sibling process already published an equivalent rotation."))
+
+
+(-> credential-manager--refresh-generation-installed
+    (credential-manager credential-refresh-generation)
+    null)
+(defgeneric credential-manager--refresh-generation-installed (manager generation)
+  (:documentation
+   "Observe that MANAGER published GENERATION before its refresh exchange begins."))
+
+(defmethod credential-manager--refresh-generation-installed
+    ((manager credential-manager) (generation credential-refresh-generation))
+  "Provide a no-op refresh-leader publication hook."
+  (declare (ignore manager generation))
+  nil)
 
 (-> credential-manager-create (configuration) chatgpt-credential-manager)
 (defun credential-manager-create (configuration)
@@ -474,49 +548,171 @@ false when a sibling process already published an equivalent rotation."))
              :status nil
              :response nil))))
 
+(-> oauth-credentials-refresh-identity-equal-p
+    (oauth-credentials oauth-credentials)
+    boolean)
+(defun oauth-credentials-refresh-identity-equal-p (left right)
+  "Return true when LEFT and RIGHT identify the same refresh-token generation."
+  (and (string= (oauth-credentials-access-token left)
+                (oauth-credentials-access-token right))
+       (equal (oauth-credentials-refresh-token left)
+              (oauth-credentials-refresh-token right))))
+
 (-> credential-manager-refresh (credential-manager oauth-credentials) oauth-credentials)
 (defun credential-manager-refresh (manager stale-credentials)
-  "Refresh STALE-CREDENTIALS, publishing rotated tokens only to Autolith's store."
-  (with-lock-held ((credential-manager-refresh-lock manager))
-    (let* ((primary-source (credential-manager-primary-source manager))
-           (bootstrap-source (credential-manager-bootstrap-source manager))
-           (bootstrap-pathname
-             (and bootstrap-source
-                  (credential-source-pathname bootstrap-source)))
-           (latest (credential-source-load primary-source))
-           (credentials
-             (if (and latest
-                      (not (string= (oauth-credentials-access-token latest)
-                                    (oauth-credentials-access-token stale-credentials))))
-                 (credential-manager-accept-account manager latest)
-                 stale-credentials))
-           (refresh-token (oauth-credentials-refresh-token credentials)))
-      (when (and bootstrap-pathname
-                  (equal (oauth-credentials-source-path credentials)
-                         bootstrap-pathname))
-         (error 'token-refresh-failed
-                :message
-                (format nil "~A bootstrap credentials are never refreshed by Autolith."
-                        (credential-source-label bootstrap-source))
-                :status nil
-                :response nil))
-      (when (and latest
-                 (not (string= (oauth-credentials-access-token latest)
-                               (oauth-credentials-access-token stale-credentials)))
-                 (not (credentials-needs-refresh-p latest)))
-        (return-from credential-manager-refresh credentials))
-      (unless (non-empty-string-p refresh-token)
-        (error 'token-refresh-failed
-               :message (format nil "These credentials cannot refresh; ~A."
-                                (credential-manager-login-hint manager))
-               :status nil
-               :response nil))
-      (multiple-value-bind (refreshed publish-p)
-          (credential-manager-refresh-exchange manager credentials refresh-token)
-        (credential-manager-accept-account manager refreshed)
-        (if publish-p
-            (credential-source-save primary-source refreshed)
-            refreshed)))))
+  "Refresh STALE-CREDENTIALS with one in-process exchange per token generation."
+  (labels ((wait-for-generation (generation)
+             "Wait for GENERATION and replay its immutable terminal outcome."
+             (with-lock-held ((credential-refresh-generation-lock generation))
+               (incf (credential-refresh-generation-waiter-count generation))
+               (condition-notify
+                (credential-refresh-generation-completion generation))
+               (unwind-protect
+                    (loop until
+                          (credential-refresh-generation-completed-p generation)
+                          do (condition-wait
+                              (credential-refresh-generation-completion generation)
+                              (credential-refresh-generation-lock generation)))
+                 (decf (credential-refresh-generation-waiter-count generation)))
+               (ecase (credential-refresh-generation-outcome-kind generation)
+                 (:success
+                  (credential-refresh-generation-result generation))
+                 (:failure
+                  (error (credential-refresh-generation-failure generation)))
+                 (:abandoned
+                  nil))))
+
+           (finish-generation (generation outcome-kind &key result failure)
+             "Publish GENERATION's immutable outcome and release every waiter."
+             (sb-sys:without-interrupts
+               (with-lock-held ((credential-manager-refresh-lock manager))
+                 (when (eq generation
+                           (credential-manager--refresh-generation manager))
+                   (setf (credential-manager--refresh-generation manager) nil
+                         (credential-manager--refresh-in-progress-p manager) nil)
+                   (sb-thread:condition-broadcast
+                    (credential-manager--refresh-completion manager))))
+               (with-lock-held ((credential-refresh-generation-lock generation))
+                 (unless (credential-refresh-generation-completed-p generation)
+                   (setf (credential-refresh-generation-outcome-kind generation)
+                         outcome-kind
+                         (credential-refresh-generation-result generation) result
+                         (credential-refresh-generation-failure generation) failure
+                         (credential-refresh-generation-completed-p generation) t)
+                   (sb-thread:condition-broadcast
+                    (credential-refresh-generation-completion generation))))))
+
+           (select-action (record-leader)
+             "Select a completed credential, waiter result, or leader exchange."
+             (with-lock-held ((credential-manager-refresh-lock manager))
+               (when (credential-manager--refresh-in-progress-p manager)
+                 (return-from select-action
+                   (values ':wait nil nil
+                           (credential-manager--refresh-generation manager))))
+               (let* ((primary-source (credential-manager-primary-source manager))
+                      (bootstrap-source (credential-manager-bootstrap-source manager))
+                      (bootstrap-pathname
+                        (and bootstrap-source
+                             (credential-source-pathname bootstrap-source)))
+                      (latest (credential-source-load primary-source))
+                      (latest-different-p
+                        (and latest
+                             (not (oauth-credentials-refresh-identity-equal-p
+                                   latest stale-credentials))))
+                      (credentials
+                        (if latest-different-p
+                            (credential-manager-accept-account manager latest)
+                            stale-credentials))
+                      (refresh-token
+                        (oauth-credentials-refresh-token credentials)))
+                 (when (and bootstrap-pathname
+                            (equal (oauth-credentials-source-path credentials)
+                                   bootstrap-pathname))
+                   (error 'token-refresh-failed
+                          :message
+                          (format nil
+                                  "~A bootstrap credentials are never refreshed by Autolith."
+                                  (credential-source-label bootstrap-source))
+                          :status nil
+                          :response nil))
+                 (when (and latest-different-p
+                            (not (credentials-needs-refresh-p latest)))
+                   (return-from select-action
+                     (values ':return credentials nil nil)))
+                 (unless (non-empty-string-p refresh-token)
+                   (error 'token-refresh-failed
+                          :message (format nil "These credentials cannot refresh; ~A."
+                                           (credential-manager-login-hint manager))
+                          :status nil
+                          :response nil))
+                 (incf (credential-manager--refresh-epoch manager))
+                 (let ((generation
+                         (make-instance
+                          'credential-refresh-generation
+                          :number (credential-manager--refresh-epoch manager))))
+                   (sb-sys:without-interrupts
+                     (funcall record-leader generation)
+                     (setf (credential-manager--refresh-generation manager) generation
+                           (credential-manager--refresh-in-progress-p manager) t))
+                   (values ':lead credentials refresh-token generation)))))
+
+           (complete-success (generation refreshed publish-p)
+             "Publish REFRESHED and notify waiters for GENERATION."
+             (let ((result
+                     (with-lock-held ((credential-manager-refresh-lock manager))
+                       (credential-manager-accept-account manager refreshed)
+                       (if publish-p
+                           (credential-source-save
+                            (credential-manager-primary-source manager)
+                            refreshed)
+                           refreshed))))
+               (finish-generation generation ':success :result result)
+               result)))
+    (loop
+      (let ((leader-generation nil))
+        (unwind-protect
+             (multiple-value-bind (action credentials refresh-token generation)
+                 (select-action
+                  (lambda (selected-generation)
+                    (setf leader-generation selected-generation)))
+               (ecase action
+                 (:wait
+                  (let ((result (wait-for-generation generation)))
+                    (when result
+                      (return result))))
+                 (:return
+                  (return credentials))
+                 (:lead
+                  (credential-manager--refresh-generation-installed
+                   manager generation)
+                  (handler-case
+                      (multiple-value-bind (refreshed publish-p)
+                          (credential-manager-refresh-exchange
+                           manager credentials refresh-token)
+                        (return
+                          (complete-success generation refreshed publish-p)))
+                    (error (condition)
+                      (finish-generation
+                       generation ':failure :failure condition)
+                      (error condition))))))
+          (when leader-generation
+            (finish-generation leader-generation ':abandoned)))))))
+
+(-> credential-manager--refresh-token-reuse-recovery
+    (credential-manager string (option string))
+    (option oauth-credentials))
+(defun credential-manager--refresh-token-reuse-recovery
+    (manager attempted-refresh-token code)
+  "Return a source rotation superseding ATTEMPTED-REFRESH-TOKEN after token reuse."
+  (when (and code (string= code "refresh_token_reused"))
+    (let ((latest
+            (credential-source-load
+             (credential-manager-primary-source manager))))
+      (and latest
+           (non-empty-string-p (oauth-credentials-refresh-token latest))
+           (not (string= (oauth-credentials-refresh-token latest)
+                         attempted-refresh-token))
+           latest))))
 
 (defmethod credential-manager-refresh-exchange
     ((manager chatgpt-credential-manager)
@@ -528,18 +724,27 @@ false when a sibling process already published an equivalent rotation."))
                        "client_id" *openai-oauth-client-id*
                        "grant_type" "refresh_token"
                        "refresh_token" refresh-token))
-             (body (dexador:post
-                    *openai-oauth-token-endpoint*
-                    :headers '(("Content-Type" . "application/json")
-                               ("Accept" . "application/json"))
-                    :content (json-encode request)
-                    :force-string t
-                    :connect-timeout 30
-                    :read-timeout 60)))
+             (body
+               (provider-call-with-response-deadline
+                60
+                (lambda ()
+                  (dexador:post
+                   *openai-oauth-token-endpoint*
+                   :headers '(("Content-Type" . "application/json")
+                              ("Accept" . "application/json"))
+                   :content (json-encode request)
+                   :force-string t
+                   :connect-timeout 30
+                   :read-timeout 60)))))
         (values (oauth-refresh-response-credentials manager credentials body)
                 t))
+    (sb-sys:deadline-timeout ()
+      (error 'token-refresh-failed
+             :message "OAuth token refresh exceeded its response deadline."
+             :status nil
+             :response nil))
     (http-request-failed (condition)
-      (let* ((body (response-body condition))
+      (let* ((body (provider--error-body-text (response-body condition)))
              (raw-code (oauth-error-code body))
              (code
                (and
@@ -553,13 +758,10 @@ false when a sibling process already published an equivalent rotation."))
                     "[OAUTH CREDENTIAL REDACTED]"
                     secrets)))))
              (newer-primary
-               (and (string= (or code "") "refresh_token_reused")
-                    (credential-source-load
-                     (credential-manager-primary-source manager)))))
-        (if (and newer-primary
-                 (not (string= (oauth-credentials-access-token newer-primary)
-                               (oauth-credentials-access-token credentials))))
-            (values newer-primary nil)
+               (credential-manager--refresh-token-reuse-recovery
+                manager refresh-token code)))
+          (if newer-primary
+              (values newer-primary nil)
             (error 'token-refresh-failed
                    :message (format nil "OAuth token refresh failed~@[ (~A)~]." code)
                    :status (response-status condition)

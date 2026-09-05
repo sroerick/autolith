@@ -2194,6 +2194,321 @@
       (ignore-errors (sb-bsd-sockets:socket-close listener))))
   nil)
 
+(-> provider-tests--dexador-call-p (t) boolean)
+(defun provider-tests--dexador-call-p (form)
+  "Return true when FORM is a direct Dexador GET or POST call."
+  (and (consp form)
+       (symbolp (first form))
+       (let ((package (symbol-package (first form))))
+         (and package
+              (string= (package-name package) "DEXADOR")
+              (member (symbol-name (first form)) '("GET" "POST")
+                      :test #'string=)))
+       t))
+
+(-> provider-tests--response-deadline-form-p (t) boolean)
+(defun provider-tests--response-deadline-form-p (form)
+  "Return true when FORM establishes the hard provider response deadline."
+  (and (consp form)
+       (eq (first form) 'provider-call-with-response-deadline)))
+
+(-> provider-tests--audit-dexador-deadlines () (values integer list))
+(defun provider-tests--audit-dexador-deadlines ()
+  "Inspect every provider source form and report Dexador calls outside a deadline."
+  (let ((count 0)
+        (violations nil)
+        (root (merge-pathnames "src/provider/"
+                               (asdf:system-source-directory :autolith))))
+    (labels ((walk (form deadline-p pathname)
+               "Walk FORM under DEADLINE-P, recording violations from PATHNAME."
+               (when (consp form)
+                 (let ((nested-deadline-p
+                         (or deadline-p
+                             (provider-tests--response-deadline-form-p form))))
+                   (when (provider-tests--dexador-call-p form)
+                     (incf count)
+                     (unless nested-deadline-p
+                       (push (list (enough-namestring pathname root)
+                                   (first form))
+                             violations)))
+                   (walk (first form) nested-deadline-p pathname)
+                   (walk (rest form) nested-deadline-p pathname)))))
+      (dolist (pathname (directory (merge-pathnames "**/*.lisp" root)))
+        (with-open-file (stream pathname :direction ':input)
+          (let ((*read-eval* nil)
+                (*package* (find-package '#:autolith)))
+            (loop for form = (read stream nil stream)
+                  until (eq form stream)
+                  do (walk form nil pathname))))))
+    (values count (nreverse violations))))
+
+(-> test-provider-response-deadlines () null)
+(defun test-provider-response-deadlines ()
+  "Test response deadlines, diagnostic body draining, and transport routing."
+  (multiple-value-bind (call-count violations)
+      (provider-tests--audit-dexador-deadlines)
+    (test-assert (plusp call-count)
+                 "the provider transport audit finds Dexador call sites")
+    (test-assert (null violations)
+                 (format nil "every provider Dexador call has a hard response deadline: ~S"
+                         violations)))
+  (multiple-value-bind (stream client accepted listener)
+      (provider-tests--connected-stream-pair)
+    (unwind-protect
+         (let ((*provider-error-body-deadline-seconds* 1)
+               (started (get-universal-time)))
+           (test-assert (null (provider--drain-error-body stream))
+                        "a silent optional error body produces no diagnostic text")
+           (test-assert (< (- (get-universal-time) started) 30)
+                        "optional error-body draining stops at its short deadline")
+           (test-assert (not (open-stream-p stream))
+                        "optional error-body draining closes the response stream"))
+      (ignore-errors (close stream))
+      (ignore-errors (sb-bsd-sockets:socket-close accepted))
+      (ignore-errors (sb-bsd-sockets:socket-close client))
+      (ignore-errors (sb-bsd-sockets:socket-close listener))))
+  (multiple-value-bind (stream client accepted listener)
+      (provider-tests--connected-stream-pair)
+    (let* ((configuration (test-configuration))
+           (root (test-configuration-root configuration))
+           (provider (provider-create configuration))
+           (*provider-error-body-deadline-seconds* 1)
+           (condition
+             (make-condition 'http-request-failed
+                             :body stream
+                             :status 500
+                             :headers nil
+                             :uri nil
+                             :method ':post)))
+      (unwind-protect
+           (test-assert
+            (handler-case
+                (progn
+                  (provider-signal-http-failure provider condition)
+                  nil)
+              (provider-retryable-error (failure)
+                (= (provider-error-status failure) 500)))
+            "a body-drain deadline preserves the originating HTTP status failure")
+        (ignore-errors (close stream))
+        (ignore-errors (sb-bsd-sockets:socket-close accepted))
+        (ignore-errors (sb-bsd-sockets:socket-close client))
+        (ignore-errors (sb-bsd-sockets:socket-close listener))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+  (let ((stream
+          (make-instance 'test-failing-close-stream
+                         :source "{\"error\":\"synthetic\"}")))
+    (test-call-with-function-replacements
+     (list
+      (list
+       'dexador:post
+       (lambda (&rest arguments)
+         (declare (ignore arguments))
+         (error 'http-request-failed
+                :body stream
+                :status 500
+                :headers nil
+                :uri nil
+                :method ':post))))
+     (lambda ()
+       (multiple-value-bind (body status headers)
+           (nous-authentication--request
+            :method ':post
+            :url "https://provider.invalid/oauth"
+            :headers nil
+            :content "")
+         (declare (ignore headers))
+         (test-assert
+          (and (= status 500)
+               (search "synthetic" body)
+               (test-failing-close-stream-close-abort-p stream))
+          "Nous OAuth drains and abort-closes a streamed error body")))))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (manager
+           (api-key-credential-manager-create
+            :provider-name "deadline-model-errors"
+            :pathname (configuration-api-keys-path configuration)))
+         (stream
+           (make-instance 'test-failing-close-stream
+                          :source "{\"error\":\"synthetic\"}")))
+    (unwind-protect
+         (progn
+           (api-key-credential-manager-save-key manager "deadline-key")
+           (test-call-with-function-replacements
+            (list
+             (list
+              'dexador:get
+              (lambda (&rest arguments)
+                (declare (ignore arguments))
+                (error 'http-request-failed
+                       :body stream
+                       :status 500
+                       :headers nil
+                       :uri nil
+                       :method ':get))))
+            (lambda ()
+              (test-assert
+               (handler-case
+                   (progn
+                     (openai-compatible--fetch-models
+                      configuration
+                      :provider-name "deadline-model-errors"
+                      :endpoint "https://provider.invalid/models"
+                      :headers nil
+                      :credential-manager manager)
+                     nil)
+                 (configuration-error ()
+                   t))
+               "model discovery preserves typed HTTP failure mapping")))
+           (test-assert (test-failing-close-stream-close-abort-p stream)
+                        "model discovery drains and abort-closes a streamed error body"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (credentials
+           (make-instance 'oauth-credentials
+                          :access-token "deadline-access"
+                          :refresh-token "deadline-refresh"
+                          :account-id "deadline-account"
+                          :expires-at nil))
+         (grok-manager
+           (make-instance
+            'grok-credential-manager
+            :primary-source
+            (make-instance 'autolith-credential-source
+                           :pathname (configuration-grok-auth-path configuration)))))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list
+            'provider-call-with-response-deadline
+            (lambda (seconds function)
+              (declare (ignore seconds function))
+              (error 'sb-sys:deadline-timeout))))
+          (lambda ()
+            (flet ((signals-type-p (thunk type)
+                     (handler-case
+                         (progn (funcall thunk) nil)
+                       (condition (condition)
+                         (typep condition type)))))
+              (dolist (thunk
+                       (list
+                        (lambda () (anthropic-validate-api-key "key"))
+                        (lambda () (fireworks-validate-api-key "key"))
+                        (lambda () (openrouter-validate-api-key "key"))
+                        (lambda () (mistral-validate-api-key "key"))
+                        (lambda ()
+                          (chatgpt-oauth--request
+                           :url "https://provider.invalid/oauth" :content ""))
+                        (lambda ()
+                          (gemini-oauth--request
+                           :url "https://provider.invalid/oauth" :content ""))
+                        (lambda ()
+                          (nous-authentication--request
+                           :method ':post
+                           :url "https://provider.invalid/oauth"
+                           :headers nil
+                           :content ""))))
+                (test-assert (signals-type-p thunk 'authentication-error)
+                             "authentication response deadlines map to typed failures"))
+              (test-assert
+               (signals-type-p
+                (lambda ()
+                  (credential-manager-refresh-exchange
+                   grok-manager credentials "deadline-refresh"))
+                'token-refresh-failed)
+               "Grok refresh deadlines map to a typed token failure"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  (test-assert
+   (handler-case
+       (progn
+         (provider--call-with-transport-normalization
+          (lambda ()
+            (provider-call-with-response-deadline
+             1/100
+             (lambda () (sleep 1)))))
+         nil)
+     (provider-retryable-error ()
+       t))
+   "a response deadline becomes a typed retryable provider transport failure")
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation (conversation-create configuration :identifier "response-deadlines"))
+         (credentials
+           (make-instance 'oauth-credentials
+                          :access-token "deadline-access"
+                          :refresh-token "deadline-refresh"
+                          :account-id "deadline-account"
+                          :expires-at (+ (get-universal-time) 3600)))
+         (codex (provider-create configuration))
+         (openai
+           (openai-compatible-provider-create
+            configuration
+            :name "deadline-openai"
+            :family ':openai
+            :headers nil
+            :reasoning-parameter nil
+            :stream-usage-p t))
+         (anthropic (anthropic-provider-create configuration))
+         (gemini
+           (gemini-code-assist-provider-create
+            configuration
+            :credential-manager (credential-manager-create configuration)))
+         (model-manager
+           (api-key-credential-manager-create
+            :provider-name "deadline-models"
+            :pathname (configuration-api-keys-path configuration)))
+         (deadlines nil))
+    (unwind-protect
+         (progn
+           (api-key-credential-manager-save-key model-manager "deadline-key")
+           (setf (gemini-code-assist-provider-project gemini) "deadline-project"
+                 (gemini-code-assist-provider-setup-complete-p gemini) t)
+           (test-call-with-function-replacements
+            (list
+             (list
+              'provider-call-with-response-deadline
+              (lambda (seconds function)
+                (push seconds deadlines)
+                (funcall function)))
+             (list
+              'dexador:post
+              (lambda (url &rest arguments)
+                (declare (ignore url))
+                (if (getf arguments :want-stream)
+                    (values (make-string-input-stream "") 200 nil)
+                    (values "{}" 200 nil))))
+             (list
+              'dexador:get
+              (lambda (url &rest arguments)
+                (declare (ignore url arguments))
+                (values "{\"data\":[]}" 200 nil))))
+            (lambda ()
+              (provider-open-response-stream
+               codex (json-object) :credentials credentials :conversation conversation)
+              (provider-open-native-compaction
+               codex (json-object) :credentials credentials :conversation conversation)
+              (openai-compatible--fetch-models
+               configuration
+               :provider-name "deadline-models"
+               :endpoint "https://provider.invalid/models"
+               :headers nil
+               :credential-manager model-manager)
+              (provider-open-response-stream
+               openai (json-object) :credentials credentials :conversation conversation)
+              (provider-open-response-stream
+               anthropic (json-object) :credentials credentials :conversation conversation)
+              (gemini-code-assist--post-once
+               gemini credentials "loadCodeAssist" (json-object))
+              (gemini-code-assist--get-once gemini credentials "operations/deadline")
+              (provider-open-response-stream
+               gemini (json-object) :credentials credentials :conversation conversation)))
+           (test-assert
+            (equal (nreverse deadlines) '(300 300 30 300 300 300 300 300))
+            "every provider response and stream-open path uses its response deadline"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (defun test-provider-stream-retries ()
   "Test bounded stream reconnection, observer events, and final failure."
   (let* ((configuration (test-configuration))

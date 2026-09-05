@@ -505,6 +505,11 @@ never retains the resulting credential after this call."
       (progn
         (funcall thunk)
         nil)
+    (sb-sys:deadline-timeout ()
+      (error 'authentication-error
+             :message
+             (format nil "The ~A API key validation exceeded its response deadline."
+                     label)))
     (dexador.error:http-request-unauthorized ()
       (error 'authentication-error
              :message (format nil "~A rejected the entered API key." label)))

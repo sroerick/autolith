@@ -231,14 +231,23 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
 (defun gemini-code-assist--post-once (provider credentials method request)
   "Perform one non-streaming Code Assist METHOD request."
   (handler-case
-      (dexador:post
-       (gemini-code-assist--method-url provider method)
-       :headers (gemini-code-assist--headers credentials "application/json")
-       :content (json-encode-utf8 request)
-       :force-string t
-       :keep-alive nil
-       :connect-timeout 30
-       :read-timeout 300)
+      (provider-call-with-response-deadline
+       300
+       (lambda ()
+         (dexador:post
+          (gemini-code-assist--method-url provider method)
+          :headers (gemini-code-assist--headers credentials "application/json")
+          :content (json-encode-utf8 request)
+          :force-string t
+          :keep-alive nil
+          :connect-timeout 30
+          :read-timeout 300)))
+    (sb-sys:deadline-timeout (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The Gemini Code Assist response exceeded its deadline."
+        condition)
+       :retryable-p t))
     (http-request-failed (condition)
       (provider-signal-http-failure provider condition))))
 
@@ -248,13 +257,22 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
 (defun gemini-code-assist--get-once (provider credentials operation)
   "Perform one non-streaming Code Assist long-running operation request."
   (handler-case
-      (dexador:get
-       (gemini-code-assist--operation-url provider operation)
-       :headers (gemini-code-assist--headers credentials "application/json")
-       :force-string t
-       :keep-alive nil
-       :connect-timeout 30
-       :read-timeout 300)
+      (provider-call-with-response-deadline
+       300
+       (lambda ()
+         (dexador:get
+          (gemini-code-assist--operation-url provider operation)
+          :headers (gemini-code-assist--headers credentials "application/json")
+          :force-string t
+          :keep-alive nil
+          :connect-timeout 30
+          :read-timeout 300)))
+    (sb-sys:deadline-timeout (condition)
+      (provider--signal-transport-failure
+       (provider--transport-failure-message
+        "The Gemini Code Assist response exceeded its deadline."
+        condition)
+       :retryable-p t))
     (http-request-failed (condition)
       (provider-signal-http-failure provider condition))))
 
@@ -672,16 +690,19 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
   (gemini-code-assist-ensure-setup provider credentials)
   (setf (gethash "project" request)
         (gemini-code-assist-provider-project provider))
-  (dexador:post
-   (format nil "~A?alt=sse"
-           (gemini-code-assist--method-url provider "streamGenerateContent"))
-   :headers (gemini-code-assist--headers credentials "text/event-stream")
-   :content (json-encode-utf8 request)
-   :want-stream t
-   :force-string t
-   :keep-alive nil
-   :connect-timeout 30
-   :read-timeout 300))
+  (provider-call-with-response-deadline
+   300
+   (lambda ()
+     (dexador:post
+      (format nil "~A?alt=sse"
+              (gemini-code-assist--method-url provider "streamGenerateContent"))
+      :headers (gemini-code-assist--headers credentials "text/event-stream")
+      :content (json-encode-utf8 request)
+      :want-stream t
+      :force-string t
+      :keep-alive nil
+      :connect-timeout 30
+      :read-timeout 300))))
 
 (-> gemini-code-assist--normalize-call
     (gemini-code-assist-provider json-object integer t) json-object)
