@@ -173,7 +173,7 @@
   (provider-record-rate-limits provider headers))
 
 (defparameter *provider-rate-limit-event-error-codes*
-    '("rate_limit_exceeded")
+    '("rate_limit_exceeded" "RESOURCE_EXHAUSTED")
   "Structured SSE error codes reporting exhausted provider allowance.")
 
 (defparameter *provider-retryable-event-error-codes*
@@ -181,7 +181,11 @@
       "internal_server_error"
       "server_is_overloaded"
       "slow_down"
-      "rate_limit_exceeded")
+      "rate_limit_exceeded"
+      "DEADLINE_EXCEEDED"
+      "INTERNAL"
+      "RESOURCE_EXHAUSTED"
+      "UNAVAILABLE")
   "Structured SSE error codes eligible for bounded retry.")
 
 (defparameter *provider-error-detail-limit* 1000
@@ -1194,15 +1198,18 @@ abandon the looping stream; the default reaction ignores the report."))
 
 (-> provider--event-error-code ((option json-object)) (option string))
 (defun provider--event-error-code (error-object)
-  "Return ERROR-OBJECT's code or type when either is a non-empty string."
+  "Return ERROR-OBJECT's code, type, or status when it is a non-empty string."
   (when error-object
     (let ((code (json-get error-object "code"))
-          (type (json-get error-object "type")))
+          (type (json-get error-object "type"))
+          (status (json-get error-object "status")))
       (cond
         ((non-empty-string-p code)
          code)
         ((non-empty-string-p type)
          type)
+        ((non-empty-string-p status)
+         status)
         (t
          nil)))))
 
@@ -1264,14 +1271,89 @@ abandon the looping stream; the default reaction ignores the report."))
                             :test #'string-equal))))))
        t))
 
-(-> provider--event-incomplete-reason (json-object) non-empty-string)
+(-> provider--condition-string (t) (option string))
+(defun provider--condition-string (value)
+  "Return VALUE as bounded credential-redacted condition text, when present."
+  (when value
+    (bounded-string
+     (provider--sanitize-wire-string (princ-to-string value))
+     :limit *provider-error-detail-limit*)))
+
+(-> provider--signal-incomplete-terminal
+    (non-empty-string t
+     &key (:request-id (option string))
+          (:response-id (option string))
+          (:response (option string))
+          (:code non-empty-string))
+    null)
+(defun provider--signal-incomplete-terminal
+    (reason headers &key request-id response-id response
+                         (code "response_incomplete"))
+  "Signal a terminal incomplete response with sanitized provider identifiers."
+  (let ((sanitized-reason (or (provider--condition-string reason) "unknown")))
+    (error 'provider-incomplete-response
+           :message (format nil "The provider returned an incomplete response (~A)."
+                            sanitized-reason)
+           :reason sanitized-reason
+           :status nil
+           :code code
+           :request-id
+           (provider--condition-string
+            (or request-id (provider--response-request-id headers)))
+           :response-id (provider--condition-string response-id)
+           :response (provider--condition-string response))))
+
+(defparameter *provider-incomplete-terminal-reasons*
+    '("max_output_tokens" "content_filter")
+  "Recognized Responses protocol reasons for an incomplete terminal event.")
+
+(-> provider--signal-terminal-protocol-error
+    (string t
+     &key (:code (option string))
+          (:request-id (option string))
+          (:response-id (option string))
+          (:response (option string)))
+    null)
+(defun provider--signal-terminal-protocol-error
+    (message headers &key code request-id response-id response)
+  "Signal a sanitized terminal protocol failure with provider metadata."
+  (error 'provider-protocol-error
+         :message message
+         :status nil
+         :code code
+         :request-id
+         (provider--condition-string
+          (or request-id (provider--response-request-id headers)))
+         :response-id (provider--condition-string response-id)
+         :response (provider--condition-string response)))
+
+(-> provider--signal-invalid-terminal-reason
+    (t t
+     &key (:request-id (option string))
+          (:response-id (option string))
+          (:response (option string)))
+    null)
+(defun provider--signal-invalid-terminal-reason
+    (reason headers &key request-id response-id response)
+  "Signal a terminal protocol failure for an unknown or invalid finish reason."
+  (let ((sanitized-reason (or (provider--condition-string reason) "missing")))
+    (provider--signal-terminal-protocol-error
+     (format nil "The provider returned an invalid terminal reason: ~A."
+             sanitized-reason)
+     headers
+     :code "invalid_finish_reason"
+     :request-id request-id
+     :response-id response-id
+     :response response)))
+
+(-> provider--event-incomplete-reason (json-object) (option string))
 (defun provider--event-incomplete-reason (event)
-  "Return EVENT's response.incomplete reason, defaulting to unknown."
+  "Return EVENT's response.incomplete reason when it is a non-empty string."
   (let* ((response (json-get event "response"))
          (details (and (json-object-p response)
                        (json-get response "incomplete_details")))
          (reason (and (json-object-p details) (json-get details "reason"))))
-    (if (non-empty-string-p reason) reason "unknown")))
+    (and (non-empty-string-p reason) reason)))
 
 (-> provider--signal-incomplete-response
     (json-object &key (:data string) (:headers t)
@@ -1279,20 +1361,33 @@ abandon the looping stream; the default reaction ignores the report."))
     null)
 (defun provider--signal-incomplete-response
     (event &key data headers response-id)
-  "Signal terminal EVENT with its structured incomplete reason."
-  (let ((reason (provider--event-incomplete-reason event)))
-    (error 'provider-incomplete-response
-           :message (format nil "The provider returned an incomplete response (~A)."
-                            reason)
-           :reason reason
-           :status nil
-           :code "response_incomplete"
-           :request-id (provider--event-request-id event nil headers)
-           :response-id (provider--event-response-id event response-id)
-           :response
-           (bounded-string
-            (provider--sanitize-wire-string data)
-            :limit 2000))))
+  "Validate terminal EVENT and signal its recognized incomplete reason."
+  (let* ((response (json-get event "response"))
+         (event-response-id (provider--event-response-id event response-id))
+         (request-id (provider--event-request-id event nil headers)))
+    (unless (json-object-p response)
+      (provider--signal-terminal-protocol-error
+       "The provider returned response.incomplete without a response object."
+       headers
+       :code "invalid_terminal_response"
+       :request-id request-id
+       :response-id event-response-id
+       :response data))
+    (let ((reason (provider--event-incomplete-reason event)))
+      (unless (and reason
+                   (member reason *provider-incomplete-terminal-reasons*
+                           :test #'string=))
+        (provider--signal-invalid-terminal-reason
+         reason headers
+         :request-id request-id
+         :response-id event-response-id
+         :response data))
+      (provider--signal-incomplete-terminal
+       reason
+       headers
+       :request-id request-id
+       :response-id event-response-id
+       :response data))))
 
 (-> provider--signal-event-failure
     (json-object
@@ -1305,8 +1400,12 @@ abandon the looping stream; the default reaction ignores the report."))
     (event &key type data headers response-id)
   "Signal EVENT as a structured terminal or retryable provider failure."
   (let* ((error-object (provider--event-error-object event))
-         (code (provider--event-error-code error-object))
-         (detail (and error-object (json-get error-object "message")))
+         (code (provider--condition-string
+                (provider--event-error-code error-object)))
+         (status-value (and error-object (json-get error-object "code")))
+         (status (and (integerp status-value) status-value))
+         (detail (provider--condition-string
+                  (and error-object (json-get error-object "message"))))
          (message
            (if (non-empty-string-p detail)
                (format nil "The provider returned ~A.~%~A"
@@ -1319,14 +1418,15 @@ abandon the looping stream; the default reaction ignores the report."))
                'provider-error)))
     (error condition-type
            :message message
-           :status nil
+           :status status
            :code code
-           :request-id (provider--event-request-id event error-object headers)
-           :response-id (provider--event-response-id event response-id)
-           :response
-           (bounded-string
-            (provider--sanitize-wire-string data)
-            :limit 2000))))
+           :request-id
+           (provider--condition-string
+            (provider--event-request-id event error-object headers))
+           :response-id
+           (provider--condition-string
+            (provider--event-response-id event response-id))
+           :response (provider--condition-string data))))
 
 (defmethod provider-consume-stream ((provider model-provider) stream headers event-callback)
   "Consume a Responses protocol STREAM into a provider result."
@@ -1338,12 +1438,17 @@ abandon the looping stream; the default reaction ignores the report."))
         (completed-p nil))
     (loop until completed-p
           for data = (provider--read-sse-data stream headers)
-          do (when (eq data *sse-end-of-stream*)
-               (provider--signal-stream-interruption
-                headers
-                "The provider stream closed before a terminal event."))
-             (unless (string= data "[DONE]")
-               (let* ((event (provider--decode-sse-data data headers))
+           do (cond
+                ((eq data *sse-end-of-stream*)
+                 (provider--signal-stream-interruption
+                  headers
+                  "The provider stream closed before a terminal event."))
+                ((string= data "[DONE]")
+                 (provider--signal-stream-interruption
+                  headers
+                  "The provider stream ended before a terminal event."))
+                (t
+                 (let* ((event (provider--decode-sse-data data headers))
                       (type (and (json-object-p event)
                                  (json-get event "type"))))
                  (cond
@@ -1382,22 +1487,29 @@ abandon the looping stream; the default reaction ignores the report."))
                         (push item output-items)
                         (funcall event-callback
                                  (make-instance 'provider-item-event :item item)))))
-                  ((json-string= type "response.completed")
-                    (let ((response (json-get event "response")))
-                      (when (json-object-p response)
-                        (setf response-id (or (json-get response "id") response-id)
-                              usage (json-get response "usage"))
-                        (multiple-value-bind (end-turn present-p)
-                            (gethash "end_turn" response)
-                          (when present-p
-                            (setf turn-completion
-                                  (if end-turn :end :continue)))))
-                      (setf completed-p t)
-                      (funcall event-callback
-                               (make-instance 'provider-completed-event
-                                              :response-id response-id
-                                              :usage usage
-                                              :turn-completion turn-completion))))
+                 ((json-string= type "response.completed")
+                  (let ((response (json-get event "response")))
+                    (unless (json-object-p response)
+                      (provider--signal-terminal-protocol-error
+                       "The provider returned response.completed without a response object."
+                       headers
+                       :code "invalid_terminal_response"
+                       :request-id (provider--event-request-id event nil headers)
+                       :response-id response-id
+                       :response data))
+                    (setf response-id (or (json-get response "id") response-id)
+                          usage (json-get response "usage"))
+                    (multiple-value-bind (end-turn present-p)
+                        (gethash "end_turn" response)
+                      (when present-p
+                        (setf turn-completion
+                              (if end-turn :end :continue))))
+                    (setf completed-p t)
+                    (funcall event-callback
+                             (make-instance 'provider-completed-event
+                                            :response-id response-id
+                                            :usage usage
+                                            :turn-completion turn-completion))))
                   ((json-string= type "response.doom_loop_check")
                     ;; A non-standard xAI event reporting a detected
                     ;; generation loop; it must never reach item handling.
@@ -1418,9 +1530,9 @@ abandon the looping stream; the default reaction ignores the report."))
                      :data data
                      :headers headers
                      :response-id response-id))
-                   (t
-                    (funcall event-callback
-                             (make-instance 'provider-progress-event)))))))
+                    (t
+                     (funcall event-callback
+                              (make-instance 'provider-progress-event))))))))
     (let* ((ordered-items (nreverse output-items))
            (tool-calls (remove-if-not #'function-call-item-p ordered-items)))
       (make-instance 'provider-result

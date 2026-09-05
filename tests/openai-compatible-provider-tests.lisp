@@ -16,6 +16,103 @@
      "delta" delta
      "finish_reason" finish-reason))))
 
+(-> openai-compatible-provider-tests--terminal-semantics
+    (openai-compatible-provider)
+    null)
+(defun openai-compatible-provider-tests--terminal-semantics (provider)
+  "Test Chat Completions terminal and structured-error outcomes by case."
+  (labels ((consume (source)
+             "Consume SOURCE and return either its result or typed condition."
+             (handler-case
+                 (provider-consume-stream
+                  provider
+                  (make-string-input-stream source)
+                  '(("x-request-id" . "chat-terminal-request"))
+                  #'identity)
+               (provider-error (condition)
+                 condition)))
+
+           (finish-source (reason &key (done-p t))
+             "Return a Chat stream with REASON followed by usage and optional DONE."
+             (concatenate
+              'string
+              (test-sse-event-string
+               (openai-compatible-provider-tests--stream-event
+                (json-object "content" "partial")
+                "chat-terminal-response"))
+              (test-sse-event-string
+               (openai-compatible-provider-tests--stream-event
+                (json-object) "chat-terminal-response" reason))
+              (test-sse-event-string
+               (json-object
+                "id" "chat-terminal-response"
+                "choices" (json-array)
+                "usage"
+                (json-object "prompt_tokens" 4
+                             "completion_tokens" 2
+                             "total_tokens" 6)))
+              (if done-p (format nil "data: [DONE]~%~%") ""))))
+    (dolist
+        (case
+         `(("normal completion" ,(finish-source "stop") provider-result)
+           ("output truncation"
+            ,(finish-source "length") provider-incomplete-response)
+           ("unknown finish reason"
+            ,(finish-source "future_reason") provider-protocol-error)
+           ("[DONE] before terminal"
+            ,(concatenate
+              'string
+              (test-sse-event-string
+               (openai-compatible-provider-tests--stream-event
+                (json-object "content" "partial") "chat-terminal-response"))
+              (format nil "data: [DONE]~%~%"))
+            response-stream-error)
+           ("clean EOF before terminal"
+            ,(test-sse-event-string
+              (openai-compatible-provider-tests--stream-event
+               (json-object "content" "partial") "chat-terminal-response"))
+            response-stream-error)
+           ("clean EOF after finish reason"
+            ,(finish-source "stop" :done-p nil)
+            response-stream-error)
+           ("permanent structured error"
+            ,(test-sse-event-string
+              (json-object
+               "error"
+               (json-object "code" "invalid_request_error"
+                            "message" "invalid request")))
+            provider-error)
+           ("transient structured error"
+            ,(test-sse-event-string
+              (json-object
+               "error"
+               (json-object "code" "server_error"
+                            "message" "try again")))
+            provider-retryable-error)))
+      (destructuring-bind (name source expected-type) case
+        (let ((outcome (consume source)))
+          (test-assert
+           (typep outcome expected-type)
+           (format nil "Chat Completions ~A yields ~A" name expected-type))
+          (when (typep outcome 'provider-incomplete-response)
+            (test-assert
+             (and (string= (provider-incomplete-response-reason outcome) "length")
+                  (string= (provider-error-request-id outcome)
+                           "chat-terminal-request")
+                  (string= (provider-error-response-id outcome)
+                           "chat-terminal-response")
+                  (not (typep outcome 'provider-retryable-error)))
+             "Chat truncation retains sanitized terminal metadata"))
+          (when (typep outcome 'response-stream-error)
+            (test-assert
+             (typep outcome 'provider-retryable-error)
+             "unterminated Chat streams remain retryable"))
+          (when (string= name "permanent structured error")
+            (test-assert
+             (not (typep outcome 'provider-retryable-error))
+             "permanent Chat stream errors do not retry"))))))
+  nil)
+
 (-> openai-compatible-provider-tests--save-key
     (configuration string string)
     oauth-credentials)
@@ -1065,6 +1162,7 @@
                (test-assert
                 (string= (json-get (second messages) "role") "tool")
                 "Chat Completions tool results follow the grouped assistant message"))
+              (openai-compatible-provider-tests--terminal-semantics provider)
              (let* ((text-event
                       (openai-compatible-provider-tests--stream-event
                        (json-object "content" "hello")
@@ -1096,20 +1194,20 @@
                        (json-object
                         "tool_calls" (json-array second-tool))
                        "chat-test"))
-                    (finish-event
-                      (openai-compatible-provider-tests--stream-event
-                       (json-object)
-                       "chat-test"
-                       "tool_calls"))
                      (usage
                        (json-object
                         "prompt_tokens" 7
                         "completion_tokens" 3
                         "total_tokens" 10))
+                     (finish-event
+                       (openai-compatible-provider-tests--stream-event
+                        (json-object)
+                        "chat-test"
+                        "tool_calls"))
                      (usage-event
                        (json-object
                         "id" "chat-test"
-                        "choices" #()
+                        "choices" (json-array)
                         "usage" usage))
                     (source
                       (concatenate

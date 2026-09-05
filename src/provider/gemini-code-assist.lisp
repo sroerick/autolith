@@ -762,24 +762,6 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
           (setf (gethash (rest mapping) usage) value))))
     usage))
 
-(-> gemini-code-assist--finish-error
-    (string t (option string)) null)
-(defun gemini-code-assist--finish-error (reason headers response-id)
-  "Signal the typed failure represented by Gemini finish REASON."
-  (let ((sanitized-reason (provider--sanitize-wire-string reason)))
-    (error 'gemini-code-assist-error
-           :message
-           (format nil
-                   "Gemini Code Assist ended generation with ~A."
-                   sanitized-reason)
-           :code sanitized-reason
-           :status nil
-           :request-id
-           (gemini-code-assist--condition-string
-            (provider--response-request-id headers))
-           :response-id
-           (gemini-code-assist--condition-string response-id)
-           :response nil)))
 
 (defmethod provider-consume-stream
     ((provider gemini-code-assist-provider) stream headers event-callback)
@@ -790,35 +772,29 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
         (text-stream (make-string-output-stream))
         (reasoning-stream (make-string-output-stream))
         (calls nil)
-        (call-index 0))
-    (loop
-      for data = (provider--read-sse-data stream headers)
-      until (eq data *sse-end-of-stream*)
-      do (let* ((event (provider--decode-sse-data data headers))
-                (error-object (and (json-object-p event) (json-get event "error"))))
+        (call-index 0)
+        (completed-p nil))
+    (loop until completed-p
+          for data = (provider--read-sse-data stream headers)
+          do (cond
+               ((eq data *sse-end-of-stream*)
+                (provider--signal-stream-interruption
+                 headers
+                 "The provider stream closed before a validated finish reason."))
+               ((string= data "[DONE]")
+                (provider--signal-stream-interruption
+                 headers
+                 "The provider stream ended before a validated finish reason."))
+               (t
+                (let* ((event (provider--decode-sse-data data headers))
+                       (error-object (and (json-object-p event) (json-get event "error"))))
            (when (json-object-p error-object)
-             (let ((message
-                     (gemini-code-assist--condition-string
-                      (json-get error-object "message"))))
-               (error 'gemini-code-assist-error
-                      :message
-                      (or message
-                          "Gemini Code Assist returned an error event.")
-                      :code
-                      (gemini-code-assist--condition-string
-                       (json-get error-object "status"))
-                      :status
-                      (gemini-code-assist--condition-status
-                       (json-get error-object "code"))
-                      :request-id
-                      (gemini-code-assist--condition-string
-                       (provider--response-request-id headers))
-                      :response-id
-                      (gemini-code-assist--condition-string response-id)
-                      :response
-                      (bounded-string
-                       (provider--sanitize-wire-string data)
-                       :limit 2000))))
+             (provider--signal-event-failure
+              event
+              :type "error"
+              :data data
+              :headers headers
+              :response-id response-id))
            (when (json-object-p event)
              (let ((trace (json-get event "traceId"))
                    (response (json-get event "response")))
@@ -834,8 +810,25 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                            when (json-object-p candidate)
                              do (let ((finish (json-get candidate "finishReason"))
                                       (content (json-get candidate "content")))
-                                  (when (non-empty-string-p finish)
-                                    (setf finish-reason finish))
+                                  (when finish
+                                    (unless (non-empty-string-p finish)
+                                      (provider--signal-invalid-terminal-reason
+                                       finish headers :response-id response-id))
+                                    (cond
+                                      ((member finish
+                                               '("MAX_TOKENS"
+                                                 "MODEL_CONTEXT_WINDOW_EXCEEDED")
+                                               :test #'string=)
+                                       (provider--signal-incomplete-terminal
+                                        finish headers
+                                        :response-id response-id))
+                                      ((string= finish "STOP")
+                                       (setf finish-reason finish
+                                             completed-p t))
+                                      (t
+                                       (provider--signal-invalid-terminal-reason
+                                        finish headers
+                                        :response-id response-id))))
                                   (when (json-object-p content)
                                     (let ((parts (json-get content "parts")))
                                       (when (vectorp parts)
@@ -860,15 +853,11 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                                                                        'assistant-delta-event
                                                                        :text text)))))
                                                      (when (json-object-p function-call)
-                                                       (push
-                                                        (gemini-code-assist--normalize-call
-                                                         provider function-call
-                                                         (incf call-index) headers)
-                                                         calls))))))))))))))))
-    (when (and finish-reason
-               (not (member finish-reason '("STOP" "MAX_TOKENS")
-                            :test #'string=)))
-      (gemini-code-assist--finish-error finish-reason headers response-id))
+                                                      (push
+                                                       (gemini-code-assist--normalize-call
+                                                        provider function-call
+                                                        (incf call-index) headers)
+                                                       calls))))))))))))))))))
     (let ((items nil)
           (reasoning (get-output-stream-string reasoning-stream))
           (text (get-output-stream-string text-stream)))

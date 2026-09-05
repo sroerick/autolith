@@ -1061,28 +1061,97 @@
 
 (-> test-provider-stream-failures () null)
 (defun test-provider-stream-failures ()
-  "Test failed and truncated streams become typed provider conditions."
-  (dolist (source
-           (list
-            (test-sse-event-string
-             (json-object "type" "response.failed"
-                          "response" (json-object "id" "failed-response")))
-            (test-sse-event-string
-             (json-object "type" "response.output_text.delta" "delta" "partial"))
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial"))
-    (test-assert
-     (handler-case
-         (progn
-           (provider-consume-stream
-            (make-instance 'model-provider)
-            (make-instance 'test-character-input-stream :source source)
-            nil
-            (lambda (event)
-              (declare (ignore event))))
-           nil)
-       (provider-error ()
-         t))
-     "failed and unterminated SSE streams signal typed provider errors"))
+  "Test Responses terminal outcomes and failed streams by protocol case."
+  (labels ((consume (source)
+             "Consume SOURCE and return either its result or typed condition."
+             (handler-case
+                 (provider-consume-stream
+                  (make-instance 'model-provider)
+                  (make-instance 'test-character-input-stream :source source)
+                  nil
+                  #'identity)
+               (provider-error (condition)
+                 condition))))
+    (dolist
+        (case
+         `(("normal completion"
+            ,(concatenate
+              'string
+              (test-sse-event-string
+               (json-object
+                "type" "response.completed"
+                "response" (json-object "id" "completed-response")))
+              (format nil "data: [DONE]~%~%"))
+            provider-result)
+           ("output truncation"
+            ,(test-sse-event-string
+              (json-object
+               "type" "response.incomplete"
+               "response"
+               (json-object
+                "id" "incomplete-response"
+                "incomplete_details" (json-object "reason" "max_output_tokens"))))
+            provider-incomplete-response)
+           ("content-filter truncation"
+            ,(test-sse-event-string
+              (json-object
+               "type" "response.incomplete"
+               "response"
+               (json-object
+                "id" "filtered-response"
+                "incomplete_details" (json-object "reason" "content_filter"))))
+            provider-incomplete-response)
+           ("completion without response"
+            ,(test-sse-event-string
+              (json-object "type" "response.completed"))
+            provider-protocol-error)
+           ("completion with malformed response"
+            ,(test-sse-event-string
+              (json-object "type" "response.completed" "response" "invalid"))
+            provider-protocol-error)
+           ("incomplete without response"
+            ,(test-sse-event-string
+              (json-object "type" "response.incomplete"))
+            provider-protocol-error)
+           ("incomplete without reason"
+            ,(test-sse-event-string
+              (json-object
+               "type" "response.incomplete"
+               "response" (json-object "id" "missing-reason-response")))
+            provider-protocol-error)
+           ("incomplete with unknown reason"
+            ,(test-sse-event-string
+              (json-object
+               "type" "response.incomplete"
+               "response"
+               (json-object
+                "id" "unknown-reason-response"
+                "incomplete_details" (json-object "reason" "future_reason"))))
+            provider-protocol-error)
+           ("[DONE] before terminal"
+            ,(format nil "data: [DONE]~%~%")
+            response-stream-error)
+           ("clean EOF before terminal"
+            ,(test-sse-event-string
+              (json-object "type" "response.output_text.delta" "delta" "partial"))
+            response-stream-error)
+           ("failed response"
+            ,(test-sse-event-string
+              (json-object "type" "response.failed"
+                           "response" (json-object "id" "failed-response")))
+            provider-error)
+           ("malformed event"
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial"
+            provider-error)))
+      (destructuring-bind (name source expected-type) case
+        (let ((outcome (consume source)))
+          (test-assert
+           (typep outcome expected-type)
+           (format nil "Responses ~A yields ~A" name expected-type))
+          (when (typep outcome 'response-stream-error)
+            (test-assert
+             (typep outcome 'provider-retryable-error)
+             "unterminated Responses streams remain retryable"))))))
   nil)
 
 (-> test-provider-stream-error-classification () null)

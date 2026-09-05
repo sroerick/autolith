@@ -125,6 +125,154 @@
   nil)
 
 
+(-> fireworks-provider-test--inherited-terminal-routing () null)
+(defun fireworks-provider-test--inherited-terminal-routing ()
+  "Test terminal policy inherited by Grok, Fireworks, and both Nous protocols."
+  (labels ((consume (provider source)
+             "Consume SOURCE through PROVIDER and return its result or typed condition."
+             (handler-case
+                 (provider-consume-stream
+                  provider (make-string-input-stream source) nil #'identity)
+               (provider-error (condition)
+                 condition)))
+
+           (assert-cases (name provider cases)
+             "Assert terminal CASES for NAME and PROVIDER."
+             (dolist (case cases)
+               (destructuring-bind
+                   (case-name source expected-type &optional expected-prompt-tokens)
+                   case
+                 (let ((outcome (consume provider source)))
+                   (test-assert
+                    (typep outcome expected-type)
+                    (format nil "~A ~A yields ~A"
+                            name case-name expected-type))
+                   (when expected-prompt-tokens
+                     (test-assert
+                      (= (json-get (provider-result-usage outcome) "prompt_tokens")
+                         expected-prompt-tokens)
+                      (format nil "~A ~A retains trailing usage"
+                              name case-name))))))))
+    (let ((responses-cases
+            `(("normal completion"
+               ,(concatenate
+                 'string
+                 (test-sse-event-string
+                  (json-object "type" "response.completed"
+                               "response" (json-object "id" "inherited-response")))
+                 (format nil "data: [DONE]~%~%"))
+               provider-result)
+              ("output truncation"
+               ,(test-sse-event-string
+                 (json-object
+                  "type" "response.incomplete"
+                  "response"
+                  (json-object "id" "inherited-response"
+                               "incomplete_details"
+                               (json-object "reason" "max_output_tokens"))))
+               provider-incomplete-response)
+              ("completion without response"
+               ,(test-sse-event-string
+                 (json-object "type" "response.completed"))
+               provider-protocol-error)
+              ("incomplete without reason"
+               ,(test-sse-event-string
+                 (json-object
+                  "type" "response.incomplete"
+                  "response" (json-object "id" "inherited-response")))
+               provider-protocol-error)
+              ("incomplete with unknown reason"
+               ,(test-sse-event-string
+                 (json-object
+                  "type" "response.incomplete"
+                  "response"
+                  (json-object "id" "inherited-response"
+                               "incomplete_details"
+                               (json-object "reason" "future_reason"))))
+               provider-protocol-error)
+              ("[DONE] before terminal"
+               ,(format nil "data: [DONE]~%~%")
+               response-stream-error)
+              ("clean EOF before terminal"
+               ,(test-sse-event-string
+                 (json-object "type" "response.output_text.delta" "delta" "partial"))
+               response-stream-error)))
+          (chat-cases
+            `(("normal completion"
+               ,(concatenate
+                 'string
+                 (test-sse-event-string
+                  (openai-compatible-provider-tests--stream-event
+                   (json-object "content" "complete") "inherited-chat" "stop"))
+                 (test-sse-event-string
+                  (json-object
+                   "id" "inherited-chat"
+                   "choices" (json-array)
+                   "usage"
+                   (json-object "prompt_tokens" 5
+                                "completion_tokens" 3
+                                "total_tokens" 8)))
+                 (format nil "data: [DONE]~%~%"))
+               provider-result
+               5)
+              ("output truncation"
+               ,(test-sse-event-string
+                 (openai-compatible-provider-tests--stream-event
+                  (json-object) "inherited-chat" "length"))
+               provider-incomplete-response)
+              ("[DONE] before terminal"
+               ,(format nil "data: [DONE]~%~%")
+               response-stream-error)
+              ("clean EOF before terminal"
+               ,(test-sse-event-string
+                 (openai-compatible-provider-tests--stream-event
+                  (json-object "content" "partial") "inherited-chat"))
+               response-stream-error)
+              ("clean EOF after finish reason"
+               ,(test-sse-event-string
+                 (openai-compatible-provider-tests--stream-event
+                  (json-object) "inherited-chat" "stop"))
+               response-stream-error))))
+      (assert-cases
+       "Grok"
+       (allocate-instance (find-class 'grok-subscription-provider))
+       responses-cases)
+      (assert-cases
+       "Fireworks"
+       (allocate-instance (find-class 'fireworks-api-key-provider))
+       responses-cases)
+      (assert-cases
+       "Nous Chat"
+       (allocate-instance (find-class 'nous-chat-completions-provider))
+       chat-cases))
+    (dolist
+        (case
+         `(("normal completion"
+            ,(list (anthropic-provider-test--message-start)
+                   (anthropic-provider-test--message-delta "end_turn")
+                   (json-object "type" "message_stop"))
+            provider-result)
+           ("output truncation"
+            ,(list (anthropic-provider-test--message-start)
+                   (anthropic-provider-test--message-delta "max_tokens")
+                   (json-object "type" "message_stop"))
+            provider-incomplete-response)
+           ("clean EOF before terminal"
+            ,(list (anthropic-provider-test--message-start))
+            response-stream-error)))
+      (destructuring-bind (name events expected-type) case
+        (let ((outcome
+                (handler-case
+                    (anthropic-provider-test--consume
+                     (allocate-instance (find-class 'nous-messages-provider))
+                     events)
+                  (provider-error (condition)
+                    condition))))
+          (test-assert
+           (typep outcome expected-type)
+           (format nil "Nous Messages ~A yields ~A" name expected-type))))))
+  nil)
+
 (-> test-fireworks-provider () null)
 (defun test-fireworks-provider ()
   "Test the Fireworks API key provider without network access."
@@ -132,4 +280,5 @@
   (fireworks-provider-test--credential-source)
   (fireworks-provider-test--request-shape)
   (fireworks-provider-test--reasoning-omission)
+  (fireworks-provider-test--inherited-terminal-routing)
   nil)

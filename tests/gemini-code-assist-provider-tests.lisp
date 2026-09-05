@@ -14,7 +14,7 @@
 
 (-> gemini-code-assist-test--consume-condition
     (gemini-code-assist-provider json-object &key (:headers t))
-    gemini-code-assist-error)
+    provider-error)
 (defun gemini-code-assist-test--consume-condition (provider event &key headers)
   "Consume one Gemini EVENT and return its expected typed failure."
   (handler-case
@@ -26,7 +26,7 @@
          headers
          (lambda (provider-event) (declare (ignore provider-event))))
         (error "The Gemini stream fixture did not signal a provider failure."))
-    (gemini-code-assist-error (condition)
+    (provider-error (condition)
       condition)))
 
 (-> gemini-code-assist-test--model-catalog () null)
@@ -187,6 +187,97 @@
      "Code Assist emits assistant deltas"))
   nil)
 
+(-> gemini-code-assist-test--terminal-semantics () null)
+(defun gemini-code-assist-test--terminal-semantics ()
+  "Test Code Assist terminal and structured-error outcomes by protocol case."
+  (let ((provider (gemini-code-assist-test--provider)))
+    (labels ((candidate-event (finish-reason &key text)
+               "Return one candidate stream event with optional FINISH-REASON and TEXT."
+               (let ((candidate (json-object)))
+                 (when finish-reason
+                   (setf (gethash "finishReason" candidate) finish-reason))
+                 (when text
+                   (setf (gethash "content" candidate)
+                         (json-object
+                          "parts" (json-array (json-object "text" text)))))
+                 (json-object
+                  "traceId" "gemini-terminal-response"
+                  "response"
+                  (json-object "candidates" (json-array candidate)))))
+
+             (consume (events)
+               "Consume EVENTS and return either the result or typed condition."
+               (handler-case
+                   (provider-consume-stream
+                    provider
+                    (make-string-input-stream
+                     (with-output-to-string (stream)
+                       (dolist (event events)
+                         (if (stringp event)
+                             (write-string event stream)
+                             (write-string (test-sse-event-string event) stream)))))
+                    '(("x-request-id" . "gemini-terminal-request"))
+                    #'identity)
+                 (provider-error (condition)
+                   condition))))
+      (dolist
+          (case
+            `(("normal completion"
+               ,(list (candidate-event "STOP" :text "complete")
+                      (format nil "data: [DONE]~%~%"))
+               provider-result)
+              ("output truncation"
+               ,(list (candidate-event "MAX_TOKENS" :text "partial"))
+               provider-incomplete-response)
+              ("unknown finish reason"
+               ,(list (candidate-event "FUTURE_REASON"))
+               provider-protocol-error)
+              ("[DONE] before terminal"
+               ,(list (candidate-event nil :text "partial")
+                      (format nil "data: [DONE]~%~%"))
+               response-stream-error)
+              ("clean EOF before terminal"
+               ,(list (candidate-event nil :text "partial"))
+               response-stream-error)
+             ("permanent structured error"
+              ,(list (json-object
+                      "error"
+                      (json-object "status" "INVALID_ARGUMENT"
+                                   "code" 400
+                                   "message" "invalid request")))
+              provider-error)
+             ("transient structured error"
+              ,(list (json-object
+                      "error"
+                      (json-object "status" "UNAVAILABLE"
+                                   "code" 503
+                                   "message" "try again")))
+              provider-retryable-error)))
+        (destructuring-bind (name events expected-type) case
+          (let ((outcome (consume events)))
+            (test-assert
+             (typep outcome expected-type)
+             (format nil "Gemini ~A yields ~A" name expected-type))
+            (when (typep outcome 'provider-incomplete-response)
+              (test-assert
+               (and (string= (provider-incomplete-response-reason outcome)
+                             "MAX_TOKENS")
+                    (string= (provider-error-request-id outcome)
+                             "gemini-terminal-request")
+                    (string= (provider-error-response-id outcome)
+                             "gemini-terminal-response")
+                    (not (typep outcome 'provider-retryable-error)))
+               "Gemini truncation retains sanitized terminal metadata"))
+            (when (typep outcome 'response-stream-error)
+              (test-assert
+               (typep outcome 'provider-retryable-error)
+               "unterminated Gemini streams remain retryable"))
+            (when (string= name "permanent structured error")
+              (test-assert
+               (not (typep outcome 'provider-retryable-error))
+               "permanent Gemini stream errors do not retry")))))))
+  nil)
+
 (-> gemini-code-assist-test--credential-redaction () null)
 (defun gemini-code-assist-test--credential-redaction ()
   "Test credential redaction across Gemini stream failure conditions."
@@ -250,14 +341,15 @@
             (null (search secret error-metadata-text)))
        "Gemini error events redact every active credential"))
     (test-assert
-     (and (search "finish-before-" finish-report)
+     (and (typep finish-condition 'provider-protocol-error)
+          (string= (provider-error-code finish-condition) "invalid_finish_reason")
+          (search "finish-before-" finish-report)
           (search "-middle-" finish-report)
           (search "-after" finish-report)
-          (search "finish-before-" (provider-error-code finish-condition))
           (search "trace-before-" (provider-error-response-id finish-condition))
           (search "request-before-" (provider-error-request-id finish-condition))
           (search "finish-before-" finish-metadata-text))
-     "Gemini finish failures preserve safe surrounding text")
+     "Gemini finish failures preserve safe shared protocol metadata")
     (test-assert
      (and (= (provider-error-status error-condition) 403)
           (search "message-before-" error-report)
@@ -349,6 +441,7 @@
   (gemini-code-assist-test--model-catalog)
   (gemini-code-assist-test--request-conversion)
   (gemini-code-assist-test--stream-fixture)
+  (gemini-code-assist-test--terminal-semantics)
   (gemini-code-assist-test--credential-redaction)
   (gemini-code-assist-test--setup-and-retry)
   nil)

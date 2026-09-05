@@ -858,13 +858,15 @@ the registry's unique-name dispatch."
           for data = (provider--read-sse-data stream headers)
           do (cond
                ((eq data *sse-end-of-stream*)
+                (provider--signal-stream-interruption
+                 headers
+                 "The provider stream closed before the [DONE] marker."))
+               ((string= data "[DONE]")
                 (if finish-reason
                     (setf completed-p t)
                     (provider--signal-stream-interruption
                      headers
-                     "The provider stream closed before a terminal event.")))
-               ((string= data "[DONE]")
-                (setf completed-p t))
+                     "The provider stream ended before a validated finish reason.")))
                (t
                 (let* ((event (provider--decode-sse-data data headers))
                        (error-object (and (json-object-p event)
@@ -924,10 +926,29 @@ the registry's unique-name dispatch."
                                             tool-states
                                             (first tool-delta)
                                             (second tool-delta))))
-                                       (when (stringp finish)
-                                         (setf finish-reason finish))))
+                                       (when finish
+                                         (unless (non-empty-string-p finish)
+                                           (provider--signal-invalid-terminal-reason
+                                            finish headers :response-id response-id))
+                                         (cond
+                                           ((member finish
+                                                    '("length" "max_tokens"
+                                                      "max_output_tokens"
+                                                      "model_context_window_exceeded")
+                                                    :test #'string=)
+                                            (provider--signal-incomplete-terminal
+                                             finish headers
+                                             :response-id response-id))
+                                           ((member finish
+                                                    '("stop" "tool_calls" "function_call")
+                                                    :test #'string=)
+                                            (setf finish-reason finish))
+                                           (t
+                                            (provider--signal-invalid-terminal-reason
+                                             finish headers
+                                             :response-id response-id)))))
                           (funcall event-callback
-                                   (make-instance 'provider-progress-event)))))))))
+                                   (make-instance 'provider-progress-event))))))))))
     (let ((output-items nil)
           (reasoning-text (get-output-stream-string reasoning-stream))
           (assistant-text (get-output-stream-string text-stream)))
