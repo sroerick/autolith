@@ -118,18 +118,6 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
 
 ;;;; -- Model-Visible Catalog Adapter --
 
-(-> skill--library-catalog-prefix () string)
-(defun skill--library-catalog-prefix ()
-  "Return the provider-neutral cl-skills catalog introduction."
-  (format nil
-          "## Skills~2%A skill is a reusable instruction set stored in native SKILL.sexp or standard SKILL.md. The entries below contain metadata and exact source locations only. Descriptions may be shortened to keep this catalog bounded.~2%### Available skills~%"))
-
-(-> skill--library-catalog-guidance () string)
-(defun skill--library-catalog-guidance ()
-  "Return the provider-neutral cl-skills selection guidance."
-  (format nil
-          "~%### Skill rules~%When a task names a listed skill or clearly matches its description, select that skill by exact name through the host application before other task actions. Select every applicable skill. Treat selected instructions as request-local unless the host application documents another lifetime.~2%Before acting, read every selected instruction body completely from request-local context. Resolve linked relative paths from the source file's directory and load only resources needed for the task. Prefer provided scripts and assets. If a skill cannot be read or applied, state that briefly and continue with the best fallback."))
-
 (-> skill--catalog-prefix () string)
 (defun skill--catalog-prefix ()
   "Return the Autolith model-visible skill catalog introduction."
@@ -142,54 +130,17 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
   (format nil
           "~%### Skill rules~%When the user names a listed skill or the task clearly matches a description, call `skill.load` with its exact name before other task actions. Call it once for every applicable skill. Do not read the skill source through `resource.read`; `skill.load` makes Autolith inject only its instruction body ephemerally into subsequent provider requests in this logical turn. Do not carry a skill into later turns unless it is selected again.~2%Before acting, read every selected instruction body completely from request-local context. Resolve linked relative paths from the source file's directory and load only resources needed for the task. Prefer provided scripts and assets. If a skill cannot be read or applied, state that briefly and continue with the best fallback."))
 
-(-> skill--replace-catalog-section (string string string) string)
-(defun skill--replace-catalog-section (catalog source replacement)
-  "Replace the one exact SOURCE section in CATALOG with REPLACEMENT."
-  (let ((position (search source catalog)))
-    (unless position
-      (error "cl-skills returned a catalog without its expected protocol section."))
-    (concatenate 'string
-                 (subseq catalog 0 position)
-                 replacement
-                 (subseq catalog (+ position (length source))))))
-
 (-> skill-catalog-render
     (skill-catalog &key (:character-budget (integer 1)))
     (values string (integer 0) (integer 0)))
 (defun skill-catalog-render
     (catalog &key (character-budget *skill-catalog-character-budget*))
   "Render CATALOG through cl-skills with Autolith-specific selection guidance."
-  (let* ((library-prefix    (skill--library-catalog-prefix))
-         (library-guidance  (skill--library-catalog-guidance))
-         (autolith-prefix   (skill--catalog-prefix))
-         (autolith-guidance (skill--catalog-guidance))
-         (host-overhead
-           (- (+ (length autolith-prefix) (length autolith-guidance))
-              (+ (length library-prefix) (length library-guidance))))
-         (library-budget (max 1 (- character-budget host-overhead))))
-    (handler-case
-        (multiple-value-bind (rendered included omitted)
-            (cl-skills:skill-catalog-render
-             catalog
-             :character-budget library-budget)
-          (let ((adapted
-                  (skill--replace-catalog-section
-                   (skill--replace-catalog-section
-                    rendered library-prefix autolith-prefix)
-                   library-guidance autolith-guidance)))
-            (values adapted included omitted)))
-      (cl-skills:skill-catalog-render-error (condition)
-        (let ((minimum-required
-                (+ host-overhead
-                   (skill-catalog-render-error-minimum-required condition))))
-          (error 'skill-catalog-render-error
-                 :message
-                 (format nil
-                         "Skill catalog budget ~D is below the required ~D characters."
-                         character-budget
-                         minimum-required)
-                 :character-budget character-budget
-                 :minimum-required minimum-required))))))
+  (cl-skills:skill-catalog-render
+   catalog
+   :character-budget character-budget
+   :prefix (skill--catalog-prefix)
+   :guidance (skill--catalog-guidance)))
 
 ;;;; -- Autolith Skill Roots --
 
