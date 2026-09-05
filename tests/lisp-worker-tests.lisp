@@ -666,6 +666,132 @@
   nil)
 
 
+(-> test-lisp-busy-worker-operations () null)
+(defun test-lisp-busy-worker-operations ()
+  "Test worker inspection and lifecycle calls hand off instead of blocking."
+  (let* ((base-configuration (test-configuration))
+         (root (test-configuration-root base-configuration))
+         (configuration
+           (configuration--clone base-configuration :working-directory root))
+         (pool (lisp-worker-pool-create configuration))
+         (registry
+           (task-augment-tool-registry (make-default-tool-registry)))
+         (run-tool (tool-registry-find registry "task" "run"))
+         (orchestrator (task-run-tool-orchestrator run-tool))
+         (primary
+           (task-tests--primary-agent
+            configuration "lisp-busy-worker-primary" registry))
+         (context
+           (make-instance
+            'tool-context
+            :configuration configuration
+            :worker pool
+            :conversation (agent-conversation primary)
+            :registry registry
+            :agent primary
+            :call-id "lisp-busy-worker-test")))
+    (labels ((run-lisp (name &rest arguments)
+               "Execute lisp.NAME with decoded test ARGUMENTS."
+               (tool-execute
+                (tool-registry-find registry "lisp" name)
+                context
+                (apply #'json-object arguments)))
+
+             (execution-job (result tool-name)
+               "Return RESULT's visible execution job for TOOL-NAME."
+               (let* ((details (tool-result-details result))
+                      (record (and (listp details)
+                                   (getf (rest details) :job)))
+                      (identifier (and record (getf record :id))))
+                 (and identifier
+                      (task-orchestrator-find-visible-job
+                       orchestrator identifier primary tool-name))))
+
+             (start-blocker (name)
+               "Start and return one marked slow evaluation job for REPL NAME."
+               (let* ((marker
+                        (merge-pathnames
+                         (format nil "~A-started" name) root))
+                      (form
+                        (format nil
+                                "(progn (with-open-file (stream ~A :direction :output :if-exists :supersede :if-does-not-exist :create) (write-string \"started\" stream)) (sleep 1) :done)"
+                                (prin1-to-string marker)))
+                      (result
+                        (run-lisp "eval"
+                                  "form" form
+                                  "repl" name
+                                  "async" t))
+                      (job (execution-job result "lisp.eval")))
+                 (test-assert
+                  (and job
+                       (task-tests--wait-until
+                        (lambda () (probe-file marker)) 5))
+                  (format nil "the ~A blocker reaches its Lisp worker" name))
+                 job))
+
+             (await-state (job state message)
+               "Assert that JOB reaches terminal STATE within the test bound."
+               (multiple-value-bind (snapshot terminal-p)
+                   (session-job-await job 20)
+                 (test-assert
+                  (and terminal-p (eq (getf snapshot :state) state))
+                  (format nil "~A: ~S" message snapshot))))
+
+             (exercise (repl-name tool-name arguments &key after)
+               "Queue one Lisp TOOL-NAME behind a blocker and verify handoff."
+               (let* ((blocker (start-blocker repl-name))
+                      (*tool-execution-blocking-grace-seconds* 0.01)
+                      (result
+                        (apply #'run-lisp
+                               tool-name
+                               (append arguments (list "repl" repl-name))))
+                      (details (tool-result-details result))
+                      (job
+                        (execution-job
+                         result (format nil "lisp.~A" tool-name))))
+                 (test-assert
+                  (and (typep result 'task-tool-result)
+                       (eq (getf (rest details) :handoff-reason)
+                           :grace-expired)
+                       job
+                       (session-job-detached-p job))
+                  (format nil
+                          "lisp.~A hands off while REPL ~A is busy"
+                          tool-name repl-name))
+                 (await-state blocker :completed
+                              "the busy worker blocker completes")
+                 (await-state job :completed
+                              (format nil "lisp.~A completes after the blocker" tool-name))
+                 (when after
+                   (funcall after)))))
+      (unwind-protect
+           (progn
+             (exercise "busy-describe" "describe" '("designator" "cons"))
+             (exercise "busy-source" "source"
+                       '("name" "cons" "kind" "function"))
+             (test-call-with-function-replacements
+              (list
+               (list 'lisp-worker-manager-reset
+                     (lambda (manager name image)
+                       (declare (ignore manager name image))
+                       (sleep 1)
+                       nil))
+               (list 'lisp-worker-manager-stop-worker
+                     (lambda (manager name)
+                       (declare (ignore manager name))
+                       (sleep 1)
+                       nil)))
+              (lambda ()
+                (exercise "busy-reset" "reset" nil)
+                (exercise "busy-stop" "stop" nil))))
+        (ignore-errors (tool-registry-close-runtime-state registry))
+        (ignore-errors (lisp-worker-pool-stop-all pool))
+        (uiop:delete-directory-tree root
+                                    :validate t
+                                    :if-does-not-exist ':ignore))))
+  nil)
+
+
 (-> test-lisp-scratchpad-tools () null)
 (defun test-lisp-scratchpad-tools ()
   "Test conversation-scoped scratchpad resources, execution, and deletion."

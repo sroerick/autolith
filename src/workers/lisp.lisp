@@ -399,6 +399,24 @@
                  :tool-name tool-name))
         path))))
 
+(-> lisp-tool-invoke-managed-execution
+    (tool-context hash-table
+     &key (:tool-name non-empty-string)
+       (:summary string)
+       (:operation-function function))
+    tool-result)
+(defun lisp-tool-invoke-managed-execution
+    (context arguments &key tool-name summary operation-function)
+  "Run one Lisp-manager operation directly or through an inspectable session job."
+  (tool-execution-invoke
+   (tool-context-execution-runtime context)
+   (tool-context-agent context)
+   :tool-name tool-name
+   :summary summary
+   :operation-function operation-function
+   :async-p (tool-boolean-argument arguments "async" :tool-name tool-name)
+   :parent-call-id (tool-context-call-id context)))
+
 (-> lisp-tool-invoke-execution
     (tool-context hash-table
      &key (:tool-name non-empty-string)
@@ -411,13 +429,10 @@
 
 Cancellation detaches the selected worker before unwinding the job, so its next
 request restarts immediately from a clean protocol stream."
-  (let* ((async-p
-           (tool-boolean-argument arguments "async" :tool-name tool-name))
-         (worker (lisp-tool-worker context arguments))
+  (let* ((worker (lisp-tool-worker context arguments))
          (repl-name (lisp-worker-name worker)))
-    (tool-execution-invoke
-     (tool-context-execution-runtime context)
-     (tool-context-agent context)
+    (lisp-tool-invoke-managed-execution
+     context arguments
      :tool-name tool-name
      :summary (format nil "Lisp REPL ~A: ~A" repl-name summary)
      :operation-function
@@ -426,9 +441,7 @@ request restarts immediately from a clean protocol stream."
                         (lambda (condition)
                           (declare (ignore condition))
                           (sbcl-worker-cancel-request worker))))
-         (funcall operation-function worker)))
-     :async-p async-p
-     :parent-call-id (tool-context-call-id context))))
+         (funcall operation-function worker))))))
 
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
@@ -502,28 +515,37 @@ request restarts immediately from a clean protocol stream."
                          (arguments hash-table))
   "Describe the required designator in a worker or the active image."
   (declare (ignore tool))
-  (if (lisp-tool--active-target-p context arguments "lisp.describe")
-      (lisp-describe-active-image context arguments)
-      (worker-response-tool-result
-       (lisp-worker-request
-        (lisp-tool-worker context arguments)
-        :describe
-        (list :designator
-              (tool-argument arguments "designator" :required t))))))
+  (let ((designator (tool-argument arguments "designator" :required t)))
+    (if (lisp-tool--active-target-p context arguments "lisp.describe")
+        (lisp-describe-active-image context arguments)
+        (lisp-tool-invoke-execution
+         context arguments
+         :tool-name "lisp.describe"
+         :summary (format nil "Describe ~A" designator)
+         :operation-function
+         (lambda (worker)
+           (worker-response-tool-result
+            (lisp-worker-request
+             worker :describe (list :designator designator))))))))
 
 (defmethod tool-execute ((tool lisp-source-tool)
                          (context tool-context)
                          (arguments hash-table))
   "Read matching source from a worker or the active image."
   (declare (ignore tool))
-  (if (lisp-tool--active-target-p context arguments "lisp.source")
-      (lisp-source-active-image context arguments)
-      (worker-response-tool-result
-       (lisp-worker-request
-        (lisp-tool-worker context arguments)
-        :source
-        (list :name (tool-argument arguments "name" :required t)
-              :kind (tool-argument arguments "kind"))))))
+  (let ((name (tool-argument arguments "name" :required t))
+        (kind (tool-argument arguments "kind")))
+    (if (lisp-tool--active-target-p context arguments "lisp.source")
+        (lisp-source-active-image context arguments)
+        (lisp-tool-invoke-execution
+         context arguments
+         :tool-name "lisp.source"
+         :summary (format nil "Read source for ~A" name)
+         :operation-function
+         (lambda (worker)
+           (worker-response-tool-result
+            (lisp-worker-request
+             worker :source (list :name name :kind kind))))))))
 
 (defmethod tool-execute ((tool lisp-run-tests-tool)
                          (context tool-context)
@@ -556,9 +578,15 @@ request restarts immediately from a clean protocol stream."
          (name (lisp-tool-repl-name arguments))
          (image (or (tool-argument arguments "image")
                     (pristine-lisp-image-identifier))))
-    (lisp-worker-manager-reset manager name image)
-    (tool-success
-     (format nil "Lisp REPL ~A was reset from image ~A." name image))))
+    (lisp-tool-invoke-managed-execution
+     context arguments
+     :tool-name "lisp.reset"
+     :summary (format nil "Reset Lisp REPL ~A from image ~A" name image)
+     :operation-function
+     (lambda ()
+       (lisp-worker-manager-reset manager name image)
+       (tool-success
+        (format nil "Lisp REPL ~A was reset from image ~A." name image))))))
 
 (defmethod tool-execute ((tool lisp-start-tool)
                          (context tool-context)
@@ -568,12 +596,18 @@ request restarts immediately from a clean protocol stream."
   (let* ((manager (tool-context-worker context))
          (name (lisp-tool-repl-name arguments))
          (image (or (tool-argument arguments "image")
-                    (pristine-lisp-image-identifier)))
-         (worker (lisp-worker-manager-start manager name image)))
-    (tool-success
-     (format nil "Lisp REPL ~A is running from image ~A."
-             name
-             (lisp-worker-image-identifier worker)))))
+                    (pristine-lisp-image-identifier))))
+    (lisp-tool-invoke-managed-execution
+     context arguments
+     :tool-name "lisp.start"
+     :summary (format nil "Start Lisp REPL ~A from image ~A" name image)
+     :operation-function
+     (lambda ()
+       (let ((worker (lisp-worker-manager-start manager name image)))
+         (tool-success
+          (format nil "Lisp REPL ~A is running from image ~A."
+                  name
+                  (lisp-worker-image-identifier worker))))))))
 
 (defmethod tool-execute ((tool lisp-stop-tool)
                          (context tool-context)
@@ -582,8 +616,14 @@ request restarts immediately from a clean protocol stream."
   (declare (ignore tool))
   (let ((manager (tool-context-worker context))
         (name (lisp-tool-repl-name arguments)))
-    (lisp-worker-manager-stop-worker manager name)
-    (tool-success (format nil "Lisp REPL ~A was stopped." name))))
+    (lisp-tool-invoke-managed-execution
+     context arguments
+     :tool-name "lisp.stop"
+     :summary (format nil "Stop Lisp REPL ~A" name)
+     :operation-function
+     (lambda ()
+       (lisp-worker-manager-stop-worker manager name)
+       (tool-success (format nil "Lisp REPL ~A was stopped." name))))))
 
 (defmethod tool-execute ((tool lisp-repls-tool)
                          (context tool-context)
@@ -606,21 +646,26 @@ request restarts immediately from a clean protocol stream."
                          (arguments hash-table))
   "Save one named REPL as an immutable worker image with a durable note."
   (declare (ignore tool))
-  (let* ((worker (lisp-tool-worker context arguments))
-         (identifier (tool-argument arguments "image" :required t))
-         (note (tool-argument arguments "note" :required t))
-         (image
-           (lisp-worker-save-image
-            (tool-context-configuration context)
-            worker
-            :identifier identifier
-            :note note)))
-    (tool-success
-     (format nil "Saved Lisp REPL ~A as image ~A.~%Parent: ~A~%Note: ~A"
-             (lisp-worker-name worker)
-             (lisp-image-identifier image)
-             (lisp-image-parent-identifier image)
-             (lisp-image-note image)))))
+  (let ((identifier (tool-argument arguments "image" :required t))
+        (note (tool-argument arguments "note" :required t)))
+    (lisp-tool-invoke-execution
+     context arguments
+     :tool-name "lisp.save-image"
+     :summary (format nil "Save image ~A" identifier)
+     :operation-function
+     (lambda (worker)
+       (let ((image
+               (lisp-worker-save-image
+                (tool-context-configuration context)
+                worker
+                :identifier identifier
+                :note note)))
+         (tool-success
+          (format nil "Saved Lisp REPL ~A as image ~A.~%Parent: ~A~%Note: ~A"
+                  (lisp-worker-name worker)
+                  (lisp-image-identifier image)
+                  (lisp-image-parent-identifier image)
+                  (lisp-image-note image))))))))
 
 
 ;;;; -- Worker Runtime Entry Points --
