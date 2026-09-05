@@ -1711,10 +1711,10 @@ abandon the looping stream; the default reaction ignores the report."))
              (let* ((manager (provider-credential-manager provider))
                     (refreshable-p
                       (credential-manager-refreshable-p manager))
-                    (maximum-attempts (if refreshable-p 3 1)))
+                    (maximum-attempts (if refreshable-p 2 1)))
                (loop for attempt-number from 1 to maximum-attempts
                      for force-refresh = (and refreshable-p
-                                              (= attempt-number 3))
+                                              (= attempt-number 2))
                      do (handler-case
                             (return-from attempt-with-authentication
                               (provider--call-with-transport-normalization

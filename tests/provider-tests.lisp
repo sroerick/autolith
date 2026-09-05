@@ -2051,7 +2051,7 @@
 
 (-> test-provider-authentication-retries () null)
 (defun test-provider-authentication-retries ()
-  "Test bounded credential reload, refresh, and final unauthorized normalization."
+  "Test immediate bounded credential refresh and final unauthorized normalization."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (conversation (conversation-create configuration :identifier "provider-retry"))
@@ -2073,29 +2073,15 @@
                                         :tool-namespaces #()
                                         :event-callback #'identity)
                   result)
-              "a credential reload may satisfy the first unauthorized response")
+              "one forced refresh may satisfy the first unauthorized response")
              (test-assert
               (equal (nreverse (test-codex-provider-refresh-flags provider))
-                     '(nil nil))
-              "the reload retry does not rotate credentials"))
+                     '(nil t))
+              "the first retry forces credential refresh"))
            (let ((provider
                    (test-codex-provider-create
                     configuration
-                    (list :unauthorized :unauthorized result))))
-             (test-assert
-              (eq (provider-stream-turn provider conversation
-                                        :tool-namespaces #()
-                                        :event-callback #'identity)
-                  result)
-              "one forced refresh may satisfy two unauthorized responses")
-             (test-assert
-              (equal (nreverse (test-codex-provider-refresh-flags provider))
-                     '(nil nil t))
-              "the third and final attempt forces credential refresh"))
-           (let ((provider
-                   (test-codex-provider-create
-                    configuration
-                    '(:unauthorized :unauthorized :unauthorized))))
+                    '(:unauthorized :unauthorized))))
              (test-assert
               (handler-case
                   (progn
@@ -2105,7 +2091,11 @@
                     nil)
                 (authentication-error ()
                   t))
-              "a third unauthorized response becomes a typed authentication failure"))
+              "a second unauthorized response becomes a typed authentication failure")
+             (test-assert
+              (equal (nreverse (test-codex-provider-refresh-flags provider))
+                     '(nil t))
+              "authentication failure follows one immediate forced refresh"))
            (let* ((manager
                     (api-key-credential-manager-create
                      :provider-name "retry-api-key"
