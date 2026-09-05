@@ -29,9 +29,40 @@
                  (configuration-provider-endpoint configuration)))
 
 
+(-> test-memory-process-shared-locks () null)
+(defun test-memory-process-shared-locks ()
+  "Test memory reads and appends wait for the adjacent process-shared lock."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (lock-pathname
+           (readable-state-lock-pathname
+            (configuration-memory-path configuration)
+            "memories.lock")))
+    (unwind-protect
+         (progn
+           (test-operation-blocked-by-file-lock
+            lock-pathname
+            (lambda ()
+              (memory-list configuration :visibility ':all))
+            "memory reads wait for the process-shared file lock")
+           (test-operation-blocked-by-file-lock
+            lock-pathname
+            (lambda ()
+              (memory-remember configuration
+                               :title "Child memory"
+                               :content "Written after the parent releases the lock."
+                               :tags nil))
+            "memory appends wait for the process-shared file lock")
+           (test-assert (= (length (memory-list configuration :visibility ':all)) 1)
+                        "the blocked child memory append persists intact"))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-memory-persistence () null)
 (defun test-memory-persistence ()
   "Test memory replay, scope selection, search, replacement, and tombstones."
+  (test-memory-process-shared-locks)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
          (other-workspace (merge-pathnames "other-workspace/" root))

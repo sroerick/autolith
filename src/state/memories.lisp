@@ -196,9 +196,27 @@
 
 ;;;; -- Readable Log --
 
-(-> memory--append-record (configuration list) null)
-(defun memory--append-record (configuration record)
-  "Append one complete memory RECORD, atomically creating the log if absent."
+(-> memory--call-with-file-lock (configuration function) t)
+(defun memory--call-with-file-lock (configuration function)
+  "Call FUNCTION while holding CONFIGURATION's process-shared memory lock."
+  (let* ((pathname (configuration-memory-path configuration))
+         (lock-pathname
+           (readable-state-lock-pathname pathname "memories.lock")))
+    (handler-case
+        (call-with-file-lock lock-pathname function)
+      (memory-error (condition)
+        (error condition))
+      (error (cause)
+        (error 'memory-error
+               :message (format nil "Could not lock persistent memories at ~A: ~A"
+                                lock-pathname
+                                cause)
+               :pathname lock-pathname
+               :identifier nil)))))
+
+(-> memory--append-record-unlocked (configuration list) null)
+(defun memory--append-record-unlocked (configuration record)
+  "Append memory RECORD while the caller holds the process-shared memory lock."
   (let ((pathname (configuration-memory-path configuration)))
     (handler-case
         (log-append
@@ -214,9 +232,17 @@
                :identifier nil))))
   nil)
 
-(-> memory--read-forms (pathname) (values list boolean))
-(defun memory--read-forms (pathname)
-  "Read complete memory forms and report an incomplete final form."
+(-> memory--append-record (configuration list) null)
+(defun memory--append-record (configuration record)
+  "Append one complete memory RECORD under the process-shared memory lock."
+  (memory--call-with-file-lock
+   configuration
+   (lambda ()
+     (memory--append-record-unlocked configuration record))))
+
+(-> memory--read-forms-unlocked (pathname) (values list boolean))
+(defun memory--read-forms-unlocked (pathname)
+  "Read complete memory forms while the caller holds the process-shared lock."
   (handler-case
       (log-read pathname)
     (error (cause)
@@ -226,12 +252,31 @@
              :pathname pathname
              :identifier nil))))
 
+(-> memory--read-forms (pathname) (values list boolean))
+(defun memory--read-forms (pathname)
+  "Read complete memory forms under the adjacent process-shared lock."
+  (let ((lock-pathname
+          (readable-state-lock-pathname pathname "memories.lock")))
+    (handler-case
+        (call-with-file-lock
+         lock-pathname
+         (lambda ()
+           (memory--read-forms-unlocked pathname)))
+      (memory-error (condition)
+        (error condition))
+      (error (cause)
+        (error 'memory-error
+               :message (format nil "Could not lock persistent memories at ~A: ~A"
+                                lock-pathname cause)
+               :pathname lock-pathname
+               :identifier nil)))))
+
 (-> memory--replay-unlocked (configuration) list)
 (defun memory--replay-unlocked (configuration)
   "Replay the readable log and return all active memories."
   (let ((pathname (configuration-memory-path configuration)))
     (multiple-value-bind (records incomplete-final-form-p)
-        (memory--read-forms pathname)
+          (memory--read-forms-unlocked pathname)
       (declare (ignore incomplete-final-form-p))
       (when (and (probe-file pathname) (null records))
         (error 'memory-error
@@ -328,10 +373,13 @@
 (defun memory-list (configuration &key (visibility :relevant))
   "Return active memories selected by VISIBILITY, newest first."
   (with-recursive-lock-held (*memory-lock*)
-    (remove-if-not
-     (lambda (memory)
-       (memory--visible-p memory configuration visibility))
-     (memory--load-unlocked configuration))))
+    (memory--call-with-file-lock
+     configuration
+     (lambda ()
+       (remove-if-not
+        (lambda (memory)
+          (memory--visible-p memory configuration visibility))
+        (memory--load-unlocked configuration))))))
 
 (-> memory-find (configuration string) (option memory))
 (defun memory-find (configuration identifier)
@@ -370,50 +418,46 @@
              :pathname (configuration-memory-path configuration)
              :identifier identifier))
     (with-recursive-lock-held (*memory-lock*)
-      (let* ((active (memory--load-unlocked configuration))
-             (existing (and identifier
-                            (find identifier active
-                                  :test #'string=
-                                  :key #'memory-identifier))))
-        (when (and identifier (null existing))
-          (error 'memory-error
-                 :message (format nil "Memory ~A does not exist." identifier)
-                 :pathname (configuration-memory-path configuration)
-                 :identifier identifier))
-        (let* ((now (get-universal-time))
-               (selected-scope (or scope
-                                   (and existing (memory-scope existing))
-                                   :workspace))
-               (memory
-                 (make-instance
-                  'memory
-                  :identifier (or identifier (make-identifier))
-                  :created-at (if existing (memory-created-at existing) now)
-                  :updated-at now
-                  :scope selected-scope
-                  :workspace (if (eq selected-scope :workspace)
-                                 (if (and existing
-                                          (null scope)
-                                          (eq (memory-scope existing) :workspace))
-                                     (memory-workspace existing)
-                                     (namestring
-                                      (configuration-working-directory
-                                       configuration)))
-                                 nil)
-                  :title validated-title
-                  :content validated-content
-                  :tags validated-tags
-                  :source-conversation source-conversation)))
-          (handler-case
-              (memory--append-record configuration (memory--record memory))
-            (memory-error (condition)
-              (error condition))
-            (error (condition)
-              (error 'memory-error
-                     :message (format nil "Could not persist memory: ~A" condition)
-                     :pathname (configuration-memory-path configuration)
-                     :identifier (memory-identifier memory))))
-          memory)))))
+      (memory--call-with-file-lock
+       configuration
+       (lambda ()
+         (let* ((active (memory--load-unlocked configuration))
+                (existing (and identifier
+                               (find identifier active
+                                     :test #'string=
+                                     :key #'memory-identifier))))
+           (when (and identifier (null existing))
+             (error 'memory-error
+                    :message (format nil "Memory ~A does not exist." identifier)
+                    :pathname (configuration-memory-path configuration)
+                    :identifier identifier))
+           (let* ((now (get-universal-time))
+                  (selected-scope (or scope
+                                      (and existing (memory-scope existing))
+                                      :workspace))
+                  (memory
+                    (make-instance
+                     'memory
+                     :identifier (or identifier (make-identifier))
+                     :created-at (if existing (memory-created-at existing) now)
+                     :updated-at now
+                     :scope selected-scope
+                     :workspace (if (eq selected-scope :workspace)
+                                    (if (and existing
+                                             (null scope)
+                                             (eq (memory-scope existing) :workspace))
+                                        (memory-workspace existing)
+                                        (namestring
+                                         (configuration-working-directory
+                                          configuration)))
+                                    nil)
+                     :title validated-title
+                     :content validated-content
+                     :tags validated-tags
+                     :source-conversation source-conversation)))
+             (memory--append-record-unlocked
+              configuration (memory--record memory))
+             memory)))))))
 
 (-> memory-forget
     (configuration string &key (:source-conversation (option string)))
@@ -427,23 +471,26 @@
            :pathname (configuration-memory-path configuration)
            :identifier identifier))
   (with-recursive-lock-held (*memory-lock*)
-    (let ((memory (find identifier
-                        (memory--load-unlocked configuration)
-                        :test #'string=
-                        :key #'memory-identifier)))
-      (unless memory
-        (error 'memory-error
-               :message (format nil "Memory ~A does not exist." identifier)
-               :pathname (configuration-memory-path configuration)
-               :identifier identifier))
-      (memory--append-record
-       configuration
-       (list :memory-forgotten
-             :version *memory-format-version*
-             :id identifier
-             :time (get-universal-time)
-             :source-conversation source-conversation))
-      memory)))
+    (memory--call-with-file-lock
+     configuration
+     (lambda ()
+       (let ((memory (find identifier
+                           (memory--load-unlocked configuration)
+                           :test #'string=
+                           :key #'memory-identifier)))
+         (unless memory
+           (error 'memory-error
+                  :message (format nil "Memory ~A does not exist." identifier)
+                  :pathname (configuration-memory-path configuration)
+                  :identifier identifier))
+         (memory--append-record-unlocked
+          configuration
+          (list :memory-forgotten
+                :version *memory-format-version*
+                :id identifier
+                :time (get-universal-time)
+                :source-conversation source-conversation))
+         memory)))))
 
 (-> memory--search-terms (string) list)
 (defun memory--search-terms (query)

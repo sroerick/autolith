@@ -213,9 +213,27 @@
 
 ;;;; -- Readable Log --
 
-(-> papercut--append-record (configuration list) null)
-(defun papercut--append-record (configuration record)
-  "Append one complete papercut RECORD, atomically creating the log if absent."
+(-> papercut--call-with-file-lock (configuration function) t)
+(defun papercut--call-with-file-lock (configuration function)
+  "Call FUNCTION while holding CONFIGURATION's process-shared papercut lock."
+  (let* ((pathname (configuration-papercut-path configuration))
+         (lock-pathname
+           (readable-state-lock-pathname pathname "papercuts.lock")))
+    (handler-case
+        (call-with-file-lock lock-pathname function)
+      (papercut-error (condition)
+        (error condition))
+      (error (cause)
+        (error 'papercut-error
+               :message (format nil "Could not lock papercuts at ~A: ~A"
+                                lock-pathname
+                                cause)
+               :pathname lock-pathname
+               :identifier nil)))))
+
+(-> papercut--append-record-unlocked (configuration list) null)
+(defun papercut--append-record-unlocked (configuration record)
+  "Append papercut RECORD while the caller holds the process-shared lock."
   (let ((pathname (configuration-papercut-path configuration)))
     (handler-case
         (log-append
@@ -230,9 +248,17 @@
                :identifier nil))))
   nil)
 
-(-> papercut--read-forms (pathname) (values list boolean))
-(defun papercut--read-forms (pathname)
-  "Read complete papercut forms and report an incomplete final form."
+(-> papercut--append-record (configuration list) null)
+(defun papercut--append-record (configuration record)
+  "Append one complete papercut RECORD under the process-shared lock."
+  (papercut--call-with-file-lock
+   configuration
+   (lambda ()
+     (papercut--append-record-unlocked configuration record))))
+
+(-> papercut--read-forms-unlocked (pathname) (values list boolean))
+(defun papercut--read-forms-unlocked (pathname)
+  "Read complete papercut forms while the caller holds the process-shared lock."
   (handler-case
       (log-read pathname)
     (error (cause)
@@ -242,12 +268,31 @@
              :pathname pathname
              :identifier nil))))
 
+(-> papercut--read-forms (pathname) (values list boolean))
+(defun papercut--read-forms (pathname)
+  "Read complete papercut forms under the adjacent process-shared lock."
+  (let ((lock-pathname
+          (readable-state-lock-pathname pathname "papercuts.lock")))
+    (handler-case
+        (call-with-file-lock
+         lock-pathname
+         (lambda ()
+           (papercut--read-forms-unlocked pathname)))
+      (papercut-error (condition)
+        (error condition))
+      (error (cause)
+        (error 'papercut-error
+               :message (format nil "Could not lock papercuts at ~A: ~A"
+                                lock-pathname cause)
+               :pathname lock-pathname
+               :identifier nil)))))
+
 (-> papercut--replay-unlocked (configuration) list)
 (defun papercut--replay-unlocked (configuration)
   "Replay the readable log and return all papercuts."
   (let ((pathname (configuration-papercut-path configuration)))
     (multiple-value-bind (records incomplete-final-form-p)
-        (papercut--read-forms pathname)
+          (papercut--read-forms-unlocked pathname)
       (declare (ignore incomplete-final-form-p))
       (when (and (probe-file pathname) (null records))
         (error 'papercut-error
@@ -379,7 +424,10 @@
 (defun papercut-list (configuration)
   "Return papercuts reported in CONFIGURATION's current workspace, newest first."
   (with-lock-held (*papercut-lock*)
-    (papercut--list-unlocked configuration)))
+    (papercut--call-with-file-lock
+     configuration
+     (lambda ()
+       (papercut--list-unlocked configuration)))))
 
 (-> papercut-find (configuration string) (option papercut))
 (defun papercut-find (configuration identifier)
@@ -428,7 +476,7 @@ matching reports for :AMBIGUOUS."
            :title title
            :content content
            :source-conversation source-conversation)))
-    (papercut--append-record configuration (papercut--record papercut))
+    (papercut--append-record-unlocked configuration (papercut--record papercut))
     papercut))
 
 (-> papercut-report
@@ -448,8 +496,11 @@ matching reports for :AMBIGUOUS."
              :pathname (configuration-papercut-path configuration)
              :identifier nil))
     (with-lock-held (*papercut-lock*)
-      (papercut--report-unlocked
-       configuration validated-title validated-content source-conversation))))
+      (papercut--call-with-file-lock
+       configuration
+       (lambda ()
+         (papercut--report-unlocked
+           configuration validated-title validated-content source-conversation))))))
 
 (-> papercut--assess-unlocked
     (configuration non-empty-string
@@ -471,7 +522,7 @@ matching reports for :AMBIGUOUS."
              :pathname (configuration-papercut-path configuration)
              :identifier identifier))
     (let ((assessed-at (get-universal-time)))
-      (papercut--append-record
+      (papercut--append-record-unlocked
        configuration
        (papercut--assessed-record identifier verdict note assessed-at))
       (setf (papercut-assessment-verdict papercut) verdict
@@ -498,8 +549,11 @@ matching reports for :AMBIGUOUS."
           (papercut--validate-text
            note "assessment note" *papercut-assessment-note-limit*)))
     (with-lock-held (*papercut-lock*)
-      (papercut--assess-unlocked
-       configuration identifier verdict validated-note))))
+      (papercut--call-with-file-lock
+       configuration
+       (lambda ()
+         (papercut--assess-unlocked
+           configuration identifier verdict validated-note))))))
 
 (-> papercut--mark-closed-unlocked
     (configuration non-empty-string non-empty-string)
@@ -529,7 +583,7 @@ matching reports for :AMBIGUOUS."
                               (papercut-assessment-verdict papercut))
              :pathname (configuration-papercut-path configuration)
              :identifier identifier))
-    (papercut--append-record
+    (papercut--append-record-unlocked
      configuration
      (papercut--closed-record identifier resolution (get-universal-time)))
     papercut))
@@ -546,8 +600,11 @@ matching reports for :AMBIGUOUS."
           (papercut--validate-text
            resolution "closure resolution" *papercut-resolution-limit*)))
     (with-lock-held (*papercut-lock*)
-      (papercut--mark-closed-unlocked
-       configuration identifier validated-resolution))))
+      (papercut--call-with-file-lock
+       configuration
+       (lambda ()
+         (papercut--mark-closed-unlocked
+           configuration identifier validated-resolution))))))
 
 
 ;;;; -- Presentation Values --

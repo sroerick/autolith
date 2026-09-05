@@ -437,12 +437,12 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                :cause cause))))
   (copy-list identifiers))
 
-(-> agenda-add
+(-> agenda--add-unlocked
     (&key (:configuration configuration) (:state agenda-state)
           (:text string) (:status agenda-status)
           (:memory-identifiers list) (:now timestamp))
     agenda-item)
-(defun agenda-add
+(defun agenda--add-unlocked
     (&key configuration state text (status ':todo) memory-identifiers
           (now (get-universal-time)))
   "Add a new agenda item to CONFIGURATION's current workspace."
@@ -480,12 +480,12 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
       (setf (agenda-state-records state) records)
       item)))
 
-(-> agenda-update
+(-> agenda--update-unlocked
     (configuration agenda-state string
      &key (:text (option string)) (:status (option agenda-status))
           (:memory-identifiers list) (:now timestamp))
     agenda-item)
-(defun agenda-update
+(defun agenda--update-unlocked
     (configuration state identifier
      &key text status (memory-identifiers nil memory-identifiers-supplied-p)
        (now (get-universal-time)))
@@ -545,8 +545,8 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
       (setf (agenda-state-records state) records)
       replacement-item)))
 
-(-> agenda-remove (configuration agenda-state string) boolean)
-(defun agenda-remove (configuration state identifier)
+(-> agenda--remove-unlocked (configuration agenda-state string) boolean)
+(defun agenda--remove-unlocked (configuration state identifier)
   "Remove current-workspace agenda IDENTIFIER and report whether it existed."
   (let* ((record (agenda-current configuration state))
          (items (and record (workspace-agenda-items record)))
@@ -649,12 +649,12 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
                            (copy-seq identifier))))))))))
     result))
 
-(-> agenda-transport
+(-> agenda--transport-unlocked
     (&key (:configuration configuration) (:state agenda-state)
           (:source-directory (or pathname string))
           (:target-directory (or pathname string)) (:move-p boolean))
     workspace-agenda)
-(defun agenda-transport
+(defun agenda--transport-unlocked
     (&key configuration state source-directory target-directory move-p)
   "Copy or move SOURCE-DIRECTORY's agenda into existing TARGET-DIRECTORY."
   (let* ((source-name
@@ -691,3 +691,97 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
       (agenda--write configuration (make-instance 'agenda-state :records records))
       (setf (agenda-state-records state) records)
       replacement)))
+
+
+;;;; -- Process-Shared Transactions --
+
+(-> agenda--call-with-transaction (configuration agenda-state function) t)
+(defun agenda--call-with-transaction (configuration state function)
+  "Call FUNCTION with freshly read state under process-local and file locks."
+  (with-recursive-lock-held (*agenda-lock*)
+    (let* ((pathname (configuration-agenda-path configuration))
+           (lock-pathname
+             (readable-state-lock-pathname pathname "agendas.lock")))
+      (handler-case
+          (call-with-file-lock
+           lock-pathname
+           (lambda ()
+             (let* ((current (agenda--read configuration))
+                    (value (funcall function current)))
+               (setf (agenda-state-records state)
+                     (agenda-state-records current))
+               value)))
+        (agenda-error (condition)
+          (error condition))
+        (error (cause)
+          (error 'agenda-error
+                 :message (format nil "Could not lock agendas at ~A: ~A"
+                                  lock-pathname cause)
+                 :pathname lock-pathname
+                 :operation ':lock
+                 :cause cause))))))
+
+(-> agenda-add
+    (&key (:configuration configuration) (:state agenda-state)
+          (:text string) (:status agenda-status)
+          (:memory-identifiers list) (:now timestamp))
+    agenda-item)
+(defun agenda-add
+    (&key configuration state text (status ':todo) memory-identifiers
+          (now (get-universal-time)))
+  "Add an item in one process-shared read-modify-write transaction."
+  (agenda--call-with-transaction
+   configuration state
+   (lambda (current)
+     (agenda--add-unlocked :configuration configuration
+                           :state current
+                           :text text
+                           :status status
+                           :memory-identifiers memory-identifiers
+                           :now now))))
+
+(-> agenda-update
+    (configuration agenda-state string
+     &key (:text (option string)) (:status (option agenda-status))
+          (:memory-identifiers list) (:now timestamp))
+    agenda-item)
+(defun agenda-update
+    (configuration state identifier
+     &key text status (memory-identifiers nil memory-identifiers-supplied-p)
+       (now (get-universal-time)))
+  "Update an item in one process-shared read-modify-write transaction."
+  (agenda--call-with-transaction
+   configuration state
+   (lambda (current)
+     (apply #'agenda--update-unlocked
+            configuration current identifier
+            (append (and text (list :text text))
+                    (and status (list :status status))
+                    (and memory-identifiers-supplied-p
+                         (list :memory-identifiers memory-identifiers))
+                    (list :now now))))))
+
+(-> agenda-remove (configuration agenda-state string) boolean)
+(defun agenda-remove (configuration state identifier)
+  "Remove an item in one process-shared read-modify-write transaction."
+  (agenda--call-with-transaction
+   configuration state
+   (lambda (current)
+     (agenda--remove-unlocked configuration current identifier))))
+
+(-> agenda-transport
+    (&key (:configuration configuration) (:state agenda-state)
+          (:source-directory (or pathname string))
+          (:target-directory (or pathname string)) (:move-p boolean))
+    workspace-agenda)
+(defun agenda-transport
+    (&key configuration state source-directory target-directory move-p)
+  "Transport an agenda in one process-shared read-modify-write transaction."
+  (agenda--call-with-transaction
+   configuration state
+   (lambda (current)
+     (agenda--transport-unlocked :configuration configuration
+                                 :state current
+                                 :source-directory source-directory
+                                 :target-directory target-directory
+                                 :move-p move-p))))
