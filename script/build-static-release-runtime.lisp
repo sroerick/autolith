@@ -36,24 +36,27 @@
                  (uiop:symbol-call :cffi :load-foreign-library fff-library))
                (uiop:symbol-call :colorlisp :native-ensure-loaded)))
 
-            (build-sandbox-helper ()
-              "Build the locked cl-exec-sandbox helper as a static executable."
+            (build-sandbox-helpers ()
+              "Build the locked cl-exec-sandbox helpers as static executables."
               (let* ((sandbox-root
                        (asdf:system-source-directory :cl-exec-sandbox))
-                     (source
-                       (merge-pathnames "helper/cl-exec-sandbox-helper.c"
-                                        sandbox-root))
-                     (target
-                       (merge-pathnames "build/cl-exec-sandbox-helper"
-                                        sandbox-root))
-                     (compiler (or (uiop:getenv "CC") "cc")))
-                (unless (probe-file source)
-                  (fail "the locked sandbox helper source is absent."))
-                (uiop:ensure-all-directories-exist (list target))
-                (run (list compiler "-static" "-std=c11" "-O2"
-                           "-Wall" "-Wextra" "-Werror" "-pedantic"
-                           (namestring source) "-o" (namestring target)))
-                target))
+                     (compiler (or (uiop:getenv "CC") "cc"))
+                     (helpers
+                       '(("helper/cl-exec-sandbox-helper.c"
+                          "build/cl-exec-sandbox-helper")
+                         ("helper/cl-exec-sandbox-process-group.c"
+                          "build/cl-exec-sandbox-process-group"))))
+                (loop for (source-name target-name) in helpers
+                      for source = (merge-pathnames source-name sandbox-root)
+                      for target = (merge-pathnames target-name sandbox-root)
+                      do (unless (probe-file source)
+                           (fail "the locked sandbox helper source ~A is absent."
+                                 source-name))
+                         (uiop:ensure-all-directories-exist (list target))
+                         (run (list compiler "-static" "-std=c11" "-O2"
+                                    "-Wall" "-Wextra" "-Werror" "-pedantic"
+                                    (namestring source) "-o" (namestring target)))
+                      collect target)))
 
            (build-color-archive ()
              "Build ColorLisp's native sources into COLOR-ARCHIVE."
@@ -170,7 +173,7 @@
                        source-root assembly color-archive)
             (fail "usage: build-static-release-runtime.lisp SOURCE ASSEMBLY COLOR-ARCHIVE"))
           (load-project)
-           (build-sandbox-helper)
+           (build-sandbox-helpers)
           (build-color-archive)
           (write-assembly))
       (error (condition)
