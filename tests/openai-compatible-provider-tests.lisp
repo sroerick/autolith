@@ -531,9 +531,13 @@
         (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
   nil)
 
+(define-condition test-provider-model-discovery-interrupt (serious-condition)
+  ()
+  (:documentation "A synthetic non-error interrupt during provider model discovery."))
+
 (-> test-openai-compatible-provider-discovery () null)
 (defun test-openai-compatible-provider-discovery ()
-  "Test OpenAI-compatible model discovery, metadata overrides, and failures."
+  "Test OpenAI-compatible model discovery, metadata overrides, failures, and interrupts."
   (let* ((registry-snapshot (provider--registry-snapshot))
          (configuration (test-configuration))
          (root (test-configuration-root configuration))
@@ -567,8 +571,11 @@
                   (lambda (url &rest arguments)
                     (setf observed-url url
                           observed-headers (getf arguments :headers))
-                    (when response-error-p
-                      (error "Synthetic model discovery transport failure."))
+                    (cond
+                      ((eq response-error-p ':interrupt)
+                       (error 'test-provider-model-discovery-interrupt))
+                      (response-error-p
+                       (error "Synthetic model discovery transport failure.")))
                     (values response-body response-status nil nil)))
            (let ((failures
                    (provider-refresh-models
@@ -688,6 +695,17 @@
                     (typep (first failures)
                            'provider-model-discovery-error))
                "model discovery normalizes dependency transport failures"))
+            (setf response-error-p ':interrupt)
+            (test-assert
+             (handler-case
+                 (progn
+                   (provider-refresh-models
+                    configuration
+                    :provider-name "dynamic-test")
+                   nil)
+               (test-provider-model-discovery-interrupt ()
+                 t))
+             "model discovery does not swallow non-error interrupts")
       (setf (symbol-function 'dexador:get) original-get)
       (provider--registry-restore registry-snapshot)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))

@@ -597,7 +597,7 @@ registrations are ignored. Failures retain the last successful model list."
         (when discovery
           (handler-case
               (provider--refresh-registration-models registration configuration)
-            (serious-condition (cause)
+            (error (cause)
               (push
                (make-condition
                 'provider-model-discovery-error
