@@ -110,6 +110,49 @@
     (test-assert
      (string= (get-output-stream-string host-error-output) "")
      "worker subprocess diagnostics do not leak into the host error stream"))
+  (let ((worker (allocate-instance (find-class 'sbcl-worker)))
+        (cancel-count 0)
+        (request-count 0))
+    (test-call-with-function-replacements
+     (list
+      (list 'sbcl-worker-request
+            (lambda (ignored-worker operation arguments)
+              (declare (ignore ignored-worker operation arguments))
+              (incf request-count)
+              (if (= request-count 1)
+                  (error 'job-aborted
+                         :message "Synthetic request cancellation."
+                         :identifier "request-cancellation"
+                         :reason ':cancelled)
+                  '(:response :id 1 :status :ok :values ("42")))))
+      (list 'sbcl-worker-cancel-request
+            (lambda (ignored-worker)
+              (declare (ignore ignored-worker))
+              (incf cancel-count)
+              nil)))
+     (lambda ()
+       (test-assert
+        (handler-case
+            (progn
+              (lisp-worker-request worker ':eval '(:form "(+ 40 2)"))
+              nil)
+          (job-aborted ()
+            t))
+        "an interrupted worker request re-signals its cancellation")
+       (test-assert
+        (equal (lisp-worker-request worker ':eval '(:form "(+ 40 2)"))
+               '(:response :id 1 :status :ok :values ("42")))
+        "a later worker request can complete normally")
+       (handler-case
+           (error 'job-aborted
+                  :message "Synthetic post-request cancellation."
+                  :identifier "post-request-cancellation"
+                  :reason ':cancelled)
+         (job-aborted ()
+           nil))))
+    (test-assert
+     (= cancel-count 1)
+     "only cancellation inside the worker protocol request detaches the REPL"))
   (let ((success
           (worker-handle-request
            '(:request :id 1 :operation :eval :arguments (:form "(+ 20 22)"))))

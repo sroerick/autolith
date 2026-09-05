@@ -123,10 +123,14 @@
 
 (-> lisp-worker-request (lisp-worker keyword list) list)
 (defun lisp-worker-request (worker operation arguments)
-  "Send OPERATION and portable ARGUMENTS to WORKER and return its response."
-  (lisp-worker--call
-   (lambda ()
-     (sbcl-worker-request worker operation arguments))))
+  "Send OPERATION to WORKER, cancelling only an interrupted protocol request."
+  (handler-case
+      (lisp-worker--call
+       (lambda ()
+         (sbcl-worker-request worker operation arguments)))
+    (job-aborted (condition)
+      (sbcl-worker-cancel-request worker)
+      (error condition))))
 
 
 ;;;; -- Named Worker Pool Adapters --
@@ -422,8 +426,8 @@
     (context arguments &key tool-name summary operation-function)
   "Run one named-worker operation directly or through an inspectable session job.
 
-Worker resolution runs inside the job. Cancellation detaches a selected worker
-before unwinding, so its next request restarts with a clean protocol stream."
+Worker resolution runs inside the job. Cancellation during a protocol request detaches
+that worker, while cancellation after a completed request leaves the REPL intact."
   (let ((manager (tool-context-worker context))
         (repl-name (lisp-tool-repl-name arguments)))
     (lisp-tool-invoke-managed-execution
@@ -432,14 +436,8 @@ before unwinding, so its next request restarts with a clean protocol stream."
      :summary (format nil "Lisp REPL ~A: ~A" repl-name summary)
      :operation-function
      (lambda ()
-       (let ((worker nil))
-         (handler-bind ((job-aborted
-                          (lambda (condition)
-                            (declare (ignore condition))
-                            (when worker
-                              (sbcl-worker-cancel-request worker)))))
-           (setf worker (lisp-worker-manager-worker manager repl-name))
-           (funcall operation-function worker)))))))
+       (let ((worker (lisp-worker-manager-worker manager repl-name)))
+         (funcall operation-function worker))))))
 
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
