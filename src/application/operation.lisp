@@ -751,8 +751,12 @@ local-user override."
   (let* ((name (application-command-name command))
          (remainder
            (string-trim *application-command-whitespace*
-                         (format nil "~{~A~^ ~}"
-                                 (mapcar #'application-operation--command-value arguments))))
+                        (format nil "~{~A~^ ~}"
+                                (mapcar #'application-operation--command-value arguments))))
+         (semantic-arguments
+           (if (application-command--raw-remainder-call-p command)
+               (mapcar #'application-operation--command-value arguments)
+               (copy-list arguments)))
          (input
            (if (non-empty-string-p remainder)
                (format nil "~A ~A" name remainder)
@@ -762,8 +766,8 @@ local-user override."
                    :name name
                    :remainder remainder
                    :argument (application-command--first-token remainder)
-                   :arguments (copy-list arguments)
-                   :supplied-argument-count (length arguments)
+                   :arguments semantic-arguments
+                   :supplied-argument-count (length semantic-arguments)
                    :command command)))
 
 

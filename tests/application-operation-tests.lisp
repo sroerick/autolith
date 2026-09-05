@@ -774,6 +774,19 @@
              (test-assert (fboundp name)
                           (format nil "canonical operation ~S has a Lisp function binding"
                                   name)))
+            (setf (application-goal application)
+                  (list :objective "existing"
+                        :status ':paused
+                        :continuations 0
+                        :created-at (get-universal-time)))
+            (let ((evaluation
+                    (application-lisp-evaluate
+                     "(goal 'clear)"
+                     :application application)))
+              (test-assert
+               (and (eq (application-lisp-evaluation-status evaluation) ':ok)
+                    (null (application-goal application)))
+               "raw-remainder Lisp commands normalize evaluated values to text"))
            (recording-terminal-reset terminal)
            (let* ((evaluation
                     (application-lisp-evaluate
