@@ -22,6 +22,14 @@
                         "the Org system prompt template is shipped with Autolith")
            (test-assert (probe-file (request-context--template-path))
                         "the Org request-context template is shipped with Autolith")
+            (let ((*system-prompt-template-cache* nil)
+                  (*request-context-template-cache* nil))
+              (test-assert
+               (eq (system-prompt--template) (system-prompt--template))
+               "the system prompt template is read once per source load")
+              (test-assert
+               (eq (request-context--template) (request-context--template))
+               "the request context template is read once per source load"))
            (test-assert
             (string= (request-context--bounded-complete-lines
                       (format nil "first row~%second row is too long") 25)

@@ -22,6 +22,12 @@ prompt instead of the full Autolith persona.")
   #p"docs/request-context.org"
   "The Org template for mutable state delivered behind conversation history.")
 
+(defparameter *system-prompt-template-cache* nil
+  "The system-prompt template text cached for the current source load.")
+
+(defparameter *request-context-template-cache* nil
+  "The request-context template text cached for the current source load.")
+
 (defparameter *workspace-instructions-limit* 16000
   "The characters of workspace AGENTS.md included in the prompt.")
 
@@ -133,6 +139,20 @@ prompt instead of the full Autolith persona.")
       (error "Autolith request-context template is missing: ~A" path))
     path))
 
+(-> system-prompt--template () string)
+(defun system-prompt--template ()
+  "Return the cached Org system-prompt template text."
+  (or *system-prompt-template-cache*
+      (setf *system-prompt-template-cache*
+            (uiop:read-file-string (system-prompt--template-path)))))
+
+(-> request-context--template () string)
+(defun request-context--template ()
+  "Return the cached Org mutable request-context template text."
+  (or *request-context-template-cache*
+      (setf *request-context-template-cache*
+            (uiop:read-file-string (request-context--template-path)))))
+
 (-> system-prompt--org-keyword-line-p (string) boolean)
 (defun system-prompt--org-keyword-line-p (line)
   "Return true when LINE is an Org keyword such as #+TITLE."
@@ -234,7 +254,7 @@ prompt instead of the full Autolith persona.")
    '(#\Newline)
    (system-prompt--drop-org-keyword-lines
     (org-templater:render
-     :template-path (request-context--template-path)
+     :template (request-context--template)
      :config (request-context--config configuration :hurry-up-p hurry-up-p)))))
 
 (-> system-prompt (configuration) string)
@@ -251,5 +271,5 @@ behind conversation history."
    '(#\Newline)
    (system-prompt--drop-org-keyword-lines
     (org-templater:render
-     :template-path (system-prompt--template-path)
+     :template (system-prompt--template)
      :config (system-prompt--config configuration)))))
