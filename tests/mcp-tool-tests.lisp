@@ -4248,6 +4248,12 @@
                 all-tools-registry :only-dirty-p t)
                (mcp-tool-registry-refresh
                 child-safe-registry :only-dirty-p t)
+                 (test-assert
+                  (null
+                   (with-lock-held ((mcp-manager-lock manager))
+                     (mcp-tool-registry-refresh
+                      all-tools-registry :only-dirty-p t)))
+                  "clean dirty-only refresh bypasses the manager-wide lock")
                (let* ((binding
                          (mcp-tool-registry-binding all-tools-registry))
                        (before-tools

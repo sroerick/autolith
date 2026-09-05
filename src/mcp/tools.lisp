@@ -3036,6 +3036,17 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
       (tool-registry-register registry tool)))
   registry)
 
+(-> mcp-tool-registry--current-p
+    (mcp-registry-binding mcp-manager)
+    boolean)
+(defun mcp-tool-registry--current-p (binding manager)
+  "Return true when BINDING already reflects every clean runtime in MANAGER."
+  (and (every (lambda (runtime)
+                (not (mcp-server-runtime-tools-stale-p runtime)))
+              (mcp-manager-runtimes manager))
+       (equal (mcp-manager-tool-revisions manager)
+              (mcp-registry-binding-reconciled-revisions binding))))
+
 (-> mcp-tool-registry-refresh
     (tool-registry &key (:only-dirty-p boolean))
     boolean)
@@ -3045,6 +3056,9 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
          (manager
            (and binding (mcp-registry-binding-manager binding))))
     (unless (and binding manager)
+      (return-from mcp-tool-registry-refresh nil))
+    (when (and only-dirty-p
+               (mcp-tool-registry--current-p binding manager))
       (return-from mcp-tool-registry-refresh nil))
     (with-lock-held ((mcp-manager-lock manager))
       (unless only-dirty-p
