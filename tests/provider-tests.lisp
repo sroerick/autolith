@@ -2157,8 +2157,9 @@
 
 (-> test-provider-persistent-transient-retries () null)
 (defun test-provider-persistent-transient-retries ()
-  "Test persistent jittered retries and complete-attempt DNS normalization."
-  (let ((attempts 0)
+  "Test bounded jittered retries and complete-attempt DNS normalization."
+  (let ((*provider-maximum-transient-retries* 3)
+        (attempts 0)
         (events nil)
         (sleeps nil))
     (test-assert
@@ -2179,13 +2180,59 @@
           :sleep-function (lambda (delay) (push delay sleeps))
           :random-state (make-random-state t)))
      "retryable provider failures preserve and complete the same attempt")
+    (setf events (nreverse events))
     (test-assert (= attempts 4)
-                 "persistent provider recovery retries every transient failure")
+                 "provider recovery uses every permitted transient retry")
     (test-assert (and (= (length sleeps) 3)
                       (every (lambda (delay) (<= 1 delay 60)) sleeps))
-                 "persistent provider recovery uses bounded jitter delays")
-    (test-assert (= (length events) 6)
-                 "each retry reports its wait and resumed attempt"))
+                 "provider recovery uses bounded jitter delays")
+    (test-assert
+     (equal (mapcar #'provider-retry-event-attempt events)
+            '(1 1 2 2 3 3))
+     "retry events report honest attempt numbers")
+    (test-assert
+     (every (lambda (event)
+              (= (provider-retry-event-maximum-attempts event) 3))
+            events)
+     "retry events report the configured retry limit"))
+  (let* ((*provider-maximum-transient-retries* 2)
+         (attempts 0)
+         (events nil)
+         (sleeps nil)
+         (injected-condition
+           (make-condition 'provider-retryable-error
+                           :message "Injected persistent transient failure."
+                           :status nil
+                           :request-id nil
+                           :response-id nil
+                           :response nil))
+         (observed-condition nil))
+    (handler-case
+        (provider--call-with-transient-retries
+         (lambda ()
+           (incf attempts)
+           (error injected-condition))
+         (lambda (event)
+           (push event events))
+         :sleep-function (lambda (delay) (push delay sleeps))
+         :random-state (make-random-state t))
+      (provider-retryable-error (condition)
+        (setf observed-condition condition)))
+    (setf events (nreverse events)
+          sleeps (nreverse sleeps))
+    (test-assert (eq observed-condition injected-condition)
+                 "retry exhaustion preserves the final provider condition")
+    (test-assert (= attempts 3)
+                 "two retries permit exactly three total attempts")
+    (test-assert (= (length sleeps) 2)
+                 "retry exhaustion does not sleep after the final failure")
+    (test-assert
+     (equal (mapcar #'provider-retry-event-attempt events) '(1 1 2 2))
+     "retry exhaustion emits no event after the final failure")
+    (test-assert
+     (equal (mapcar #'provider-retry-event-delay events)
+            (list (first sleeps) 0 (second sleeps) 0))
+     "each permitted retry reports its wait and resumed attempt"))
   (let ((attempts 0)
         (events nil)
         (sleeps nil))
@@ -2706,10 +2753,17 @@
                      (append (make-list 7 :initial-element :server-error)
                              (list result)))))
               (test-assert
-               (eq (provider-stream-turn provider conversation
-                                         :tool-namespaces #()
-                                         :event-callback #'identity)
-                   result)
-               "transient provider recovery continues past the old retry bound")))
+               (handler-case
+                   (progn
+                     (provider-stream-turn provider conversation
+                                           :tool-namespaces #()
+                                           :event-callback #'identity)
+                     nil)
+                 (provider-retryable-error ()
+                   t))
+               "transient provider recovery stops after six retries")
+              (test-assert
+               (= (length (test-codex-provider-refresh-flags provider)) 7)
+               "retry exhaustion permits exactly seven total attempts")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)

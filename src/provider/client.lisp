@@ -1620,6 +1620,9 @@ abandon the looping stream; the default reaction ignores the report."))
         (http-request-failed (condition)
           (provider-signal-http-failure provider condition))))))
 
+(defparameter *provider-maximum-transient-retries* 6
+  "Maximum retryable provider failures allowed after the initial attempt.")
+
 (-> provider--call-with-transient-retries
     (function function &key (:sleep-function function) (:random-state random-state))
     t)
@@ -1628,7 +1631,7 @@ abandon the looping stream; the default reaction ignores the report."))
      &key
        (sleep-function llm-provider-api:*bounded-retry-sleep-function*)
        (random-state *random-state*))
-  "Call ATTEMPT-FUNCTION until it succeeds or signals a definitive failure."
+  "Call ATTEMPT-FUNCTION with bounded retries for transient failures."
   (let ((retry-number 0))
     (loop
       (handler-case
@@ -1641,8 +1644,10 @@ abandon the looping stream; the default reaction ignores the report."))
                     :maximum-attempts
                     (provider-resample-requested-maximum-attempts condition)
                     :delay 0)))
-        (provider-retryable-error ()
+        (provider-retryable-error (condition)
           (incf retry-number)
+          (when (> retry-number *provider-maximum-transient-retries*)
+            (error condition))
           (let* ((base-delay
                    (min 50 (ash 1 (min 6 (1- retry-number)))))
                  (delay
@@ -1651,19 +1656,20 @@ abandon the looping stream; the default reaction ignores the report."))
                              (round
                               (* base-delay
                                  (+ 0.8d0
-                                    (random 0.4d0 random-state)))))))
-                 (display-attempt (1+ (mod (1- retry-number) 6))))
+                                    (random 0.4d0 random-state))))))))
             (funcall event-callback
-                     (make-instance 'provider-retry-event
-                                    :attempt display-attempt
-                                    :maximum-attempts 6
-                                    :delay delay))
+                     (make-instance
+                      'provider-retry-event
+                      :attempt retry-number
+                      :maximum-attempts *provider-maximum-transient-retries*
+                      :delay delay))
             (funcall sleep-function delay)
             (funcall event-callback
-                     (make-instance 'provider-retry-event
-                                    :attempt display-attempt
-                                    :maximum-attempts 6
-                                    :delay 0))))))))
+                     (make-instance
+                      'provider-retry-event
+                      :attempt retry-number
+                      :maximum-attempts *provider-maximum-transient-retries*
+                      :delay 0))))))))
 
 (-> provider--call-with-transport-normalization (function) t)
 (defun provider--call-with-transport-normalization (attempt-function)
