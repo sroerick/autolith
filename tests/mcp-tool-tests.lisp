@@ -3450,18 +3450,24 @@
                   (test-mcp--object-contains-string-p runtime marker)))
                 "one MCP runtime retains only projected initialization metadata")))
            (mcp-tool-registry-register-manager registry manager)
-           (let ((contributions
-                   (mcp-tool-registry-context-contributions registry)))
-             (test-assert
-              (and
-               (= (length contributions) 2)
-               (every
-                (lambda (contribution)
-                  (string=
-                   (context-contribution-evidence contribution)
-                   instructions))
-                contributions))
-              "multi-server instructions reach the model unabridged"))
+            (let ((contributions
+                    (mcp-tool-registry-context-contributions registry)))
+              (test-assert
+               (and
+                (= (length contributions) 2)
+                (every
+                 (lambda (contribution)
+                   (let ((evidence
+                           (context-contribution-evidence contribution)))
+                     (and
+                      (= (length evidence)
+                         *context-contribution-evidence-limit*)
+                      (uiop:string-suffix-p
+                       evidence
+                       "... [MCP server instructions truncated]")
+                      (not (string= evidence instructions)))))
+                 contributions))
+               "multi-server instructions are bounded before model context"))
            (let ((application
                    (make-instance
                     'application
