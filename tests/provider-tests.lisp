@@ -1195,6 +1195,37 @@
   (let* ((source
            (test-sse-event-string
             (json-object
+             "type" "response.completed"
+             "response"
+             (json-object
+              "id" "usage-limit-response"
+              "error"
+              (json-object
+               "message" "You've hit your usage limit. Try again tomorrow.")))))
+         (condition
+           (handler-case
+               (progn
+                 (provider-consume-stream
+                  (make-instance 'model-provider)
+                  (make-instance 'test-character-input-stream :source source)
+                  nil
+                  #'identity)
+                 nil)
+             (provider-error (error)
+               error))))
+    (test-assert
+     (and condition
+          (not (typep condition 'provider-retryable-error)))
+     "response.completed usage-limit failures are terminal")
+    (test-assert
+     (string= (provider-error-response-id condition) "usage-limit-response")
+     "response.completed failures retain their response identifier")
+    (test-assert
+     (search "You've hit your usage limit" (format nil "~A" condition))
+     "response.completed failures surface the provider's explanation"))
+  (let* ((source
+           (test-sse-event-string
+            (json-object
              "type" "response.incomplete"
              "response"
              (json-object

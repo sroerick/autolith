@@ -1497,6 +1497,13 @@ abandon the looping stream; the default reaction ignores the report."))
                        :request-id (provider--event-request-id event nil headers)
                        :response-id response-id
                        :response data))
+                     (when (provider--event-error-object event)
+                       (provider--signal-event-failure
+                        event
+                        :type type
+                        :data data
+                        :headers headers
+                        :response-id response-id))
                     (setf response-id (or (json-get response "id") response-id)
                           usage (json-get response "usage"))
                     (multiple-value-bind (end-turn present-p)
