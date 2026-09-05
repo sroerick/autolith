@@ -132,7 +132,7 @@
 (defparameter *agent-maximum-concurrent-tool-workers* 8
   "Maximum worker threads executing independent calls from one provider batch.")
 
-(defparameter *agent-tool-storm-identical-call-limit* 3
+(defparameter *agent-tool-storm-identical-call-limit* 16
   "Withhold this many matching non-read-only calls within one user turn.")
 
 (defparameter *agent-tool-storm-signature-window-size* 8
