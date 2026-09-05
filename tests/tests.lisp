@@ -490,6 +490,7 @@
     (test-task-live-activity-snapshots)
     (test-task-cumulative-child-usage)
     (test-task-run-native-manifest)
+    (test-task-closed-runtime-refresh)
     (test-task-scheduler)
     (run-terminal-tests)
     (test-localgroup-terminal-restart)

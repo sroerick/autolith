@@ -203,6 +203,11 @@
     :initform (make-lock "Autolith task orchestrator")
     :accessor task-orchestrator-lock
     :documentation "The lock protecting naming, ordering, hurry-up, and listeners.")
+    (closed-p
+     :initform nil
+     :accessor task-orchestrator-closed-p
+     :type boolean
+     :documentation "Whether runtime shutdown has begun and ordinary refresh is forbidden.")
    (hurry-up-p
     :initarg :hurry-up-p
     :initform nil

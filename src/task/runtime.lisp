@@ -200,27 +200,38 @@ a no-op, preserving lazy pools before their first job."
     (job-pool-add-listener execution-pool #'task--pool-event-listener)
     orchestrator))
 
-(-> task-orchestrator-refresh (task-orchestrator) task-orchestrator)
-(defun task-orchestrator-refresh (orchestrator)
-  "Apply current limits and refresh both reusable worker pools."
+(-> task-orchestrator-refresh
+    (task-orchestrator &key (:reopen-p boolean))
+    task-orchestrator)
+(defun task-orchestrator-refresh (orchestrator &key reopen-p)
+  "Apply current limits and refresh both reusable worker pools.
+
+A completed shutdown can be reopened only by an explicit runtime resume."
   (let ((task-pool (task-orchestrator-pool orchestrator))
         (execution-pool (task-orchestrator-execution-pool orchestrator)))
     (with-lock-held ((task-orchestrator-lock orchestrator))
+      (when (and (task-orchestrator-closed-p orchestrator)
+                 (not reopen-p))
+        (error 'task-error
+               :message "The session job runtime is closed."
+               :tool-name "job.list"))
       (task-orchestrator--apply-limits-locked
        orchestrator
        :refresh-runtime-p t)
       (task-orchestrator--apply-execution-limits-locked orchestrator)
       (setf (task-orchestrator-maximum-depth orchestrator)
             (task--environment-integer "AUTOLITH_TASK_MAX_DEPTH"
-                                       *task-default-maximum-depth* :minimum 1)))
-    (dolist (pool (list task-pool execution-pool))
-      (job-pool-add-listener pool #'task--pool-event-listener)
-      (handler-case
-          (job-pool-refresh pool)
-        (job-pool-closed ()
-          (error 'task-error
-                 :message "The session job runtime is still shutting down."
-                 :tool-name "job.list")))))
+                                       *task-default-maximum-depth* :minimum 1))
+      (dolist (pool (list task-pool execution-pool))
+        (job-pool-add-listener pool #'task--pool-event-listener)
+        (handler-case
+            (job-pool-refresh pool)
+          (job-pool-closed ()
+            (error 'task-error
+                   :message "The session job runtime is still shutting down."
+                   :tool-name "job.list"))))
+      (when reopen-p
+        (setf (task-orchestrator-closed-p orchestrator) nil))))
   orchestrator)
 
 
@@ -355,6 +366,8 @@ identifier is what an agent uses to refer to its own children."
 (-> task-orchestrator-close (task-orchestrator) boolean)
 (defun task-orchestrator-close (orchestrator)
   "Cancel all jobs, stop both pools, and report complete shutdown."
+  (with-lock-held ((task-orchestrator-lock orchestrator))
+    (setf (task-orchestrator-closed-p orchestrator) t))
   (let ((cl-jobpond:*shutdown-timeout-seconds* *task-shutdown-timeout-seconds*))
     (let ((execution-closed-p
             (job-pool-close (task-orchestrator-execution-pool orchestrator)))
@@ -401,8 +414,9 @@ identifier is what an agent uses to refer to its own children."
     ((tool task-orchestrator-tool) (registry tool-registry))
   "Restart TOOL's scheduler after a non-stopping checkpoint fork."
   (declare (ignore registry))
-  (task-orchestrator-refresh (task-orchestrator-tool-orchestrator tool))
-  nil)
+  (task-orchestrator-refresh
+   (task-orchestrator-tool-orchestrator tool)
+   :reopen-p t))
 
 (defmethod tool-runtime-detach ((tool task-orchestrator-tool))
   "Remove TOOL's closed shared scheduler graph before image saving."

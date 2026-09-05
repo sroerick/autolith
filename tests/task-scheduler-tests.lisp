@@ -2045,7 +2045,7 @@ exactly that race."
              (setf released-p t)
              (task--condition-broadcast barrier))
            (join-thread thread)
-           (task-orchestrator-refresh orchestrator)
+           (task-orchestrator-refresh orchestrator :reopen-p t)
            (test-assert
             (and (eq (job-pool-lifecycle-state (task-orchestrator-pool orchestrator))
                        :open)
@@ -2874,6 +2874,36 @@ exactly that race."
                           previous-runtime 1)
           (sb-posix:unsetenv "AUTOLITH_TASK_MAX_RUNTIME_MS"))))
   nil)
+
+(-> test-task-closed-runtime-refresh () null)
+(defun test-task-closed-runtime-refresh ()
+  "Test ordinary refresh cannot reopen a deliberately closed task runtime."
+  (let ((orchestrator (task-orchestrator-create)))
+    (unwind-protect
+         (progn
+           (test-assert
+            (task-orchestrator-close orchestrator)
+            "the lazy task runtime closes completely")
+           (test-assert
+            (handler-case
+                (progn
+                  (task-orchestrator-refresh orchestrator)
+                  nil)
+              (task-error ()
+                t))
+            "ordinary refresh rejects a closed task runtime")
+           (test-assert
+            (and (task-orchestrator-closed-p orchestrator)
+                 (eq (task-orchestrator-lifecycle-state orchestrator) ':closed))
+            "rejected refresh leaves the runtime closed")
+           (task-orchestrator-refresh orchestrator :reopen-p t)
+           (test-assert
+            (and (not (task-orchestrator-closed-p orchestrator))
+                 (eq (task-orchestrator-lifecycle-state orchestrator) ':open))
+            "explicit runtime resume reopens both task pools"))
+      (task-orchestrator-close orchestrator)))
+  nil)
+
 
 (-> test-task-scheduler () null)
 (defun test-task-scheduler ()
