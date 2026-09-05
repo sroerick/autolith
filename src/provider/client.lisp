@@ -1507,7 +1507,7 @@ abandon the looping stream; the default reaction ignores the report."))
                     (setf response-id (or (json-get response "id") response-id)
                           usage (json-get response "usage"))
                     (multiple-value-bind (end-turn present-p)
-                        (gethash "end_turn" response)
+                        (json-get-present response "end_turn")
                       (when present-p
                         (setf turn-completion
                               (if end-turn :end :continue))))

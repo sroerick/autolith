@@ -61,7 +61,7 @@
              :message
              "The Mistral model response omitted a capabilities object."))
     (multiple-value-bind (completion-chat present-p)
-        (gethash "completion_chat" capabilities)
+        (json-get-present capabilities "completion_chat")
       (unless (and present-p
                    (or (eq completion-chat t) (null completion-chat)))
         (error 'configuration-error

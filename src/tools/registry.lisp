@@ -659,7 +659,7 @@ spilling is unavailable, in which case the tail is discarded as before.")
 (defun tool-argument (arguments name &key required)
   "Return NAME from ARGUMENTS, signaling TOOL-ERROR when REQUIRED and absent."
   (multiple-value-bind (value present-p)
-      (gethash name arguments)
+      (json-get-present arguments name)
     (when (and required (not present-p))
       (error 'tool-error
              :message (format nil "Required tool argument ~S is missing." name)
@@ -672,7 +672,7 @@ spilling is unavailable, in which case the tail is discarded as before.")
 (defun tool-boolean-argument (arguments name &key default tool-name)
   "Return optional JSON Boolean NAME from ARGUMENTS, defaulting to DEFAULT."
   (multiple-value-bind (value present-p)
-      (gethash name arguments)
+      (json-get-present arguments name)
     (cond
       ((not present-p)
        (and default t))
