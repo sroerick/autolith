@@ -12,6 +12,23 @@
      configuration
      :credential-manager (credential-manager-create configuration))))
 
+(-> gemini-code-assist-test--consume-condition
+    (gemini-code-assist-provider json-object &key (:headers t))
+    gemini-code-assist-error)
+(defun gemini-code-assist-test--consume-condition (provider event &key headers)
+  "Consume one Gemini EVENT and return its expected typed failure."
+  (handler-case
+      (progn
+        (provider-consume-stream
+         provider
+         (make-string-input-stream
+          (format nil "data: ~A~%~%" (json-encode event)))
+         headers
+         (lambda (provider-event) (declare (ignore provider-event))))
+        (error "The Gemini stream fixture did not signal a provider failure."))
+    (gemini-code-assist-error (condition)
+      condition)))
+
 (-> gemini-code-assist-test--model-catalog () null)
 (defun gemini-code-assist-test--model-catalog ()
   "Test stable aliases and static discovery for the private API."
@@ -170,6 +187,88 @@
      "Code Assist emits assistant deltas"))
   nil)
 
+(-> gemini-code-assist-test--credential-redaction () null)
+(defun gemini-code-assist-test--credential-redaction ()
+  "Test credential redaction across Gemini stream failure conditions."
+  (let* ((provider (gemini-code-assist-test--provider))
+         (access-token "ya29.a0AfH6SMB-access-token-fixture")
+         (refresh-token "1//0g-refresh-token-fixture")
+         (*provider-active-credential-values* (list access-token refresh-token))
+         (*provider-active-credential-redaction-marker* "[REDACTED]")
+         (finish-reason
+           (format nil "finish-before-~A-middle-~A-after"
+                   access-token refresh-token))
+         (finish-condition
+           (gemini-code-assist-test--consume-condition
+            provider
+            (json-object
+             "traceId" (format nil "trace-before-~A-after" access-token)
+             "response"
+             (json-object
+              "candidates"
+              (json-array (json-object "finishReason" finish-reason))))
+            :headers
+            (list
+             (cons "x-request-id"
+                   (format nil "request-before-~A-after" refresh-token)))))
+         (finish-report (format nil "~A" finish-condition))
+         (finish-metadata (agent--provider-error-metadata finish-condition))
+         (finish-metadata-text (prin1-to-string finish-metadata))
+         (error-event
+           (json-object
+            "error"
+            (json-object
+             "message" (format nil "message-before-~A-after" access-token)
+             "status" (format nil "status-before-~A-after" refresh-token)
+             "code" 403)))
+         (error-condition
+           (gemini-code-assist-test--consume-condition
+            provider error-event
+            :headers
+            (list
+             (cons "request-id"
+                   (format nil "request-before-~A-after" access-token)))))
+         (error-report (format nil "~A" error-condition))
+         (error-response (provider-error-response error-condition))
+         (error-metadata (agent--provider-error-metadata error-condition))
+         (error-metadata-text (prin1-to-string error-metadata)))
+    (dolist (secret (list access-token refresh-token))
+      (test-assert
+       (and (null (search secret finish-report))
+            (null (search secret (autolith-error-message finish-condition)))
+            (null (search secret (provider-error-code finish-condition)))
+            (null (search secret (provider-error-request-id finish-condition)))
+            (null (search secret (provider-error-response-id finish-condition)))
+            (null (search secret finish-metadata-text)))
+       "Gemini finish failures redact every active credential")
+      (test-assert
+       (and (null (search secret error-report))
+            (null (search secret (autolith-error-message error-condition)))
+            (null (search secret (provider-error-code error-condition)))
+            (null (search secret (provider-error-request-id error-condition)))
+            (null (search secret error-response))
+            (null (search secret error-metadata-text)))
+       "Gemini error events redact every active credential"))
+    (test-assert
+     (and (search "finish-before-" finish-report)
+          (search "-middle-" finish-report)
+          (search "-after" finish-report)
+          (search "finish-before-" (provider-error-code finish-condition))
+          (search "trace-before-" (provider-error-response-id finish-condition))
+          (search "request-before-" (provider-error-request-id finish-condition))
+          (search "finish-before-" finish-metadata-text))
+     "Gemini finish failures preserve safe surrounding text")
+    (test-assert
+     (and (= (provider-error-status error-condition) 403)
+          (search "message-before-" error-report)
+          (search "status-before-" (provider-error-code error-condition))
+          (search "request-before-" (provider-error-request-id error-condition))
+          (search "message-before-" error-response)
+          (search "status-before-" error-response)
+          (search "message-before-" error-metadata-text))
+     "Gemini error events preserve typed fields and safe surrounding text"))
+  nil)
+
 (-> gemini-code-assist-test--setup-and-retry () null)
 (defun gemini-code-assist-test--setup-and-retry ()
   "Test loadCodeAssist project setup and provider-specific HTTP retry."
@@ -250,5 +349,6 @@
   (gemini-code-assist-test--model-catalog)
   (gemini-code-assist-test--request-conversion)
   (gemini-code-assist-test--stream-fixture)
+  (gemini-code-assist-test--credential-redaction)
   (gemini-code-assist-test--setup-and-retry)
   nil)

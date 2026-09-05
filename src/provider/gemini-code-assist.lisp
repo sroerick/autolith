@@ -203,6 +203,18 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
       (= status 499)
       (<= 500 status 599)))
 
+(-> gemini-code-assist--condition-string (t) (option string))
+(defun gemini-code-assist--condition-string (value)
+  "Return wire VALUE as a credential-sanitized condition string, when valid."
+  (and (stringp value)
+       (provider--sanitize-wire-string value)))
+
+(-> gemini-code-assist--condition-status (t) (option integer))
+(defun gemini-code-assist--condition-status (value)
+  "Return wire VALUE as a credential-sanitized provider status, when valid."
+  (let ((sanitized (provider--sanitize-wire-value value)))
+    (and (integerp sanitized) sanitized)))
+
 (-> gemini-code-assist--decode-json-response (string keyword) json-object)
 (defun gemini-code-assist--decode-json-response (body stage)
   "Decode BODY as a JSON object for setup STAGE."
@@ -215,14 +227,20 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                      :stage stage
                      :status nil
                      :request-id nil
-                     :response (bounded-string body :limit 2000))))))
+                     :response
+                     (bounded-string
+                      (provider--sanitize-wire-string body)
+                      :limit 2000))))))
     (unless (json-object-p value)
       (error 'gemini-code-assist-setup-error
              :message "Gemini Code Assist returned a non-object JSON response."
              :stage stage
              :status nil
              :request-id nil
-             :response (bounded-string body :limit 2000)))
+             :response
+             (bounded-string
+              (provider--sanitize-wire-string body)
+              :limit 2000)))
     value))
 
 (-> gemini-code-assist--post-once
@@ -385,8 +403,10 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
          (reason (and (json-object-p first-tier)
                       (json-get first-tier "reasonMessage"))))
     (error 'gemini-code-assist-project-required
-           :message (or (and (non-empty-string-p reason) reason)
-                        "This Google account requires GOOGLE_CLOUD_PROJECT to be set.")
+           :message
+           (or (and (non-empty-string-p reason)
+                    (gemini-code-assist--condition-string reason))
+               "This Google account requires GOOGLE_CLOUD_PROJECT to be set.")
            :stage stage
            :status nil
            :request-id nil
@@ -746,13 +766,20 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (string t (option string)) null)
 (defun gemini-code-assist--finish-error (reason headers response-id)
   "Signal the typed failure represented by Gemini finish REASON."
-  (error 'gemini-code-assist-error
-         :message (format nil "Gemini Code Assist ended generation with ~A." reason)
-         :code reason
-         :status nil
-         :request-id (provider--response-request-id headers)
-         :response-id response-id
-         :response nil))
+  (let ((sanitized-reason (provider--sanitize-wire-string reason)))
+    (error 'gemini-code-assist-error
+           :message
+           (format nil
+                   "Gemini Code Assist ended generation with ~A."
+                   sanitized-reason)
+           :code sanitized-reason
+           :status nil
+           :request-id
+           (gemini-code-assist--condition-string
+            (provider--response-request-id headers))
+           :response-id
+           (gemini-code-assist--condition-string response-id)
+           :response nil)))
 
 (defmethod provider-consume-stream
     ((provider gemini-code-assist-provider) stream headers event-callback)
@@ -770,14 +797,28 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
       do (let* ((event (provider--decode-sse-data data headers))
                 (error-object (and (json-object-p event) (json-get event "error"))))
            (when (json-object-p error-object)
-             (error 'gemini-code-assist-error
-                    :message (or (json-get error-object "message")
-                                 "Gemini Code Assist returned an error event.")
-                    :code (json-get error-object "status")
-                    :status (json-get error-object "code")
-                    :request-id (provider--response-request-id headers)
-                    :response-id response-id
-                    :response (bounded-string data :limit 2000)))
+             (let ((message
+                     (gemini-code-assist--condition-string
+                      (json-get error-object "message"))))
+               (error 'gemini-code-assist-error
+                      :message
+                      (or message
+                          "Gemini Code Assist returned an error event.")
+                      :code
+                      (gemini-code-assist--condition-string
+                       (json-get error-object "status"))
+                      :status
+                      (gemini-code-assist--condition-status
+                       (json-get error-object "code"))
+                      :request-id
+                      (gemini-code-assist--condition-string
+                       (provider--response-request-id headers))
+                      :response-id
+                      (gemini-code-assist--condition-string response-id)
+                      :response
+                      (bounded-string
+                       (provider--sanitize-wire-string data)
+                       :limit 2000))))
            (when (json-object-p event)
              (let ((trace (json-get event "traceId"))
                    (response (json-get event "response")))
