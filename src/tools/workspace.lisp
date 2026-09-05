@@ -130,6 +130,18 @@ or filesystem failures as absence."
                              (workspace-tool--canonical-path root)))
             roots)))))
 
+(-> workspace-tool-resolve-path (tool-context (option string)) pathname)
+(defun workspace-tool-resolve-path (context path)
+  "Return PATH resolved against CONTEXT's working directory without confinement."
+  (let* ((configuration (tool-context-configuration context))
+         (working-directory (configuration-working-directory configuration))
+         (resolved
+           (if (non-empty-string-p path)
+               (merge-pathnames (uiop:parse-native-namestring path)
+                                working-directory)
+               working-directory)))
+    (workspace-tool--canonical-path resolved)))
+
 (-> workspace-tool-path (tool-context (option string)) pathname)
 (defun workspace-tool-path (context path)
   "Return PATH resolved against CONTEXT's working directory.
@@ -142,12 +154,7 @@ existing symlinks and the nearest existing parent before checking the boundary."
          (roots (or *workspace-tool-readable-roots*
                     (list working-directory
                           (configuration-source-root configuration))))
-         (resolved
-           (if (non-empty-string-p path)
-               (merge-pathnames (uiop:parse-native-namestring path)
-                                working-directory)
-               working-directory))
-         (canonical (workspace-tool--canonical-path resolved)))
+         (canonical (workspace-tool-resolve-path context path)))
     (unless (workspace-tool--read-path-allowed-p canonical roots)
       (error 'tool-error
              :message
@@ -251,9 +258,8 @@ existing symlinks and the nearest existing parent before checking the boundary."
          (description
            (let ((value (tool-argument arguments "description")))
              (and (non-empty-string-p value) value)))
-         (directory (workspace-tool-path
-                     context
-                     (tool-argument arguments "directory")))
+         (directory-argument (tool-argument arguments "directory"))
+         (directory (workspace-tool-resolve-path context directory-argument))
          (timeout (workspace-tool-shell-timeout arguments))
          (async-p
            (tool-boolean-argument
@@ -272,14 +278,15 @@ existing symlinks and the nearest existing parent before checking the boundary."
           (tool-failure "The user denied this command.")
           (let* ((configuration (tool-context-configuration context))
                  (policy
-                   (ecase authorization
-                     (:sandboxed
-                      (workspace-write-sandbox-policy
-                       :workspace-roots
-                       (list
-                        (configuration-working-directory configuration))))
-                     (:full-access
-                      (external-sandbox-policy))))
+                    (ecase authorization
+                      (:sandboxed
+                       (workspace-tool-path context directory-argument)
+                       (workspace-write-sandbox-policy
+                        :workspace-roots
+                        (list
+                         (configuration-working-directory configuration))))
+                      (:full-access
+                       (external-sandbox-policy))))
                  (output-limit *shell-maximum-output-characters*))
             (tool-execution-invoke
              (tool-context-execution-runtime context)

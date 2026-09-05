@@ -1575,6 +1575,19 @@ exactly that race."
             (lambda (command directory)
               (declare (ignore command directory))
               ':deny)))
+           (sandboxed-context
+             (make-instance
+              'tool-context
+              :configuration configuration
+              :worker nil
+              :conversation (agent-conversation primary)
+              :registry registry
+              :agent primary
+              :call-id "shell-execution-sandboxed-test"
+              :command-authorization-function
+              (lambda (command directory)
+                (declare (ignore command directory))
+                ':sandboxed)))
           (unavailable-context
             (make-instance
              'tool-context
@@ -1658,6 +1671,26 @@ exactly that race."
                       (= (execution-count) before)
                       (not (probe-file slow-path)))
                  "unavailable interactive authorization becomes a failed tool result before subprocess admission"))
+              (let ((result
+                      (run-shell context
+                                 "command" "pwd -P"
+                                 "directory" "/")))
+                (test-assert
+                 (and (tool-result-success-p result)
+                      (search (format nil "~%/~%")
+                              (tool-result-content result)))
+                 "full-access shell execution accepts a directory outside workspace roots"))
+              (test-assert
+               (handler-case
+                   (progn
+                     (run-shell sandboxed-context
+                                "command" "pwd -P"
+                                "directory" "/")
+                     nil)
+                 (tool-error (condition)
+                   (search "outside the allowed workspace roots"
+                           (princ-to-string condition))))
+               "sandboxed shell execution still rejects a directory outside workspace roots")
              (let* ((*tool-execution-blocking-grace-seconds* 2)
                     (before (execution-count))
                     (result
@@ -1669,7 +1702,7 @@ exactly that race."
                      (search "exit 0" (tool-result-content result))
                      (search "fast-shell" (tool-result-content result))
                      (= (execution-count) (1+ before))
-                     (= authorization-count 1))
+                      (= authorization-count 2))
                 "a fast default shell job returns its ordinary result"))
              (let* ((*tool-execution-blocking-grace-seconds* 0.01)
                     (before (execution-count))
