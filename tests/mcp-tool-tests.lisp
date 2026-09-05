@@ -2450,6 +2450,28 @@
                (not (string= first changed))
                (not (string= first-boundary second-boundary)))
               "one key yields stable collision-resistant canonical digests")
+              (let* ((configuration (test-configuration))
+                     (root (test-configuration-root configuration))
+                     (closing-manager
+                       (make-instance 'mcp-manager :configuration configuration))
+                     (detaching-manager
+                       (make-instance 'mcp-manager :configuration configuration)))
+                (unwind-protect
+                     (progn
+                       (mcp-manager-close closing-manager)
+                       (test-assert
+                        (string=
+                         first
+                         (mcp-tools--environment-snapshot-fingerprint snapshot))
+                        "closing one manager preserves the process fingerprint key")
+                       (mcp-manager-detach detaching-manager)
+                       (test-assert
+                        (string=
+                         first
+                         (mcp-tools--environment-snapshot-fingerprint snapshot))
+                        "detaching one manager preserves the process fingerprint key"))
+                  (uiop:delete-directory-tree
+                   root :validate t :if-does-not-exist ':ignore)))
              (mcp-tools--clear-environment-fingerprint-key)
              (test-assert
               (and

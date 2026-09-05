@@ -1606,14 +1606,12 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 (defun mcp-manager-close (manager)
   "Close every server in MANAGER while preserving the first failure."
   (let ((first-failure nil))
-    (unwind-protect
-         (dolist (runtime (reverse (copy-list (mcp-manager-runtimes manager))))
-           (handler-case
-               (mcp-server-runtime-close runtime)
-             (serious-condition (condition)
-               (unless first-failure
-                 (setf first-failure condition)))))
-      (mcp-tools--clear-environment-fingerprint-key))
+    (dolist (runtime (reverse (copy-list (mcp-manager-runtimes manager))))
+      (handler-case
+          (mcp-server-runtime-close runtime)
+        (serious-condition (condition)
+          (unless first-failure
+            (setf first-failure condition)))))
     (when first-failure
       (error first-failure)))
   nil)
@@ -1622,14 +1620,12 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
 (defun mcp-manager-detach (manager)
   "Detach every inherited server resource in MANAGER."
   (let ((first-failure nil))
-    (unwind-protect
-         (dolist (runtime (mcp-manager-runtimes manager))
-           (handler-case
-               (mcp-server-runtime-detach runtime)
-             (serious-condition (condition)
-               (unless first-failure
-                 (setf first-failure condition)))))
-      (mcp-tools--clear-environment-fingerprint-key))
+    (dolist (runtime (mcp-manager-runtimes manager))
+      (handler-case
+          (mcp-server-runtime-detach runtime)
+        (serious-condition (condition)
+          (unless first-failure
+            (setf first-failure condition)))))
     (when first-failure
       (error first-failure)))
   nil)
