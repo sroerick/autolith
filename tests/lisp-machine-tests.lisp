@@ -206,6 +206,34 @@
                 (application-tool-registry application)))
              (uiop:delete-directory-tree
               root :validate t :if-does-not-exist ':ignore)))
+    (dolist (condition
+             (list (make-condition 'rollback-requested
+                                   :message "requested rollback"
+                                   :generation-id "generation")
+                   (make-condition 'update-requested
+                                   :message "requested update"
+                                   :tag "v9.9.9")))
+      (test-assert
+       (and (typep condition 'autolith-control-condition)
+            (not (typep condition 'autolith-error))
+            (not (typep condition 'serious-condition)))
+       "process handoff controls use the non-error control hierarchy")
+      (let ((selector-calls 0))
+        (test-assert
+         (handler-case
+             (progn
+               (application-lisp-call-with-debugger
+                (lambda () (error condition))
+                :restart-selector
+                (lambda (signaled-condition restarts)
+                  (declare (ignore signaled-condition restarts))
+                  (incf selector-calls)
+                  (values nil nil)))
+               nil)
+           (autolith-control-condition (signaled-condition)
+             (and (eq signaled-condition condition)
+                  (zerop selector-calls))))
+         "process handoff controls bypass generic debugger boundaries")))
     (let ((selector-calls 0))
       (test-assert
        (handler-case

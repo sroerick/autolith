@@ -960,7 +960,9 @@
                   (agent-tool-registry agent)
                   call
                   context))))
-      (serious-condition (failure)
+      ((or autolith-control-condition
+           serious-condition)
+       (failure)
         (setf condition failure)))
     (list
      :plan plan

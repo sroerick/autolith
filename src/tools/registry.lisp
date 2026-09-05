@@ -1251,8 +1251,6 @@ signals with the candidate canonical names."
                      (tool--missing-arguments-result
                       tool arguments missing-names)
                      (tool-execute tool context arguments))))))
-      (rollback-requested (condition)
-        (error condition))
       (active-image-corruption (condition)
         (error condition))
       (error (condition)

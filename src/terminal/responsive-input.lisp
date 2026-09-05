@@ -2215,9 +2215,7 @@ reaches the very next provider request."
                 (values (first values) condition)))
         ((or application-operation-loop-action
              application-turn-cancelled
-             application-input-failed
-             rollback-requested
-             update-requested)
+             application-input-failed)
          (condition)
           (error condition))
         ((or agent-loop-error
@@ -3604,8 +3602,6 @@ reader stays alive in interrupt-only mode until FUNCTION returns or unwinds."
            :reason ':cancelled)
           (error condition))
         (application-input-failed (condition)
-          (error condition))
-        (rollback-requested (condition)
           (error condition))
         (agent-loop-error (condition)
           (application--record-turn-aborted

@@ -2694,7 +2694,7 @@
 
 (-> test-agent-parallel-fatal-propagation () null)
 (defun test-agent-parallel-fatal-propagation ()
-  "Test serious tool conditions persist unknown outcomes before propagation."
+  "Test propagated tool conditions persist unknown outcomes before propagation."
   (dolist (case '(("rollback" rollback-requested)
                   ("corruption" active-image-corruption)
                   ("job-aborted" job-aborted)))

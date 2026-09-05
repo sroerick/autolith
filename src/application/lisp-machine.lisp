@@ -54,20 +54,19 @@ are presented by the evaluator."
       :text text
       :image-pathnames (user-message-input-image-pathnames input)))))
 
-(-> application-lisp--control-condition-p (serious-condition) boolean)
+(-> application-lisp--control-condition-p (condition) boolean)
 (defun application-lisp--control-condition-p (condition)
   "Return true when CONDITION belongs to Autolith's own control boundary."
   (typep condition
          '(or application-operation-loop-action
               application-turn-cancelled
               application-input-failed
-              rollback-requested
-               update-requested
+              autolith-control-condition
               agent-loop-error
               conversation-invariant-error
               active-image-corruption)))
 
-(-> application-lisp--selectable-restarts (serious-condition) list)
+(-> application-lisp--selectable-restarts (condition) list)
 (defun application-lisp--selectable-restarts (condition)
   "Return CONDITION's named restarts without Autolith's outer ABORT restart."
   (remove-if
@@ -356,8 +355,6 @@ journaling or provider conversation projection."
               raw-values nil))
       ((or application-turn-cancelled
            application-input-failed
-           rollback-requested
-            update-requested
            agent-loop-error
            conversation-invariant-error
            active-image-corruption)

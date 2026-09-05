@@ -2,6 +2,16 @@
 
 ;;;; -- Base Conditions --
 
+(define-condition autolith-control-condition (condition)
+  ((message
+    :initarg :message
+    :reader autolith-control-condition-message
+    :type string
+    :documentation "A concise explanation of the requested control transfer."))
+  (:documentation "The base condition for non-error Autolith control transfers.")
+  (:report (lambda (condition stream)
+             (write-string (autolith-control-condition-message condition) stream))))
+
 (define-condition autolith-error (error)
   ((message
     :initarg :message
@@ -83,7 +93,7 @@
   (:documentation
    "A live application runtime replacement failed during retirement or installation."))
 
-(define-condition rollback-requested (autolith-error)
+(define-condition rollback-requested (autolith-control-condition)
   ((generation-id
     :initarg :generation-id
     :reader rollback-requested-generation-id
@@ -91,7 +101,7 @@
     :documentation "The retained generation selected for the next process."))
   (:documentation "A control condition requesting rollback to a retained generation."))
 
-(define-condition update-requested (autolith-error)
+(define-condition update-requested (autolith-control-condition)
   ((tag
     :initarg :tag
     :reader update-requested-tag
