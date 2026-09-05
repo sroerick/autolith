@@ -2813,20 +2813,57 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   '("pondering" "exploring" "untangling" "crafting" "verifying" "connecting")
   "One-word activity labels sampled while the model prepares its next action.")
 
+(-> application--git-marker-pathname (pathname) (option pathname))
+(defun application--git-marker-pathname (directory)
+  "Return the nearest enclosing .git marker for DIRECTORY."
+  (handler-case
+      (loop with current = (uiop:ensure-directory-pathname directory)
+            for marker = (merge-pathnames ".git" current)
+            when (probe-file marker)
+              return marker
+            do (let ((parent (uiop:pathname-parent-directory-pathname current)))
+                 (when (or (null parent) (equal parent current))
+                   (return nil))
+                 (setf current parent)))
+    (error ()
+      nil)))
+
+(-> application--git-directory-pathname (pathname) (option pathname))
+(defun application--git-directory-pathname (directory)
+  "Return the Git metadata directory enclosing DIRECTORY."
+  (let ((marker (application--git-marker-pathname directory)))
+    (cond
+      ((null marker)
+       nil)
+      ((uiop:directory-exists-p marker)
+       (uiop:ensure-directory-pathname marker))
+      (t
+       (handler-case
+           (with-open-file (stream marker :direction :input)
+             (let ((line (read-line stream nil nil))
+                   (prefix "gitdir: "))
+               (when (and line (uiop:string-prefix-p prefix line))
+                 (uiop:directory-exists-p
+                  (merge-pathnames
+                   (string-trim '(#\Space #\Tab) (subseq line (length prefix)))
+                   (uiop:pathname-directory-pathname marker))))))
+         (error ()
+           nil))))))
+
 (-> application--git-branch (pathname) (option string))
 (defun application--git-branch (directory)
   "Return the enclosing Git worktree branch for DIRECTORY, when attached."
   (handler-case
-      (let ((branch
-              (string-trim
-               '(#\Space #\Tab #\Newline #\Return)
-               (uiop:run-program
-                (list "git" "-C" (namestring directory)
-                      "symbolic-ref" "--quiet" "--short" "HEAD")
-                :output ':string
-                :error-output ':string
-                :ignore-error-status t))))
-        (and (non-empty-string-p branch) branch))
+      (let* ((git-directory (application--git-directory-pathname directory))
+             (head-pathname (and git-directory
+                                 (merge-pathnames "HEAD" git-directory))))
+        (when (and head-pathname (probe-file head-pathname))
+          (with-open-file (stream head-pathname :direction :input)
+            (let ((line (read-line stream nil nil))
+                  (prefix "ref: refs/heads/"))
+              (when (and line (uiop:string-prefix-p prefix line))
+                (let ((branch (subseq line (length prefix))))
+                  (and (non-empty-string-p branch) branch)))))))
     (error ()
       nil)))
 

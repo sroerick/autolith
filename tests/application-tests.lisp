@@ -8077,11 +8077,68 @@
   nil)
 
 
+(-> test-application-git-branch () null)
+(defun test-application-git-branch ()
+  "Test branch discovery without spawning Git subprocesses."
+  (let* ((root
+           (merge-pathnames
+            (format nil "autolith-git-branch-~A/" (make-identifier))
+            (uiop:temporary-directory)))
+         (repository (merge-pathnames "repository/" root))
+         (nested (merge-pathnames "src/deep/" repository))
+         (head (merge-pathnames ".git/HEAD" repository))
+         (worktree (merge-pathnames "worktree/" root))
+         (worktree-nested (merge-pathnames "src/" worktree))
+         (worktree-marker (merge-pathnames ".git" worktree))
+         (worktree-head (merge-pathnames "metadata/worktrees/example/HEAD" root)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist head)
+           (ensure-directories-exist (merge-pathnames "placeholder" nested))
+           (with-open-file (stream head
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
+             (write-line "ref: refs/heads/feature/status" stream))
+           (test-assert
+            (string= (application--git-branch nested) "feature/status")
+            "branch discovery reads the enclosing worktree HEAD directly")
+           (with-open-file (stream head
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
+             (write-line "892e223b0b7a2d7143787b7c9e4d7ecee644a83c" stream))
+           (test-assert
+            (null (application--git-branch nested))
+            "detached worktrees omit branch status")
+           (ensure-directories-exist worktree-marker)
+           (ensure-directories-exist worktree-head)
+           (ensure-directories-exist (merge-pathnames "placeholder" worktree-nested))
+           (with-open-file (stream worktree-marker
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
+             (write-line "gitdir: ../metadata/worktrees/example/" stream))
+           (with-open-file (stream worktree-head
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create)
+             (write-line "ref: refs/heads/worktree-branch" stream))
+           (test-assert
+            (string= (application--git-branch worktree-nested) "worktree-branch")
+            "branch discovery follows linked-worktree gitdir markers"))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> run-application-tests () boolean)
 (defun run-application-tests ()
   "Run focused application presentation tests and return true on success."
   (test-application-command-tips)
   (test-application-banner-policy)
+  (test-application-git-branch)
   (test-startup-update-choice)
   (test-explicit-update-operation)
   (test-session-titles-command)
