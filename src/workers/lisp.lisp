@@ -36,22 +36,23 @@
 
 (-> lisp-worker--call (function) t)
 (defun lisp-worker--call (function)
-  "Call FUNCTION and translate sbcl-workers conditions for Autolith."
-  (handler-case
-      (funcall function)
-    (sbcl-worker-image-error (condition)
-      (error 'lisp-image-error
-             :message (sbcl-worker-error-message condition)
-             :tool-name
-             (lisp-worker--tool-name (sbcl-worker-error-operation condition))
-             :pathname (sbcl-worker-error-pathname condition)
-             :stage (or (sbcl-worker-error-stage condition) ':manifest)))
-    (sbcl-worker-error (condition)
-      (error 'worker-error
-             :message (sbcl-worker-error-message condition)
-             :tool-name
-             (lisp-worker--tool-name
-              (sbcl-worker-error-operation condition))))))
+  "Call FUNCTION with isolated worker stderr and translate library conditions."
+  (let ((*error-output* (make-broadcast-stream)))
+    (handler-case
+        (funcall function)
+      (sbcl-worker-image-error (condition)
+        (error 'lisp-image-error
+               :message (sbcl-worker-error-message condition)
+               :tool-name
+               (lisp-worker--tool-name (sbcl-worker-error-operation condition))
+               :pathname (sbcl-worker-error-pathname condition)
+               :stage (or (sbcl-worker-error-stage condition) ':manifest)))
+      (sbcl-worker-error (condition)
+        (error 'worker-error
+               :message (sbcl-worker-error-message condition)
+               :tool-name
+               (lisp-worker--tool-name
+                (sbcl-worker-error-operation condition)))))))
 
 (-> lisp-worker-sbcl-command () string)
 (defun lisp-worker-sbcl-command ()

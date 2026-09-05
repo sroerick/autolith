@@ -101,6 +101,15 @@
 (-> test-lisp-worker-protocol () null)
 (defun test-lisp-worker-protocol ()
   "Test portable worker request execution and condition reporting."
+  (let ((host-error-output (make-string-output-stream)))
+    (let ((*error-output* host-error-output))
+      (lisp-worker--call
+       (lambda ()
+         (write-string "worker diagnostic" *error-output*)
+         nil)))
+    (test-assert
+     (string= (get-output-stream-string host-error-output) "")
+     "worker subprocess diagnostics do not leak into the host error stream"))
   (let ((success
           (worker-handle-request
            '(:request :id 1 :operation :eval :arguments (:form "(+ 20 22)"))))
