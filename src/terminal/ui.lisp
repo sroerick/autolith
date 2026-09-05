@@ -25,6 +25,9 @@
 (defparameter *terminal-ui-picker-search-character-limit* 256
   "The maximum number of characters retained in a modal picker search.")
 
+(defparameter *terminal-ui-picker-poll-interval* 0.02
+  "The default seconds between modal picker terminal-readiness checks.")
+
 (defparameter *terminal-ui-pending-preview-limit* 3
   "The maximum pending inputs previewed for each delivery class.")
 
@@ -2303,7 +2306,8 @@ removes it."
              (visible-count *terminal-ui-visible-completions*)
              initial-name initial-value search-p
              (search-key #'terminal-ui--picker-default-search-text)
-             resize-callback on-event poll-interval)
+             resize-callback on-event
+             (poll-interval *terminal-ui-picker-poll-interval*))
   "Run a modal picker over ITEMS and return the selected value, or NIL on cancel.
 
 Items follow the completion entry shape and may carry a :VALUE distinct from
@@ -2329,11 +2333,12 @@ handling and may return:
   (:REPLACE TITLE ITEMS HINT) - same, and replace the hint, including with NIL
   (:REPLACE TITLE ITEMS HINT VALUE) - same, selecting VALUE when it exists
 
-RESIZE-CALLBACK is queried before each blocking read and immediately after the
-read returns. It returns positive pending rows and columns as a cons, or NIL
-when no resize needs to be applied. POLL-INTERVAL, when non-NIL, replaces the
-blocking read with bounded readiness checks and delivers :POLL to ON-EVENT while
-no terminal input is ready."
+RESIZE-CALLBACK is queried before each terminal-readiness check and immediately
+before handling its resulting event. It returns positive pending rows and columns
+as a cons, or NIL when no resize needs to be applied. POLL-INTERVAL defaults to
+*TERMINAL-UI-PICKER-POLL-INTERVAL*; when non-NIL, it replaces the blocking read
+with bounded readiness checks and delivers :POLL to ON-EVENT while no terminal
+input is ready. Explicit NIL preserves blocking reads."
   (block nil
     (let ((source-items items)
           (base-title title)
@@ -2496,7 +2501,8 @@ no terminal input is ready."
                                          (terminal-ui-selector ui)))))
                      (cond
                        ((null custom)
-                        (unless (handle-search-event event)
+                        (unless (or (eq event ':poll)
+                                    (handle-search-event event))
                           (multiple-value-bind (action item)
                               (selector-handle-event
                                (terminal-ui-selector ui) event)

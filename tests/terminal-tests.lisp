@@ -2402,6 +2402,74 @@
                  "non-interactive terminals never open the picker"))
   nil)
 
+(-> test-terminal-modal-default-polling () null)
+(defun test-terminal-modal-default-polling ()
+  "Test default picker polling, resize refresh, and inert ordinary poll handling."
+  (let* ((readiness-check-count 0)
+         (poll-count 0)
+         (poll-selection nil)
+         (resize-returned-p nil)
+         (input-read-p nil)
+         (ready-after-resize-p nil)
+         (terminal-holder (list nil))
+         (terminal
+           (make-instance
+            'scripted-terminal
+            :columns 60
+            :rows 20
+            :events (list :submit)
+            :read-callback (lambda ()
+                             (setf input-read-p t))))
+         (ui (terminal-ui-create :terminal terminal))
+         (items '((:name "alpha" :argument nil :description "first")
+                  (:name "beta" :argument nil :description "second"))))
+    (setf (first terminal-holder) terminal)
+    (with-terminal-ui (active-ui ui)
+      (let ((*terminal-ui-picker-poll-interval* 0))
+        (test-call-with-function-replacements
+         (list
+          (list 'terminal-input-ready-p
+                (lambda (ignored)
+                  (declare (ignore ignored))
+                  (let ((ready-p (>= (incf readiness-check-count) 2))
+                        (active-terminal (first terminal-holder)))
+                    (when ready-p
+                      (setf ready-after-resize-p
+                            (and (= (terminal-columns active-terminal) 72)
+                                 (= (terminal-rows active-terminal) 30))))
+                    ready-p))))
+         (lambda ()
+           (test-assert
+            (string=
+             (terminal-ui-select
+              active-ui
+              :title "polling picker"
+              :items items
+              :initial-name "beta"
+              :resize-callback
+              (lambda ()
+                (when (and (= readiness-check-count 1)
+                           (not resize-returned-p))
+                  (setf resize-returned-p t)
+                  (cons 30 72)))
+              :on-event
+              (lambda (event selector)
+                (when (eq event ':poll)
+                  (incf poll-count)
+                  (setf poll-selection (selector-selection selector)))
+                nil))
+             "beta")
+            "default polling preserves the selected item until later submit")))))
+    (test-assert (= poll-count 1)
+                 "default picker polling delivers one poll event to the callback")
+    (test-assert (= poll-selection 1)
+                 "an ordinary poll does not alter the picker selection")
+    (test-assert input-read-p
+                 "an ordinary poll does not dismiss the picker before later input")
+    (test-assert ready-after-resize-p
+                 "default polling applies a resize before later input becomes ready")
+    nil))
+
 (-> terminal-tests--call-without-host-size (function) t)
 (defun terminal-tests--call-without-host-size (function)
   "Call FUNCTION while kernel and tput terminal sizes are unavailable.
@@ -2819,6 +2887,7 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-command-completion)
   (test-terminal-lisp-operation-completion)
   (test-terminal-modal-selection)
+  (test-terminal-modal-default-polling)
   (test-terminal-modal-resize)
   (test-terminal-application-read-resize)
   (test-terminal-non-tty-fallback)
