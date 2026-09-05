@@ -650,12 +650,13 @@
     (format nil "~16,'0X" hash)))
 
 (-> mcp-tools--identifier-map
-    (list &key (:prefix string) (:limit integer))
+    (list &key (:prefix string) (:limit integer)
+               (:identity-scope (option string)))
     hash-table)
 (defun mcp-tools--identifier-map
     (raw-names
-     &key (prefix "") (limit *mcp-provider-identifier-limit*))
-  "Map RAW-NAMES to stable provider identifiers independent of other names."
+     &key (prefix "") (limit *mcp-provider-identifier-limit*) identity-scope)
+  "Map RAW-NAMES to stable provider identifiers within IDENTITY-SCOPE."
   (unless (= (length raw-names)
              (length (remove-duplicates raw-names :test #'string=)))
     (error 'configuration-error
@@ -669,7 +670,12 @@
   (let ((used (make-hash-table :test #'equal))
         (result (make-hash-table :test #'equal)))
     (dolist (raw raw-names)
-      (let* ((hash (mcp-tools--identifier-hash raw))
+      (let* ((hash-source
+               (if identity-scope
+                   (format nil "~D:~A~A"
+                           (length identity-scope) identity-scope raw)
+                   raw))
+             (hash (mcp-tools--identifier-hash hash-source))
              (suffix
                (format nil
                        "_~A"
@@ -2891,7 +2897,8 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
         (let* ((raw-tools (mcp-server-runtime-tools runtime))
                (name-map
                  (mcp-tools--identifier-map
-                  (mapcar #'mcp-tool-name raw-tools)))
+                  (mapcar #'mcp-tool-name raw-tools)
+                  :identity-scope (mcp-server-runtime-name runtime)))
                (configuration
                  (mcp-server-runtime-configuration runtime)))
           (loop for raw-tool in raw-tools

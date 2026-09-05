@@ -3054,6 +3054,51 @@
       :name "autolith-test"
       :version "1"))))
 
+(-> test-mcp-server-scoped-tool-identifiers () null)
+(defun test-mcp-server-scoped-tool-identifiers ()
+  "Test equal raw tool names remain distinct across MCP servers."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (definition (test-mcp--tool-definition "search"))
+         (first-runtime
+           (test-mcp--bounded-runtime
+            configuration
+            :name "first-server"
+            :required-p t
+            :tools-function (lambda () (list definition))))
+         (second-runtime
+           (test-mcp--bounded-runtime
+            configuration
+            :name "second-server"
+            :required-p t
+            :tools-function (lambda () (list definition))))
+         (manager
+           (make-instance
+            'mcp-manager
+            :configuration configuration
+            :runtimes (list first-runtime second-runtime))))
+    (unwind-protect
+         (progn
+           (mcp-server-runtime-connect first-runtime)
+           (mcp-server-runtime-connect second-runtime)
+           (let* ((first-tools (mcp-tools--manager-tool-objects manager))
+                  (second-tools (mcp-tools--manager-tool-objects manager))
+                  (first-names (mapcar #'tool-name first-tools))
+                  (second-names (mapcar #'tool-name second-tools)))
+             (test-assert
+              (and (= (length first-names) 2)
+                   (not (string= (first first-names) (second first-names)))
+                   (every
+                    (lambda (name)
+                      (uiop:string-prefix-p "search_" name))
+                    first-names)
+                   (equal first-names second-names))
+              "equal MCP raw tool names have readable stable server-scoped identifiers")))
+      (ignore-errors (mcp-manager-close manager))
+      (uiop:delete-directory-tree
+       root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-mcp-aggregate-discovery-bounds () null)
 (defun test-mcp-aggregate-discovery-bounds ()
   "Test required-first aggregate allocation during startup and refresh."
@@ -3578,6 +3623,7 @@
   (test-mcp-http-credential-exchange-scope)
   (test-mcp-retained-tool-metadata-boundaries)
   (test-mcp-credential-echo-containment)
+  (test-mcp-server-scoped-tool-identifiers)
   (test-mcp-aggregate-discovery-bounds)
   (test-mcp-initialization-metadata-bounds)
   (test-mcp-result-text-bound)
@@ -3862,9 +3908,10 @@
                    (tool-name read-tool)
                    (tool-name collision-tool))))
                 "provider tools use stable names and omit task-required tools")
-               (let ((name-map
-                       (mcp-tools--identifier-map
-                        '("read/file" "read file"))))
+                (let ((name-map
+                        (mcp-tools--identifier-map
+                         '("read/file" "read file")
+                         :identity-scope "Test Server")))
                  (test-assert
                   (and
                    (string=
