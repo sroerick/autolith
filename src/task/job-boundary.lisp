@@ -419,9 +419,11 @@
         (when (probe-file temporary)
           (delete-file temporary))))))
 
-(-> run-job-headless-command-authorization (application keyword string) function)
+(-> run-job-headless-command-authorization
+    (application keyword run-job-request)
+    function)
 (defun run-job-headless-command-authorization
-    (application permission-mode user-instructions)
+    (application permission-mode request)
   "Return a fail-closed non-interactive command authorization function."
   (lambda (command directory)
     (case permission-mode
@@ -440,7 +442,7 @@
               :provider (application-provider application)
               :configuration (application-configuration application)
               :sandbox-available-p (application--command-sandbox-available-p)
-              :user-instructions user-instructions)))
+              :user-instructions (run-job-request-prompt request))))
            ':deny))
       (otherwise
        ':deny))))
@@ -516,7 +518,7 @@
                          :detached nil))
                   :command-authorization-function
                   (run-job-headless-command-authorization
-                   application permission-mode assignment)
+                   application permission-mode request)
                   :tool-authorization-function
                   (run-job-headless-tool-authorization permission-mode))
                (dolist (job inline)
