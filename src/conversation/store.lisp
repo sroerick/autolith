@@ -3347,33 +3347,39 @@ later picker searches read it without scanning the log."
              :sequence nil))
     (conversation-load pathname)))
 
+(-> conversation--active-pathname-non-empty-p (pathname) boolean)
+(defun conversation--active-pathname-non-empty-p (pathname)
+  "Return true when active segment PATHNAME has a header and durable record."
+  (handler-case
+      (let ((header-seen-p nil))
+        (conversation--map-records
+         pathname
+         (lambda (record)
+           (cond
+             ((not header-seen-p)
+              (unless (and (listp record)
+                           (eq (first record) :conversation))
+                (return-from conversation--active-pathname-non-empty-p nil))
+              (setf header-seen-p t))
+             (t
+              (return-from conversation--active-pathname-non-empty-p t)))))
+        nil)
+    (error ()
+      nil)))
+
 (-> conversation--pathname-non-empty-p (pathname) boolean)
 (defun conversation--pathname-non-empty-p (pathname)
   "Return true when PATHNAME's active segment has a header and durable record."
   (let ((active (conversation-storage-active-pathname pathname)))
     (and active
-         (handler-case
-             (let ((header-seen-p nil))
-               (conversation--map-records
-                active
-                (lambda (record)
-                  (cond
-                    ((not header-seen-p)
-                     (unless (and (listp record)
-                                  (eq (first record) :conversation))
-                       (return-from conversation--pathname-non-empty-p nil))
-                     (setf header-seen-p t))
-                    (t
-                     (return-from conversation--pathname-non-empty-p t)))))
-               nil)
-           (error ()
-             nil)))))
+         (conversation--active-pathname-non-empty-p active))))
 
 (-> conversation-list (configuration) list)
 (defun conversation-list (configuration)
   "Return non-empty stable conversation identities, newest first."
-  (let ((root (configuration-conversation-root configuration))
-        (identities nil))
+  (let ((root       (configuration-conversation-root configuration))
+        (identities nil)
+        (summaries  nil))
     (when (uiop:directory-exists-p root)
       (dolist (pathname (uiop:directory-files root "*.sexp"))
         (pushnew pathname identities :test #'equal))
@@ -3386,9 +3392,13 @@ later picker searches read it without scanning the log."
               root)
              identities
              :test #'equal)))))
-    (sort (remove-if-not #'conversation--pathname-non-empty-p identities)
-          #'>
-          :key #'conversation-storage-write-date)))
+    (dolist (identity identities)
+      (let ((active (conversation-storage-active-pathname identity)))
+        (when (and active
+                   (conversation--active-pathname-non-empty-p active))
+          (push (list identity (or (file-write-date active) 0)) summaries))))
+    (mapcar #'first
+            (sort summaries #'> :key #'second))))
 
 
 (-> conversation-activity-summary (pathname)
