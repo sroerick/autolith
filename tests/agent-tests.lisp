@@ -1339,7 +1339,8 @@
 (-> test-agent-tool-storm-guard () null)
 (defun test-agent-tool-storm-guard ()
   "Test canonical repetition and oscillation guards while read-only calls remain exempt."
-  (let* ((configuration (test-configuration))
+  (let* ((*agent-tool-storm-identical-call-limit* 3)
+         (configuration (test-configuration))
          (root          (test-configuration-root configuration)))
     (unwind-protect
          (progn
