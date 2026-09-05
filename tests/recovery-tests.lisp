@@ -446,6 +446,59 @@ exit 64
                                   :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-recovery-source-failure-reporting () null)
+(defun test-recovery-source-failure-reporting ()
+  "Test clean-source recovery reports and refreshes a secondary failure."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (context (recovery-tests--context root))
+         (status 70)
+         (refreshed-capsule :unset)
+         (capsule "/state/crashes/original.sexp"))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'recovery-boot-source
+                 (lambda (active-context arguments)
+                   (declare (ignore active-context arguments))
+                   status))
+           (list 'recovery-refresh-crash-context
+                 (lambda (active-context current-capsule &key session-p)
+                   (declare (ignore active-context session-p))
+                   (setf refreshed-capsule current-capsule)
+                   current-capsule)))
+          (lambda ()
+            (let ((output
+                    (with-output-to-string (stream)
+                      (let ((*error-output* stream))
+                        (test-assert
+                         (= (recovery-boot-source-with-report
+                             context nil :capsule capsule)
+                            70)
+                         "secondary source failure preserves its status")))))
+              (test-assert
+               (and (search "status 70" output)
+                    (equal refreshed-capsule capsule))
+               "secondary source failure is reported and refreshes crash context"))
+            (setf status 0
+                  refreshed-capsule :unset)
+            (let ((output
+                    (with-output-to-string (stream)
+                      (let ((*error-output* stream))
+                        (test-assert
+                         (zerop
+                          (recovery-boot-source-with-report
+                           context nil :capsule capsule))
+                         "successful source recovery preserves its status")))))
+              (test-assert
+               (and (zerop (length output))
+                    (eq refreshed-capsule :unset))
+               "successful source recovery emits no failure report"))))
+      (uiop:delete-directory-tree root
+                                  :validate t
+                                  :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-recovery-generation-revision-boundary () null)
 (defun test-recovery-generation-revision-boundary ()
   "Test automatic recovery revision matching and explicit rollback exceptions."
@@ -670,5 +723,6 @@ exit 64
   (test-recovery-conversation-identifiers)
   (test-recovery-session-handoff)
   (test-recovery-status-boundary)
+  (test-recovery-source-failure-reporting)
   (test-recovery-generation-revision-boundary)
   nil)

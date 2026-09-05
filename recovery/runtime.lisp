@@ -1201,6 +1201,19 @@ generation. Its validator carries this image's own stricter checks."
            (uiop:wait-process process))
       (recovery-terminal-state-restore terminal-state))))
 
+(serapeum:-> recovery-boot-source-with-report
+    (recovery-context list &key (:capsule (or null string)))
+    integer)
+(defun recovery-boot-source-with-report (context forwarded-arguments &key capsule)
+  "Boot clean committed source and report any secondary recovery failure."
+  (let ((status (recovery-boot-source context forwarded-arguments)))
+    (unless (recovery-generation-terminal-status-p status)
+      (format *error-output*
+              "Clean committed source exited with status ~D.~%"
+              status)
+      (recovery-refresh-crash-context context capsule))
+    status))
+
 (serapeum:-> recovery-generation-terminal-status-p (integer) boolean)
 (defun recovery-generation-terminal-status-p (status)
   "Return true when STATUS should end retained-generation fallback."
@@ -1287,12 +1300,14 @@ generation. Its validator carries this image's own stricter checks."
                                        forwarded-arguments
                                        :capsule capsule
                                        :source-commit source-commit)
-        (error (condition)
-          (format *error-output*
-                  "Retained-generation recovery failed: ~A~%"
-                  (recovery-sanitize-text condition))
-          (recovery-boot-source context forwarded-arguments)))
-      (recovery-boot-source context forwarded-arguments)))
+      (error (condition)
+        (format *error-output*
+                "Retained-generation recovery failed: ~A~%"
+                (recovery-sanitize-text condition))
+        (recovery-boot-source-with-report
+         context forwarded-arguments :capsule capsule)))
+    (recovery-boot-source-with-report
+     context forwarded-arguments :capsule capsule)))
 
 
 ;;;; -- Argument Parsing and Entry --
