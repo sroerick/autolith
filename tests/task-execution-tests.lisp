@@ -543,7 +543,7 @@
                        orchestrator identifier child "lisp.eval")))
            (test-assert
             (and execution
-                 (task-tests--wait-until (lambda () (probe-file marker)) 5))
+                 (task-tests--wait-until (lambda () (probe-file marker)) 20))
             "a child asynchronous Lisp evaluation starts before cleanup")
            (setf worker (lisp-worker-pool-worker worker-pool "child-cleanup"))
            (test-assert

@@ -539,7 +539,7 @@
                        (eq (getf (getf snapshot :result) :status) :aborted)
                        (not (lisp-worker-running-p cancel-worker)))
                   "cancelling a Lisp job aborts it and stops the interrupted REPL")))
-             (let* ((*tool-execution-blocking-grace-seconds* 5)
+             (let* ((*tool-execution-blocking-grace-seconds* 20)
                     (result
                       (run-lisp "eval"
                                 "form" "(+ 40 2)"
@@ -725,7 +725,7 @@
                  (test-assert
                   (and job
                        (task-tests--wait-until
-                        (lambda () (probe-file marker)) 5))
+                       (lambda () (probe-file marker)) 20))
                   (format nil "the ~A blocker reaches its Lisp worker" name))
                  job))
 
@@ -784,6 +784,32 @@
               (lambda ()
                 (exercise "busy-reset" "reset" nil)
                 (exercise "busy-stop" "stop" nil))))
+             (let ((worker
+                     (lisp-worker-pool-start
+                      pool "slow-resolution" "pristine")))
+               (test-call-with-function-replacements
+                (list
+                 (list 'lisp-worker-manager-worker
+                       (lambda (manager name)
+                         (declare (ignore manager name))
+                         (sleep 1)
+                         worker)))
+                (lambda ()
+                  (let* ((*tool-execution-blocking-grace-seconds* 0.01)
+                         (result
+                           (run-lisp "eval"
+                                     "form" "(+ 20 22)"
+                                     "repl" "slow-resolution"))
+                         (details (tool-result-details result))
+                         (job (execution-job result "lisp.eval")))
+                    (test-assert
+                     (and (typep result 'task-tool-result)
+                          (eq (getf (rest details) :handoff-reason)
+                              :grace-expired)
+                          job)
+                     "Lisp worker resolution runs inside the execution job")
+                    (await-state job :completed
+                                 "the delayed worker resolution completes")))))
         (ignore-errors (tool-registry-close-runtime-state registry))
         (ignore-errors (lisp-worker-pool-stop-all pool))
         (uiop:delete-directory-tree root

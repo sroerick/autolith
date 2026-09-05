@@ -370,12 +370,6 @@
   (lisp-repl--validate-name
    (or (tool-argument arguments "repl") "default")))
 
-(-> lisp-tool-worker (tool-context hash-table) lisp-worker)
-(defun lisp-tool-worker (context arguments)
-  "Return the named worker selected by ARGUMENTS inside CONTEXT."
-  (lisp-worker-manager-worker
-   (tool-context-worker context)
-   (lisp-tool-repl-name arguments)))
 
 (-> lisp-tool-asd-pathname
     (tool-context hash-table non-empty-string)
@@ -427,21 +421,24 @@
     (context arguments &key tool-name summary operation-function)
   "Run one named-worker operation directly or through an inspectable session job.
 
-Cancellation detaches the selected worker before unwinding the job, so its next
-request restarts immediately from a clean protocol stream."
-  (let* ((worker (lisp-tool-worker context arguments))
-         (repl-name (lisp-worker-name worker)))
+Worker resolution runs inside the job. Cancellation detaches a selected worker
+before unwinding, so its next request restarts with a clean protocol stream."
+  (let ((manager (tool-context-worker context))
+        (repl-name (lisp-tool-repl-name arguments)))
     (lisp-tool-invoke-managed-execution
      context arguments
      :tool-name tool-name
      :summary (format nil "Lisp REPL ~A: ~A" repl-name summary)
      :operation-function
      (lambda ()
-       (handler-bind ((job-aborted
-                        (lambda (condition)
-                          (declare (ignore condition))
-                          (sbcl-worker-cancel-request worker))))
-         (funcall operation-function worker))))))
+       (let ((worker nil))
+         (handler-bind ((job-aborted
+                          (lambda (condition)
+                            (declare (ignore condition))
+                            (when worker
+                              (sbcl-worker-cancel-request worker)))))
+           (setf worker (lisp-worker-manager-worker manager repl-name))
+           (funcall operation-function worker)))))))
 
 (defmethod tool-execute ((tool lisp-eval-tool)
                          (context tool-context)
