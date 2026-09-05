@@ -117,6 +117,29 @@
       (sb-bsd-sockets:socket-close socket))))
 
 
+(-> management-repl-test-same-settings-p
+    (configuration configuration)
+    boolean)
+(defun management-repl-test-same-settings-p (left right)
+  "Return true when LEFT and RIGHT have equal management endpoint settings."
+  (every
+   (lambda (reader)
+     (equal (funcall reader left) (funcall reader right)))
+   (list #'configuration-management-repl-enabled-p
+         #'configuration-management-repl-transport
+         #'configuration-management-repl-unix-socket-path
+         #'configuration-management-repl-tcp-address
+         #'configuration-management-repl-tcp-port
+         #'configuration-management-repl-token-file-path
+         #'configuration-management-repl-evaluation-timeout
+         #'configuration-management-repl-maximum-frame-size
+         #'configuration-management-repl-maximum-source-size
+         #'configuration-management-repl-maximum-output-size
+         #'configuration-management-repl-queue-capacity
+         #'configuration-management-repl-maximum-clients
+         #'configuration-management-repl-authentication-timeout)))
+
+
 ;;;; -- Focused Tests --
 
 (-> test-management-repl-configuration () null)
@@ -135,25 +158,12 @@
            (application--reconnect-configuration configuration nil)))
     (unwind-protect
          (progn
-           (test-assert (configuration-management-repl-enabled-p clone)
-                        "configuration clones preserve management enablement")
-           (test-assert
-            (and (eq (configuration-management-repl-transport clone) ':tcp)
-                 (string= (configuration-management-repl-tcp-address clone)
-                          "127.0.0.2")
-                 (= (configuration-management-repl-tcp-port clone) 4545)
-                 (= (configuration-management-repl-evaluation-timeout clone) 7)
-                 (= (configuration-management-repl-maximum-output-size clone) 2048))
-            "configuration clones preserve every management endpoint bound")
-           (test-assert
-            (and (configuration-management-repl-enabled-p reconnect)
-                 (eq (configuration-management-repl-transport reconnect) ':tcp)
-                 (equal
-                  (configuration-management-repl-unix-socket-path reconnect)
-                  (configuration-management-repl-unix-socket-path configuration))
-                 (= (configuration-management-repl-maximum-clients reconnect) 2)
-                 (= (configuration-management-repl-authentication-timeout reconnect) 1))
-            "non-environment reconnect preserves explicit management settings")
+            (test-assert
+             (management-repl-test-same-settings-p configuration clone)
+             "configuration clones preserve management endpoint settings")
+            (test-assert
+             (management-repl-test-same-settings-p configuration reconnect)
+             "non-environment reconnect preserves explicit management settings")
            (test-assert
             (not (configuration-management-repl-enabled-p
                   (configuration-create

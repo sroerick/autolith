@@ -878,6 +878,37 @@ initialization registers the selected model."
                    :provider-endpoint
                    (configuration--provider-endpoint-for selected-model))))
 
+(-> configuration--management-repl-initargs (configuration) list)
+(defun configuration--management-repl-initargs (configuration)
+  "Return CONFIGURATION's management endpoint settings as constructor initargs."
+  (list
+   :management-repl-enabled-p
+   (configuration-management-repl-enabled-p configuration)
+   :management-repl-transport
+   (configuration-management-repl-transport configuration)
+   :management-repl-unix-socket-path
+   (configuration-management-repl-unix-socket-path configuration)
+   :management-repl-tcp-address
+   (configuration-management-repl-tcp-address configuration)
+   :management-repl-tcp-port
+   (configuration-management-repl-tcp-port configuration)
+   :management-repl-token-file-path
+   (configuration-management-repl-token-file-path configuration)
+   :management-repl-evaluation-timeout
+   (configuration-management-repl-evaluation-timeout configuration)
+   :management-repl-maximum-frame-size
+   (configuration-management-repl-maximum-frame-size configuration)
+   :management-repl-maximum-source-size
+   (configuration-management-repl-maximum-source-size configuration)
+   :management-repl-maximum-output-size
+   (configuration-management-repl-maximum-output-size configuration)
+   :management-repl-queue-capacity
+   (configuration-management-repl-queue-capacity configuration)
+   :management-repl-maximum-clients
+   (configuration-management-repl-maximum-clients configuration)
+   :management-repl-authentication-timeout
+   (configuration-management-repl-authentication-timeout configuration)))
+
 (-> configuration--clone
     (configuration &key (:working-directory (option pathname))
                    (:model (option string))
@@ -912,65 +943,40 @@ reasoning effort only when that effort is supported by the selected model."
       (error 'configuration-error
              :message (format nil "Unsupported reasoning effort ~S for model ~A."
                               selected-effort selected-model)))
-    (make-instance 'configuration
-                   :source-root (configuration-source-root configuration)
-                   :working-directory effective-working-directory
-                   :config-root (configuration-config-root configuration)
-                   :data-root (configuration-data-root configuration)
-                   :state-root (configuration-state-root configuration)
-                   :cache-root (configuration-cache-root configuration)
-                   :management-repl-enabled-p
-                   (configuration-management-repl-enabled-p configuration)
-                   :management-repl-transport
-                   (configuration-management-repl-transport configuration)
-                   :management-repl-unix-socket-path
-                   (configuration-management-repl-unix-socket-path configuration)
-                   :management-repl-tcp-address
-                   (configuration-management-repl-tcp-address configuration)
-                   :management-repl-tcp-port
-                   (configuration-management-repl-tcp-port configuration)
-                   :management-repl-token-file-path
-                   (configuration-management-repl-token-file-path configuration)
-                   :management-repl-evaluation-timeout
-                   (configuration-management-repl-evaluation-timeout configuration)
-                   :management-repl-maximum-frame-size
-                   (configuration-management-repl-maximum-frame-size configuration)
-                   :management-repl-maximum-source-size
-                   (configuration-management-repl-maximum-source-size configuration)
-                   :management-repl-maximum-output-size
-                   (configuration-management-repl-maximum-output-size configuration)
-                   :management-repl-queue-capacity
-                   (configuration-management-repl-queue-capacity configuration)
-                   :management-repl-maximum-clients
-                   (configuration-management-repl-maximum-clients configuration)
-                   :management-repl-authentication-timeout
-                   (configuration-management-repl-authentication-timeout configuration)
-                   :codex-auth-path (configuration-codex-auth-path configuration)
-                   :grok-bootstrap-auth-path
-                   (configuration-grok-bootstrap-auth-path configuration)
-                   :model selected-model
-                   :reasoning-effort selected-effort
-                   :codex-fast-mode-p
-                   (if codex-fast-mode-p-supplied-p
-                       codex-fast-mode-p
-                       (configuration-codex-fast-mode-p configuration))
-                   :immutable-p (if immutable-p-supplied-p
-                                    immutable-p
-                                    (configuration-immutable-p configuration))
-                   :web-search-mode
-                   (if web-search-mode-supplied-p
-                       web-search-mode
-                       (configuration-web-search-mode configuration))
-                   :context-window (if model
-                                       (configuration--context-window-for model)
-                                       (configuration-context-window
-                                        configuration))
-                   :compaction-threshold-percent
-                   (configuration-compaction-threshold-percent configuration)
-                   :provider-endpoint
-                   (if model
-                       (configuration--provider-endpoint-for model)
-                       (configuration-provider-endpoint configuration)))))
+    (apply #'make-instance
+           'configuration
+           :source-root (configuration-source-root configuration)
+           :working-directory effective-working-directory
+           :config-root (configuration-config-root configuration)
+           :data-root (configuration-data-root configuration)
+           :state-root (configuration-state-root configuration)
+           :cache-root (configuration-cache-root configuration)
+           :codex-auth-path (configuration-codex-auth-path configuration)
+           :grok-bootstrap-auth-path
+           (configuration-grok-bootstrap-auth-path configuration)
+           :model selected-model
+           :reasoning-effort selected-effort
+           :codex-fast-mode-p
+           (if codex-fast-mode-p-supplied-p
+               codex-fast-mode-p
+               (configuration-codex-fast-mode-p configuration))
+           :immutable-p (if immutable-p-supplied-p
+                            immutable-p
+                            (configuration-immutable-p configuration))
+           :web-search-mode
+           (if web-search-mode-supplied-p
+               web-search-mode
+               (configuration-web-search-mode configuration))
+           :context-window (if model
+                               (configuration--context-window-for model)
+                               (configuration-context-window configuration))
+           :compaction-threshold-percent
+           (configuration-compaction-threshold-percent configuration)
+           :provider-endpoint
+           (if model
+               (configuration--provider-endpoint-for model)
+               (configuration-provider-endpoint configuration))
+           (configuration--management-repl-initargs configuration))))
 
 (-> configuration--expanded-working-directory
     ((or pathname string))

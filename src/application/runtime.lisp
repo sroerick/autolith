@@ -1058,39 +1058,14 @@ newly acquired lease."
 (-> application--reconnect-configuration (configuration boolean) configuration)
 (defun application--reconnect-configuration (previous immutable-p)
   "Recreate PREVIOUS for reconnect while preserving explicit management settings."
-  (configuration-create
-   :working-directory (uiop:getcwd)
-   :model (configuration-model previous)
-   :reasoning-effort (configuration-reasoning-effort previous)
-   :codex-fast-mode-p (configuration-codex-fast-mode-p previous)
-   :immutable-p immutable-p
-   :management-repl-enabled-p
-   (configuration-management-repl-enabled-p previous)
-   :management-repl-transport
-   (configuration-management-repl-transport previous)
-   :management-repl-unix-socket-path
-   (configuration-management-repl-unix-socket-path previous)
-   :management-repl-tcp-address
-   (configuration-management-repl-tcp-address previous)
-   :management-repl-tcp-port
-   (configuration-management-repl-tcp-port previous)
-   :management-repl-token-file-path
-   (configuration-management-repl-token-file-path previous)
-   :management-repl-evaluation-timeout
-   (configuration-management-repl-evaluation-timeout previous)
-   :management-repl-maximum-frame-size
-   (configuration-management-repl-maximum-frame-size previous)
-   :management-repl-maximum-source-size
-   (configuration-management-repl-maximum-source-size previous)
-   :management-repl-maximum-output-size
-   (configuration-management-repl-maximum-output-size previous)
-   :management-repl-queue-capacity
-   (configuration-management-repl-queue-capacity previous)
-   :management-repl-maximum-clients
-   (configuration-management-repl-maximum-clients previous)
-   :management-repl-authentication-timeout
-   (configuration-management-repl-authentication-timeout previous)
-   :defer-provider-validation-p t))
+  (apply #'configuration-create
+         :working-directory (uiop:getcwd)
+         :model (configuration-model previous)
+         :reasoning-effort (configuration-reasoning-effort previous)
+         :codex-fast-mode-p (configuration-codex-fast-mode-p previous)
+         :immutable-p immutable-p
+         :defer-provider-validation-p t
+         (configuration--management-repl-initargs previous)))
 
 (-> application-reconnect
     (application &key (:conversation-id (option string))
