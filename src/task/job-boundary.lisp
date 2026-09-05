@@ -603,53 +603,51 @@
         (identifier "")
         (request nil)
         (form nil))
-    (handler-case
-        (progn
-          (setf form (run-job-read-file input-path)
-                identifier (run-job--recover-identifier form)
-                request (run-job-validate-envelope form)
-                identifier (run-job-request-identifier request))
-          (multiple-value-bind (status result trace-id usage category message)
-              (funcall
-               executor
-               (or configuration
-                   (configuration-create :defer-provider-validation-p t))
-               request
-               permission-mode)
-            (when (and (eq status ':succeeded)
-                       (not (run-job--success-result-valid-p
-                             result
-                             (run-job-request-output-contract request))))
-              (setf status ':failed
-                    result nil
-                    category ':invalid-output
-                    message
-                    "The child result does not satisfy the supplied contract."))
-            (run-job-write-result-atomically
-             output-path
-             (run-job-result-envelope
-              identifier status
-              :started-at started-at :finished-at (get-universal-time)
-              :result result :trace-id trace-id :usage usage
-              :category category :message message))
-            (if (eq status ':succeeded) 0 1)))
-      (run-job-error (condition)
-        (ignore-errors
-          (run-job-write-result-atomically
-           output-path
-           (run-job-result-envelope
-            identifier ':failed
-            :started-at started-at :finished-at (get-universal-time)
-            :category (run-job-error-category condition)
-            :message (princ-to-string condition))))
-        64)
-      (error (condition)
-        (ignore-errors
-          (run-job-write-result-atomically
-           output-path
-           (run-job-result-envelope
-            identifier ':failed
-            :started-at started-at :finished-at (get-universal-time)
-            :category ':process-failure
-            :message (princ-to-string condition))))
-        1))))
+    (flet ((write-failure (category condition)
+             (ignore-errors
+               (run-job-write-result-atomically
+                output-path
+                (run-job-result-envelope
+                 identifier ':failed
+                 :started-at started-at :finished-at (get-universal-time)
+                 :category category
+                 :message (princ-to-string condition))))))
+      (handler-case
+          (progn
+            (setf form (run-job-read-file input-path)
+                  identifier (run-job--recover-identifier form)
+                  request (run-job-validate-envelope form)
+                  identifier (run-job-request-identifier request))
+            (multiple-value-bind (status result trace-id usage category message)
+                (funcall
+                 executor
+                 (or configuration
+                     (configuration-create :defer-provider-validation-p t))
+                 request
+                 permission-mode)
+              (when (and (eq status ':succeeded)
+                         (not (run-job--success-result-valid-p
+                               result
+                               (run-job-request-output-contract request))))
+                (setf status ':failed
+                      result nil
+                      category ':invalid-output
+                      message
+                      "The child result does not satisfy the supplied contract."))
+              (run-job-write-result-atomically
+               output-path
+               (run-job-result-envelope
+                identifier status
+                :started-at started-at :finished-at (get-universal-time)
+                :result result :trace-id trace-id :usage usage
+                :category category :message message))
+              (if (eq status ':succeeded) 0 1)))
+        (run-job-error (condition)
+          (write-failure (run-job-error-category condition) condition)
+          64)
+        (error (condition)
+          (write-failure ':process-failure condition)
+          1)
+        (serious-condition (condition)
+          (write-failure ':process-failure condition)
+          1)))))

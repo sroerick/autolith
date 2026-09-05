@@ -2,6 +2,10 @@
 
 ;;;; -- Non-interactive Job Boundary Tests --
 
+(define-condition run-job-test-interruption (serious-condition)
+  ()
+  (:documentation "A synthetic non-error serious condition escaping a test executor."))
+
 (-> run-job-tests--request-form (&key (:role string) (:contract list)) list)
 (defun run-job-tests--request-form
     (&key (role "custom-runner")
@@ -246,5 +250,31 @@
                    (eq (getf (getf fields :failure) :category)
                        ':invalid-output))
               "invalid structured output keeps its trace and category")))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  (let* ((root (run-job-tests--temporary-directory))
+         (input (merge-pathnames "interrupted.sexp" root))
+         (output (merge-pathnames "interrupted-result.sexp" root)))
+    (unwind-protect
+         (progn
+           (task-tests--write-text
+            input
+            (run-job--write-data-sexp
+             (run-job-tests--request-form) :pretty-p t))
+           (test-assert
+            (= (run-job-run
+                input output ':auto
+                :executor
+                (lambda (configuration request permission-mode)
+                  (declare (ignore configuration request permission-mode))
+                  (error (make-condition 'run-job-test-interruption))))
+               1)
+            "non-error serious conditions fail the job boundary")
+           (let* ((result (run-job-tests--read-result output))
+                  (fields (rest result)))
+             (test-assert
+              (and (eq (getf fields :status) ':failed)
+                   (eq (getf (getf fields :failure) :category)
+                       ':process-failure))
+              "non-error serious conditions publish a terminal result artifact")))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
   nil)
