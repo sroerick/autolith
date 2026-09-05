@@ -912,9 +912,11 @@
                    (provider (provider-create provider-configuration))
                    (registration (provider-registration-find "test-openai"))
                    (metadata (provider-model-for model))
+                    (astra-model (provider-model-for "gpt-6-astra"))
                    (built-in-models
                      (append
-                      (list "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+                       (list "gpt-6-astra"
+                             "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
                       (mapcar (lambda (entry) (getf entry ':name))
                               *gemini-code-assist-models*)
                       (list "grok-4.6"
@@ -933,6 +935,12 @@
                            (subseq model-identifiers 0 (length built-in-models)))
                     (>= model-position (length built-in-models)))
                "registered models appear after the built-in provider models")
+              (test-assert
+               (and astra-model
+                    (= (provider-model-context-window astra-model) 272000)
+                    (equal (provider-model-reasoning-efforts astra-model)
+                           '("low" "medium" "high" "xhigh" "max" "ultra")))
+               "ChatGPT exposes gpt-6-astra with current Codex metadata")
              (test-assert
               (and registration
                    (string= (provider-registration-description registration)

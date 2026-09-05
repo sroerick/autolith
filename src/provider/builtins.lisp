@@ -159,7 +159,10 @@
  :description "ChatGPT Codex subscription"
  :family ':codex
  :protocol ':responses
- :models '("gpt-5.6-sol"
+ :models '((:name "gpt-6-astra"
+            :context-window 272000
+            :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+           "gpt-5.6-sol"
            "gpt-5.6-luna"
            "gpt-5.6-terra")
  :factory #'provider--codex-registration-factory
