@@ -1730,27 +1730,57 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
         (mcp-server-runtime-tool-schema-bytes runtime)
         0)))
 
+(-> mcp-server-runtime--cached-failure
+    (mcp-server-runtime)
+    (option mcp-server-startup-error))
+(defun mcp-server-runtime--cached-failure (runtime)
+  "Return RUNTIME's published startup failure without retrying it."
+  (with-lock-held ((mcp-server-runtime-lock runtime))
+    (when (eq (mcp-server-runtime-state runtime) :failed)
+      (let ((configuration (mcp-server-runtime-configuration runtime)))
+        (make-condition
+         'mcp-server-startup-error
+         :message
+         (or (mcp-server-runtime-failure runtime)
+             (format nil "MCP server ~A is unavailable."
+                     (mcp-server-runtime-name runtime)))
+         :server-name (mcp-server-runtime-name runtime)
+         :required-p (mcp-server-configuration-required-p configuration)
+         :cause nil)))))
+
+(-> mcp-manager--runtime-failure-barrier-p
+    (mcp-server-runtime (option mcp-server-runtime) boolean)
+    boolean)
+(defun mcp-manager--runtime-failure-barrier-p
+    (runtime target-runtime signal-target-failure-p)
+  "Return true when RUNTIME's failure must cross the current manager boundary."
+  (or
+   (and
+    (null target-runtime)
+    (mcp-server-configuration-required-p
+     (mcp-server-runtime-configuration runtime)))
+   (and signal-target-failure-p
+        (eq runtime target-runtime))))
+
 (-> mcp-server-runtime--manager-connect-p
     (mcp-server-runtime (option mcp-server-runtime))
     boolean)
 (defun mcp-server-runtime--manager-connect-p (runtime target-runtime)
   "Return true when RUNTIME needs discovery during manager reconciliation."
   (or
-   (eq runtime target-runtime)
    (mcp-server-runtime-tools-stale-p runtime)
    (with-lock-held ((mcp-server-runtime-lock runtime))
      (let ((state (mcp-server-runtime-state runtime)))
-       (or
-        (and
-         (eq state :ready)
-         (mcp-server-runtime--persistent-launch-environment-p runtime))
-        (and
-         (member state '(:disconnected :connecting :detached) :test #'eq)
-         t)
-        (and
-         (eq state :failed)
-         (mcp-server-configuration-required-p
-          (mcp-server-runtime-configuration runtime))))))))
+       (and
+        (not (eq state :failed))
+        (or
+         (eq runtime target-runtime)
+         (and
+          (eq state :ready)
+          (mcp-server-runtime--persistent-launch-environment-p runtime))
+         (and
+          (member state '(:disconnected :connecting :detached) :test #'eq)
+          t)))))))
 
 (-> mcp-manager--connect-runtimes
     (mcp-manager
@@ -1763,14 +1793,25 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
   (let ((allocated-schema-bytes 0)
         (changed-p nil))
     (dolist (runtime (mcp-manager--ordered-runtimes manager))
-      (let ((before
-              (with-lock-held ((mcp-server-runtime-lock runtime))
-                (mcp-server-runtime-tools-revision runtime))))
+      (let* ((before
+               (with-lock-held ((mcp-server-runtime-lock runtime))
+                 (mcp-server-runtime-tools-revision runtime)))
+             (connect-p
+               (mcp-server-runtime--manager-connect-p
+                runtime target-runtime))
+             (cached-failure
+               (and
+                (not connect-p)
+                (mcp-server-runtime--cached-failure runtime))))
+        (when
+            (and
+             cached-failure
+             (mcp-manager--runtime-failure-barrier-p
+              runtime target-runtime signal-target-failure-p))
+          (error cached-failure))
         (handler-case
             (progn
-              (when
-                  (mcp-server-runtime--manager-connect-p
-                   runtime target-runtime)
+              (when connect-p
                 (mcp-server-runtime--connect
                  runtime
                  :allocated-schema-bytes allocated-schema-bytes))
@@ -1790,11 +1831,8 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
             (when (mcp-server-runtime--mark-failed runtime condition)
               (setf changed-p t))
             (when
-                (or
-                 (mcp-server-configuration-required-p
-                  (mcp-server-runtime-configuration runtime))
-                 (and signal-target-failure-p
-                      (eq runtime target-runtime)))
+                (mcp-manager--runtime-failure-barrier-p
+                 runtime target-runtime signal-target-failure-p)
               (error condition))))
         (unless
             (= before
@@ -1817,7 +1855,12 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
             manager
             :target-runtime runtime
             :signal-target-failure-p t)))
-        (mcp-server-runtime--connect runtime))))
+        (let ((cached-failure
+                (mcp-server-runtime--cached-failure runtime)))
+          (if (and cached-failure
+                   (not (mcp-server-runtime-tools-stale-p runtime)))
+              (error cached-failure)
+              (mcp-server-runtime--connect runtime))))))
 
 (-> mcp-manager-create (configuration) mcp-manager)
 (defun mcp-manager-create (configuration)

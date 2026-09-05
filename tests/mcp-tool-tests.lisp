@@ -3099,6 +3099,81 @@
        root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-mcp-required-failure-isolation () null)
+(defun test-mcp-required-failure-isolation ()
+  "Test a failed required server is isolated from healthy target calls."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (fail-required-p nil)
+         (required-discoveries 0)
+         (healthy-discoveries 0)
+         (required-definition
+           (test-mcp--tool-definition "required-tool"))
+         (healthy-definition
+           (test-mcp--tool-definition "healthy-tool"))
+         (required-runtime
+           (test-mcp--bounded-runtime
+            configuration
+            :name "required-failure"
+            :required-p t
+            :tools-function
+            (lambda ()
+              (incf required-discoveries)
+              (when fail-required-p
+                (error "Injected required discovery failure."))
+              (list required-definition))))
+         (healthy-runtime
+           (test-mcp--bounded-runtime
+            configuration
+            :name "healthy-target"
+            :required-p nil
+            :tools-function
+            (lambda ()
+              (incf healthy-discoveries)
+              (list healthy-definition))))
+         (manager
+           (make-instance
+            'mcp-manager
+            :configuration configuration
+            :runtimes (list required-runtime healthy-runtime))))
+    (unwind-protect
+         (progn
+           (with-lock-held ((mcp-manager-lock manager))
+             (mcp-manager--connect-runtimes manager))
+           (setf fail-required-p t)
+           (mcp-server-runtime-request-tool-refresh required-runtime)
+           (let ((first-failure
+                   (handler-case
+                       (progn
+                         (mcp-server-runtime-connect required-runtime)
+                         nil)
+                     (mcp-server-startup-error (condition)
+                       condition))))
+             (mcp-server-runtime-connect healthy-runtime)
+             (let ((second-failure
+                     (handler-case
+                         (progn
+                           (mcp-server-runtime-connect required-runtime)
+                           nil)
+                       (mcp-server-startup-error (condition)
+                         condition))))
+               (test-assert
+                (and
+                 first-failure
+                 second-failure
+                 (string=
+                  (autolith-error-message first-failure)
+                  (autolith-error-message second-failure))
+                 (= required-discoveries 2)
+                 (= healthy-discoveries 1)
+                 (eq (mcp-server-runtime-state required-runtime) :failed)
+                 (eq (mcp-server-runtime-state healthy-runtime) :ready))
+                "a failed required MCP server is latched without blocking healthy targets"))))
+      (ignore-errors (mcp-manager-close manager))
+      (uiop:delete-directory-tree
+       root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-mcp-aggregate-discovery-bounds () null)
 (defun test-mcp-aggregate-discovery-bounds ()
   "Test required-first aggregate allocation during startup and refresh."
@@ -3249,28 +3324,31 @@
                             nil)
                         (mcp-server-startup-error (condition)
                           condition))))
-             (let ((first-failure (refresh-failure))
-                   (second-failure (refresh-failure)))
-               (test-assert
-                (and
-                 first-failure
-                 second-failure
-                 (mcp-server-startup-error-required-p first-failure)
-                 (mcp-server-startup-error-required-p second-failure)
-                 (= discovery-count 3)
-                 (eq (mcp-server-runtime-state runtime) :failed)
-                 (=
-                  (mcp-server-runtime-tools-discovered-version runtime)
-                  (mcp-server-runtime-tools-change-version runtime)))
-                "a failed required refresh retries and remains a provider-boundary barrier")))
-           (setf fail-refresh-p nil)
-           (mcp-tool-registry-refresh registry :only-dirty-p t)
-           (test-assert
-            (and
-             (= discovery-count 4)
-             (eq (mcp-server-runtime-state runtime) :ready)
-             (test-mcp--tool-with-raw-name registry "required-retry"))
-            "a required server can recover after a failed refresh")
+              (let ((first-failure (refresh-failure))
+                    (second-failure (refresh-failure)))
+                (test-assert
+                 (and
+                  first-failure
+                  second-failure
+                  (mcp-server-startup-error-required-p first-failure)
+                  (mcp-server-startup-error-required-p second-failure)
+                  (string=
+                   (autolith-error-message first-failure)
+                   (autolith-error-message second-failure))
+                  (= discovery-count 2)
+                  (eq (mcp-server-runtime-state runtime) :failed)
+                  (=
+                   (mcp-server-runtime-tools-discovered-version runtime)
+                   (mcp-server-runtime-tools-change-version runtime)))
+                 "a failed required refresh is latched as a provider-boundary barrier"))
+              (setf fail-refresh-p nil)
+              (mcp-tool-registry-refresh registry)
+              (test-assert
+               (and
+                (= discovery-count 3)
+                (eq (mcp-server-runtime-state runtime) :ready)
+                (test-mcp--tool-with-raw-name registry "required-retry"))
+               "an explicit refresh retries and recovers a failed required server"))
            (tool-registry-close-runtime-state registry)
            (setf fail-refresh-p t)
            (let ((resume-failure
@@ -3624,6 +3702,7 @@
   (test-mcp-retained-tool-metadata-boundaries)
   (test-mcp-credential-echo-containment)
   (test-mcp-server-scoped-tool-identifiers)
+  (test-mcp-required-failure-isolation)
   (test-mcp-aggregate-discovery-bounds)
   (test-mcp-initialization-metadata-bounds)
   (test-mcp-result-text-bound)
