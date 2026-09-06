@@ -34,12 +34,25 @@
     :initarg :pathname
     :reader workspace-file-resource-pathname
     :type pathname
-    :documentation "The authority-checked pathname represented by this resource."))
-  (:documentation "An existing or potential file addressed through the workspace boundary."))
+    :documentation "The canonical pathname represented by this resource."))
+  (:documentation "An existing or potential file addressed by a workspace URI."))
 
 (defclass workspace-file-resolver (resource-resolver)
   ()
-  (:documentation "Resolve workspace: URIs through the ordinary workspace path boundary."))
+  (:documentation "Resolve workspace: URIs against the configured working directory."))
+
+(-> workspace-file-resource-access-roots
+    (workspace-file-resource tool-context)
+    list)
+(defgeneric workspace-file-resource-access-roots (resource context)
+  (:documentation
+   "Return roots RESOURCE may access without command authorization under CONTEXT."))
+
+(defmethod workspace-file-resource-access-roots
+    ((resource workspace-file-resource) (context tool-context))
+  "Return CONTEXT's active workspace roots for RESOURCE."
+  (declare (ignore resource))
+  (workspace-tool-readable-roots context))
 
 (defclass workspace-file-observation (resource-observation)
   ((kind
@@ -180,9 +193,9 @@
 
 (defmethod resource-resolver-resolve
     ((resolver workspace-file-resolver) identifier context)
-  "Resolve IDENTIFIER through WORKSPACE-TOOL-PATH without granting authority."
+  "Resolve IDENTIFIER without granting authority to the resulting workspace path."
   (declare (ignore resolver))
-  (let ((path (workspace-tool-path
+  (let ((path (workspace-tool-resolve-path
                context (workspace-file--decode-identifier
                         "workspace" identifier))))
     (make-instance 'workspace-file-resource
@@ -1041,6 +1054,63 @@ the final check-to-rename window. Missing-file publication rejects that race."
 
 
 ;;;; -- Resource Tool Methods --
+
+(-> workspace-file--authorization-command
+    ((member :read :edit) pathname)
+    string)
+(defun workspace-file--authorization-command (operation path)
+  "Return the command-shaped permission request for OPERATION on PATH."
+  (format nil "~A -- ~A"
+          (ecase operation
+            (:read "resource.read")
+            (:edit "resource.edit"))
+          (uiop:escape-shell-token (uiop:native-namestring path))))
+
+(-> workspace-file--call-with-authorized-access
+    (workspace-file-resource tool-context (member :read :edit) function)
+    t)
+(defun workspace-file--call-with-authorized-access
+    (resource context operation function)
+  "Call FUNCTION after authorizing out-of-root OPERATION on RESOURCE."
+  (let* ((path  (workspace-file-resource-pathname resource))
+         (roots (workspace-file-resource-access-roots resource context)))
+    (if (workspace-tool--read-path-allowed-p path roots)
+        (funcall function)
+        (let* ((tool-name
+                 (ecase operation
+                   (:read "resource.read")
+                   (:edit "resource.edit")))
+               (command
+                 (workspace-file--authorization-command operation path))
+               (decision
+                 (tool-context-authorize-command
+                  context command
+                  (configuration-working-directory
+                   (tool-context-configuration context)))))
+          (unless (eq decision ':full-access)
+            (error 'tool-error
+                   :message
+                   (format nil "~A requires full-access approval for path ~A outside the workspace and source roots."
+                           tool-name path)
+                   :tool-name tool-name))
+          (let ((*workspace-tool-readable-roots* (cons path roots)))
+            (funcall function))))))
+
+(defmethod resource-tool-read :around
+    ((resource workspace-file-resource) (tool resource-read-tool)
+     (context tool-context) (arguments hash-table))
+  "Authorize out-of-root workspace RESOURCE reads before inspection."
+  (declare (ignore tool arguments))
+  (workspace-file--call-with-authorized-access
+   resource context ':read (lambda () (call-next-method))))
+
+(defmethod resource-tool-edit :around
+    ((resource workspace-file-resource) (tool resource-edit-tool)
+     (context tool-context) (arguments hash-table))
+  "Authorize out-of-root workspace RESOURCE writes before inspection or mutation."
+  (declare (ignore tool arguments))
+  (workspace-file--call-with-authorized-access
+   resource context ':edit (lambda () (call-next-method))))
 
 (defmethod resource-tool-read
     ((resource workspace-file-resource) (tool resource-read-tool)

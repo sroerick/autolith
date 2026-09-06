@@ -109,6 +109,13 @@
                   *workspace-tool-readable-roots*
                   :test #'uiop:pathname-equal))))
 
+
+(defmethod workspace-file-resource-access-roots
+    ((resource scratchpad-resource) (context tool-context))
+  "Return RESOURCE's disposable scratchpad root as directly accessible."
+  (declare (ignore context))
+  (scratchpad-resource--readable-roots resource))
+
 (-> scratchpad-resource--root-p (scratchpad-resource) boolean)
 (defun scratchpad-resource--root-p (resource)
   "Return true when RESOURCE names the conversation scratchpad root itself."

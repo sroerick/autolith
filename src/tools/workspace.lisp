@@ -125,9 +125,11 @@ or filesystem failures as absence."
   (let ((candidate (workspace-tool--canonical-path path)))
     (not
      (null
-      (some (lambda (root)
-              (uiop:subpathp candidate
-                             (workspace-tool--canonical-path root)))
+       (some (lambda (root)
+               (or (uiop:pathname-equal candidate
+                                        (workspace-tool--canonical-path root))
+                   (uiop:subpathp candidate
+                                  (workspace-tool--canonical-path root))))
             roots)))))
 
 (-> workspace-tool-resolve-path (tool-context (option string)) pathname)
@@ -142,6 +144,15 @@ or filesystem failures as absence."
                working-directory)))
     (workspace-tool--canonical-path resolved)))
 
+(-> workspace-tool-readable-roots (tool-context) list)
+(defun workspace-tool-readable-roots (context)
+  "Return the exact path roots allowed for workspace operations under CONTEXT."
+  (or *workspace-tool-readable-roots*
+      (list (configuration-working-directory
+             (tool-context-configuration context))
+            (configuration-source-root
+             (tool-context-configuration context)))))
+
 (-> workspace-tool-path (tool-context (option string)) pathname)
 (defun workspace-tool-path (context path)
   "Return PATH resolved against CONTEXT's working directory.
@@ -149,11 +160,7 @@ or filesystem failures as absence."
 When *WORKSPACE-TOOL-READABLE-ROOTS* is NIL, confine access to CONTEXT's
 workspace and source roots. Otherwise use the dynamically supplied roots. Resolve
 existing symlinks and the nearest existing parent before checking the boundary."
-  (let* ((configuration (tool-context-configuration context))
-         (working-directory (configuration-working-directory configuration))
-         (roots (or *workspace-tool-readable-roots*
-                    (list working-directory
-                          (configuration-source-root configuration))))
+  (let* ((roots (workspace-tool-readable-roots context))
          (canonical (workspace-tool-resolve-path context path)))
     (unless (workspace-tool--read-path-allowed-p canonical roots)
       (error 'tool-error

@@ -98,7 +98,7 @@
 (defmethod resource-resolver-resolve
     ((resolver workspace-resource-tests-coordinated-resolver) identifier context)
   "Resolve IDENTIFIER as a coordinated workspace resource under CONTEXT."
-  (let ((path (workspace-tool-path context (url-decode identifier))))
+  (let ((path (workspace-tool-resolve-path context (url-decode identifier))))
     (make-instance 'workspace-resource-tests-coordinated-resource
                    :uri          (workspace-file--canonical-uri context path)
                    :pathname     path
@@ -125,11 +125,12 @@
 (-> test-workspace-file-resources () null)
 (defun test-workspace-file-resources ()
   "Test revision-gated workspace files, directories, missing paths, and tools."
-  (let* ((base-configuration (test-configuration))
-         (root (test-configuration-root base-configuration))
-         (workspace (merge-pathnames "workspace/" root))
-         (configuration nil)
-         (registry (make-default-tool-registry)))
+  (let* ((base-configuration     (test-configuration))
+         (root                   (test-configuration-root base-configuration))
+         (workspace              (merge-pathnames "workspace/" root))
+         (configuration          nil)
+         (registry               (make-default-tool-registry))
+         (authorization-requests nil))
     (ensure-directories-exist workspace)
     (setf configuration
           (configuration--clone base-configuration
@@ -147,6 +148,26 @@
                                  :configuration configuration
                                  :worker nil
                                  :conversation first-conversation))
+                (full-access-context
+                  (make-instance
+                   'tool-context
+                   :configuration configuration
+                   :worker nil
+                   :conversation first-conversation
+                   :command-authorization-function
+                   (lambda (command directory)
+                     (push (list command directory) authorization-requests)
+                     ':full-access)))
+                (sandboxed-context
+                  (make-instance
+                   'tool-context
+                   :configuration configuration
+                   :worker nil
+                   :conversation first-conversation
+                   :command-authorization-function
+                   (lambda (command directory)
+                     (declare (ignore command directory))
+                     ':sandboxed)))
                 (second-context
                   (make-instance 'tool-context
                                  :configuration configuration
@@ -429,40 +450,107 @@
                       (non-empty-string-p revision)
                       (search "Kind: directory" (tool-result-content result)))
                  "workspace:. reads the workspace root as a canonical directory resource"))
-             (test-assert
-              (handler-case
-                  (progn
-                    (resource-registry-resolve
-                     (tool-registry-resource-registry registry)
-                     (format nil "workspace:~A"
-                             (workspace-file--encode-identifier
-                              (namestring (user-homedir-pathname))))
-                     first-context)
-                    nil)
-                (tool-error () t))
-              "workspace resource URIs do not bypass primary-agent confinement")
-             (let ((escape (merge-pathnames "escape" workspace)))
-               (unwind-protect
-                    (progn
-                      (sb-posix:symlink
-                       (namestring (user-homedir-pathname))
-                       (namestring escape))
-                      (dolist (uri '("workspace:escape"
-                                     "workspace:escape/new.txt"))
-                        (test-assert
-                         (handler-case
-                             (progn
-                               (resource-registry-resolve
-                                (tool-registry-resource-registry registry)
-                                uri
-                                first-context)
-                               nil)
-                           (tool-error () t))
-                        (format nil
-                                "workspace resource resolution rejects symlink escape ~A"
-                                uri))))
-                 (when (probe-file escape)
-                   (sb-posix:unlink (namestring escape)))))
+              (let* ((outside-directory (merge-pathnames "outside/" root))
+                     (outside-path      (merge-pathnames "secret.txt"
+                                                         outside-directory))
+                     (outside-uri
+                       (format nil "workspace:~A"
+                               (workspace-file--encode-identifier
+                                (namestring outside-path)))))
+                (workspace-resource-tests--write-text outside-path "secret")
+                (let ((resource
+                        (resource-registry-resolve
+                         (tool-registry-resource-registry registry)
+                         outside-uri first-context)))
+                  (test-assert
+                   (uiop:pathname-equal
+                    (workspace-file-resource-pathname resource)
+                    (truename outside-path))
+                   "workspace resource resolution is authority-neutral"))
+                (test-assert
+                 (not (tool-result-success-p
+                       (call first-context "resource" "read" "uri" outside-uri)))
+                 "resource.read denies unapproved out-of-root paths")
+                (test-assert
+                 (not (tool-result-success-p
+                       (call sandboxed-context
+                             "resource" "read" "uri" outside-uri)))
+                 "resource.read requires full access for out-of-root paths")
+                (multiple-value-bind (result canonical-uri revision)
+                    (read-resource full-access-context outside-uri)
+                  (declare (ignore canonical-uri revision))
+                  (test-assert
+                   (and (tool-result-success-p result)
+                        (search "secret" (tool-result-content result)))
+                   "resource.read accepts full-access approval for out-of-root paths"))
+                (let ((escape (merge-pathnames "escape" workspace)))
+                  (unwind-protect
+                       (progn
+                         (sb-posix:symlink
+                          (namestring outside-directory)
+                          (namestring escape))
+                         (dolist (uri '(("workspace:escape" . "outside/")
+                                        ("workspace:escape/new.txt"
+                                         . "outside/new.txt")))
+                           (let ((resource
+                                   (resource-registry-resolve
+                                    (tool-registry-resource-registry registry)
+                                    (first uri) first-context)))
+                             (test-assert
+                              (uiop:pathname-equal
+                               (workspace-file-resource-pathname resource)
+                               (merge-pathnames (rest uri) root))
+                              (format nil
+                                      "workspace resource resolution preserves symlink target ~A"
+                                      (first uri)))))
+                         (multiple-value-bind (result canonical-uri revision)
+                             (read-resource full-access-context
+                                            "workspace:escape/new.txt")
+                           (test-assert
+                            (and (tool-result-success-p result)
+                                 (search "Kind: missing"
+                                         (tool-result-content result)))
+                            "resource.read observes an approved missing out-of-root path")
+                           (let ((denied
+                                   (edit-resource
+                                    first-context canonical-uri revision
+                                    (list
+                                     (workspace-resource-tests--operation
+                                      "replace-empty" "content" "created")))))
+                             (test-assert
+                              (and (not (tool-result-success-p denied))
+                                   (not (probe-file
+                                         (merge-pathnames "new.txt"
+                                                          outside-directory))))
+                              "resource.edit denies an unapproved out-of-root creation"))
+                           (let ((edited
+                                   (edit-resource
+                                    full-access-context canonical-uri revision
+                                    (list
+                                     (workspace-resource-tests--operation
+                                      "replace-empty" "content" "created")))))
+                             (test-assert
+                              (and (tool-result-success-p edited)
+                                   (string=
+                                    (workspace-file--read-content
+                                     (merge-pathnames "new.txt" outside-directory))
+                                    "created"))
+                              "resource.edit accepts full-access approval for out-of-root creation"))))
+                    (when (probe-file escape)
+                      (sb-posix:unlink (namestring escape)))))
+                (test-assert
+                 (and (some (lambda (request)
+                              (uiop:string-prefix-p "resource.read -- "
+                                                    (first request)))
+                            authorization-requests)
+                      (some (lambda (request)
+                              (uiop:string-prefix-p "resource.edit -- "
+                                                    (first request)))
+                            authorization-requests)
+                      (every (lambda (request)
+                               (uiop:pathname-equal (second request) workspace))
+                             authorization-requests))
+                 "out-of-root resource authorization uses the active workspace directory"))
              (let ((oversized (merge-pathnames "oversized.txt" workspace)))
                (workspace-resource-tests--write-text oversized "123456789")
                (let ((*workspace-file-resource-maximum-bytes* 8))
