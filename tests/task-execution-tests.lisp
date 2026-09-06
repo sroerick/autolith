@@ -129,9 +129,9 @@
                   (tool-registry-find child-registry "task" "agents")
                   (every
                    (lambda (name)
-                     (tool-registry-find child-registry "job" name))
+                     (null (tool-registry-find child-registry "job" name)))
                    '("list" "get" "wait" "cancel")))
-                 "spawn authority carries the matching task job controls")
+                 "child spawning excludes the primary session job surface")
                 (test-assert
                  (and
                   (null (tool-registry-find non-spawning-registry "task" "run"))
@@ -141,7 +141,7 @@
                      (null
                       (tool-registry-find non-spawning-registry "job" name)))
                    '("list" "get" "wait" "cancel")))
-                 "children without spawn authority receive no task job controls")))
+                 "children without spawn authority receive no task controls")))
            (let* ((registry (make-default-tool-registry))
                   (local-definition
                     (task-agent-definition-create

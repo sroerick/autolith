@@ -157,7 +157,7 @@
    :reader task-test-provider-mode
    :type keyword
    :documentation
-    "The :CONCURRENT, :NESTED, :NESTED-CANCEL, :BLOCKING-TOOL, :ASYNC-WAIT, or :MANIFEST script.")
+     "The :CONCURRENT, :NESTED, :NESTED-CANCEL, :BLOCKING-TOOL, or :MANIFEST script.")
    (active-count
     :initform 0
     :accessor task-test-provider-active-count
@@ -295,28 +295,6 @@
                  :namespace "test"
                  :name "block"
                  :arguments "{}"))
-               ((and (eq (task-test-provider-mode provider) :async-wait)
-                     (= request-number 1))
-                (agent-test-call
-                 :call-id "spawn-detached-leaf"
-                 :namespace "task"
-                 :name "run"
-                 :arguments
-                 (json-encode
-                  (json-object "name" "saturation-leaf"
-                               "agent" "task"
-                               "task" "Return the detached leaf result."
-                               "async" t))))
-               ((and (eq (task-test-provider-mode provider) :async-wait)
-                     (= request-number 2))
-                (agent-test-call
-                 :call-id "wait-detached-leaf"
-                 :namespace "job"
-                 :name "wait"
-                 :arguments
-                 (json-encode
-                  (json-object "id" "saturation-leaf-2"
-                               "timeout-seconds" 1))))
                ((and (eq (task-test-provider-mode provider) :manifest)
                      (= request-number *task-maximum-batch-size*))
                 (agent-test-call

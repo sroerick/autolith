@@ -3145,31 +3145,6 @@ exactly that race."
               "a nested child inherits its immediate parent's assignment")
              (test-assert (< (getf observation :duration-ms) 1000)
                           "nested help-join avoids a concurrency-one deadlock"))
-           (let* ((provider
-                    (make-instance 'task-test-provider :mode ':async-wait))
-                  (observation
-                    (task-tests--run-scheduler-case
-                     provider
-                     (json-object
-                      "agent" "task"
-                      "task"
-                      "Spawn one detached task, wait for it, then return."
-                      "blocking" t)))
-                  (artifacts (getf observation :artifact-forms)))
-             (test-assert
-              (and (getf observation :success-p)
-                   (= (getf observation :job-count) 2)
-                   (getf observation :all-terminal-p)
-                   (= (getf observation :provider-request-count) 4)
-                   (= (getf observation :provider-worker-count) 2)
-                   (getf observation :scheduler-idle-p)
-                   (zerop (getf observation :active-count))
-                   (zerop (getf observation :live-count))
-                   (every (lambda (artifact)
-                            (eq (getf artifact :status) :success))
-                          artifacts)
-                   (< (getf observation :duration-ms) 1000))
-               "a child can await detached work through a helper at concurrency one"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_CONCURRENCY" "999" 1)
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert

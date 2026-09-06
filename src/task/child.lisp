@@ -69,6 +69,7 @@
 (defun task-child-tool-registry (parent-registry definition orchestrator depth)
   "Build a restricted child registry with yield and structurally bounded spawning."
   (let ((registry (make-instance 'tool-registry)))
+    (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (dolist (tool (tool-registry-tools parent-registry))
       (when (task--definition-allows-tool-p definition tool)
         (tool-registry-register registry tool)))
@@ -78,10 +79,7 @@
       (dolist (name '("run" "agents"))
         (let ((task-tool (tool-registry-find parent-registry "task" name)))
           (when task-tool
-            (tool-registry-register registry task-tool))))
-      (dolist (tool (tool-registry-tools parent-registry))
-        (when (string= (tool-namespace tool) "job")
-          (tool-registry-register registry tool))))
+            (tool-registry-register registry task-tool)))))
     (let ((output (task-agent-definition-output definition)))
       (tool-registry-describe-namespace
        registry "yield"

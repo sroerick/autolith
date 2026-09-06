@@ -1186,6 +1186,7 @@ Only the current primary conversation's artifact root is searched."
                       *task-job-page-maximum*
                       *task-job-page-default*)))
             nil)))
+    (tool-registry-bind-runtime registry 'task-orchestrator orchestrator)
     (tool-registry-register registry
                             (make-instance 'task-run-tool :orchestrator
                                            orchestrator :namespace "task" :name

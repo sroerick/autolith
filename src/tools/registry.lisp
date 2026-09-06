@@ -998,11 +998,9 @@ spilling is unavailable, in which case the tail is discarded as before.")
 (-> tool-context-execution-runtime (tool-context) t)
 (defun tool-context-execution-runtime (context)
   "Return CONTEXT's shared inspectable execution runtime, or NIL when absent."
-  (let* ((registry (tool-context-registry context))
-         (job-tool
-           (and (typep registry 'tool-registry)
-                (tool-registry-find registry "job" "list"))))
-    (and job-tool (tool-runtime-identity job-tool))))
+  (let ((registry (tool-context-registry context)))
+    (and (typep registry 'tool-registry)
+         (tool-registry-runtime-binding registry 'task-orchestrator))))
 
 (-> tool-execution-invoke
     (t t
