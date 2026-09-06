@@ -2486,6 +2486,44 @@
       (mcp-tools--clear-environment-fingerprint-key)))
   nil)
 
+(-> test-mcp-manager-concurrent-close () null)
+(defun test-mcp-manager-concurrent-close ()
+  "Test parallel MCP shutdown and deterministic close-order failure reporting."
+  (let ((lock      (make-lock "MCP close test"))
+        (entered   0)
+        (observed  (make-hash-table :test #'eq)))
+    (mcp-manager--close-runtimes
+     '(:first :second)
+     (lambda (runtime)
+       (with-lock-held (lock)
+         (incf entered))
+       (let ((peer-seen-p
+               (loop repeat 100
+                     thereis
+                     (with-lock-held (lock)
+                       (= entered 2))
+                     do (sleep 0.005))))
+         (with-lock-held (lock)
+           (setf (gethash runtime observed) peer-seen-p)))))
+    (test-assert
+     (and (gethash :first observed)
+          (gethash :second observed))
+     "MCP manager closes independent server runtimes concurrently"))
+  (let ((failure
+          (handler-case
+              (progn
+                (mcp-manager--close-runtimes
+                 '(:second :first)
+                 (lambda (runtime)
+                   (error "close ~A" runtime)))
+                nil)
+            (simple-error (condition)
+              (princ-to-string condition)))))
+    (test-assert
+     (and failure (search "SECOND" failure))
+     "concurrent MCP close reports the first failure in close order"))
+  nil)
+
 
 ;;;; -- Cleanup Without Credential Availability --
 
@@ -3701,6 +3739,7 @@
   (test-mcp-stdio-xdg-environment)
   (test-mcp-credential-stdio-ingress-projection)
   (test-mcp-environment-fingerprint-lifecycle)
+  (test-mcp-manager-concurrent-close)
   (test-mcp-cleanup-without-credential-availability)
   (test-mcp-short-credential-redaction-markers)
   (test-mcp-stdio-credential-snapshot-rotation)

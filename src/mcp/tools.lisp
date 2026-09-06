@@ -1618,18 +1618,43 @@ The caller must hold RUNTIME's lock and an exact MCP secret-use scope."
       (mcp-tools--clear-client-server-state runtime)))
   nil)
 
+(-> mcp-manager--close-runtimes (list function) null)
+(defun mcp-manager--close-runtimes (runtimes close-function)
+  "Close RUNTIMES concurrently with CLOSE-FUNCTION and signal the first failure."
+  (let* ((runtime-vector (coerce runtimes 'simple-vector))
+         (failures      (make-array (length runtime-vector) :initial-element nil))
+         (threads       nil))
+    (labels ((close-at (index)
+               (handler-case
+                   (funcall close-function (aref runtime-vector index))
+                 (serious-condition (condition)
+                   (setf (aref failures index) condition)))))
+      (loop for index below (length runtime-vector)
+            do (let ((position index))
+                 (handler-case
+                     (push
+                      (make-thread
+                       (lambda ()
+                         (close-at position))
+                       :name "Autolith MCP server close")
+                      threads)
+                   (serious-condition ()
+                     (loop for remaining from position below (length runtime-vector)
+                           do (close-at remaining))
+                     (return)))))
+      (dolist (thread threads)
+        (join-thread thread))
+      (loop for failure across failures
+            when failure
+              do (error failure))))
+  nil)
+
 (-> mcp-manager-close (mcp-manager) null)
 (defun mcp-manager-close (manager)
-  "Close every server in MANAGER while preserving the first failure."
-  (let ((first-failure nil))
-    (dolist (runtime (reverse (copy-list (mcp-manager-runtimes manager))))
-      (handler-case
-          (mcp-server-runtime-close runtime)
-        (serious-condition (condition)
-          (unless first-failure
-            (setf first-failure condition)))))
-    (when first-failure
-      (error first-failure)))
+  "Close every server in MANAGER concurrently, preserving close-order failures."
+  (mcp-manager--close-runtimes
+   (reverse (copy-list (mcp-manager-runtimes manager)))
+   #'mcp-server-runtime-close)
   nil)
 
 (-> mcp-manager-detach (mcp-manager) null)
