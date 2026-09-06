@@ -99,6 +99,16 @@
   test-conversation-identifier-migration-resumption)
 
 (define-test-suite conversation
+  test-conversation-image-input
+  test-conversation-inherited-reference
+  test-conversation-ephemeral-tool-projection
+  test-conversation-ephemeral-append-interruption
+  test-conversation-malformed-tool-projections
+  test-conversation-concurrent-appends
+  test-conversation-child-project-setup
+  test-conversation-process-lease
+  test-conversation-interrupted-tool-call
+  test-conversation-late-duplicate-tool-output
   test-conversation-persistence
   test-conversation-private-storage
   test-conversation-origin-directory

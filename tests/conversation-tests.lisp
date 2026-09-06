@@ -1923,16 +1923,6 @@ fresh process and file-based synchronization instead of SB-POSIX:FORK."
 (-> test-conversation-persistence () null)
 (defun test-conversation-persistence ()
   "Test append-only conversation projection and incomplete-tail recovery."
-  (test-conversation-image-input)
-  (test-conversation-inherited-reference)
-  (test-conversation-ephemeral-tool-projection)
-  (test-conversation-ephemeral-append-interruption)
-  (test-conversation-malformed-tool-projections)
-  (test-conversation-concurrent-appends)
-  (test-conversation-child-project-setup)
-  (test-conversation-process-lease)
-  (test-conversation-interrupted-tool-call)
-  (test-conversation-late-duplicate-tool-output)
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration)))
     (unwind-protect
