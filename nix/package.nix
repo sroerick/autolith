@@ -126,8 +126,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "cl-skills";
-      rev = "aafcf34e186bf85c8d8e70ab7e86f7259bcbf412";
-      hash = "sha256-wpNxMJeYefW+BhZMx5Sr9Qae3AKeopLWM9aYK4lQBV0=";
+      rev = "ef20ce4bde2eb1d8f483a063788256aad06d0968";
+      hash = "sha256-Y4+uUmaQ9tY/J8hf/R3wUS8UJHhwXkQm29oUmk8GcNU=";
     };
     lispLibs = [
       pkgs.sbclPackages.ironclad
