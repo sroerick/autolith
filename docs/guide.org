@@ -100,6 +100,22 @@ With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 ./script/check
 #+END_SRC
 
+The check runs FiveAM tests in four isolated SBCL processes and verifies the
+pristine recovery image. List or select test suites and individual cases with:
+
+#+BEGIN_SRC sh
+./script/check --list
+./script/check --suite workspace-resource --suite fixtures
+./script/check --test test-workspace-file-resources --jobs 1
+./script/check --jobs 8 --timeout 900
+#+END_SRC
+
+Selected runs skip recovery probes. Selectors are exact, case-insensitive names
+and can be repeated; unknown names fail. =--jobs= controls process concurrency,
+and =--timeout= sets the deadline per worker in seconds (default 600). Results
+include per-case timings and the slowest cases. =AGENTS.md= documents test
+registration, reusable fixtures, and interactive Lisp entry points.
+
 To put a checkout into =PATH=:
 
 #+BEGIN_SRC sh

@@ -200,7 +200,8 @@
 (asdf:defsystem #:autolith/tests
   :description "Tests for Autolith."
   :depends-on (#:autolith
-               #:autolith/release-server)
+               #:autolith/release-server
+               #:fiveam)
   :serial t
   :components ((:module "tests"
                 :serial t
@@ -278,7 +279,11 @@
                              (:file "recovery-input-vault-tests")
                              (:file "user-init-tests")
                              (:file "prompt-tests")
-                             (:file "tests"))))
+                             (:file "tests")
+                             (:file "test-runner")
+                             (:file "fixture-tests")
+                             (:file "test-runner-tests")
+                             (:file "test-suites"))))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (uiop:symbol-call '#:autolith '#:run-tests)))

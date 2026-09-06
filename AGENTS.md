@@ -247,6 +247,38 @@ Run the complete repository check from the repository root with:
 ./script/check
 ```
 
+The check runs FiveAM cases in four independent SBCL processes by default and
+includes the recovery probes. Select suites or individual cases for focused work:
+
+```sh
+./script/check --list
+./script/check --suite workspace-resource --suite fixtures
+./script/check --test test-workspace-file-resources --jobs 1
+./script/check --jobs 8 --timeout 900
+```
+
+Selectors are exact, case-insensitive names; repeated selectors form a union.
+Unknown names fail. Selected runs and `--list` skip recovery probes. `--timeout`
+is a per-worker deadline in seconds (default 600). Every run reports case timings
+and the slowest cases. Worker failures, invalid results, and timeouts fail the
+command; worker process groups are terminated and reaped on exit.
+
+Register zero-argument test functions in `tests/test-suites.lisp` using
+`define-test-suite`. Use FiveAM assertions or `test-assert`, which records a
+FiveAM check in registered tests. `with-test-configuration` binds a fresh
+configuration and optional temporary root, cleaning it up on every exit.
+`with-test-environment` installs `(NAME VALUE)` bindings and restores previous
+values; `nil` means unset. Use `test-call-with-function-replacements` for scoped
+function replacement. Global function and environment mutation requires process
+isolation, not parallel test threads.
+
+For interactive serial execution after loading `autolith/tests`:
+
+```lisp
+(autolith:run-tests :suites '("workspace-resource"))
+(autolith:run-tests :tests '("test-workspace-file-resources"))
+```
+
 Materialize the locked project dependencies with:
 
 ```sh

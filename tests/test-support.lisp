@@ -1,9 +1,9 @@
 (in-package #:autolith)
 
-;;;; -- Minimal Test Harness --
+;;;; -- Shared Test Support --
 
-(defvar *test-count* 0
-  "The number of assertions attempted by the current test run.")
+(defparameter *tests-running-p* nil
+  "Whether TEST-ASSERT should record its result in the current FiveAM test.")
 
 (defparameter *test-conversation-tiny-png*
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="
@@ -11,10 +11,11 @@
 
 (-> test-assert (t string) null)
 (defun test-assert (value description)
-  "Record one assertion and signal an error when VALUE is false."
-  (incf *test-count*)
-  (unless value
-    (error "Test failed: ~A" description))
+  "Record a FiveAM assertion, or signal directly outside a registered test."
+  (if *tests-running-p*
+      (fiveam:is-true value "~A" description)
+      (unless value
+        (error "Test failed: ~A" description)))
   nil)
 
 (-> test-terminal-row-text (list) string)
@@ -123,6 +124,63 @@
   "Return the common temporary root containing CONFIGURATION's data directory."
   (uiop:pathname-parent-directory-pathname
    (configuration-data-root configuration)))
+
+
+;;;; -- Reusable Test Fixtures --
+
+(-> test-call-with-configuration (function) t)
+(defun test-call-with-configuration (function)
+  "Call FUNCTION with a fresh configuration and its canonical temporary root.
+Delete that root on every exit and return all values produced by FUNCTION."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (funcall function configuration root)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+
+(defmacro with-test-configuration ((configuration &optional root) &body body)
+  "Bind CONFIGURATION and optional ROOT around BODY with automatic cleanup.
+ROOT is a canonical temporary directory. BODY's bindings and setup run inside
+the cleanup boundary, and all of BODY's values are returned."
+  (let ((root-name (or root (gensym "ROOT"))))
+    `(test-call-with-configuration
+      (lambda (,configuration ,root-name)
+        ,@(unless root `((declare (ignore ,root-name))))
+        ,@body))))
+
+(-> test-call-with-environment (list function) t)
+(defun test-call-with-environment (bindings function)
+  "Call FUNCTION with process environment BINDINGS, restoring them on every exit.
+Each binding is (NAME VALUE); NIL removes NAME and a string sets it, including
+an empty string. Nested calls restore their enclosing values. Environment
+changes are process-global, so concurrent tests require separate processes."
+  (let ((originals
+          (mapcar (lambda (binding)
+                    (destructuring-bind (name value) binding
+                      (check-type name string)
+                      (check-type value (or null string))
+                      (list name (uiop:getenv name))))
+                  bindings)))
+    (labels ((install (bindings)
+               "Install BINDINGS in this process's environment."
+               (dolist (binding bindings)
+                 (destructuring-bind (name value) binding
+                   (if value
+                       (sb-posix:setenv name value 1)
+                       (sb-posix:unsetenv name))))))
+      (unwind-protect
+           (progn
+             (install bindings)
+             (funcall function))
+        (install originals)))))
+
+(defmacro with-test-environment (bindings &body body)
+  "Evaluate each (NAME VALUE) in BINDINGS once, then run BODY in that environment.
+NIL removes a variable. Restore prior values, including absence, on every exit
+and return all of BODY's values. Use process isolation for parallel execution."
+  `(test-call-with-environment
+    (list ,@(mapcar (lambda (binding) `(list ,@binding)) bindings))
+    (lambda () ,@body)))
 
 (-> test-configuration-for-source-root (pathname) configuration)
 (defun test-configuration-for-source-root (source-root)

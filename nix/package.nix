@@ -440,6 +440,7 @@ let
       colordiff
       clTermdown
       dexador
+      fiveam
       ironclad
       opticl
       parenchek
