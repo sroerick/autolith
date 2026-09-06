@@ -460,9 +460,10 @@ journaling or provider conversation projection."
          (editor (terminal-ui-editor ui))
          (saved-input
            (terminal-ui--submission-input ui (line-editor-text editor))))
-    (let ((*terminal-ui-lisp-input-p* t))
+    (let ((saved-lisp-input-p (terminal-ui-lisp-input-p ui)))
       (unwind-protect
            (progn
+             (terminal-ui-set-lisp-input ui t)
              (terminal-ui-set-input ui "")
              (application-present
               application
@@ -487,7 +488,8 @@ journaling or provider conversation projection."
                         (return (user-message-input-text payload))))
                    ((:interrupt :end-of-input :escape)
                     (return nil))))))
-        (terminal-ui-set-input ui saved-input)))))
+        (terminal-ui-set-input ui saved-input)
+        (terminal-ui-set-lisp-input ui saved-lisp-input-p)))))
 
 (-> application-lisp--debugger-condition-entry (serious-condition) list)
 (defun application-lisp--debugger-condition-entry (condition)

@@ -1684,7 +1684,7 @@ the ordinary FIFO queue."
         :target target)))))
 
 (defmethod application-submit-prompt
-    ((application application) target input)
+    ((application application) target input &key (prefer-steering-p t))
   "Prompt APPLICATION's primary agent or steer one visible running child."
   (if (application-prompt--primary-target-p target)
       (let ((controller
@@ -1698,9 +1698,7 @@ the ordinary FIFO queue."
         (application-localgroup-resume application)
         (multiple-value-bind (accepted-p delivery)
             (application-input-controller-submit-primary-prompt
-             controller
-             input
-             :prefer-steering-p *prompt-primary-prefer-steering-p*)
+             controller input :prefer-steering-p prefer-steering-p)
           (unless accepted-p
             (let ((reason
                     (application-prompt--primary-rejection-reason controller)))
@@ -2434,14 +2432,14 @@ may execute immediately; other Lisp waits for the idle boundary."
     boolean)
 (defun application-input-controller--prompt
     (controller input &key (prefer-steering-p t))
-  "Submit terminal INPUT through canonical PROMPT and report acceptance."
-  (let* ((application
-           (application-input-controller-application controller))
-         (*application-operation-application* application)
-         (*prompt-primary-prefer-steering-p* prefer-steering-p))
+  "Submit terminal INPUT through the prompt protocol and report acceptance."
+  (let ((application
+          (application-input-controller-application controller)))
     (handler-case
         (progn
-          (prompt input)
+          (application-submit-prompt
+           application "autolith" input
+           :prefer-steering-p prefer-steering-p)
           t)
       (prompt-error (condition)
         (unless (eq (prompt-error-reason condition) ':storage-unavailable)

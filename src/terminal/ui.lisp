@@ -50,9 +50,6 @@
   #("⣾" "⣽" "⣻" "⢿" "⡿" "⣟" "⣯" "⣷")
   "The shared running-child spinner cycle.")
 
-(defvar *terminal-ui-lisp-input-p* nil
-  "Whether the active editor is explicitly reading Common Lisp input.")
-
 (-> terminal-ui--monotonic-seconds () real)
 (defun terminal-ui--monotonic-seconds ()
   "Return monotonic process time in seconds for live activity accounting."
@@ -449,20 +446,21 @@ The rendered row is memoized on its exact inputs, because most repaints
 run while the draft, cursor, and terminal width are unchanged. The editor
 installs a fresh string on every text change, so identity comparison on
 the draft is exact."
-  (let* ((editor (terminal-ui-editor ui))
-         (raw-content (line-editor-text editor))
+  (let* ((editor       (terminal-ui-editor ui))
+         (raw-content  (line-editor-text editor))
          (lisp-draft-p
-           (not (null (or *terminal-ui-lisp-input-p*
+           (not (null (or (terminal-ui-lisp-input-p ui)
                           (terminal-ui--lisp-draft-p raw-content)))))
-         (key (list raw-content
-                    (line-editor-cursor editor)
-                    (terminal-columns (terminal-ui-terminal ui))
-                    lisp-draft-p
-                    (terminal-ui-prompt ui)
-                    (terminal-ui-placeholder ui)
-                    *terminal-style-table*
-                    *terminal-style-reset*))
-         (cache (terminal-ui-prompt-render-cache ui)))
+         (key
+           (list raw-content
+                 (line-editor-cursor editor)
+                 (terminal-columns (terminal-ui-terminal ui))
+                 lisp-draft-p
+                 (terminal-ui-prompt ui)
+                 (terminal-ui-placeholder ui)
+                 *terminal-style-table*
+                 *terminal-style-reset*))
+         (cache        (terminal-ui-prompt-render-cache ui)))
     (if (and cache (every #'eql (first cache) key))
         (values (second cache) (third cache))
         (multiple-value-bind (content cursor-offset)
@@ -3115,6 +3113,14 @@ thread."
   (with-terminal-ui-locked (ui)
     (terminal-ui--set-draft-input ui input)
     (setf (terminal-ui-completion-dismissed-p ui) nil)
+    (terminal-ui--paint-live ui))
+  ui)
+
+(-> terminal-ui-set-lisp-input (terminal-ui boolean) terminal-ui)
+(defun terminal-ui-set-lisp-input (ui lisp-input-p)
+  "Set whether UI is explicitly reading Common Lisp input and repaint it."
+  (with-terminal-ui-locked (ui)
+    (setf (terminal-ui-lisp-input-p ui) lisp-input-p)
     (terminal-ui--paint-live ui))
   ui)
 

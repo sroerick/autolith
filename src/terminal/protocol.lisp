@@ -165,6 +165,11 @@ the composed width and the live-region geometry together.")
     :accessor terminal-ui-prompt-marker-state
     :type (member :closed :prompt :input :executing)
     :documentation "The current semantic OSC 133 prompt-block boundary.")
+    (lisp-input-p
+     :initform nil
+     :accessor terminal-ui-lisp-input-p
+     :type boolean
+     :documentation "Whether the editor is explicitly reading Common Lisp input.")
    (live-output-suspended-p
     :initform nil
     :accessor terminal-ui-live-output-suspended-p

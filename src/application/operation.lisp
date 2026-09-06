@@ -94,9 +94,6 @@
 (defvar *application-local-user-evaluation-p* nil
   "Whether evaluation came from one explicit local Lisp submission.")
 
-(defvar *prompt-primary-prefer-steering-p* t
-  "Whether the current primary PROMPT should prefer active-turn steering.")
-
 (define-condition prompt-error (autolith-error)
   ((reason
     :initarg :reason
@@ -224,9 +221,11 @@
       "PROMPT content must be a string or rich user message input."))))
 
 (-> application-submit-prompt
-    (application non-empty-string (or string user-message-input))
+    (application non-empty-string (or string user-message-input)
+     &key (:prefer-steering-p boolean))
     list)
-(defgeneric application-submit-prompt (application target input)
+(defgeneric application-submit-prompt
+    (application target input &key prefer-steering-p)
   (:documentation
    "Submit INPUT to primary AUTOLITH or to one named running child TARGET."))
 
@@ -296,7 +295,8 @@
     (application-submit-prompt
      *application-operation-application*
      (prompt--target-name target)
-     (prompt--input content images))))
+     (prompt--input content images)
+     :prefer-steering-p t)))
 
 
 (defmacro eval-now (&body body)

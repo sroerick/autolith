@@ -4306,8 +4306,8 @@
                   (format nil "terminal-prompt-~A.png" (make-identifier))
                   (uiop:temporary-directory)))
                (input nil)
-               (observed nil)
-               (original-prompt (symbol-function 'prompt)))
+                (observed nil)
+                (original-submit-prompt (symbol-function 'application-submit-prompt)))
           (unwind-protect
                (progn
                  (test-conversation--write-tiny-png image)
@@ -4317,26 +4317,24 @@
                         :image-pathnames (list (truename image))))
                  (test-call-with-function-replacements
                   (list
-                   (list 'prompt
-                         (lambda (&rest arguments)
-                           (setf observed
-                                 (list arguments
-                                       *prompt-primary-prefer-steering-p*))
-                           (apply original-prompt arguments))))
+                    (list 'application-submit-prompt
+                          (lambda (&rest arguments)
+                            (setf observed arguments)
+                            (apply original-submit-prompt arguments))))
                   (lambda ()
                     (application-input-controller--handle-submission
                      controller input :steer-p t)))
-                  (let ((observed-input (first (first observed)))
-                        (steering-input
-                          (first (application-input-controller--state
-                                  controller :steering-items))))
-                   (test-assert
-                    (and (typep observed-input 'user-message-input)
-                         (string= (user-message-input-text observed-input)
-                                  "[Image #1] steer active message")
-                         (equal (user-message-input-image-pathnames observed-input)
-                                (list (truename image)))
-                         (second observed)
+                   (let ((observed-input (third observed))
+                         (steering-input
+                           (first (application-input-controller--state
+                                   controller :steering-items))))
+                     (test-assert
+                      (and (typep observed-input 'user-message-input)
+                           (string= (user-message-input-text observed-input)
+                                    "[Image #1] steer active message")
+                           (equal (user-message-input-image-pathnames observed-input)
+                                  (list (truename image)))
+                           (getf (cdddr observed) :prefer-steering-p)
                          (string=
                           (user-message-input-text steering-input)
                           "[Image #1] steer active message")
@@ -4355,21 +4353,21 @@
        (let* ((ui
                 (application-ui
                  (application-input-controller-application controller)))
-              (observed nil)
-              (original-prompt (symbol-function 'prompt)))
+               (observed nil)
+               (original-submit-prompt
+                 (symbol-function 'application-submit-prompt)))
          (test-call-with-function-replacements
           (list
-           (list 'prompt
-                 (lambda (&rest arguments)
-                   (setf observed
-                         (list arguments *prompt-primary-prefer-steering-p*))
-                   (apply original-prompt arguments))))
+            (list 'application-submit-prompt
+                  (lambda (&rest arguments)
+                    (setf observed arguments)
+                    (apply original-submit-prompt arguments))))
           (lambda ()
             (terminal-ui-set-input ui "ordinary during local Lisp")
             (application-input-controller--process-event controller ':complete)))
           (test-assert
-           (and (equal (first observed) '("ordinary during local Lisp"))
-                (null (second observed))
+            (and (equal (third observed) "ordinary during local Lisp")
+                 (null (getf (cdddr observed) :prefer-steering-p))
                 (null (application-input-controller--state
                        controller :steering-items))
                 (equal (application-input-controller--state controller :work-items)
