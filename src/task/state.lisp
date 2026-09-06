@@ -23,6 +23,9 @@
 (defparameter *task-terminal-retention-limit* 64
   "The maximum terminal task summaries retained in one session.")
 
+(defparameter *task-artifact-retention-limit* 64
+  "The maximum completed child artifact directories retained per conversation.")
+
 (defparameter *tool-execution-default-maximum-concurrency* 4
   "The default number of asynchronous tool executions that may run concurrently.")
 
@@ -203,6 +206,10 @@
     :initform (make-lock "Autolith task orchestrator")
     :accessor task-orchestrator-lock
     :documentation "The lock protecting naming, ordering, hurry-up, and listeners.")
+   (artifact-lock
+    :initform (make-lock "Autolith task artifacts")
+    :reader task-orchestrator-artifact-lock
+    :documentation "The lock serializing artifact publication and retention cleanup.")
     (closed-p
      :initform nil
      :accessor task-orchestrator-closed-p

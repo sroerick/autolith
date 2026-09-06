@@ -67,6 +67,7 @@
                 #:job-pool-maximum-concurrency
                 #:job-pool-maximum-live-jobs
                 #:job-pool-maximum-runtime-milliseconds
+                #:job-pool-terminal-retention-limit
                 #:job-pool-queued-count
                 #:job-pool-refresh
                 #:job-pool-remove-listener

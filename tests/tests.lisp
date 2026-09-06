@@ -488,6 +488,7 @@
     (test-task-default-detachment)
     (test-task-running-cancellation)
     (test-task-runtime-deadline)
+     (test-task-artifact-retention)
     (test-task-nested-parent-cancellation)
     (test-task-admission-cancellation-barrier)
     (test-task-hurry-up-admission-races)
