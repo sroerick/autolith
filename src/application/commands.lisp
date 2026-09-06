@@ -981,25 +981,25 @@
 
 (-> application-compact (application) null)
 (defun application-compact (application)
-  "Manually compact the active conversation into a durable summary."
+  "Compact the active conversation, or report an empty conversation without a request."
   (let ((agent (application-agent application))
         (conversation (application-conversation application)))
-    (unless agent
-      (error 'configuration-error
-             :message "No connected agent can compact the conversation."))
-    (if (null (conversation-input-items conversation))
-        (application-present application "Nothing to compact yet.")
-        (progn
-          (unwind-protect
-               (agent-compact-conversation
-                agent
-                (application-agent-observer application))
-            (terminal-ui-set-compacting (application-ui application) nil)
-            (application-set-activity application nil))
-          (application-render-records application)
-          (application-present
-           application
-           "Compacted; a summary now stands in for the earlier history."))))
+    (cond
+      ((null (conversation-input-items conversation))
+       (application-present application "Nothing to compact yet."))
+      ((null agent)
+       (error 'configuration-error
+              :message "No connected agent can compact the conversation."))
+      (t
+       (unwind-protect
+            (agent-compact-conversation
+             agent
+             (application-agent-observer application))
+         (terminal-ui-set-compacting (application-ui application) nil)
+         (application-set-activity application nil))
+       (application-present
+        application
+        "Compacted; a summary now stands in for the earlier history."))))
   nil)
 
 
@@ -2487,8 +2487,8 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (define-application-command application--builtin-compact-command
     (:name "/compact"
-     :description "condense tool details, or summarize context with no argument"
-     :tip "toggles compact tool presentation; with no argument it compacts context."
+     :description "compact context now; on/off selects tool detail presentation"
+     :tip "compacts context without an argument, waiting until an active turn finishes."
      :busy-behavior :hold
      :terminal-behavior :shared
      :callable t

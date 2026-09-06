@@ -428,6 +428,12 @@ ctx [==========|..] 218K / 272K used
 
 At narrow widths, the meter keeps the used and window counts and drops the bar.
 
+Use =(compact)= or =/compact= to compact the current conversation immediately,
+regardless of the meter. It uses the same provider-native checkpoint and portable
+summary path as automatic compaction. During an active turn, the command waits
+in the idle queue. An empty conversation needs no provider request. Compaction
+adds a durable checkpoint without adding a user message or starting a model turn.
+
 ** Providers
 
 Register a OpenAI-compatible provider:

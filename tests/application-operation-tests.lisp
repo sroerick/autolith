@@ -664,6 +664,7 @@
                         ("(goal \"pause\")" :hold)
                        ("(quit)" :cancel)
                        ("(update)" :hold)
+                        ("(compact)" :hold)
                        ("(resource.read :uri \"workspace:.\")" :execute)
                        ("(lisp.paren-check :path \".\")" :execute)
                        ("(shell.run :command \"true\")" :hold)
@@ -861,3 +862,147 @@
            t)
       (ignore-errors (terminal-ui-stop (application-ui application)))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+
+
+;;;; -- On-demand Compaction --
+
+(-> application-operation-tests--call-with-compaction-provider
+    (model-provider function) null)
+(defun application-operation-tests--call-with-compaction-provider (provider function)
+  "Call FUNCTION with an isolated application using PROVIDER for compaction."
+  (multiple-value-bind (application root terminal)
+      (application-operation-tests--application)
+    (declare (ignore terminal))
+    (unwind-protect
+         (progn
+           (setf (application-provider application) provider
+                 (application-agent application)
+                 (agent-create
+                  :configuration (application-configuration application)
+                  :conversation (application-conversation application)
+                  :provider provider
+                  :tool-registry (application-tool-registry application)
+                  :worker nil))
+           (funcall function application))
+      (terminal-ui-stop (application-ui application))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> test-compact-operation () null)
+(defun test-compact-operation ()
+  "Test forced portable and native compaction through the canonical Lisp command."
+  (dolist (native-p '(nil t))
+    (let* ((native-item
+             (json-object "type" "context_compaction"
+                          "encrypted_content" "command-checkpoint"))
+           (provider
+             (apply #'make-instance
+                    (if native-p 'native-scripted-provider 'scripted-provider)
+                    :results (list (agent-test-result
+                                    "manual-summary"
+                                    (list (agent-test-message "A portable handoff."))))
+                    (when native-p (list :native-items (list native-item))))))
+      (application-operation-tests--call-with-compaction-provider
+       provider
+       (lambda (application)
+         (let* ((conversation (application-conversation application))
+                (configuration (application-configuration application)))
+           (conversation-append-user-message conversation "Earlier work.")
+           (let* ((sequence-before (conversation-next-sequence conversation))
+                  (evaluation (application-lisp-evaluate
+                               "(compact)" :application application))
+                  (records-after (conversation--read-records
+                                 (conversation-pathname conversation)))
+                  (reloaded (conversation-load-by-id
+                             configuration (conversation-identifier conversation))))
+             (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
+                          "the registered Lisp command compacts below the automatic threshold")
+             (test-assert
+              (and (equal (scripted-provider-compaction-flags provider) '(t))
+                   (equal (scripted-provider-tool-schema-counts provider) '(0)))
+              "manual compaction makes one tool-free summary request")
+             (test-assert
+              (= (conversation-next-sequence conversation) (1+ sequence-before))
+              "manual compaction appends one checkpoint without starting a user turn")
+             (test-assert
+              (eq (first (first (last records-after)))
+                  (if native-p ':native-compaction ':summary))
+              "the command uses the provider's existing compaction strategy")
+             (test-assert
+              (string= (json-encode (coerce (conversation-input-items conversation) 'vector))
+                       (json-encode (coerce (conversation-input-items reloaded) 'vector)))
+              "the compacted projection is reproducible from durable history")
+             (test-assert
+              (and (not (terminal-ui-compacting-p (application-ui application)))
+                   (null (terminal-ui-status (application-ui application))))
+              "manual compaction clears its progress indicators")))))))
+  nil)
+
+(-> test-compact-operation-empty () null)
+(defun test-compact-operation-empty ()
+  "Test empty conversations need no connected agent or durable checkpoint."
+  (let ((provider (make-instance 'scripted-provider :results nil)))
+    (application-operation-tests--call-with-compaction-provider
+     provider
+     (lambda (application)
+       (setf (application-agent application) nil)
+       (let* ((conversation (application-conversation application))
+              (evaluation (application-lisp-evaluate
+                           "(compact)" :application application)))
+         (test-assert (eq (application-lisp-evaluation-status evaluation) ':ok)
+                      "compacting an empty conversation succeeds without an agent")
+         (test-assert
+          (and (null (scripted-provider-input-snapshots provider))
+               (null (conversation-input-items conversation))
+               (not (conversation-persisted-p conversation)))
+          "empty compaction neither contacts the provider nor creates history")
+         (conversation-append-user-message conversation "Needs a connected agent.")
+         (test-assert
+          (handler-case
+              (progn (application-command application "/compact") nil)
+            (configuration-error ()
+              t))
+          "nonempty compaction without an agent reports a configuration failure")))))
+  nil)
+
+(-> test-compact-operation-failures () null)
+(defun test-compact-operation-failures ()
+  "Test failed summary requests preserve context and release command progress."
+  (dolist (result
+            (list (agent-test-result "empty-summary" nil)
+                  (make-condition 'provider-protocol-error
+                                  :message "The compaction request failed."
+                                  :status 503 :code nil :request-id nil
+                                  :response-id nil :response nil)))
+    (let ((provider
+            (make-instance
+             'native-scripted-provider
+             :native-items (list (json-object "type" "context_compaction"
+                                             "encrypted_content" "uncommitted-checkpoint"))
+             :results (list result))))
+      (application-operation-tests--call-with-compaction-provider
+       provider
+       (lambda (application)
+         (let ((conversation (application-conversation application)))
+           (conversation-append-user-message conversation "Context to preserve.")
+           (let* ((records-before (conversation--read-records
+                                  (conversation-pathname conversation)))
+                  (input-before (json-encode
+                                 (coerce (conversation-input-items conversation) 'vector)))
+                  (failure
+                    (handler-case
+                        (progn (application-command application "/compact") nil)
+                      (provider-protocol-error (condition)
+                        condition))))
+             (test-assert failure "compaction failures use the existing typed provider boundary")
+             (test-assert
+              (and (equal records-before
+                          (conversation--read-records (conversation-pathname conversation)))
+                   (string= input-before
+                            (json-encode (coerce (conversation-input-items conversation) 'vector))))
+              "a failed summary does not publish even a successful native checkpoint")
+             (test-assert
+              (and (not (terminal-ui-compacting-p (application-ui application)))
+                   (null (terminal-ui-status (application-ui application))))
+              "failed compaction clears its progress indicators")))))))
+  nil)

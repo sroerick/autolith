@@ -587,7 +587,10 @@
   test-user-operation-retention-failure)
 
 (define-test-suite application-operation
-  run-application-operation-tests)
+  run-application-operation-tests
+  test-compact-operation
+  test-compact-operation-empty
+  test-compact-operation-failures)
 
 (define-test-suite recovery-input-vault
   test-recovery-input-vault-import
