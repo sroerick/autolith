@@ -17,9 +17,27 @@
   "Signal a structured check failure formatted from CONTROL and ARGUMENTS."
   (error 'check-error :message (apply #'format nil control arguments)))
 
+(defun check--processor-count ()
+  "Return the available logical CPU count, falling back to one worker.
+
+Prefer affinity-aware nproc, then the online CPU count from getconf or sysctl."
+  (loop for command in '(("nproc") ("getconf" "_NPROCESSORS_ONLN")
+                        ("sysctl" "-n" "hw.ncpu"))
+        for count = (handler-case
+                        (multiple-value-bind (output diagnostics status)
+                            (uiop:run-program command :output ':string
+                                                      :error-output nil
+                                                      :ignore-error-status t)
+                          (declare (ignore diagnostics))
+                          (and (eql status 0) (parse-integer output)))
+                      (error () nil))
+        when (typep count '(integer 1 *))
+          return count
+        finally (return 1)))
+
 (defun check--parse-arguments (arguments)
   "Parse selectors and execution limits, rejecting invalid command arguments."
-  (let ((suites nil) (tests nil) (jobs 4) (timeout 600) (list-p nil) (help-p nil))
+  (let ((suites nil) (tests nil) (jobs nil) (timeout 600) (list-p nil) (help-p nil))
     (labels ((argument (option)
                (or (pop arguments) (check--fail "~A requires a value." option)))
 
@@ -49,7 +67,8 @@
                  (t
                   (check--fail "Unknown argument ~S. Use --help." option)))))
     (list :suites (nreverse suites) :tests (nreverse tests)
-          :jobs jobs :timeout timeout :list list-p :help help-p)))
+          :jobs (or jobs (check--processor-count))
+          :timeout timeout :list list-p :help help-p)))
 
 (defun check--usage (&optional (stream *standard-output*))
   "Print the supported test command options."
@@ -58,7 +77,7 @@
   --suite NAME   Select a suite (repeatable).
   --test NAME    Select a case (repeatable).
   --list         List selected suites and cases without running them.
-  --jobs N       Maximum concurrent test processes (default: 4).
+  --jobs N       Maximum concurrent test processes (default: available logical CPUs).
   --timeout N    Deadline in seconds per process (default: 600).
   --help         Show this help.
 
@@ -156,7 +175,7 @@ Selectors and --list bypass recovery checks.
       (uiop:terminate-process process :urgent t))
     (setf (check-process-status entry) (uiop:wait-process process))))
 
-(defun check--run-processes (entries &key (jobs 4) (timeout 600))
+(defun check--run-processes (entries &key (jobs (check--processor-count)) (timeout 600))
   "Run ENTRIES with bounded concurrency and deadlines; always reap children."
   (unless (and (typep jobs '(integer 1 *)) (typep timeout '(integer 1 *)))
     (check--fail "Jobs and timeout must be positive integers."))
@@ -205,7 +224,8 @@ Selectors and --list bypass recovery checks.
               (uiop:read-file-string (check-process-output entry))
               "Worker log is missing.")))
 
-(defun check--run-workers (cases &key source-root temporary-root (jobs 4) (timeout 600))
+(defun check--run-workers (cases &key source-root temporary-root
+                                    (jobs (check--processor-count)) (timeout 600))
   "Run CASES in fresh SBCL processes and return true only for a complete pass."
   (let ((entries nil) (results nil) (successful-p t))
     (loop for partition in (check--partition-cases cases jobs) for index from 1

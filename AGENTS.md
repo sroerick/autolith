@@ -247,8 +247,10 @@ Run the complete repository check from the repository root with:
 ./script/check
 ```
 
-The check runs FiveAM cases in four independent SBCL processes by default and
-includes the recovery probes. Select suites or individual cases for focused work:
+The check runs FiveAM cases in independent SBCL processes, defaulting to the
+available logical CPU count (one worker if detection fails), and includes the
+recovery probes. `--jobs` overrides concurrency; at most one worker per selected
+case is started. Select suites or individual cases for focused work:
 
 ```sh
 ./script/check --list

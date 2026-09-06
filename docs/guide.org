@@ -100,8 +100,9 @@ With Quicklisp in =~/quicklisp=, bootstrap and check the checkout:
 ./script/check
 #+END_SRC
 
-The check runs FiveAM tests in four isolated SBCL processes and verifies the
-pristine recovery image. List or select test suites and individual cases with:
+The check runs FiveAM tests in isolated SBCL processes, defaulting to the available
+logical CPU count (one worker if detection fails), and verifies the pristine
+recovery image. List or select test suites and individual cases with:
 
 #+BEGIN_SRC sh
 ./script/check --list

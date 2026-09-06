@@ -91,6 +91,45 @@
     (test-assert (and (= 2 (getf options ':jobs))
                       (= 15 (getf options ':timeout)))
                  "worker limits parse as positive integers"))
+  (test-call-with-function-replacements
+   (list (list (find-symbol "CHECK--PROCESSOR-COUNT" '#:cl-user)
+               (lambda () 7)))
+   (lambda ()
+     (test-assert (= 7 (getf (test-check--call "CHECK--PARSE-ARGUMENTS" nil) ':jobs))
+                  "worker concurrency defaults to the detected CPU count")
+     (test-assert
+      (= 3 (getf (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "3")) ':jobs))
+      "explicit concurrency overrides CPU detection")))
+  (dolist (case '(("8" 0 8) (" 12 " 0 12) ("0" 0 1) ("-2" 0 1)
+                 ("" 0 1) ("unknown" 0 1) ("8 junk" 0 1) ("8" 1 1)))
+    (destructuring-bind (output status expected) case
+      (test-call-with-function-replacements
+       (list (list 'uiop:run-program
+                   (lambda (&rest arguments)
+                     (declare (ignore arguments))
+                     (values output nil status))))
+       (lambda ()
+         (test-assert (= expected (test-check--call "CHECK--PROCESSOR-COUNT"))
+                      "CPU detection requires successful positive integer output")))))
+  (let ((attempts 0))
+    (test-call-with-function-replacements
+     (list (list 'uiop:run-program
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (if (= (incf attempts) 1)
+                       (error 'file-error :pathname #P"missing-cpu-probe")
+                       (values "6" nil 0)))))
+     (lambda ()
+       (test-assert (= 6 (test-check--call "CHECK--PROCESSOR-COUNT"))
+                    "CPU detection tries another utility when the first is absent"))))
+  (test-call-with-function-replacements
+   (list (list 'uiop:run-program
+               (lambda (&rest arguments)
+                 (declare (ignore arguments))
+                 (error 'file-error :pathname #P"missing-cpu-probe"))))
+   (lambda ()
+     (test-assert (= 1 (test-check--call "CHECK--PROCESSOR-COUNT"))
+                  "unavailable CPU detection falls back to one worker")))
   (dolist (arguments '(("--jobs" "0") ("--timeout" "-1") ("--jobs" "2x")
                        ("--suite") ("--unknown")))
     (test-assert
