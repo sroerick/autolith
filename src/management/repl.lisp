@@ -976,11 +976,12 @@
                 (sb-bsd-sockets:socket-accept
                  (management-repl-runtime-listener runtime))))
           (with-lock-held ((management-repl-runtime-lock runtime))
-            (if (or (management-repl-runtime-stopping-p runtime)
-                    (>= (length
-                         (management-repl-runtime-client-sockets runtime))
-                        (configuration-management-repl-maximum-clients
-                         (management-repl-runtime-configuration runtime))))
+            (when (management-repl-runtime-stopping-p runtime)
+              (ignore-errors (sb-bsd-sockets:socket-close socket))
+              (return))
+            (if (>= (length (management-repl-runtime-client-sockets runtime))
+                    (configuration-management-repl-maximum-clients
+                     (management-repl-runtime-configuration runtime)))
                 (ignore-errors (sb-bsd-sockets:socket-close socket))
                 (handler-case
                     (let ((thread

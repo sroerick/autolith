@@ -262,9 +262,33 @@
   nil)
 
 
+(-> management-repl-test-listener-stop () null)
+(defun management-repl-test-listener-stop ()
+  "Test a shutdown wakeup exits the accept loop before its listener is closed."
+  (let ((runtime (make-instance 'management-repl-runtime :listener nil))
+        (socket (make-instance 'sb-bsd-sockets:local-socket :type ':stream))
+        (accept-count 0))
+    (setf (management-repl-runtime-stopping-p runtime) t)
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list (list 'sb-bsd-sockets:socket-accept
+                      (lambda (listener)
+                        (declare (ignore listener))
+                        (if (= (incf accept-count) 1)
+                            socket
+                            (throw 'accepted-after-stop nil)))))
+          (lambda ()
+            (catch 'accepted-after-stop
+              (management-repl--serve runtime))))
+      (ignore-errors (sb-bsd-sockets:socket-close socket)))
+    (test-assert (= accept-count 1)
+                 "shutdown exits after its wakeup instead of blocking in accept again"))
+  nil)
+
 (-> test-management-repl-unix-lifecycle () null)
 (defun test-management-repl-unix-lifecycle ()
   "Test Unix authentication, active-image evaluation, quiescence, and shutdown."
+  (management-repl-test-listener-stop)
   (let* ((root (uiop:ensure-directory-pathname
                 (merge-pathnames
                  (format nil "management-unix-~A/" (make-identifier))
