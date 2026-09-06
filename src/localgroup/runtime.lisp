@@ -13,9 +13,9 @@
     :documentation "The primary application exposed by this endpoint.")
    (identifier
     :initarg :identifier
-    :reader localgroup-session-identifier
+    :accessor localgroup-session-identifier
     :type non-empty-string
-    :documentation "The process-lifetime identifier used by localgroup commands.")
+    :documentation "The exact identifier of the application's active conversation.")
    (token
     :initarg :token
     :reader localgroup-session-token
@@ -33,7 +33,7 @@
     :documentation "The ephemeral loopback TCP port.")
    (registry-pathname
     :initarg :registry-pathname
-    :reader localgroup-session-registry-pathname
+    :accessor localgroup-session-registry-pathname
     :type pathname
     :documentation "The private endpoint-discovery record.")
    (created-at
@@ -110,20 +110,13 @@
   (merge-pathnames (make-pathname :name session-id :type "sexp")
                    (localgroup-registry-directory configuration)))
 
-(-> localgroup-session-identifier-generate (configuration timestamp) string)
-(defun localgroup-session-identifier-generate (configuration timestamp)
-  "Allocate one canonical timestamp-bearing identifier for a local process session."
-  (let ((directory (localgroup-registry-directory configuration)))
-    (ensure-directories-exist directory)
-    (identifier-generate
-     :timestamp timestamp
-     :namespace (namestring directory)
-     :occupied-p
-     (lambda (candidate)
-       (not
-        (null
-         (probe-file
-          (localgroup-registry-pathname configuration candidate))))))))
+(-> localgroup--call-with-registry-lock (pathname function) t)
+(defun localgroup--call-with-registry-lock (pathname function)
+  "Call FUNCTION while serializing registry updates beside PATHNAME."
+  (let ((lock-pathname (make-pathname :name "registry" :type "lock"
+                                    :defaults pathname)))
+    (ensure-directories-exist lock-pathname)
+    (call-with-file-lock lock-pathname function)))
 
 
 (-> localgroup--registry-record (localgroup-session) list)
@@ -140,25 +133,71 @@
 
 (-> localgroup--publish-registry (localgroup-session) null)
 (defun localgroup--publish-registry (session)
-  "Atomically publish SESSION's private discovery record."
-  (let* ((directory
-           (localgroup-registry-directory
-            (application-configuration
-             (localgroup-session-application session))))
-         (pathname (localgroup-session-registry-pathname session)))
-    (ensure-directories-exist pathname)
-    (sb-posix:chmod (namestring directory) #o700)
-    (snapshot-write pathname (localgroup--registry-record session))
-    (sb-posix:chmod (namestring pathname) #o600))
+  "Publish SESSION unless a different live endpoint owns its conversation ID."
+  (let* ((pathname (localgroup-session-registry-pathname session))
+         (directory (uiop:pathname-directory-pathname pathname))
+         (record (localgroup--registry-record session)))
+    (localgroup--call-with-registry-lock
+     pathname
+     (lambda ()
+       (let ((current (localgroup--read-endpoint-record pathname)))
+         (when (and current
+                    (not (equal current record))
+                    (not (eq (localgroup-process-state (getf (rest current) :pid))
+                             ':dead))
+                    (not (string= (getf (rest current) :token)
+                                  (localgroup-session-token session))))
+           (error 'localgroup-error
+                  :message "A live localgroup endpoint already owns this conversation."
+                  :operation ':publish
+                  :session-id (localgroup-session-identifier session))))
+       (sb-posix:chmod (namestring directory) #o700)
+       (snapshot-write pathname record)
+       (sb-posix:chmod (namestring pathname) #o600))))
   nil)
 
 (-> localgroup--delete-owned-registry (localgroup-session) null)
 (defun localgroup--delete-owned-registry (session)
   "Delete SESSION's registry record only while it still names this endpoint."
-  (let* ((pathname (localgroup-session-registry-pathname session))
-         (current (localgroup--read-endpoint-record pathname)))
-    (when (equal current (localgroup--registry-record session))
-      (ignore-errors (delete-file pathname))))
+  (localgroup--delete-matching-endpoint-record
+   (localgroup-session-registry-pathname session)
+   (localgroup--registry-record session))
+  nil)
+
+(-> application-localgroup-sync-conversation (application) null)
+(defun application-localgroup-sync-conversation (application)
+  "Rekey APPLICATION's endpoint to its active conversation without reconnecting clients.
+
+Publication failure restores the old endpoint identity so the surrounding
+conversation transaction can roll back before releasing either lease."
+  (let ((session (application-localgroup-session application))
+        (identifier (conversation-identifier
+                     (application-conversation application))))
+    (when session
+      (with-lock-held ((localgroup-session-lock session))
+        (unless (string= identifier (localgroup-session-identifier session))
+          (let ((old-identifier (localgroup-session-identifier session))
+                (old-pathname (localgroup-session-registry-pathname session))
+                (old-record (localgroup--registry-record session))
+                (completed-p nil))
+            (unwind-protect
+                 (progn
+                   (setf (localgroup-session-identifier session) identifier
+                         (localgroup-session-registry-pathname session)
+                         (localgroup-registry-pathname
+                          (application-configuration application) identifier))
+                   (localgroup--publish-registry session)
+                   (localgroup--call-with-registry-lock
+                    old-pathname
+                    (lambda ()
+                      (when (equal old-record
+                                   (localgroup--read-endpoint-record old-pathname))
+                        (delete-file old-pathname))))
+                   (setf completed-p t))
+              (unless completed-p
+                (localgroup--delete-owned-registry session)
+                (setf (localgroup-session-identifier session) old-identifier
+                      (localgroup-session-registry-pathname session) old-pathname))))))))
   nil)
 
 (-> localgroup--endpoint-record-p (t) boolean)
@@ -221,9 +260,12 @@
 (defun localgroup--delete-matching-endpoint-record (pathname record)
   "Delete PATHNAME when it still contains RECORD and report whether it vanished."
   (handler-case
-      (when (equal record (localgroup--read-endpoint-record pathname))
-        (delete-file pathname)
-        t)
+      (localgroup--call-with-registry-lock
+       pathname
+       (lambda ()
+         (when (equal record (localgroup--read-endpoint-record pathname))
+           (delete-file pathname)
+           t)))
     (error ()
       nil)))
 
@@ -364,7 +406,7 @@
                    (t ':starting))))
       (list :localgroup-status
             :version *daemon-protocol-version*
-            :session-id (localgroup-session-identifier session)
+            :session-id (conversation-identifier conversation)
             :pid (sb-posix:getpid)
             :autolith-version *autolith-version*
             :state state
@@ -822,25 +864,24 @@ forced shutdown does; the conversation stays resumable."
   nil)
 
 (-> localgroup-start
-    (application &key (:identifier (option string))
-                      (:token (option string))
+    (application &key (:token (option string))
                       (:created-at (option timestamp))
                       (:detached-explicitly-p boolean))
     localgroup-session)
 (defun localgroup-start
-    (application &key identifier token created-at detached-explicitly-p)
-  "Start and publish APPLICATION's authenticated loopback endpoint.
+    (application &key token created-at detached-explicitly-p)
+  "Publish the exact active conversation ID as APPLICATION's local endpoint.
 
-Optional identity values preserve one session across quiescence or process
-handoff, and DETACHED-EXPLICITLY-P carries a deliberate detach across the
-same boundary. A fresh launch started for a client that never arrives exits
-after the first-attach timeout instead of lingering."
+Optional capability and lifecycle values preserve the endpoint across quiescence
+or process handoff. A fresh client-first launch that nobody attaches to exits
+through the first-attach timeout."
   (localgroup-reconcile-endpoint-records
    (application-configuration application))
-  (let* ((restart-p (not (null identifier)))
+  (let* ((restart-p (not (null token)))
          (startup-values (and *localgroup-startup-record*
                               (rest *localgroup-startup-record*)))
-         (identifier (or identifier (getf startup-values :session-id)))
+         (identifier (conversation-identifier
+                      (application-conversation application)))
          (token (or token (getf startup-values :token)))
          (created-at (or created-at (getf startup-values :created-at)))
          (configuration (application-configuration application))
@@ -860,16 +901,7 @@ after the first-attach timeout instead of lingering."
            (multiple-value-bind (address port)
                (sb-bsd-sockets:socket-name listener)
              (declare (ignore address))
-              (let* ((created-at
-                       (or created-at
-                           (and identifier
-                                (session-identifier-timestamp identifier))
-                           (get-universal-time)))
-                     (identifier
-                       (session-identifier-normalize
-                        (or identifier
-                            (localgroup-session-identifier-generate
-                             configuration created-at))))
+              (let* ((created-at (or created-at (get-universal-time)))
                      (token (or token (daemon-random-token))))
                 (setf session
                       (make-instance
@@ -898,7 +930,8 @@ after the first-attach timeout instead of lingering."
                         (sb-thread:condition-broadcast
                          (application-input-controller-condition-variable
                           controller)))))))
-               (localgroup-handoff-assert-startup-active)
+               (unless restart-p
+                 (localgroup-handoff-assert-startup-active))
                (localgroup--publish-registry session)
                (setf (localgroup-session-server-thread session)
                      (make-thread
@@ -911,7 +944,8 @@ after the first-attach timeout instead of lingering."
                        (make-thread
                         (lambda () (localgroup--attach-watchdog session))
                         :name "Autolith localgroup attach watchdog")))
-               (localgroup-handoff-finish-startup application)
+               (unless restart-p
+                 (localgroup-handoff-finish-startup application))
                session)))
       (unless completed-p
         (when session

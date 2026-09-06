@@ -1689,9 +1689,10 @@ command replaced the active conversation."
                      (application-history-floor-sequence application) nil)
                (application--load-goal application)
                (context-runtime-reset)
-               (application-publish-recovery-session application)
                (when ui
                  (terminal-ui-load-history ui input-history))
+               (application-localgroup-sync-conversation application)
+               (application-publish-recovery-session application)
                (setf committed-p t))
            (serious-condition (condition)
              (setf failure condition)))
@@ -1724,7 +1725,11 @@ command replaced the active conversation."
                 (application-history-floor-sequence application)
                 previous-history-floor-sequence
                 (application-goal application)
-                previous-goal))
+                previous-goal)
+          (handler-case
+              (application-localgroup-sync-conversation application)
+            (serious-condition (condition)
+              (push condition rollback-failures))))
         (when registry
           (handler-case
               (tool-registry-close-runtime-state registry)

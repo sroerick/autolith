@@ -20,9 +20,7 @@
 (-> localgroup--remove-stale-record (pathname list) null)
 (defun localgroup--remove-stale-record (pathname expected-record)
   "Delete PATHNAME only when it still contains EXPECTED-RECORD."
-  (let ((current (localgroup--read-endpoint-record pathname)))
-    (when (equal current expected-record)
-      (ignore-errors (delete-file pathname))))
+  (localgroup--delete-matching-endpoint-record pathname expected-record)
   nil)
 
 (-> localgroup-query-record
@@ -61,18 +59,25 @@
 (-> localgroup--find-record (configuration string) cons)
 (defun localgroup--find-record (configuration session-id)
   "Return CONFIGURATION's unique endpoint record matching SESSION-ID."
-  (let* ((session-id (session-identifier-normalize session-id))
+  (let* ((records (localgroup-endpoint-records configuration))
+         (exact (remove-if-not
+                 (lambda (entry)
+                   (string= session-id (localgroup--record-session-id (rest entry))))
+                 records))
+         (normalized (handler-case (session-identifier-normalize session-id)
+                       (localgroup-error () session-id)))
          (matches
-           (remove-if-not
-            (lambda (entry)
-              (string=
-               session-id
-               (handler-case
-                   (session-identifier-normalize
-                    (localgroup--record-session-id (rest entry)))
-                 (localgroup-error ()
-                   (localgroup--record-session-id (rest entry))))))
-            (localgroup-endpoint-records configuration))))
+           (or exact
+               (remove-if-not
+                (lambda (entry)
+                  (string=
+                   normalized
+                   (handler-case
+                       (session-identifier-normalize
+                        (localgroup--record-session-id (rest entry)))
+                     (localgroup-error ()
+                       (localgroup--record-session-id (rest entry))))))
+                records))))
     (cond ((null matches)
            (error 'localgroup-error
                   :message (format nil "No localgroup session named ~A is running."

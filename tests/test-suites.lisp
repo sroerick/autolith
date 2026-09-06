@@ -470,6 +470,7 @@
   test-terminal-descriptor-tty-detection)
 
 (define-test-suite localgroup
+  test-localgroup-conversation-identity
   test-localgroup-terminal-restart
   test-localgroup-picker-waits-for-relayed-input
   test-localgroup-remote-detach-never-pauses-reader

@@ -568,31 +568,6 @@
       (unwind-protect
            (progn
              (configuration-ensure-directories configuration)
-             (let ((first nil)
-                   (second nil)
-                   (namespace
-                     (namestring (localgroup-registry-directory configuration))))
-               (unwind-protect
-                    (let ((*random-index-function* (lambda (limit)
-                                                      (declare (ignore limit))
-                                                      0)))
-                      (setf first
-                            (localgroup-session-identifier-generate
-                             configuration timestamp)
-                            second
-                            (localgroup-session-identifier-generate
-                             configuration timestamp))
-                      (test-assert
-                       (and (identifier-p first)
-                            (identifier-p second)
-                            (not (string= first second))
-                            (= (session-identifier-timestamp first)
-                               timestamp))
-                       "new localgroup process sessions receive unique timestamp-bearing identifiers"))
-                 (when first
-                   (idsmall:identifier-release first :namespace namespace))
-                 (when second
-                   (idsmall:identifier-release second :namespace namespace))))
              (let ((pathname
                      (localgroup-registry-pathname configuration "abcdef012345")))
                (snapshot-write
@@ -766,9 +741,9 @@
                (test-assert
                 (and (eq (first response) ':ok)
                      (identifier-p (localgroup-session-identifier session))
-                     (= (session-identifier-timestamp
-                         (localgroup-session-identifier session))
-                        (localgroup-session-created-at session))
+                     (string= (localgroup-session-identifier session)
+                              (conversation-identifier
+                               (application-conversation application)))
                       (string= (getf (rest status) :session-id)
                                (localgroup-session-identifier session))
                       (string= (getf (rest status) :conversation-title)
@@ -776,7 +751,7 @@
                       (getf (rest status) :idle-p)
                       (getf (rest status) :waiting-for-input-p)
                       (zerop (getf (rest status) :task-live-count)))
-                "new localgroup endpoints publish their canonical timestamp-bearing identity")
+                "new localgroup endpoints publish their active conversation identity")
                (test-assert
                 (eq
                  (first
@@ -803,7 +778,7 @@
               (and (string= (localgroup-session-identifier session) identifier)
                    (string= (localgroup-session-token session) token)
                    (= (localgroup-session-created-at session) created-at))
-              "checkpoint quiescence preserves the process session identity"))
+              "checkpoint quiescence preserves the active conversation identity"))
            (daemon-call
             (localgroup-session-port session)
             (localgroup-session-token session)

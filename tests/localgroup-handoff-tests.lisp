@@ -67,6 +67,8 @@
                      (typep restored 'user-message-input)
                      (string= (user-message-input-text restored) "draft survives"))
                 "handoff records preserve durable conversation identity and draft")
+                (setf (getf (rest record) :session-id) "abcdef012345")
+                (localgroup-handoff--write-record handoff-pathname record)
                (let ((*localgroup-handoff-setsid-function* (lambda () 0)))
                  (localgroup-handoff-begin-startup record))
                (multiple-value-bind (pid-record complete-p)
@@ -81,9 +83,20 @@
                (multiple-value-bind (application controller relay conversation)
                    (test-localgroup--relay-application configuration)
                  (declare (ignore controller relay conversation))
+                  (application-release-conversation-lease first-application)
+                  (application-release-conversation-lease application)
+                  (let ((identifier (getf (rest record) :conversation-id)))
+                    (setf (application-conversation-lease application)
+                          (conversation-lease-acquire configuration identifier)
+                          (application-conversation application)
+                          (conversation-load
+                           (conversation-pathname
+                            (application-conversation first-application)))))
                  (setf second-application application)
                  (let ((*localgroup-startup-record* record))
-                   (setf second-session (localgroup-start application))))))
+                  (setf second-session (localgroup-start application))
+                  (application-call-with-localgroup-quiesced application (lambda () t))
+                  (setf second-session (application-localgroup-session application))))))
            (test-assert
             (and (string= (localgroup-session-identifier first-session)
                           (localgroup-session-identifier second-session))
@@ -486,10 +499,10 @@
                       (push (list session-id pathname permission-argument
                                   immutable-p)
                             launches)))
-                  (*localgroup-handoff-wait-function*
-                    (lambda (configuration session-id token old-pid)
-                      (declare (ignore configuration session-id token old-pid))
-                      t))
+                  (*localgroup-fresh-wait-function*
+                    (lambda (configuration token old-pid)
+                      (declare (ignore configuration token old-pid))
+                      "active-conversation"))
                   (session-id
                     (localgroup-handoff-spawn-fresh
                      configuration
@@ -499,7 +512,8 @@
              (destructuring-bind (launched-id pathname permission immutable-p)
                  (first launches)
                (test-assert (and (= (length launches) 1)
-                                 (string= launched-id session-id)
+                                 (string= session-id "active-conversation")
+                                 (not (string= launched-id session-id))
                                  (string= permission "sandbox")
                                  immutable-p)
                             "a fresh spawn launches one replacement with its options")
@@ -513,7 +527,8 @@
                        (typep (getf (rest record) :rows) '(integer 1))
                        (typep (getf (rest record) :columns) '(integer 1))
                        (typep (getf (rest record) :styled-p) 'boolean)
-                       (string= (getf (rest record) :session-id) session-id))
+                       (null (getf (rest record) :session-id))
+                       (string= (getf (rest record) :launch-id) launched-id))
                   "a fresh spawn records terminal presentation and session state"))))
              (let* ((*localgroup-startup-record*
                       '(:localgroup-handoff
@@ -527,7 +542,7 @@
            (let ((*localgroup-fresh-launch-function*
                    (lambda (&rest arguments)
                      (declare (ignore arguments))))
-                 (*localgroup-handoff-wait-function*
+                 (*localgroup-fresh-wait-function*
                    (lambda (&rest arguments)
                      (declare (ignore arguments))
                      nil)))
@@ -607,12 +622,14 @@
                               (string=
                                (getf (rest captured-record) :token)
                                (localgroup-session-token session))
-                              (if persisted-p
-                                  (string=
-                                   (getf (rest captured-record) :conversation-id)
-                                   (conversation-identifier conversation))
-                                  (null
-                                   (getf (rest captured-record) :conversation-id))))
+                              (string=
+                               (getf (rest captured-record) :conversation-id)
+                               (conversation-identifier conversation))
+                              (conversation-persisted-p conversation)
+                              (string=
+                               (conversation-identifier
+                                (conversation-load (conversation-pathname conversation)))
+                               (conversation-identifier conversation)))
                          "successful handoff transfers lease, identity, conversation, and draft")))
                  (when application
                    (localgroup-stop application)
@@ -683,4 +700,151 @@
       (uiop:delete-directory-tree root
                                   :validate t
                                   :if-does-not-exist ':ignore)))
+  nil)
+
+
+(-> test-localgroup-conversation-identity () null)
+(defun test-localgroup-conversation-identity ()
+  "Test active IDs through resume selection, new, fork, reconnect and conflicts."
+  (with-test-configuration (configuration)
+    (let ((application nil)
+          (controller nil)
+          (relay nil)
+          (stream nil)
+          (session nil))
+      (unwind-protect
+           (progn
+             (multiple-value-setq (application controller relay)
+               (test-localgroup--relay-application configuration))
+             (let* ((first (application-conversation application))
+                    (provider (provider-create configuration))
+                    (registry (make-instance 'tool-registry))
+                    (saved (conversation-create configuration
+                                                :identifier "abcdef012345")))
+               (setf (application-provider application) provider
+                     (application-tool-registry application) registry
+                     (application-worker application) nil
+                     (application-agent application)
+                     (agent-create :configuration configuration :provider provider
+                                   :conversation first :tool-registry registry
+                                   :worker nil))
+               (terminal-start relay)
+               (setf session (localgroup-start application))
+               (labels ((assert-identity (conversation)
+                          (let* ((identifier (conversation-identifier conversation))
+                                 (status (localgroup-status-snapshot session))
+                                 (entry (localgroup--find-record configuration identifier)))
+                            (test-assert
+                             (and (string= (localgroup-session-identifier session) identifier)
+                                  (string= (getf (rest status) :session-id) identifier)
+                                  (string= (getf (rest status) :conversation-id) identifier)
+                                  (string= (getf (rest (rest entry)) :session-id) identifier)
+                                  (= (length (localgroup-endpoint-records configuration)) 1))
+                             "one endpoint names the exact active conversation"))))
+                 (assert-identity first)
+                 (test-assert (not (conversation-persisted-p first))
+                              "publishing a fresh endpoint does not persist unused conversation data")
+                 (test-assert
+                  (string= (localgroup-handoff--wait-for-fresh
+                            configuration (localgroup-session-token session) 0)
+                           (conversation-identifier first))
+                  "client-first readiness discovers the actual conversation by its capability")
+                 (let ((record (localgroup--registry-record session)))
+                   (test-assert
+                    (and (null (localgroup-handoff--ready-conversation-id
+                                record "wrong-token" 0))
+                         (null (localgroup-handoff--ready-conversation-id
+                                record (localgroup-session-token session) (sb-posix:getpid))))
+                    "readiness rejects another capability and the launching process"))
+                 (multiple-value-bind (socket new-stream response)
+                     (test-localgroup--attach session ':read-only)
+                   (declare (ignore socket))
+                   (setf stream new-stream)
+                   (test-assert (eq (first response) ':attached)
+                                "the initial picker conversation accepts a relay attachment"))
+                 (conversation-append-user-message first "source")
+                 (conversation-append-user-message saved "saved")
+                 (let ((port (localgroup-session-port session))
+                       (token (localgroup-session-token session))
+                       (first-path (localgroup-session-registry-pathname session)))
+                   (application-resume-conversation application (conversation-identifier saved))
+                   (assert-identity saved)
+                   (test-assert (not (probe-file first-path))
+                                "resume picker selection retires the provisional conversation endpoint")
+                   (let ((new (conversation-create configuration)))
+                     (application-install-conversation application new)
+                     (assert-identity new))
+                   (let ((fork (conversation-fork configuration (conversation-identifier first))))
+                     (application-install-conversation application fork)
+                     (assert-identity fork))
+                   (test-assert
+                    (and (eq session (application-localgroup-session application))
+                         (= port (localgroup-session-port session))
+                         (string= token (localgroup-session-token session)))
+                    "conversation changes preserve the endpoint transport")
+                   (terminal--write relay "conversation switched")
+                   (test-assert
+                    (loop repeat 30
+                          for packet = (test-localgroup--read-packet stream)
+                          thereis (and (eq (first packet) ':output)
+                                       (search "conversation switched" (second packet))))
+                    "an attached terminal receives output after conversation changes"))
+                 (let* ((before (application-conversation application))
+                        (blocked (conversation-create configuration))
+                        (identifier (conversation-identifier blocked))
+                        (pathname (localgroup-registry-pathname configuration identifier))
+                        (record (test-localgroup--endpoint-record identifier (sb-posix:getpid))))
+                   (snapshot-write pathname record)
+                   (test-assert
+                    (handler-case
+                        (progn (application-install-conversation application blocked) nil)
+                      (application-runtime-replacement-error () t))
+                    "a conflicting live registry owner aborts the conversation switch")
+                   (test-assert
+                    (and (eq before (application-conversation application))
+                         (equal record (localgroup--read-endpoint-record pathname)))
+                    "failed rekey restores the active conversation and preserves its competitor")
+                   (conversation-lease-release (conversation-lease-acquire configuration identifier))
+                   (delete-file pathname)
+                   (assert-identity before)
+                   (test-call-with-function-replacements
+                    (list
+                     (list 'application-publish-recovery-session
+                           (lambda (ignored)
+                             (declare (ignore ignored))
+                             (error "Injected failure after endpoint rekey."))))
+                    (lambda ()
+                      (test-assert
+                       (handler-case
+                           (progn (application-install-conversation application blocked) nil)
+                         (application-runtime-replacement-error () t))
+                       "a failure after successful rekey rolls back the conversation")))
+                   (test-assert (eq before (application-conversation application))
+                                "late failure restores the previous active conversation")
+                   (assert-identity before))
+                 (application-resume-conversation application (conversation-identifier saved))
+                 (assert-identity saved)
+                 (close stream)
+                 (setf stream nil)
+                 (let ((old-record (localgroup--registry-record session))
+                       (pathname (localgroup-session-registry-pathname session)))
+                   (localgroup-stop application)
+                   (setf session (localgroup-start application))
+                   (localgroup--remove-stale-record pathname old-record)
+                   (assert-identity saved))
+                 (application-call-with-localgroup-quiesced application (lambda () t))
+                 (setf session (application-localgroup-session application))
+                 (assert-identity saved))))
+        (when stream
+          (ignore-errors (close stream)))
+        (when application
+          (localgroup-stop application)
+          (application-release-conversation-lease application)
+          (application-disconnect-task-presentation application)
+          (when (slot-boundp application 'tool-registry)
+            (tool-registry-close-runtime-state (application-tool-registry application))))
+        (when controller
+          (application-input-controller-stop controller))
+        (when relay
+          (terminal-stop relay)))))
   nil)

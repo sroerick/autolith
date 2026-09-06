@@ -75,6 +75,11 @@ exit \"$status\""
      immutable-p))
   "The detached launch boundary used by client-first session starts.")
 
+(defparameter *localgroup-fresh-wait-function*
+  (lambda (configuration token old-pid)
+    (localgroup-handoff--wait-for-fresh configuration token old-pid))
+  "The authenticated discovery boundary returning a fresh launch's conversation ID.")
+
 
 ;;;; -- Private Records --
 
@@ -140,7 +145,9 @@ exit \"$status\""
        (eq (first record) ':localgroup-handoff)
        (= (or (getf (rest record) :version) 0)
           *localgroup-handoff-version*)
-       (non-empty-string-p (getf (rest record) :session-id))
+       ;; Client-first launches use a private nonce until a conversation exists.
+       (or (non-empty-string-p (getf (rest record) :launch-id))
+           (non-empty-string-p (getf (rest record) :session-id)))
        (non-empty-string-p (getf (rest record) :token))
        (typep (getf (rest record) :created-at) 'timestamp)
        (member (getf (rest record) :mode) '(:detach :take-over))
@@ -152,7 +159,11 @@ exit \"$status\""
              (typep replacement-pid '(integer 1))))
        (let ((conversation-id (getf (rest record) :conversation-id)))
          (or (null conversation-id)
-             (identifier-p conversation-id)))
+             (and (stringp conversation-id)
+                  (ignore-errors
+                    (conversation-identifier-validate-path-component
+                     conversation-id)
+                    t))))
        (stringp (or (getf (rest record) :draft) ""))))
 
 (-> localgroup-handoff--disk-record (list) list)
@@ -177,6 +188,10 @@ exit \"$status\""
     pathname)
 (defun localgroup-handoff--write (application session mode)
   "Publish APPLICATION's detached-process handoff for SESSION and MODE."
+  (let ((conversation (application-conversation application)))
+    (unless (conversation-persisted-p conversation)
+      (conversation-append-record conversation
+                                  (list :localgroup-handoff :mode mode))))
   (let* ((configuration (application-configuration application))
          (conversation (application-conversation application))
          (pathname
@@ -193,13 +208,10 @@ exit \"$status\""
                  :created-at (localgroup-session-created-at session)
                  :mode mode
                  :state ':pending
-                 :fresh-conversation-p
-                 (not (conversation-persisted-p conversation))
+                 :fresh-conversation-p nil
                  :old-pid (sb-posix:getpid)
                  :replacement-pid nil
-                 :conversation-id
-                 (and (conversation-persisted-p conversation)
-                      (conversation-identifier conversation))
+                 :conversation-id (conversation-identifier conversation)
                  :draft draft)))
     (localgroup-handoff--write-record pathname record)
     pathname))
@@ -303,8 +315,10 @@ exit \"$status\""
                     (error () nil)))))
       (unless (and record
                    (member (getf (rest record) :state) '(:pending :claimed))
-                   (string= (getf (rest record) :session-id)
-                            (getf expected :session-id))
+                   (equal (or (getf (rest record) :launch-id)
+                              (getf (rest record) :session-id))
+                          (or (getf expected :launch-id)
+                              (getf expected :session-id)))
                    (string= (getf (rest record) :token)
                             (getf expected :token))
                    (eq (first pid-record) ':localgroup-handoff-pid)
@@ -445,15 +459,13 @@ detach is immediate and never interrupts session work."
   (multiple-value-bind (rows columns)
       (terminal-current-size)
     (let* ((created-at (get-universal-time))
-           (session-id
-             (session-identifier-normalize
-              (localgroup-session-identifier-generate configuration created-at)))
+           (launch-id (daemon-random-nonce))
            (token (daemon-random-token))
-           (pathname (localgroup-handoff--pathname configuration session-id))
+           (pathname (localgroup-handoff--pathname configuration launch-id))
            (record
              (list :localgroup-handoff
                    :version *localgroup-handoff-version*
-                   :session-id session-id
+                   :launch-id launch-id
                    :token token
                    :created-at created-at
                    :mode ':detach
@@ -471,17 +483,20 @@ detach is immediate and never interrupts session work."
                    :columns columns
                    :styled-p (not (null (terminal-environment-styling-p)))))
            (completed-p nil)
-           (process nil))
+           (process nil)
+           (session-id nil))
       (localgroup-handoff--write-record pathname record)
       (unwind-protect
            (progn
              (setf process
                    (funcall *localgroup-fresh-launch-function*
-                            configuration session-id pathname
+                           configuration launch-id pathname
                             (localgroup-handoff-permission-string permission-mode)
                             immutable-p))
-             (unless (funcall *localgroup-handoff-wait-function*
-                              configuration session-id token (sb-posix:getpid))
+             (setf session-id
+                   (funcall *localgroup-fresh-wait-function*
+                            configuration token (sb-posix:getpid)))
+             (unless session-id
                (error 'localgroup-error
                       :message
                       (format nil
@@ -489,7 +504,7 @@ detach is immediate and never interrupts session work."
                               *localgroup-handoff-start-timeout-seconds*
                               (namestring
                                (localgroup-handoff-log-pathname
-                                configuration session-id)))
+                                configuration launch-id)))
                       :operation ':spawn
                       :session-id session-id))
              (setf completed-p t)
@@ -500,6 +515,41 @@ detach is immediate and never interrupts session work."
               (funcall *localgroup-handoff-stop-function* process pathname)))
           (localgroup-handoff--delete-state-pathnames pathname))))))
 
+(-> localgroup-handoff--ready-conversation-id
+    (list string integer) (option string))
+(defun localgroup-handoff--ready-conversation-id (record token old-pid)
+  "Return RECORD's authenticated active conversation ID for a new process."
+  (when (and (/= (getf (rest record) :pid) old-pid)
+             (string= (getf (rest record) :token) token))
+    (handler-case
+        (let* ((response (daemon-call (getf (rest record) :port) token ':status))
+               (status (getf (rest response) :status))
+               (identifier (getf (rest status) :session-id)))
+          (when (and (eq (first response) ':ok)
+                     (stringp identifier)
+                     (equal identifier (getf (rest status) :conversation-id))
+                     (equal identifier (getf (rest record) :session-id))
+                     (eql (getf (rest status) :pid) (getf (rest record) :pid)))
+            identifier))
+      (error ()
+        nil))))
+
+(-> localgroup-handoff--wait-for-fresh (configuration string integer) (option string))
+(defun localgroup-handoff--wait-for-fresh (configuration token old-pid)
+  "Resolve a private launch token to its published active conversation ID."
+  (let ((deadline (+ (get-internal-real-time)
+                     (* *localgroup-handoff-start-timeout-seconds*
+                        internal-time-units-per-second))))
+    (loop
+      (let ((identifier
+              (loop for entry in (localgroup-endpoint-records configuration)
+                    thereis (localgroup-handoff--ready-conversation-id
+                             (rest entry) token old-pid))))
+        (when identifier
+          (return identifier)))
+      (when (>= (get-internal-real-time) deadline)
+        (return nil))
+      (sleep 0.05))))
 (-> localgroup-handoff--replacement-ready-p
     (configuration string string integer)
     boolean)

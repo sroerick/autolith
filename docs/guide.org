@@ -280,7 +280,10 @@ conversation lease or repairing, appending, or resuming the conversation.
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.
-Inspect them with:
+Its session ID is the active conversation ID, shared with =resume= and stable
+across detach, restart and checkpoint quiescence. Selecting another conversation
+with =new=, =resume= or =fork= moves the endpoint to that conversation ID while
+attached terminals continue using the same connection. Inspect endpoints with:
 
 #+BEGIN_SRC sh
 autolith localgroup status
