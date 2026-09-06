@@ -90,13 +90,44 @@
                   nil))))
       (and (visit root) t))))
 
+(defvar *test-temporary-root* nil
+  "The process-global fixture parent owned by the current test run.
+Use SYMBOL-GLOBAL-VALUE so configuration fixtures in child threads share it.")
+
+(-> test-make-temporary-root (&optional (or null pathname)) pathname)
+(defun test-make-temporary-root (&optional parent)
+  "Atomically create a short, private test directory below PARENT or TMPDIR."
+  (uiop:ensure-directory-pathname
+   (truename
+    (sb-posix:mkdtemp
+     (namestring
+      (merge-pathnames "autolith-tests-XXXXXX"
+                       (or parent (uiop:temporary-directory))))))))
+
+(-> test-call-with-temporary-root (function &key (:temporary-root (or null pathname))) t)
+(defun test-call-with-temporary-root (function &key temporary-root)
+  "Call FUNCTION with an owned fixture root and delete it on every exit.
+TEMPORARY-ROOT transfers ownership of an existing directory to this scope.
+Otherwise create a fresh root, nested below any enclosing run. Restore the
+process-global fixture parent on exit; parallel runs need separate processes."
+  (let* ((previous (sb-ext:symbol-global-value '*test-temporary-root*))
+         (root (or temporary-root (test-make-temporary-root previous))))
+    (unwind-protect
+         (progn
+           (setf (sb-ext:symbol-global-value '*test-temporary-root*) root)
+           (funcall function root))
+      (setf (sb-ext:symbol-global-value '*test-temporary-root*) previous)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore))))
+
 (-> test-configuration () configuration)
 (defun test-configuration ()
   "Return an isolated configuration rooted in a fresh temporary directory."
-  (let* ((root (uiop:ensure-directory-pathname
+  (let* ((parent (sb-ext:symbol-global-value '*test-temporary-root*))
+         (root (uiop:ensure-directory-pathname
                 (merge-pathnames
-                 (format nil "autolith-tests-~A/" (make-identifier))
-                 (uiop:temporary-directory))))
+                 (format nil "~A~A/" (if parent "" "autolith-tests-")
+                         (make-identifier))
+                 (or parent (uiop:temporary-directory)))))
          (source-root (asdf:system-source-directory :autolith)))
     (uiop:ensure-all-directories-exist (list root))
     ;; Canonicalize ROOT so tests compare paths on the same terms as the

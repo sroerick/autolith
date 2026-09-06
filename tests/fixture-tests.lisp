@@ -9,6 +9,72 @@
              (declare (ignore condition))
              (write-string "Expected fixture failure." stream))))
 
+(-> test-run-temporary-root-cleanup () null)
+(defun test-run-temporary-root-cleanup ()
+  "Test scoped run ownership, nested cleanup, thread visibility and every exit."
+  (let ((unrelated (test-make-temporary-root))
+        (previous (sb-ext:symbol-global-value '*test-temporary-root*)))
+    (unwind-protect
+         (dolist (exit '(:normal :error :throw))
+           (let ((saved-root nil)
+                 (configuration-root nil))
+             (test-assert
+              (equal
+               (handler-case
+                   (catch 'fixture-exit
+                     (multiple-value-list
+                      (test-call-with-temporary-root
+                       (lambda (root)
+                         (setf saved-root root
+                               configuration-root
+                               (test-configuration-root (test-configuration)))
+                         (test-assert (uiop:subpathp configuration-root root)
+                                      "configuration roots belong to their run")
+                         (let ((thread-root
+                                 (sb-thread:join-thread
+                                  (sb-thread:make-thread
+                                   (lambda ()
+                                     (test-configuration-root (test-configuration)))
+                                   :name "fixture-root-probe"))))
+                           (test-assert (uiop:subpathp thread-root root)
+                                        "child thread fixtures share run ownership"))
+                         (let ((inner-root nil))
+                           (test-call-with-temporary-root
+                            (lambda (inner)
+                              (setf inner-root inner)
+                              (test-assert (uiop:subpathp inner root)
+                                           "nested runs belong to the enclosing run")
+                              (test-configuration)))
+                           (test-assert (not (probe-file inner-root))
+                                        "nested cleanup removes the inner run")
+                           (test-assert
+                            (and (probe-file configuration-root)
+                                 (equal root (sb-ext:symbol-global-value
+                                              '*test-temporary-root*)))
+                            "nested cleanup restores the surviving enclosing run"))
+                         (case exit
+                           (:error
+                            (error 'test-fixture-error))
+                           (:throw
+                            (throw 'fixture-exit :escaped)))
+                         (values :finished 42)))))
+                 (test-fixture-error ()
+                   :failed))
+               (ecase exit
+                 (:normal '(:finished 42))
+                 (:error :failed)
+                 (:throw :escaped)))
+              "run scopes preserve multiple values, errors and nonlocal exits")
+             (test-assert (and saved-root (not (probe-file saved-root))
+                               (not (probe-file configuration-root)))
+                          "every exit removes the run and unclaimed fixtures")
+             (test-assert (equal previous (sb-ext:symbol-global-value '*test-temporary-root*))
+                          "every exit restores the previous process-global fixture parent")
+             (test-assert (probe-file unrelated)
+                          "cleanup preserves an unrelated run directory")))
+      (uiop:delete-directory-tree unrelated :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-configuration-fixture-cleanup () null)
 (defun test-configuration-fixture-cleanup ()
   "Test canonical roots, recursive cleanup, and value propagation on every exit."

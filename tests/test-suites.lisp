@@ -609,6 +609,7 @@
   test-recovery-input-vault-capture-during-restore)
 
 (define-test-suite fixtures
+  test-run-temporary-root-cleanup
   test-configuration-fixture-cleanup
   test-configuration-fixture-isolation
   test-environment-fixture-restoration
@@ -618,6 +619,8 @@
 (define-test-suite test-runner
   test-runner-selection
   test-runner-failure-reporting
+  test-runner-temporary-cleanup
+  test-check-worker-temporary-cleanup
   test-runner-catalog
   test-check-command-selection
   test-check-result-validation

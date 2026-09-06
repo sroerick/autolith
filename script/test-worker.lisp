@@ -19,8 +19,11 @@
         (let* ((request (check--read-single-form (first arguments)))
                (result-path (pathname (second arguments)))
                (staging-path (make-pathname :type "pending" :defaults result-path)))
-          (unless (and (check--plist-p request '(:version :cases))
+          (unless (and (check--plist-p request '(:version :cases :temporary-root))
                        (eql (getf request :version) 1)
+                       (pathnamep (getf request :temporary-root))
+                       (uiop:absolute-pathname-p (getf request :temporary-root))
+                       (uiop:directory-exists-p (getf request :temporary-root))
                        (check--proper-list-p (getf request :cases))
                        (getf request :cases)
                        (every #'stringp (getf request :cases))
@@ -33,7 +36,8 @@
                  (cases (uiop:symbol-call '#:autolith '#:tests-select :tests names)))
             (unless (equal (mapcar #'string-downcase cases) names)
               (check--fail "Worker selection does not match its assigned cases."))
-            (let ((result (uiop:symbol-call '#:autolith '#:tests-run-cases cases)))
+            (let ((result (uiop:symbol-call '#:autolith '#:tests-run-cases cases
+                                            :temporary-root (getf request :temporary-root))))
               (check--validate-result result names)
               (unwind-protect
                    (progn

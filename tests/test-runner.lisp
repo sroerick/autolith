@@ -72,43 +72,48 @@ selectors signal TEST-SELECTION-ERROR instead of silently running nothing."
               (format stream "  ~(~A~)~%" name)))))))
   nil)
 
-(-> tests-run-cases (list &key (:stream stream)) list)
-(defun tests-run-cases (cases &key (stream *standard-output*))
+(-> tests-run-cases (list &key (:stream stream) (:temporary-root (or null pathname))) list)
+(defun tests-run-cases (cases &key (stream *standard-output*) temporary-root)
   "Run CASES sequentially and return a portable versioned result plist.
 
 FiveAM catches case failures and continues. Timings are real seconds per case.
 The caller owns process isolation; tests may mutate global functions and the
-process environment."
-  (let ((checks 0)
-        (failures nil)
-        (timings nil)
-        (fiveam:*print-names* nil)
-        (fiveam:*on-error* nil)
-        (fiveam:*on-failure* nil)
-        (fiveam:*debug-on-error* nil)
-        (fiveam:*debug-on-failure* nil)
-        (fiveam:*test-dribble* (make-broadcast-stream)))
-    (dolist (name cases)
-      (unless (member name (tests-select))
-        (error 'test-selection-error :selector name))
-      (let* ((start (get-internal-real-time))
-             (results (fiveam:run name))
-             (elapsed (/ (- (get-internal-real-time) start)
-                         (float internal-time-units-per-second 1d0)))
-             (passed (fiveam:results-status results)))
-        (incf checks (length results))
-        (push (list (string-downcase name) elapsed) timings)
-        (unless passed
-          (push (list :test (string-downcase name)
-                      :detail (with-output-to-string (output)
-                                (let ((fiveam:*test-dribble* output))
-                                  (fiveam:explain! results))))
-                failures))
-        (format stream "~&~A ~,3Fs ~(~A~)~%"
-                (if passed "PASS" "FAIL") elapsed name)
-        (finish-output stream)))
-    (list :version 1 :cases (length cases) :checks checks
-          :failures (nreverse failures) :timings (nreverse timings))))
+process environment. Delete every configuration fixture on exit, taking
+ownership of TEMPORARY-ROOT when supplied or allocating a fresh run directory."
+  (test-call-with-temporary-root
+   (lambda (root)
+     (declare (ignore root))
+     (let ((checks 0)
+           (failures nil)
+           (timings nil)
+           (fiveam:*print-names* nil)
+           (fiveam:*on-error* nil)
+           (fiveam:*on-failure* nil)
+           (fiveam:*debug-on-error* nil)
+           (fiveam:*debug-on-failure* nil)
+           (fiveam:*test-dribble* (make-broadcast-stream)))
+       (dolist (name cases)
+         (unless (member name (tests-select))
+           (error 'test-selection-error :selector name))
+         (let* ((start (get-internal-real-time))
+                (results (fiveam:run name))
+                (elapsed (/ (- (get-internal-real-time) start)
+                            (float internal-time-units-per-second 1d0)))
+                (passed (fiveam:results-status results)))
+           (incf checks (length results))
+           (push (list (string-downcase name) elapsed) timings)
+           (unless passed
+             (push (list :test (string-downcase name)
+                         :detail (with-output-to-string (output)
+                                   (let ((fiveam:*test-dribble* output))
+                                     (fiveam:explain! results))))
+                   failures))
+           (format stream "~&~A ~,3Fs ~(~A~)~%"
+                   (if passed "PASS" "FAIL") elapsed name)
+           (finish-output stream)))
+       (list :version 1 :cases (length cases) :checks checks
+             :failures (nreverse failures) :timings (nreverse timings))))
+   :temporary-root temporary-root))
 
 (-> tests-report (list &optional stream &key (:case-timings-p boolean)) boolean)
 (defun tests-report (result &optional (stream *standard-output*)

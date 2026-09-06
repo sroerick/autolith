@@ -56,6 +56,50 @@
         (fiveam:rem-test name))))
   nil)
 
+(-> test-runner-temporary-cleanup () null)
+(defun test-runner-temporary-cleanup ()
+  "Test cleanup around successful, failed and nonlocally exiting FiveAM cases."
+  (let* ((*test-suites* '(("cleanup-probe" runner-cleanup-probe)))
+         (fixture-root nil)
+         (run-root nil)
+         (exit nil)
+         (previous (sb-ext:symbol-global-value '*test-temporary-root*))
+         (*cleanup-probe*
+           (lambda ()
+             (setf run-root (sb-ext:symbol-global-value '*test-temporary-root*)
+                   fixture-root (test-configuration-root (test-configuration)))
+             (case exit
+               (:throw
+                (throw 'runner-exit :escaped))
+               (:error
+                (error 'test-fixture-error)))
+             (test-assert (not (eq exit :failure)) "cleanup probe assertion"))))
+    (declare (special *cleanup-probe*))
+    (unwind-protect
+         (progn
+           (fiveam:test (runner-cleanup-probe :compile-at :definition-time)
+             (declare (special *cleanup-probe*))
+             (funcall *cleanup-probe*))
+           (dolist (mode '(:normal :failure :error :throw))
+             (setf exit mode)
+             (let ((result (catch 'runner-exit
+                             (tests-run-cases '(runner-cleanup-probe)
+                                              :stream (make-broadcast-stream)))))
+               (test-assert
+                (if (eq mode :throw)
+                    (eq result :escaped)
+                    (= (length (getf result ':failures))
+                       (if (eq mode :normal) 0 1)))
+                "run cleanup preserves successful results, failures and nonlocal exits")
+               (test-assert (and fixture-root (not (probe-file fixture-root))
+                                 run-root (not (probe-file run-root)))
+                            "the runner deletes all unclaimed configuration fixtures")
+               (test-assert
+                (equal previous (sb-ext:symbol-global-value '*test-temporary-root*))
+                "the runner restores an enclosing fixture owner"))))
+      (fiveam:rem-test 'runner-cleanup-probe)))
+  nil)
+
 (-> test-runner-catalog () null)
 (defun test-runner-catalog ()
   "Test that the complete catalog has unique callable FiveAM cases."
@@ -235,4 +279,70 @@
         (sleep 1.2)
         (test-assert (not (probe-file late-marker))
                      "timeout terminates descendants before they can write"))))
+  nil)
+
+(-> test-check-worker-temporary-cleanup () null)
+(defun test-check-worker-temporary-cleanup ()
+  "Test parent-owned cleanup after worker success, crash, timeout and unwind."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (test-check--call "CHECK--PARSE-ARGUMENTS" '("--jobs" "1"))
+    (let ((runner (symbol-function (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)))
+          (unrelated (test-make-temporary-root)))
+      (unwind-protect
+           (dolist (mode '(:normal :failure :crash :timeout :invalid :unwind))
+             (let ((owned nil)
+                   (entry nil)
+                   (directory (merge-pathnames (format nil "~(~A~)/" mode) root)))
+               (test-call-with-function-replacements
+                (list
+                 (list (find-symbol "CHECK--RUN-PROCESSES" '#:cl-user)
+                       (lambda (entries &rest arguments)
+                         (setf entry (first entries)
+                               owned (getf (test-check--call
+                                            "CHECK--READ-SINGLE-FORM"
+                                            (fourth (test-check--call "CHECK-PROCESS-COMMAND" entry)))
+                                           ':temporary-root))
+                         (snapshot-write (merge-pathnames "unclaimed/state.sexp" owned)
+                                         '(:fixture :present))
+                         (when (eq mode :unwind)
+                           (throw 'worker-exit :escaped))
+                         (when (member mode '(:normal :invalid))
+                           (test-check--call
+                            "CHECK--WRITE-FORM"
+                            (test-check--call "CHECK-PROCESS-RESULT-PATH" entry)
+                            (when (eq mode :normal)
+                              '(:version 1 :cases 1 :checks 1 :failures nil
+                                :timings (("fixture-probe" 0d0))))))
+                         (funcall (fdefinition '(setf cl-user::check-process-command))
+                                  (list "sh" "-c"
+                                        (case mode
+                                          (:failure "exit 7")
+                                          (:crash "kill -KILL $$")
+                                          (:timeout "sleep 30 & wait")
+                                          (otherwise "exit 0")))
+                                  entry)
+                         (apply runner entries arguments))))
+                (lambda ()
+                  (let ((*standard-output* (make-broadcast-stream))
+                        (*error-output* (make-broadcast-stream)))
+                    (test-assert
+                     (eql (catch 'worker-exit
+                            (test-check--call "CHECK--RUN-WORKERS" '(fixture-probe)
+                                              :source-root (asdf:system-source-directory :autolith)
+                                              :temporary-root directory :jobs 1 :timeout 1))
+                          (case mode
+                            (:normal t)
+                            (:unwind :escaped)
+                            (otherwise nil)))
+                     "worker success, process failures and unwind preserve their outcomes"))))
+               (test-assert (and owned (not (probe-file owned)))
+                            "the parent deletes fixtures a dead worker cannot clean up")
+               (test-assert (probe-file unrelated)
+                            "worker cleanup preserves other runs' directories")
+               (unless (eq mode :unwind)
+                 (test-assert
+                  (not (uiop:process-alive-p (test-check--call "CHECK-PROCESS-PROCESS" entry)))
+                  "workers terminate before parent cleanup finishes"))))
+        (uiop:delete-directory-tree unrelated :validate t :if-does-not-exist ':ignore))))
   nil)

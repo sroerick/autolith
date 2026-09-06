@@ -274,6 +274,10 @@ values; `nil` means unset. Use `test-call-with-function-replacements` for scoped
 function replacement. Global function and environment mutation requires process
 isolation, not parallel test threads.
 
+Test runs own their configuration directories and remove them on exit. The CLI
+also removes each worker's directories after a crash or timeout, once its
+process group has stopped.
+
 For interactive serial execution after loading `autolith/tests`:
 
 ```lisp

@@ -226,58 +226,65 @@ Selectors and --list bypass recovery checks.
 
 (defun check--run-workers (cases &key source-root temporary-root
                                     (jobs (check--processor-count)) (timeout 600))
-  "Run CASES in fresh SBCL processes and return true only for a complete pass."
-  (let ((entries nil) (results nil) (successful-p t))
-    (loop for partition in (check--partition-cases cases jobs) for index from 1
-          for directory = (merge-pathnames (format nil "worker-~D/" index) temporary-root)
-          for request = (merge-pathnames "request.sexp" directory)
-          for result = (merge-pathnames "result.sexp" directory)
-          for names = (mapcar #'string-downcase partition)
-          do (ensure-directories-exist request)
-             (check--write-form request (list :version 1 :cases names))
-             (push (make-check-process
-                    :label (format nil "Test worker ~D" index)
-                    :names names :result-path result
-                    :output (merge-pathnames "output.log" directory)
-                     ;; Test fixtures already allocate unique temporary roots. Keep
-                     ;; TMPDIR short enough for native Unix-domain socket paths.
-                     :command (list (namestring (merge-pathnames "bin/autolith-runtime" source-root))
-                                   "--script"
-                                   (namestring (merge-pathnames "script/test-worker.lisp" source-root))
-                                   (namestring request) (namestring result)))
-                   entries))
-    (setf entries (nreverse entries))
-    (format t "~&Running ~D cases in ~D isolated workers.~%" (length cases) (length entries))
-    (check--run-processes entries :jobs jobs :timeout timeout)
-    (dolist (entry entries)
-      (handler-case
-          (let ((result (check--validate-result
-                         (check--read-single-form (check-process-result-path entry))
-                         (check-process-names entry))))
-            (push result results)
-            (unless (or (check-process-problem entry)
-                        (= (check-process-status entry)
-                           (if (getf result :failures) 1 0)))
-              (setf (check-process-problem entry) "Unexpected worker exit status."))
-            (when (getf result :failures)
-              (setf successful-p nil)))
-        (error (condition)
-          (unless (check-process-problem entry)
-            (setf (check-process-problem entry) (princ-to-string condition)))))
-      (when (or (check-process-problem entry) (not (zerop (check-process-status entry))))
-        (setf successful-p nil)
-        (check--print-process-log entry)))
-    (let* ((timings (loop for result in results append (getf result :timings)))
-           (aggregate (list :version 1
-                            :cases (loop for result in results sum (getf result :cases))
-                            :checks (loop for result in results sum (getf result :checks))
-                            :failures (loop for result in (reverse results)
-                                            append (getf result :failures))
-                            :timings (loop for case in cases
-                                           for timing = (assoc (string-downcase case) timings
-                                                               :test #'string=)
-                                           when timing collect timing))))
-      (and (uiop:symbol-call '#:autolith '#:tests-report aggregate) successful-p))))
+  "Run CASES in fresh SBCL processes and remove their owned fixture directories.
+Parent cleanup follows process-group termination, including crashes and timeouts."
+  (let ((entries nil) (results nil) (fixture-roots nil) (successful-p t))
+    (unwind-protect
+         (progn
+           (loop for partition in (check--partition-cases cases jobs) for index from 1
+                 for directory = (merge-pathnames (format nil "worker-~D/" index) temporary-root)
+                 for request = (merge-pathnames "request.sexp" directory)
+                 for result = (merge-pathnames "result.sexp" directory)
+                 for names = (mapcar #'string-downcase partition)
+                 for fixture-root = (uiop:symbol-call '#:autolith '#:test-make-temporary-root)
+                 do (push fixture-root fixture-roots)
+                    (ensure-directories-exist request)
+                    (check--write-form request (list :version 1 :cases names
+                                                    :temporary-root fixture-root))
+                    (push (make-check-process
+                           :label (format nil "Test worker ~D" index)
+                           :names names :result-path result
+                           :output (merge-pathnames "output.log" directory)
+                           ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
+                           :command (list (namestring (merge-pathnames "bin/autolith-runtime" source-root))
+                                          "--script"
+                                          (namestring (merge-pathnames "script/test-worker.lisp" source-root))
+                                          (namestring request) (namestring result)))
+                          entries))
+           (setf entries (nreverse entries))
+           (format t "~&Running ~D cases in ~D isolated workers.~%" (length cases) (length entries))
+           (check--run-processes entries :jobs jobs :timeout timeout)
+           (dolist (entry entries)
+             (handler-case
+                 (let ((result (check--validate-result
+                                (check--read-single-form (check-process-result-path entry))
+                                (check-process-names entry))))
+                   (push result results)
+                   (unless (or (check-process-problem entry)
+                               (= (check-process-status entry)
+                                  (if (getf result :failures) 1 0)))
+                     (setf (check-process-problem entry) "Unexpected worker exit status."))
+                   (when (getf result :failures)
+                     (setf successful-p nil)))
+               (error (condition)
+                 (unless (check-process-problem entry)
+                   (setf (check-process-problem entry) (princ-to-string condition)))))
+             (when (or (check-process-problem entry) (not (zerop (check-process-status entry))))
+               (setf successful-p nil)
+               (check--print-process-log entry)))
+           (let* ((timings (loop for result in results append (getf result :timings)))
+                  (aggregate (list :version 1
+                                   :cases (loop for result in results sum (getf result :cases))
+                                   :checks (loop for result in results sum (getf result :checks))
+                                   :failures (loop for result in (reverse results)
+                                                   append (getf result :failures))
+                                   :timings (loop for case in cases
+                                                  for timing = (assoc (string-downcase case) timings
+                                                                      :test #'string=)
+                                                  when timing collect timing))))
+             (and (uiop:symbol-call '#:autolith '#:tests-report aggregate) successful-p)))
+      (dolist (root fixture-roots)
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist ':ignore)))))
 
 (defun check--environment-directory (variable fallback)
   "Return absolute directory VARIABLE, or FALLBACK when it is unset or invalid."
