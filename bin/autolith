@@ -34,11 +34,15 @@ xdg_base_directory()
 
 launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 source_root=$(CDPATH= cd -P "$(dirname "$launcher_path")/.." && pwd)
+
+# shellcheck source=../script/launcher-cli.sh
+source "$source_root/script/launcher-cli.sh" || exit 1
+case $source_root in
+  /nix/store/*) autolith_launcher_parse nix "$@" ;;
+  *) autolith_launcher_parse source "$@" ;;
+esac
 source_checksums_path=$source_root/sbcl-source-releases.sha256
 terminal_state=
-recovery_requested=false
-from_source_requested=false
-remaining_arguments=()
 state_home=$(xdg_base_directory "${XDG_STATE_HOME:-}" "$HOME/.local/state")
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$HOME/.local/share")
 runtime_command_path=$data_home/autolith/runtimes/command
@@ -104,20 +108,6 @@ active_core=${AUTOLITH_ACTIVE_CORE:-$data_home/autolith/active/autolith-active.c
 active_manifest=$(dirname -- "$active_core")/manifest.sexp
 crash_pointer=
 recovery_session_pointer=
-
-for argument in "$@"; do
-  case "$argument" in
-    --recovery)
-      recovery_requested=true
-      ;;
-    --from-source)
-      from_source_requested=true
-      ;;
-    *)
-      remaining_arguments+=("$argument")
-      ;;
-  esac
-done
 
 if [[ -t 0 ]]; then
   terminal_state=$(stty -g 2>/dev/null || true)

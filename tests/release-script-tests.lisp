@@ -203,6 +203,9 @@ fi
   (uiop:copy-file
    (merge-pathnames "script/install" source-root)
    (merge-pathnames "libexec/autolith/script/install" release-root))
+  (uiop:copy-file
+   (merge-pathnames "script/launcher-cli.sh" source-root)
+   (merge-pathnames "libexec/autolith/script/launcher-cli.sh" release-root))
   (release-script-tests--chmod
    "755" (merge-pathnames "libexec/autolith/script/install" release-root))
   (release-script-tests--chmod
@@ -226,6 +229,7 @@ fi
                       "script/build-fff"
                       "script/build-recovery"
                       "script/check"
+                      "script/launcher-cli.sh"
                       "script/build-release"
                       "script/build-release-runtime"
                       "script/build-static-release-runtime"
@@ -547,6 +551,8 @@ printf 'subprocess %s\\n' \"$*\" >> \"${AUTOLITH_TEST_EVENT_LOG:?}\"
      (list bin-directory script-directory recovery-directory
            data-home state-home home))
     (uiop:copy-file (merge-pathnames "bin/autolith" source-root) launcher)
+    (uiop:copy-file (merge-pathnames "script/launcher-cli.sh" source-root)
+                    (merge-pathnames "launcher-cli.sh" script-directory))
     (release-script-tests--write-file active-source "")
     (release-script-tests--write-file recovery-source "")
     (release-script-tests--write-file
@@ -632,6 +638,29 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
         (declare (ignore output error-output))
         (test-assert (= status 76)
                      "update handoff bypasses crash recovery unchanged"))
+      (dolist (arguments '(("update") ("--update") ("update" "extra")))
+        (release-script-tests--write-file log "")
+        (multiple-value-bind (output error-output status)
+            (release-script-tests--run
+             (cons (namestring launcher) arguments)
+             :environment (append environment
+                                  '("AUTOLITH_INSTALLATION_KIND=release"))
+             :ignore-error-status t)
+          (declare (ignore output))
+          (test-assert
+           (and (= status 64)
+                (plusp (length error-output))
+                (zerop (length (uiop:read-file-string log))))
+           "source update rejects before invoking Lisp despite a release environment marker")))
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring launcher) "update" "--help")
+           :environment environment :ignore-error-status t)
+        (declare (ignore error-output))
+        (test-assert
+         (and (zerop status) (plusp (length output))
+              (zerop (length (uiop:read-file-string log))))
+         "update help exits without starting the source application"))
       (release-script-tests--write-file log "")
       (let* ((command
                (format nil
@@ -655,6 +684,16 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
          (format nil
                  "accepting the interactive prompt bootstraps and starts the new image:~%terminal: ~A~%events: ~A"
                  output events)))
+      (dolist (arguments '(("--" "--recovery" "--from-source")
+                           ("--image" "--from-source")
+                           ("--image" "--recovery")))
+        (let ((output (release-script-tests--run
+                       (cons (namestring launcher) arguments)
+                       :environment environment)))
+          (test-assert
+           (and (search "ACTIVE" output)
+                (search (format nil "~{~A~^ ~}" arguments) output))
+           "launcher-looking operands are forwarded to the active image")))
       (dolist (pathname (list active-core active-manifest))
         (when (probe-file pathname)
           (delete-file pathname)))
@@ -1338,6 +1377,9 @@ set -eu
 printf 'INNER_KIND=%s\\n' \"${AUTOLITH_INSTALLATION_KIND:-}\" >> \"$AUTOLITH_TEST_LOG\"
 printf 'INNER_ROOT=%s\\n' \"${AUTOLITH_RELEASE_ROOT:-}\" >> \"$AUTOLITH_TEST_LOG\"
 printf 'INNER_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
+printf 'INNER_ARG=<%s>\\n' \"$@\" >> \"$AUTOLITH_TEST_LOG\"
+printf 'INNER_ARGC=%s\\n' \"$#\" >> \"$AUTOLITH_TEST_LOG\"
+[ \"${AUTOLITH_SUPPRESS_UPDATE_OFFER:-}\" != 1 ] || exit 0
 exit 76
 ")
     (release-script-tests--write-file
@@ -1345,6 +1387,8 @@ exit 76
      "#!/bin/sh
 set -eu
 printf 'UPDATED_ARGS=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
+printf 'UPDATED_ARG=<%s>\\n' \"$@\" >> \"$AUTOLITH_TEST_LOG\"
+printf 'UPDATED_ARGC=%s\\n' \"$#\" >> \"$AUTOLITH_TEST_LOG\"
 ")
     (release-script-tests--write-file
      bundled-installer
@@ -1363,6 +1407,7 @@ done
 [ \"$requested\" = \"$AUTOLITH_TEST_LATEST_TAG\" ]
 printf 'INSTALL_ROOT=%s\\n' \"$AUTOLITH_INSTALL_ROOT\" >> \"$AUTOLITH_TEST_LOG\"
 printf 'INSTALL_ARGS=without-command-link,%s\\n' \"$requested\" >> \"$AUTOLITH_TEST_LOG\"
+[ \"${AUTOLITH_TEST_INSTALL_STATUS:-0}\" = 0 ] || exit \"$AUTOLITH_TEST_INSTALL_STATUS\"
 target=$AUTOLITH_INSTALL_ROOT/releases/$requested
 mkdir -p \"$target/bin\"
 cp \"$AUTOLITH_TEST_UPDATED_LAUNCHER\" \"$target/bin/autolith\"
@@ -1372,7 +1417,18 @@ ln -s \"releases/$requested\" \"$temporary\"
 mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
 ")
     (release-script-tests--write-file
-     curl (release-script-tests--fixture-curl))
+     curl
+     "#!/bin/sh
+set -eu
+printf 'DISCOVERY\\n' >> \"$AUTOLITH_TEST_LOG\"
+[ \"${AUTOLITH_TEST_DISCOVERY_STATUS:-0}\" = 0 ] || exit \"$AUTOLITH_TEST_DISCOVERY_STATUS\"
+printf 'https://example.invalid/releases/%s' \"$AUTOLITH_TEST_LATEST_TAG\"
+")
+    (release-script-tests--write-file
+     (merge-pathnames "runtime/bin/sbcl" release-root)
+     "#!/bin/sh
+printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
+")
     (dolist (pathname (list inner-launcher bundled-installer updated-launcher
                             curl))
       (release-script-tests--chmod "755" pathname))
@@ -1391,21 +1447,104 @@ mv -Tf \"$temporary\" \"$AUTOLITH_INSTALL_ROOT/current\"
       (release-script-tests--write-file
        (merge-pathnames "autolith/release-images" data-home)
        (format nil "~A:x86_64-linux~%" tag)))
-    (let ((path (format nil "~A:~A"
-                        (string-right-trim "/" (namestring fixture-bin))
-                        (or (uiop:getenv "PATH") ""))))
-      (release-script-tests--run
-       (list (namestring launcher) "resume" "fixture-conversation")
-       :environment
-       (list (format nil "PATH=~A" path)
-             (format nil "XDG_DATA_HOME=~A" (namestring data-home))
-             (format nil "XDG_STATE_HOME=~A" (namestring state-home))
-             (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))
-             (format nil "AUTOLITH_TEST_UPDATED_LAUNCHER=~A"
-                     (namestring updated-launcher))
-             (format nil "AUTOLITH_TEST_LATEST_TAG=~A" next-tag)
-             "AUTOLITH_RELEASE_LATEST_URL=https://example.invalid/releases/latest")
-       :output nil))
+    (let* ((environment
+             (list (format nil "PATH=~A:~A"
+                           (string-right-trim "/" (namestring fixture-bin))
+                           (or (uiop:getenv "PATH") ""))
+                   (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                   (format nil "XDG_STATE_HOME=~A" (namestring state-home))
+                   (format nil "AUTOLITH_TEST_LOG=~A" (namestring log))
+                   (format nil "AUTOLITH_TEST_UPDATED_LAUNCHER=~A"
+                           (namestring updated-launcher))
+                   "AUTOLITH_SUPPRESS_UPDATE_OFFER="
+                   "AUTOLITH_RELEASE_LATEST_URL=https://example.invalid/releases/latest"))
+           (current (merge-pathnames "current" install-root))
+           (image-marker (merge-pathnames "autolith/release-images" data-home)))
+      (labels ((select-original ()
+                 (sb-posix:unlink (namestring current))
+                 (sb-posix:symlink (format nil "releases/~A" tag)
+                                   (namestring current))
+                 (release-script-tests--write-file log ""))
+
+                (run-command (arguments &key (latest-tag next-tag)
+                                          (discovery-status 0) (install-status 0)
+                                          (expected-status 0) installed-p
+                                          (discovered-p t) restart-p)
+                 (select-original)
+                 (multiple-value-bind (output error-output status)
+                     (release-script-tests--run
+                      (cons (namestring command-link) arguments)
+                      :environment
+                      (append environment
+                              (list (format nil "AUTOLITH_TEST_LATEST_TAG=~A"
+                                            latest-tag)
+                                    (format nil "AUTOLITH_TEST_DISCOVERY_STATUS=~D"
+                                            discovery-status)
+                                    (format nil "AUTOLITH_TEST_INSTALL_STATUS=~D"
+                                            install-status)))
+                      :ignore-error-status t)
+                   (test-assert
+                     (= expected-status status)
+                    (format nil "~S exits as expected: ~A ~A"
+                            arguments output error-output)))
+                 (let ((events (uiop:read-file-string log)))
+                   (test-assert
+                    (eq discovered-p (not (null (search "DISCOVERY" events))))
+                    "update validates arguments before release discovery")
+                   (test-assert
+                    (eq restart-p
+                        (not (null (or (search "INNER_ARGS=" events)
+                                       (search "UPDATED_ARGS=" events)))))
+                    "only interactive updates start a session")
+                   (unless restart-p
+                     (test-assert (not (search "RUNTIME=" events))
+                                  "update-only never probes or rebuilds images")))
+                 (test-assert
+                  (string= (release-script-tests--readlink current)
+                           (format nil "releases/~A" (if installed-p next-tag tag)))
+                  "successful installation selects the update; other outcomes preserve selection")))
+        (delete-file image-marker)
+        (dolist (alias '("update" "--update"))
+          (run-command (list alias) :installed-p t)
+          (run-command (list alias "--") :installed-p t)
+          (run-command (list alias) :latest-tag tag)
+          (run-command (list alias) :latest-tag "v0.10.0")
+          (run-command (list alias) :discovery-status 22 :expected-status 1)
+          (run-command (list alias) :latest-tag "invalid-tag" :expected-status 1)
+          (run-command (list alias) :install-status 7 :expected-status 1)
+          (dolist (tail '(("--unknown") ("extra") ("--help" "extra")
+                          ("--" "--help") ("--recovery")
+                          ("resume" "fixture-conversation")))
+            (run-command (cons alias tail) :expected-status 64 :discovered-p nil))
+          (dolist (tail '(("--help") ("-h") ("--help" "--")))
+            (run-command (cons alias tail) :discovered-p nil)))
+        (run-command '("--immutable" "update")
+                     :expected-status 64 :discovered-p nil)
+        (run-command '("--from-source" "--update")
+                     :expected-status 64 :discovered-p nil)
+        (release-script-tests--write-file
+         image-marker (format nil "~A:x86_64-linux~%" tag))
+        (dolist (arguments '(nil ("resume" "fixture-conversation")
+                             ("resume" "--" "--recovery" "--from-source")
+                             ("--image" "--recovery" "resume" "two words" "")))
+          (run-command arguments :installed-p t :restart-p t)
+          (let ((events (uiop:read-file-string log)))
+            (test-assert
+             (and (search (format nil "INNER_ARGC=~D~%" (length arguments)) events)
+                  (search (format nil "UPDATED_ARGC=~D~%" (length arguments)) events)
+                  (search (format nil "~{INNER_ARG=<~A>~%~}" arguments) events)
+                  (search (format nil "~{UPDATED_ARG=<~A>~%~}" arguments) events))
+             "interactive update handoff preserves every original argument")))
+        (run-command '("resume") :latest-tag tag :restart-p t)
+        (run-command '("resume") :discovery-status 22 :restart-p t)
+        (run-command '("resume") :install-status 7 :restart-p t)
+        (select-original)
+        (release-script-tests--run
+         (list (namestring launcher) "resume" "fixture-conversation")
+         :environment (append environment
+                              (list (format nil "AUTOLITH_TEST_LATEST_TAG=~A"
+                                            next-tag)))
+         :output nil)))
     (let ((events (uiop:read-file-string log)))
       (test-assert
        (and (search "INNER_KIND=release" events)
@@ -2785,6 +2924,126 @@ esac
     nil)))
 
 
+(-> release-script-tests--launcher-preflight (pathname) null)
+(defun release-script-tests--launcher-preflight (source-root)
+  "Check shared launcher argument handling against the live Clingon catalog."
+  (let ((helper (namestring (merge-pathnames "script/launcher-cli.sh" source-root))))
+    (labels ((run-preflight (arguments &optional (kind "source"))
+               (release-script-tests--run
+                (append
+                 (list "bash" "-c"
+                       "set -eu; source \"$1\"; shift; autolith_launcher_parse \"$@\"; printf '%s\\n' \"$recovery_requested\" \"$from_source_requested\" \"$update_requested\"; if [ \"${#remaining_arguments[@]}\" -gt 0 ]; then printf '%s\\n' \"${remaining_arguments[@]}\"; fi"
+                       "launcher-test" helper kind)
+                 arguments)
+                :ignore-error-status t))
+
+             (check-forwarding (arguments &key recovery-p from-source-p forwarded)
+               (multiple-value-bind (output error-output status)
+                   (run-preflight arguments)
+                 (test-assert
+                  (and (zerop status)
+                       (string= output
+                                (format nil "~A~%~A~%false~%~{~A~%~}"
+                                        (if recovery-p "true" "false")
+                                        (if from-source-p "true" "false")
+                                        forwarded)))
+                  (format nil "launcher forwards ~S without consuming values: ~A ~A"
+                          arguments output error-output))))
+
+             (check-command (command)
+               (dolist (option (clingon:command-options command))
+                 (when (clingon:option-parameter option)
+                   (dolist (name (remove nil
+                                        (list
+                                         (when (clingon:option-long-name option)
+                                           (format nil "--~A"
+                                                   (clingon:option-long-name option)))
+                                         (when (clingon:option-short-name option)
+                                           (format nil "-~A"
+                                                   (clingon:option-short-name option))))))
+                     (dolist (value '("--recovery" "--from-source" "--update"
+                                      "update" "--"))
+                       (let ((arguments (list name value)))
+                         (check-forwarding arguments :forwarded arguments))))))
+               (dolist (child (clingon:command-sub-commands command))
+                 (check-command child))))
+      (check-command (main--top-level-command))
+      (check-forwarding nil)
+      (dolist (arguments '(("--" "--recovery" "--from-source" "--update")
+                           ("resume" "update")
+                           ("--image=--recovery" "resume" "two words")
+                           ("-i--from-source" "resume")
+                           ("--" "update")))
+        (check-forwarding arguments :forwarded arguments))
+      (check-forwarding '("--immutable" "--from-source" "resume" "saved")
+                        :from-source-p t :forwarded '("--immutable" "resume" "saved"))
+      (check-forwarding '("resume" "saved" "--from-source")
+                        :from-source-p t :forwarded '("resume" "saved"))
+      (check-forwarding '("--recovery" "--original-argument" "--from-source"
+                          "--" "--recovery")
+                        :recovery-p t
+                        :forwarded '("--original-argument" "--from-source"
+                                     "--" "--recovery"))
+      (dolist (kind '("source" "nix"))
+        (dolist (alias '("update" "--update"))
+          (dolist (tail '(nil ("--") ("extra") ("--help" "extra")
+                          ("--" "--help") ("--recovery") ("--from-source")))
+            (multiple-value-bind (output error-output status)
+                (run-preflight (cons alias tail) kind)
+              (test-assert
+               (and (= status 64) (zerop (length output))
+                    (plusp (length error-output)))
+               "unmanaged updates and invalid arguments exit before startup"))))
+        (dolist (tail '(("--help") ("-h") ("--help" "--")))
+          (let ((results
+                  (loop for alias in '("update" "--update")
+                        collect (multiple-value-list
+                                 (run-preflight (cons alias tail) kind)))))
+            (test-assert
+             (and (equal (first results) (second results))
+                  (zerop (third (first results)))
+                  (plusp (length (first (first results)))))
+             "update aliases provide the same successful help without startup"))))))
+  nil)
+
+(-> release-script-tests--update-dispatch () null)
+(defun release-script-tests--update-dispatch ()
+  "Verify update catalog discovery and safe dispatch when a launcher is bypassed."
+  (let ((started-p nil))
+    (test-assert
+     (find "update" (clingon:command-sub-commands (main--top-level-command))
+           :test #'string= :key #'command-name)
+     "update is a discoverable Clingon command")
+    (test-call-with-function-replacements
+     (list
+      (list 'uiop:quit (lambda (status &key urgent)
+                         (declare (ignore urgent))
+                         (throw 'update-dispatch-exit status)))
+      (list 'worker-main (lambda () (setf started-p t)))
+      (list 'main--start-session (lambda (&rest arguments)
+                                  (declare (ignore arguments))
+                                  (setf started-p t))))
+     (lambda ()
+       (dolist (alias '("update" "--update"))
+         (dolist (tail '(nil ("--") ("extra") ("--unknown")
+                         ("--help" "extra") ("--" "--help")
+                         ("resume" "saved") ("--recovery") ("--worker")))
+           (let ((*standard-output* (make-string-output-stream))
+                 (*error-output* (make-string-output-stream)))
+             (test-assert
+              (= 64 (catch 'update-dispatch-exit
+                      (main (cons alias tail))))
+              "bypassing a launcher cannot update or start a session")))
+         (dolist (tail '(("--help") ("-h") ("--help" "--")))
+           (let ((*standard-output* (make-string-output-stream))
+                 (*error-output* (make-string-output-stream)))
+             (test-assert
+              (zerop (catch 'update-dispatch-exit
+                       (main-dispatch (cons alias tail))))
+              "direct dispatch supports help for both update spellings"))))))
+    (test-assert (not started-p) "update never falls through to a session"))
+  nil)
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -2797,6 +3056,8 @@ esac
     (unwind-protect
          (progn
               (release-script-tests--syntax source-root)
+              (release-script-tests--launcher-preflight source-root)
+              (release-script-tests--update-dispatch)
               (release-script-tests--bootstrap-dependency-order source-root root)
               (release-script-tests--darwin-fff-library-path
                source-root root)

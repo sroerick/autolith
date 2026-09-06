@@ -738,6 +738,9 @@ pkgs.writeShellApplication {
     runtime
   ] ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.bubblewrap ];
     text = ''
+      # shellcheck source=/dev/null
+      source "${autolithSystem}/script/launcher-cli.sh"
+      autolith_launcher_parse nix "$@"
       xdg_base_directory()
       {
         case ''${1:-} in

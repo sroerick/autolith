@@ -1006,6 +1006,35 @@ path."
            (uiop:quit status)))))))
 
 
+(-> main--update-command () clingon:command)
+(defun main--update-command ()
+  "Describe the launcher-owned update operation without starting a session."
+  (make-command
+   :name "update"
+   :description "install the latest packaged release and exit"
+   :long-description
+   "autolith --update is an equivalent update-and-exit alias.
+Source checkouts update through Git and ./script/bootstrap; Nix installations
+update through their flake or Nix profile."
+   :handler
+   (lambda (command)
+     (declare (ignore command))
+     (error 'configuration-error
+            :message "Run update through the installed autolith launcher."))))
+
+(-> main--normalize-update-arguments (list) list)
+(defun main--normalize-update-arguments (arguments)
+  "Validate standalone update syntax and normalize its legacy launcher alias."
+  (if (member (first arguments) '("update" "--update") :test #'equal)
+      (let ((tail (rest arguments)))
+        (when (equal (last tail) '("--"))
+          (setf tail (butlast tail)))
+        (unless (or (null tail) (equal tail '("--help")) (equal tail '("-h")))
+          (error 'configuration-error
+                 :message "Usage: autolith update [--help]"))
+        (cons "update" (when tail '("--help"))))
+      arguments))
+
 (-> main--top-level-command () clingon:command)
 (defun main--top-level-command ()
   "Return Autolith's top-level command-line definition."
@@ -1014,13 +1043,16 @@ path."
    :description "a small, live, self-modifying Common Lisp agent"
    :long-description
    "The stable launcher also accepts --recovery and --from-source, which
-select how Autolith starts before this command line is parsed."
+select how Autolith starts before this command line is parsed.
+Use -- to end option parsing. autolith --update is an alias for autolith update;
+both update the packaged installation and exit without starting a session."
    :version *autolith-version*
    :options (main--session-options)
    :sub-commands (list (main--resume-command)
                        (main--replay-command)
                        (main--fork-command)
                        (main--auth-command)
+                       (main--update-command)
                        (main--run-job-command)
                        (main-localgroup-command))
    :handler
@@ -1034,6 +1066,7 @@ select how Autolith starts before this command line is parsed."
 (-> main-dispatch (list) null)
 (defun main-dispatch (arguments)
   "Dispatch validated Autolith ARGUMENTS inside the active process."
+  (setf arguments (main--normalize-update-arguments arguments))
   (cond
     ((and (= (length arguments) 3)
           (string= (first arguments)

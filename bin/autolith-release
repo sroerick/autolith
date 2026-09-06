@@ -37,6 +37,9 @@ launcher_path=$(resolve_path "${BASH_SOURCE[0]}")
 release_root=$(CDPATH= cd -P -- "$(dirname -- "$launcher_path")/.." && pwd)
 release_record=$release_root/RELEASE
 source_root=$release_root/libexec/autolith
+# shellcheck source=../script/launcher-cli.sh
+source "$source_root/script/launcher-cli.sh"
+autolith_launcher_parse release "$@"
 runtime_root=$release_root/runtime
 runtime_source_root=$release_root/libexec/sbcl-source
 sbcl_command=$runtime_root/bin/sbcl
@@ -118,16 +121,16 @@ release_update()
 
   if [[ -z $requested_tag ]]; then
     if ! requested_tag=$(release_latest_tag); then
-      printf 'Autolith could not check the latest release. Continuing with %s.\n' \
+      printf 'Autolith could not check the latest release. Keeping %s installed.\n' \
         "$release_version" >&2
-      release_restart
+      return 1
     fi
   fi
   release_tag_valid_p "$requested_tag" ||
     fail "the requested release tag is malformed."
   if ! semantic_version_newer_p "${requested_tag#v}" "$release_version"; then
     printf 'Autolith %s is already the newest release.\n' "$release_version" >&2
-    release_restart
+    return 0
   fi
   install_arguments=(--without-command-link --version "$requested_tag")
   if [[ $release_platform == *-linux-musl ]]; then
@@ -135,17 +138,15 @@ release_update()
   fi
   if ! AUTOLITH_INSTALL_ROOT="$install_root" \
        "$source_root/script/install" "${install_arguments[@]}"; then
-    printf 'Autolith could not install %s. Continuing with %s.\n' \
+    printf 'Autolith could not install %s. Keeping %s installed.\n' \
       "${requested_tag#v}" "$release_version" >&2
-    release_restart
+    return 1
   fi
 
   updated_launcher=$install_root/current/bin/autolith
   [[ -x $updated_launcher ]] ||
     fail "the updater did not publish a runnable release."
-  export AUTOLITH_NO_UPDATE_CHECK=1
-  export AUTOLITH_SUPPRESS_UPDATE_OFFER=1
-  exec "$updated_launcher" "${remaining_arguments[@]}"
+  printf 'Autolith %s is installed.\n' "${requested_tag#v}" >&2
 }
 
 release_restart()
@@ -155,7 +156,7 @@ release_restart()
   [[ -x $launcher ]] || fail "the selected release launcher is unavailable."
   export AUTOLITH_NO_UPDATE_CHECK=1
   export AUTOLITH_SUPPRESS_UPDATE_OFFER=1
-  exec "$launcher" "${remaining_arguments[@]}"
+  exec "$launcher" ${remaining_arguments[@]+"${remaining_arguments[@]}"}
 }
 
 release_images_usable_p()
@@ -328,11 +329,11 @@ if [[ ${1:-} == --autolith-release-probe ]]; then
     "$source_root" "$sbcl_command"
   exit 0
 fi
-if [[ ${1:-} == --update ]]; then
-  remaining_arguments=("${@:2}")
+if [[ $update_requested == true ]]; then
   [[ $selected_release_p == true ]] ||
-    fail "only the selected packaged release can update itself."
+    fail "only the selected packaged release can update itself. Run the installed autolith command."
   release_update
+  exit $?
 fi
 
 if ! release_images_usable_p; then
@@ -345,6 +346,7 @@ else
   status=$?
 fi
 if [[ $status -eq 76 && $selected_release_p == true ]]; then
-  release_update
+  release_update || true
+  release_restart
 fi
 exit "$status"
