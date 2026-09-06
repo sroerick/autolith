@@ -548,6 +548,8 @@ integrate it first.
 
 * Programming
 
+Write code for human readers. Make it as understandable as the
+circumstances allow.
 For ad hoc programs, automation, and data transformation, use Common
 Lisp in lisp.* REPLs.
 Use ASDF/Quicklisp libs if helpful.
