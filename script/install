@@ -85,21 +85,27 @@ release_installed_p()
 check_sha256()
 {
   check_checksum=$1
+  check_file=$2
+  # Require one digest for this archive; downloaded metadata cannot select files.
+  check_expected=$(awk -v archive="$check_file" '
+    NF != 2 || ($2 != archive && $2 != "*" archive) ||
+      length($1) != 64 || $1 ~ /[^0-9a-fA-F]/ { invalid = 1 }
+    { digest = tolower($1); records++ }
+    END {
+      if (invalid || records != 1) exit 1
+      print digest
+    }
+  ' "$check_checksum") || return 1
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum -c -s "$check_checksum" 2>/dev/null || \
-      sha256sum -c "$check_checksum" >/dev/null 2>&1
+    check_actual=$(sha256sum "$check_file") || return 1
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 -c -s "$check_checksum" 2>/dev/null || \
-      shasum -a 256 -c "$check_checksum" >/dev/null 2>&1
+    check_actual=$(shasum -a 256 "$check_file") || return 1
   elif command -v sha256 >/dev/null 2>&1; then
-    check_expected=$(awk '{print $1}' "$check_checksum")
-    check_file=$(awk '{print $2}' "$check_checksum")
-    [ -n "$check_expected" ] && [ -n "$check_file" ] || return 1
-    check_actual=$(sha256 -q "$check_file")
-    [ "$check_expected" = "$check_actual" ]
+    check_actual=$(sha256 -q "$check_file") || return 1
   else
     return 1
   fi
+  [ "$check_expected" = "${check_actual%% *}" ]
 }
 
 publish_links()
@@ -283,7 +289,7 @@ else
     --proto '=https' --tlsv1.2 --output "$checksum" "$checksum_url"
   (
     cd -- "$temporary_root"
-    check_sha256 "$checksum_name"
+    check_sha256 "$checksum_name" "$archive_name"
   ) || fail "the release archive has the wrong SHA-256 identity."
   tar -xzf "$archive" -C "$temporary_root"
   release_installed_p "$extracted" "$requested_tag" "$platform" ||

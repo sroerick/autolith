@@ -48,6 +48,10 @@ It is possible to install autolith on Linux x86_64 via a shell installer:
 curl -fsSL https://sh.lambda-symbolics.com/autolith | sh
 #+END_SRC
 
+The installer verifies the release archive's SHA-256 before extraction. The
+checksum must identify that exact archive; malformed or missing checksums abort
+installation. The initial shell script is fetched over HTTPS.
+
 Read [[https://sh.lambda-symbolics.com/autolith][the installer]] before piping it to a shell, or use Nix if that
 tradeoff is unwelcome. Linux binary releases require OpenSSL and Bubblewrap.
 Bubblewrap provides the filesystem and network isolation used for sandboxed

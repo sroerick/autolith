@@ -498,6 +498,7 @@
   test-layout-fit-text)
 
 (define-test-suite release-script
+  test-installer-checksum-verification
   test-release-scripts)
 
 (define-test-suite release-server

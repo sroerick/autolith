@@ -271,6 +271,7 @@
                              (:file "localgroup-handoff-boundary-tests")
                              (:file "layout-tests")
                              (:file "release-script-tests")
+                             (:file "installer-checksum-tests")
                              (:file "release-server-tests")
                              (:file "application-tests")
                              (:file "lisp-machine-tests")
