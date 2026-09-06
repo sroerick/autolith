@@ -1067,6 +1067,14 @@ worker results become explicit unknown outcomes so provider history stays valid.
       (error (getf failure :condition))))
   nil)
 
+(-> agent--tool-thread-function (function) function)
+(defun agent--tool-thread-function (function)
+  "Return FUNCTION wrapped with the current turn-scoped tool bindings."
+  (let ((skill-logical-turn-state *skill-logical-turn-state*))
+    (lambda ()
+      (let ((*skill-logical-turn-state* skill-logical-turn-state))
+        (funcall function)))))
+
 (-> agent--run-tool-wave
     (agent list agent-observer integer boolean)
     null)
@@ -1118,7 +1126,9 @@ worker results become explicit unknown outcomes so provider history stays valid.
                          do
                            (handler-case
                                (push
-                                (make-thread #'work :name "autolith-tool-call")
+                                 (make-thread
+                                  (agent--tool-thread-function #'work)
+                                  :name "autolith-tool-call")
                                 threads)
                              (serious-condition (condition)
                                (setf thread-creation-condition condition))))

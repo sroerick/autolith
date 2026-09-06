@@ -280,7 +280,7 @@
                (user-message-input-create
                 :text "Steering also names beta without selecting it."))
               (test-assert
-               (null *skill-logical-turn-selection-names*)
+                (null (skill-logical-turn-selection-names))
                "initial and steering text do not infer skill selection")
               (multiple-value-bind (metadata new-p)
                   (skill-select-for-logical-turn configuration "beta")
@@ -298,8 +298,8 @@
                  (not new-p)
                  "selecting one skill twice is idempotent"))
               (test-assert
-               (equal *skill-logical-turn-selection-names*
-                      '("beta" "alpha"))
+                (equal (skill-logical-turn-selection-names)
+                       '("beta" "alpha"))
                "multiple skills stack in deterministic selection order")
               (let* ((contributions
                        (skill-request-contributions
@@ -362,7 +362,7 @@
                   :compaction-p t)))
                "skills are absent from compaction side requests")))
            (test-assert
-            (not *skill-logical-turn-active-p*)
+             (not (skill-logical-turn-active-p))
             "logical-turn selection is dynamically scoped")
            (context-runtime-reset)
            (let* ((delivery
@@ -442,8 +442,7 @@
                                configuration
                                "beta")
                               (setf child-selection
-                                    (copy-list
-                                     *skill-logical-turn-selection-names*)
+                                     (skill-logical-turn-selection-names)
                                     child-identifiers
                                     (skill-tests--contribution-identifiers
                                      (skill-request-contributions
@@ -468,7 +467,7 @@
                       do
                          (condition-wait barrier barrier-lock)))
               (test-assert
-               (equal *skill-logical-turn-selection-names* '("alpha"))
+                (equal (skill-logical-turn-selection-names) '("alpha"))
                "the active parent turn retains only its own Skill selection")
               (test-assert
                (equal
@@ -488,8 +487,8 @@
                         '("skill-catalog" "skill-selected-beta")))
             "the concurrent child turn receives only its own Skill selection")
            (test-assert
-            (and (not *skill-logical-turn-active-p*)
-                 (null *skill-logical-turn-selection-names*))
+             (and (not (skill-logical-turn-active-p))
+                  (null (skill-logical-turn-selection-names)))
             "concurrent selection bindings do not escape either logical turn"))
       (when (and child-thread (thread-alive-p child-thread))
         (with-lock-held (barrier-lock)
@@ -626,7 +625,7 @@
                          ':selection-limit)))
                  "a distinct Skill beyond the logical-turn cap is rejected")
                 (test-assert
-                 (equal *skill-logical-turn-selection-names* '("first"))
+                  (equal (skill-logical-turn-selection-names) '("first"))
                  "a rejected over-cap Skill never enters selection state"))))
            (let ((warning-paths nil))
              (dolist (name '("warn-a" "warn-b" "warn-c"))

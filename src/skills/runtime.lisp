@@ -17,11 +17,35 @@
 (defparameter *skill-warning-aggregate-character-limit* 4000
   "The maximum selected-skill warning characters injected in one request.")
 
-(defvar *skill-logical-turn-active-p* nil
-  "True while one logical user turn accepts explicit skill selections.")
+(defclass skill-logical-turn-state ()
+  ((selection-names
+    :initform nil
+    :accessor skill-logical-turn-state-selection-names
+    :type list
+    :documentation "Exact skill names selected during this logical user turn.")
+   (lock
+    :initform (make-lock "Autolith skill logical turn")
+    :reader skill-logical-turn-state-lock
+    :type t
+    :documentation "The lock serializing selection updates and snapshots."))
+  (:documentation "Shared request-local Skill selection state for one logical turn."))
 
-(defvar *skill-logical-turn-selection-names* nil
-  "Exact skill names selected during the current logical user turn.")
+(defvar *skill-logical-turn-state* nil
+  "The dynamically scoped shared Skill selection state for the active logical turn.")
+
+(-> skill-logical-turn-active-p () boolean)
+(defun skill-logical-turn-active-p ()
+  "Return true while a logical user turn accepts explicit Skill selections."
+  (not (null *skill-logical-turn-state*)))
+
+(-> skill-logical-turn-selection-names () list)
+(defun skill-logical-turn-selection-names ()
+  "Return a stable copy of the active logical turn's selected Skill names."
+  (let ((state *skill-logical-turn-state*))
+    (if state
+        (with-lock-held ((skill-logical-turn-state-lock state))
+          (copy-list (skill-logical-turn-state-selection-names state)))
+        nil)))
 
 (define-condition skill-selection-error (autolith-error)
   ((name
@@ -44,10 +68,10 @@
 
 (-> call-with-skill-logical-turn (user-message-input function) t)
 (defun call-with-skill-logical-turn (input function)
-  "Call FUNCTION with an empty, dynamically scoped skill selection."
+  "Call FUNCTION with a new shared request-local Skill selection state."
   (declare (ignore input))
-  (let ((*skill-logical-turn-active-p* t)
-        (*skill-logical-turn-selection-names* nil))
+  (let ((*skill-logical-turn-state*
+          (make-instance 'skill-logical-turn-state)))
     (funcall function)))
 
 (-> skill--logical-turn-record (skill-metadata) boolean)
@@ -57,28 +81,32 @@
 Return true only when its name was newly added. Signal SKILL-SELECTION-ERROR
 when there is no active logical turn in which request-local selection can
 survive."
-  (unless *skill-logical-turn-active-p*
-    (error 'skill-selection-error
-           :message
-           "A skill can be selected only while an agent turn is active."
-           :name (skill-metadata-name metadata)
-           :reason ':inactive-turn))
-  (let ((name (skill-metadata-name metadata)))
-    (if (member name *skill-logical-turn-selection-names* :test #'string=)
-        nil
-        (progn
-          (when (>= (length *skill-logical-turn-selection-names*)
-                    *skill-selection-count-limit*)
-            (error 'skill-selection-error
-                   :message
-                   (format nil
-                           "A logical turn may select at most ~D distinct skills."
-                           *skill-selection-count-limit*)
-                   :name name
-                   :reason ':selection-limit))
-          (setf *skill-logical-turn-selection-names*
-                (append *skill-logical-turn-selection-names* (list name)))
-          t))))
+  (let ((state *skill-logical-turn-state*))
+    (unless state
+      (error 'skill-selection-error
+             :message
+             "A skill can be selected only while an agent turn is active."
+             :name (skill-metadata-name metadata)
+             :reason ':inactive-turn))
+    (let ((name (skill-metadata-name metadata)))
+      (with-lock-held ((skill-logical-turn-state-lock state))
+        (let ((selection-names
+                (skill-logical-turn-state-selection-names state)))
+          (if (member name selection-names :test #'string=)
+              nil
+              (progn
+                (when (>= (length selection-names)
+                          *skill-selection-count-limit*)
+                  (error 'skill-selection-error
+                         :message
+                         (format nil
+                                 "A logical turn may select at most ~D distinct skills."
+                                 *skill-selection-count-limit*)
+                         :name name
+                         :reason ':selection-limit))
+                (setf (skill-logical-turn-state-selection-names state)
+                      (append selection-names (list name)))
+                t)))))))
 
 (-> skill-record-steering-input ((or string user-message-input)) null)
 (defun skill-record-steering-input (input)
@@ -94,7 +122,7 @@ survive."
 
 Return the selected metadata and true when this call newly selected it. Only
 SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
-  (unless *skill-logical-turn-active-p*
+  (unless *skill-logical-turn-state*
     (error 'skill-selection-error
            :message
            "A skill can be selected only while an agent turn is active."
@@ -412,10 +440,7 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
   "Return request-local contributions selected from metadata CATALOG."
   (declare (ignore conversation))
   (let* ((skills (skill-catalog-skills catalog))
-         (selection-names
-           (if *skill-logical-turn-active-p*
-               (copy-list *skill-logical-turn-selection-names*)
-               nil)))
+         (selection-names (skill-logical-turn-selection-names)))
     (when (or skills selection-names)
       (let ((contributions
               (list (make-context-contribution

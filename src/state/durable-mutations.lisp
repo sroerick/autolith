@@ -49,8 +49,7 @@ so it is opt-in rather than the default commit gate."))
     (let ((*standard-output* stream)
           (*error-output* stream)
           (*trace-output* stream)
-          (*skill-logical-turn-active-p* nil)
-          (*skill-logical-turn-selection-names* nil))
+           (*skill-logical-turn-state* nil))
       (asdf:test-system :autolith))))
 
 (defmethod mutation-checker-check-active

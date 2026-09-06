@@ -135,7 +135,7 @@
                  (tool-result-success-p result)
                  "skill.load selects an exact discovered skill")
                 (test-assert
-                (equal *skill-logical-turn-selection-names* '("alpha"))
+                 (equal (skill-logical-turn-selection-names) '("alpha"))
                  "skill.load accumulates selection in logical-turn state")
                 (test-assert
                  (and (< (length (tool-result-content result)) 256)
@@ -174,8 +174,8 @@
                                '(:kind :skill-load
                                  :name "alpha"
                                  :newly-selected-p nil))
-                        (equal *skill-logical-turn-selection-names*
-                               '("alpha")))
+                         (equal (skill-logical-turn-selection-names)
+                                '("alpha")))
                      "repeated selection is idempotent")))))
              (let ((*skill-instruction-character-limit* 128))
                (call-with-skill-logical-turn

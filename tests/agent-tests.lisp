@@ -104,8 +104,8 @@
           (scripted-provider-input-snapshots provider))
     (push (length input-items)
         (scripted-provider-input-counts provider))
-    (push (and *skill-logical-turn-active-p*
-               (copy-list *skill-logical-turn-selection-names*))
+    (push (and (skill-logical-turn-active-p)
+               (skill-logical-turn-selection-names))
           (scripted-provider-skill-selection-snapshots provider))
     (push
      (and (scripted-provider-configuration provider)
@@ -196,6 +196,11 @@
     :accessor agent-test-concurrency-state-overlap-observed-p
     :type boolean
     :documentation "Whether two tool bodies executed at the same time.")
+   (logical-turn-states
+    :initform nil
+    :accessor agent-test-concurrency-state-logical-turn-states
+    :type list
+    :documentation "The turn-scoped Skill state observed by each tool worker.")
    (events
     :initform nil
     :accessor agent-test-concurrency-state-events
@@ -248,6 +253,8 @@
          (fatal
            (tool-argument arguments "fatal")))
     (with-lock-held ((agent-test-concurrency-state-lock state))
+      (push *skill-logical-turn-state*
+            (agent-test-concurrency-state-logical-turn-states state))
       (incf (agent-test-concurrency-state-active-count state))
       (setf (agent-test-concurrency-state-maximum-active-count state)
             (max (agent-test-concurrency-state-maximum-active-count state)
@@ -2494,6 +2501,15 @@
            (test-assert
             (= (agent-test-concurrency-state-maximum-active-count state) 2)
             "one provider batch uses two concurrent tool workers")
+            (let ((logical-turn-states
+                    (agent-test-concurrency-state-logical-turn-states state)))
+              (test-assert
+               (and (= (length logical-turn-states) 2)
+                    (first logical-turn-states)
+                    (every (lambda (turn-state)
+                             (eq turn-state (first logical-turn-states)))
+                           (rest logical-turn-states)))
+               "parallel tool workers share the active logical-turn state"))
            (test-assert
             (= callback-maximum-active-count 1)
             "observer callbacks remain serialized across tool workers")
