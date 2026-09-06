@@ -50,8 +50,8 @@
 A relayed session's process has no controlling terminal, so its own
 kernel size reports only ever see fallback defaults. Controlling
 clients therefore relay exact dimensions, and the interactive reader
-applies them through TERMINAL-UI-RESIZE, the one writer that changes
-the composed width and the live-region geometry together.")
+applies them through TERMINAL-UI-RESIZE. All terminal dimension
+mutation passes through TERMINAL-SET-DIMENSIONS.")
 
 (defvar *terminal-relayed-resize-lock*
   (make-lock "Autolith relayed terminal resize")
@@ -426,6 +426,16 @@ the composed width and the live-region geometry together.")
 
 
 ;;;; -- Terminal Protocol --
+
+(-> terminal-set-dimensions
+    (terminal integer &key (:rows (option integer)))
+    terminal)
+(defun terminal-set-dimensions (terminal columns &key rows)
+  "Set TERMINAL's positive cell dimensions through the canonical writer."
+  (setf (terminal-columns terminal) (max 1 columns))
+  (when rows
+    (setf (terminal-rows terminal) (max 1 rows)))
+  terminal)
 
 (defgeneric terminal-start (terminal)
   (:documentation "Start TERMINAL without entering an alternate screen."))

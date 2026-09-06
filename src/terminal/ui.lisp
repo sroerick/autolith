@@ -3139,16 +3139,13 @@ thread."
   "Set UI terminal dimensions and repaint only unfinished rows."
   (with-terminal-ui-locked (ui)
     (let* ((new-columns (max 1 columns))
-           (new-rows (and rows (max 1 rows)))
-           (region (terminal-ui-live-region ui)))
-      (setf (terminal-columns (terminal-ui-terminal ui)) new-columns)
-      (when new-rows
-        (setf (terminal-rows (terminal-ui-terminal ui)) new-rows))
+           (terminal    (terminal-ui-terminal ui))
+           (region      (terminal-ui-live-region ui)))
+      (terminal-set-dimensions terminal new-columns :rows rows)
       (live-region-resize
        region
        new-columns
-       :maximum-rows
-       (terminal-ui--maximum-live-rows (terminal-ui-terminal ui))
+       :maximum-rows (terminal-ui--maximum-live-rows terminal)
        :repaint-p nil)
       (terminal-ui--paint-live ui)))
   ui)

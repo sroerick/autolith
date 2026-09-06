@@ -277,9 +277,9 @@
     (let ((direct (localgroup-terminal-direct-terminal terminal)))
       (when direct
         (terminal-start direct)
-        (setf (terminal-rows terminal) (terminal-rows direct)
-              (terminal-columns terminal) (terminal-columns direct)
-              (terminal-interactive-p terminal) (terminal-interactive-p direct)
+        (terminal-set-dimensions
+         terminal (terminal-columns direct) :rows (terminal-rows direct))
+        (setf (terminal-interactive-p terminal) (terminal-interactive-p direct)
               (terminal-styled-p terminal) (terminal-styled-p direct)))
       (setf (terminal-started-p terminal) t)))
   terminal)
