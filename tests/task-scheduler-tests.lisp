@@ -257,7 +257,7 @@
 
 (-> test-task-runtime-deadline () null)
 (defun test-task-runtime-deadline ()
-  "Test the unlimited default and opt-in timeout of a stalled child."
+  "Test the bounded default and environment override of a stalled child."
   (let ((previous-runtime
           (uiop:getenv "AUTOLITH_TASK_MAX_RUNTIME_MS")))
     (unwind-protect
@@ -266,10 +266,10 @@
            (let ((orchestrator (task-tests--orchestrator)))
              (test-assert
               (and
-               (zerop
-                (task-orchestrator-maximum-runtime-milliseconds orchestrator))
-               (zerop *task-default-maximum-runtime-milliseconds*))
-              "task children have no default runtime deadline"))
+               (plusp *task-default-maximum-runtime-milliseconds*)
+               (= (task-orchestrator-maximum-runtime-milliseconds orchestrator)
+                  *task-default-maximum-runtime-milliseconds*))
+              "task children have a bounded default runtime deadline"))
            (sb-posix:setenv "AUTOLITH_TASK_MAX_RUNTIME_MS" "1000" 1)
            (let* ((configuration (test-configuration))
                   (root          (test-configuration-root configuration))
