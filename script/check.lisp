@@ -293,6 +293,22 @@ Parent cleanup follows process-group termination, including crashes and timeouts
     (uiop:ensure-directory-pathname
      (if (and pathname (uiop:absolute-pathname-p pathname)) pathname fallback))))
 
+(defun check--committed-version (source-root)
+  "Return the version of HEAD, which pristine recovery uses for source fallback."
+  (let ((source (uiop:run-program
+                 (list "git" "-C" (namestring source-root)
+                       "show" "HEAD:autolith.asd")
+                 :output ':string)))
+    (with-input-from-string (stream source)
+      (let* ((*read-eval* nil)
+             (definition (read stream))
+             (version (and (consp definition)
+                           (eq (first definition) 'asdf:defsystem)
+                           (getf (cddr definition) :version))))
+        (unless (and (stringp version) (plusp (length version)))
+          (check--fail "Committed Autolith source has no readable version."))
+        version))))
+
 (defun check--run-recovery (&key source-root temporary-root quicklisp-setup jobs timeout)
   "Run the pristine probe, listing, and fallback checks with bounded processes."
   (let* ((home (user-homedir-pathname))
@@ -343,7 +359,7 @@ Parent cleanup follows process-group termination, including crashes and timeouts
           (check--fail "Autolith's pristine recovery probe is invalid."))
         (unless (and (search "No compatible retained generation is available." fallback)
                      (search (format nil "autolith version ~A"
-                                     (asdf:component-version (asdf:find-system :autolith)))
+                                     (check--committed-version source-root))
                              fallback))
           (check--print-process-log (third entries))
           (check--fail "Recovery without a retained generation failed."))))
