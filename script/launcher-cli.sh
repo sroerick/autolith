@@ -24,6 +24,7 @@ autolith_launcher_parse()
   recovery_requested=false
   from_source_requested=false
   update_requested=false
+  data_requested=false
   remaining_arguments=()
   for argument in "$@"; do
     if [[ $take_value == true ]]; then
@@ -43,7 +44,7 @@ autolith_launcher_parse()
       --recovery) recovery_requested=true ;;
       --from-source) from_source_requested=true ;;
       --permissions|--image|-i|--localgroup-handoff|--id|--input|--output|\
-      --generation|--status|--capsule|--original-argument)
+      --generation|--status|--capsule|--original-argument|--workspace)
         # Forward a value verbatim, even when it resembles a launcher flag.
         # These are arities only, not a second application option parser.
         take_value=true
@@ -59,6 +60,9 @@ autolith_launcher_parse()
       *)
         if [[ $command_seen == false && $argument == update ]]; then
           update_requested=true
+        fi
+        if [[ $command_seen == false && $argument == data ]]; then
+          data_requested=true
         fi
         command_seen=true
         remaining_arguments+=("$argument")

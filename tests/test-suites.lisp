@@ -501,6 +501,13 @@
   test-installer-checksum-verification
   test-release-scripts)
 
+(define-test-suite data-transfer
+  test-data-transfer-commands
+  test-data-transfer-roundtrip
+  test-data-transfer-workspace
+  test-data-transfer-rejection
+  test-data-transfer-rollback)
+
 (define-test-suite release-server
   test-release-server)
 

@@ -1053,6 +1053,7 @@ both update the packaged installation and exit without starting a session."
                        (main--fork-command)
                        (main--auth-command)
                        (main--update-command)
+                       (main--data-command)
                        (main--run-job-command)
                        (main-localgroup-command))
    :handler
@@ -1073,7 +1074,7 @@ both update the packaged installation and exit without starting a session."
                    *image-commit-replay-probe-argument*))
      (image-commit-replay-probe-main (second arguments)
                                      (third arguments)))
-    ((member "--worker" arguments :test #'string=)
+    ((equal arguments '("--worker"))
      (worker-main))
     (t
      (let ((command

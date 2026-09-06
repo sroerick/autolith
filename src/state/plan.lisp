@@ -232,8 +232,8 @@
       (plan--delete-path pathname ':migrate)))
   nil)
 
-(-> plan-load (configuration) (option workspace-plan))
-(defun plan-load (configuration)
+(-> plan--load-unlocked (configuration) (option workspace-plan))
+(defun plan--load-unlocked (configuration)
   "Return CONFIGURATION's workspace plan, migrating legacy state when needed."
   (let* ((directory (plan--directory-name configuration))
          (pathname (plan--pathname configuration))
@@ -254,21 +254,46 @@
            (plan--delete-path legacy-pathname ':migrate)
            legacy-plan))))))
 
-(-> plan-write (configuration workspace-plan) workspace-plan)
-(defun plan-write (configuration plan)
+(-> plan--write-unlocked (configuration workspace-plan) workspace-plan)
+(defun plan--write-unlocked (configuration plan)
   "Atomically publish PLAN for CONFIGURATION without affecting other workspaces."
   (let ((directory (plan--directory-name configuration)))
     (plan--write-path (plan--pathname configuration) plan)
     (plan--retire-matching-legacy configuration directory)
     plan))
 
-(-> plan-clear (configuration) null)
-(defun plan-clear (configuration)
+(-> plan--clear-unlocked (configuration) null)
+(defun plan--clear-unlocked (configuration)
   "Remove only CONFIGURATION's workspace plan when present."
   (let ((directory (plan--directory-name configuration)))
     (plan--delete-path (plan--pathname configuration) ':clear)
     (plan--retire-matching-legacy configuration directory))
   nil)
+
+(defvar *plan-lock* (make-recursive-lock "Autolith workspace plans")
+  "Serialize plan mutations and import rollback in this process.")
+
+(-> plan--call-with-lock (configuration function) t)
+(defun plan--call-with-lock (configuration function)
+  "Call FUNCTION under the process-local and shared plan publication locks."
+  (with-recursive-lock-held (*plan-lock*)
+    (call-with-file-lock (merge-pathnames "plans.lock" (configuration-state-root configuration))
+                         function)))
+
+(-> plan-load (configuration) (option workspace-plan))
+(defun plan-load (configuration)
+  "Read or migrate a workspace plan under the shared publication lock."
+  (plan--call-with-lock configuration (lambda () (plan--load-unlocked configuration))))
+
+(-> plan-write (configuration workspace-plan) workspace-plan)
+(defun plan-write (configuration plan)
+  "Publish a workspace plan under the shared publication lock."
+  (plan--call-with-lock configuration (lambda () (plan--write-unlocked configuration plan))))
+
+(-> plan-clear (configuration) null)
+(defun plan-clear (configuration)
+  "Remove a workspace plan under the shared publication lock."
+  (plan--call-with-lock configuration (lambda () (plan--clear-unlocked configuration))))
 
 (-> plan-update
     (configuration list &key (:explanation (option string)))

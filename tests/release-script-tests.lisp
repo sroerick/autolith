@@ -582,6 +582,7 @@ fi
 printf '%s %s\\n' \"$mode\" \"$*\"
 case \" $* \" in
   *\" fixture-update \"*) exit 76 ;;
+  *\" fixture-data-failure \"*) exit 1 ;;
 esac
 ")
     (release-script-tests--write-file
@@ -638,6 +639,13 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
         (declare (ignore output error-output))
         (test-assert (= status 76)
                      "update handoff bypasses crash recovery unchanged"))
+      (multiple-value-bind (output error-output status)
+          (release-script-tests--run
+           (list (namestring launcher) "--from-source" "data" "import" "fixture-data-failure")
+           :environment environment :ignore-error-status t)
+        (declare (ignore error-output))
+        (test-assert (and (= status 1) (not (search "/recovery/launcher.lisp" output)))
+                     "a noninteractive data failure returns without starting recovery"))
       (dolist (arguments '(("update") ("--update") ("update" "extra")))
         (release-script-tests--write-file log "")
         (multiple-value-bind (output error-output status)

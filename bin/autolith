@@ -299,6 +299,10 @@ fi
 
 restore_terminal
 
+if [[ "$data_requested" == true ]]; then
+  exit "$status"
+fi
+
 if [[ "$status" -ne 64 && "$status" -ne 76 &&
       "$status" -ne 130 && "$status" -ne 143 ]]; then
   capsule=

@@ -213,6 +213,38 @@ Papercuts use current-workspace resource URIs:
 The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
 =/papercut-close= commands remain convenient direct interfaces.
 
+** Exporting and importing data
+
+Use the same portable archive from the command line or an active session:
+
+#+BEGIN_SRC sh
+autolith data export all.sexp --all
+autolith data export project.sexp --workspace /home/al/code/project
+autolith data import project.sexp --workspace /home/al/src/project
+#+END_SRC
+
+#+BEGIN_SRC lisp
+(data.export "all.sexp" :all)
+(data.export "project.sexp" :workspace "/home/al/code/project")
+(data.import "project.sexp" :workspace "/home/al/src/project")
+#+END_SRC
+
+Export defaults to all workspaces and global data. A workspace export contains
+its conversations, memories, agendas, plans, papercuts, and associated session
+assets. The archive contains Autolith data rather than the repository files;
+clone or copy the repository separately. Credentials, configuration, executable
+image state, and caches are excluded.
+
+Import preserves stable identifiers and merges into local data. Identical data
+is skipped; a conflicting identity aborts the import before publication. For a
+single-workspace archive, =--workspace DIRECTORY= or =:workspace "DIRECTORY"=
+sets its new home directory. Without that option, workspace locations are
+preserved. Relative paths are resolved against the current working directory.
+
+Export creates a new private archive and refuses to overwrite an existing file.
+The CLI exits without starting a session: success is 0, invalid arguments are
+64, and transfer failures are 1. Both command groups provide =--help=.
+
 ** Session titles and resume
 
 A session gets an immediate local title from its first prompt or image. After the
