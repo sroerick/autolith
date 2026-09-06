@@ -1487,8 +1487,9 @@
                 (list (format nil "HOME=~A" (namestring home))
                       (format nil "XDG_CONFIG_HOME=~A"
                               (namestring (merge-pathnames "config/" home)))
+                      ;; Share compiled files, not the isolated child's source registry.
                       (format nil "XDG_CACHE_HOME=~A"
-                              (namestring (merge-pathnames "cache/" home)))
+                              (namestring (uiop:xdg-cache-home)))
                       "CL_SOURCE_REGISTRY=(:source-registry :ignore-inherited-configuration)"))
              (test-assert
               (zerop status)

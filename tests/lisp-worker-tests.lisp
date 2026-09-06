@@ -763,7 +763,7 @@
                "Start and return one marked slow evaluation job for REPL NAME."
                (let* ((marker
                         (merge-pathnames
-                         (format nil "~A-started" name) root))
+                         (format nil "~A-~A-started" name (make-identifier)) root))
                       (form
                         (format nil
                                 "(progn (with-open-file (stream ~A :direction :output :if-exists :supersede :if-does-not-exist :create) (write-string \"started\" stream)) (sleep 1) :done)"
@@ -818,8 +818,9 @@
                    (funcall after)))))
       (unwind-protect
            (progn
-             (exercise "busy-describe" "describe" '("designator" "cons"))
-             (exercise "busy-source" "source"
+             ;; These operations leave the heap intact; reuse one booted worker.
+             (exercise "busy" "describe" '("designator" "cons"))
+             (exercise "busy" "source"
                        '("name" "cons" "kind" "function"))
              (test-call-with-function-replacements
               (list
@@ -834,11 +835,11 @@
                        (sleep 1)
                        nil)))
               (lambda ()
-                (exercise "busy-reset" "reset" nil)
-                (exercise "busy-stop" "stop" nil))))
+                (exercise "busy" "reset" nil)
+                (exercise "busy" "stop" nil))))
              (let ((worker
                      (lisp-worker-pool-start
-                      pool "slow-resolution" "pristine")))
+                      pool "busy" "pristine")))
                (test-call-with-function-replacements
                 (list
                  (list 'lisp-worker-manager-worker
@@ -851,7 +852,7 @@
                          (result
                            (run-lisp "eval"
                                      "form" "(+ 20 22)"
-                                     "repl" "slow-resolution"))
+                                     "repl" "busy"))
                          (details (tool-result-details result))
                          (job (execution-job result "lisp.eval")))
                     (test-assert
