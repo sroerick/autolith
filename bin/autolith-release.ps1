@@ -33,18 +33,23 @@ public static class AutolithWindowsPath
 }
 '@
 
+function ConvertTo-AutolithSbclPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $runtimePath = [AutolithWindowsPath]::GetShortPath($Path)
+  if ($runtimePath -match '[^\x00-\x7F]') {
+    throw "Autolith cannot obtain an ASCII Windows path for SBCL from $Path."
+  }
+  return $runtimePath
+}
+
 function ConvertTo-AutolithSbclCorePath {
   param([Parameter(Mandatory = $true)][string]$Path)
   $parent = Split-Path -Parent $Path
   $leaf = Split-Path -Leaf $Path
-  $shortParent = [AutolithWindowsPath]::GetShortPath($parent)
-  $runtimePath = Join-Path $shortParent $leaf
-  if ($runtimePath -match '[^\x00-\x7F]') {
-    throw "Autolith cannot obtain an ASCII Windows path for SBCL core images below $parent."
-  }
-  return $runtimePath
+  $shortParent = ConvertTo-AutolithSbclPath $parent
+  return Join-Path $shortParent $leaf
 }
-$releaseRoot = Split-Path -Parent $PSScriptRoot
+$releaseRoot = ConvertTo-AutolithSbclPath (Split-Path -Parent $PSScriptRoot)
 $sourceRoot = Join-Path $releaseRoot 'libexec\autolith'
 $runtime = Join-Path $releaseRoot 'runtime\sbcl.exe'
 $runtimeSource = Join-Path $releaseRoot 'libexec\sbcl-source'
@@ -59,8 +64,8 @@ $native = Join-Path $releaseRoot 'native'
 $fff = Get-ChildItem -LiteralPath $native -Filter '*fff*.dll' -File | Select-Object -First 1
 $color = Get-ChildItem -LiteralPath $native -Filter '*colorlisp*.dll' -File | Select-Object -First 1
 if (-not $fff -or -not $color) { throw 'Autolith release failed: bundled native libraries are missing.' }
-$env:AUTOLITH_FFF_LIBRARY = $fff.FullName
-$env:COLORLISP_NATIVE_LIBRARY = $color.FullName
+$env:AUTOLITH_FFF_LIBRARY = ConvertTo-AutolithSbclPath $fff.FullName
+$env:COLORLISP_NATIVE_LIBRARY = ConvertTo-AutolithSbclPath $color.FullName
 $env:PATH = "$native;$env:PATH"
 $env:GIT_OPTIONAL_LOCKS = '0'
 if ($args.Count -gt 0 -and $args[0] -eq '--autolith-release-probe') {
