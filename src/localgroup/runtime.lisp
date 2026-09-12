@@ -443,6 +443,7 @@ forced shutdown does; the conversation stays resumable."
                               attached-p))))))
                (unless attached-p
                  (return-from localgroup--serve-attachment nil))
+               (application-sync-window-title application)
                (unless (eq mode ':read-only)
                  (localgroup--note-controller-attached session))
                (image-daemon:relay-read-attachment

@@ -390,6 +390,7 @@
              (declare (ignore active-ui))
              (unwind-protect
                   (progn
+                    (application-sync-window-title application)
                     (application-present application
                                          (application-banner application))
                     (let ((update-notice

@@ -2364,12 +2364,47 @@ sources keeps the tests deterministic under an interactive terminal."
           (sb-thread:release-mutex lock)))))
   nil)
 
+(-> test-terminal-window-title () null)
+(defun test-terminal-window-title ()
+  "Test OSC 0 window-title output and control sanitization."
+  (let ((title-sequence
+          (format nil "~C]0;~~/src~C~C"
+                  *terminal-escape-character*
+                  *terminal-escape-character*
+                  #\\))
+        (terminal (make-instance 'recording-terminal :columns 80)))
+    (test-assert
+     (string= (terminal--window-title-sequence "~/src") title-sequence)
+     "window title uses OSC 0 with ST terminator")
+    (setf (terminal-interactive-p terminal) t)
+    (test-assert
+     (and (terminal-write-window-title terminal "~/src")
+          (equal (recording-terminal-chunks terminal)
+                 (list title-sequence)))
+     "an interactive window title writes exactly once")
+    (recording-terminal-reset terminal)
+    (test-assert
+     (and (terminal-write-window-title
+           terminal
+           (format nil "foo~Cbar~C" #\Newline *terminal-escape-character*))
+          (equal (recording-terminal-chunks terminal)
+                 (list (terminal--window-title-sequence "foo bar"))))
+     "window title sanitizes newlines and escape characters")
+    (recording-terminal-reset terminal)
+    (setf (terminal-interactive-p terminal) nil)
+    (test-assert
+     (and (not (terminal-write-window-title terminal "~/src"))
+          (null (recording-terminal-chunks terminal)))
+     "a noninteractive terminal emits no window title"))
+  nil)
+
 (-> run-terminal-tests () boolean)
 (defun run-terminal-tests ()
   "Run focused terminal seam tests and return true when every assertion succeeds."
   (test-terminal-primary-screen-controls)
   (test-terminal-nonblocking-lock-interrupt)
   (test-terminal-prompt-markers)
+  (test-terminal-window-title)
   (test-terminal-finalized-batch)
   (test-terminal-untrusted-text)
   (test-terminal-finalized-scrollback)

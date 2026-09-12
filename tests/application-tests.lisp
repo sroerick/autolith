@@ -5291,6 +5291,32 @@
                  "non-interactive pickers demand an explicit identifier"))
   nil)
 
+(-> test-application-window-title () null)
+(defun test-application-window-title ()
+  "Test that a started UI writes autolith - workspace as OSC 0."
+  (let* ((configuration (test-configuration))
+         (terminal (make-instance 'recording-terminal :columns 80))
+         (application
+           (make-instance 'application
+                          :configuration configuration
+                          :tool-registry (make-default-tool-registry)
+                          :ui (terminal-ui-create :terminal terminal)))
+         (title (application--window-title application)))
+    (test-assert
+     (and title
+          (uiop:string-prefix-p "autolith - " title)
+          (not (application-sync-window-title application)))
+     "an unstarted UI writes no window title")
+    (with-terminal-ui (ui (application-ui application))
+      (declare (ignore ui))
+      (recording-terminal-reset terminal)
+      (test-assert
+       (and (application-sync-window-title application)
+            (equal (recording-terminal-chunks terminal)
+                   (list (terminal--window-title-sequence title))))
+       "a started UI writes autolith - workspace as the window title")))
+  nil)
+
 (-> test-working-directory-switch () null)
 (defun test-working-directory-switch ()
   "Test transactional application, process, and worker workspace changes."
@@ -8243,6 +8269,7 @@
   (test-late-steering-promotion)
   (test-application-conversation-title-refresh)
   (test-conversation-picker)
+  (test-application-window-title)
   (test-working-directory-switch)
   (test-application-busy-conversation-resume)
   (test-application-fresh-conversation-lease-collision)

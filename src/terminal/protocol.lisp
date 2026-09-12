@@ -400,6 +400,24 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     t))
 
 
+(-> terminal--window-title-sequence (string) string)
+(defun terminal--window-title-sequence (title)
+  "Return Autolith's OSC 0 sequence for TITLE."
+  (format nil "~C]0;~A~C~C"
+          *terminal-escape-character*
+          title
+          *terminal-escape-character*
+          #\\))
+
+(-> terminal-write-window-title (terminal string) boolean)
+(defun terminal-write-window-title (terminal title)
+  "Write and flush one OSC 0 TITLE for interactive TERMINAL, if applicable."
+  (let ((safe (sanitize-text title :single-line-p t :replacement-character nil)))
+    (when (and (terminal-interactive-p terminal)
+               (non-empty-string-p safe))
+      (terminal--write terminal (terminal--window-title-sequence safe))
+      (terminal-flush terminal)
+      t)))
 ;;;; -- Presentation Modes --
 
 (defgeneric terminal-ui-fullscreen-p (ui)

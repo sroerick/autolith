@@ -507,6 +507,7 @@
   test-terminal-primary-screen-controls
   test-terminal-nonblocking-lock-interrupt
   test-terminal-prompt-markers
+  test-terminal-window-title
   test-terminal-finalized-batch
   test-terminal-untrusted-text
   test-terminal-finalized-scrollback
@@ -625,6 +626,7 @@
   test-late-steering-promotion
   test-application-conversation-title-refresh
   test-conversation-picker
+  test-application-window-title
   test-working-directory-switch
   test-application-busy-conversation-resume
   test-application-fresh-conversation-lease-collision

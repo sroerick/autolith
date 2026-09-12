@@ -1528,6 +1528,46 @@ command replaced the active conversation."
          :cause cause
          :rollback-cause rollback-cause))
 
+(-> application--abbreviated-directory ((option string)) (option string))
+(defun application--abbreviated-directory (namestring)
+  "Return NAMESTRING with the user home directory abbreviated to a tilde."
+  (when (non-empty-string-p namestring)
+    (let ((home (namestring (user-homedir-pathname))))
+      (if (and (uiop:string-prefix-p home namestring)
+               (> (length namestring) (length home)))
+          (concatenate 'string "~/" (subseq namestring (length home)))
+          namestring))))
+
+(-> application--window-title-path (string) string)
+(defun application--window-title-path (namestring)
+  "Return NAMESTRING abbreviated and without a trailing slash."
+  (let* ((abbreviated (or (application--abbreviated-directory namestring)
+                          namestring))
+         (end (length abbreviated)))
+    (if (and (> end 1)
+             (char= (char abbreviated (1- end)) #\/))
+        (subseq abbreviated 0 (1- end))
+        abbreviated)))
+
+(-> application--window-title (application) (option string))
+(defun application--window-title (application)
+  "Return APPLICATION's terminal window title from its workspace directory."
+  (when (slot-boundp application 'configuration)
+    (format nil "autolith - ~A"
+            (application--window-title-path
+             (namestring
+              (configuration-working-directory
+               (application-configuration application)))))))
+
+(-> application-sync-window-title (application) boolean)
+(defun application-sync-window-title (application)
+  "Write APPLICATION's workspace to the interactive terminal window title."
+  (let ((ui (and (slot-boundp application 'ui)
+                 (application-ui application)))
+        (title (application--window-title application)))
+    (when (and ui title)
+      (terminal-write-window-title (terminal-ui-terminal ui) title))))
+
 (-> application-set-working-directory
     (application (or pathname string))
     pathname)
@@ -1662,6 +1702,7 @@ command replaced the active conversation."
          :stage failure-stage
          :cause failure
          :rollback-cause (nreverse rollback-failures)))
+      (application-sync-window-title application)
       directory)))
 
 (-> application--conversation-input-history
