@@ -255,6 +255,11 @@ such as =/compact [on|off]=. Type the command name and a space to list the
 individual options in either syntax. Aliases such as =/exit= for =/quit= stay
 out of the menu until the typed text no longer matches the canonical name.
 
+Type =@= in prose or inside a Lisp string to fuzzy-search workspace files
+through fff. Accepting a match inserts the path and drops the =@=.
+Directories keep a trailing slash so you can keep completing. A completed
+file stays in the draft.
+
 Use =//= to send a message beginning with a literal slash.
 
 The clanker sees both your source input and its evaluated result apart

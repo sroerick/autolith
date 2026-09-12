@@ -139,11 +139,13 @@ offered only while the typed prefix no longer matches its primary."
     (&key (:terminal terminal) (:editor (option line-editor)) (:prompt string)
           (:placeholder string) (:completions list) (:fullscreen-p boolean)
           (:completion-function (option function))
+          (:completion-root (option pathname))
+          (:path-search-function (option function))
           (:clock-function function))
     terminal-ui)
 (defun terminal-ui-create
     (&key terminal editor (prompt "> ") (placeholder "") completions
-          completion-function fullscreen-p
+          completion-function completion-root path-search-function fullscreen-p
           (clock-function #'terminal-ui--monotonic-seconds))
   "Create an inline or opt-in fullscreen UI for interactive TERMINAL."
   (unless (typep terminal 'terminal)
@@ -159,6 +161,16 @@ offered only while the typed prefix no longer matches its primary."
   (unless (typep completion-function '(option function))
     (error 'terminal-error
            :message "The completion provider must be a function or NIL."
+           :operation ':create-ui
+           :cause nil))
+  (unless (typep completion-root '(option pathname))
+    (error 'terminal-error
+           :message "The completion root must be a pathname or NIL."
+           :operation ':create-ui
+           :cause nil))
+  (unless (typep path-search-function '(option function))
+    (error 'terminal-error
+           :message "The path search provider must be a function or NIL."
            :operation ':create-ui
            :cause nil))
   (let ((live-region
@@ -182,6 +194,10 @@ offered only while the typed prefix no longer matches its primary."
                    :placeholder placeholder
                    :completions completions
                    :completion-function completion-function
+                   :completion-root
+                   (and completion-root
+                        (uiop:ensure-directory-pathname completion-root))
+                   :path-search-function path-search-function
                    :completion-selector
                    (make-selector
                     :visible-count *terminal-ui-visible-completions*
@@ -574,25 +590,48 @@ the draft is exact."
                                            :test #'string-equal))))))
                matches)))
 
+(-> terminal-ui--completion-root (terminal-ui) pathname)
+(defun terminal-ui--completion-root (ui)
+  "Return UI's path-completion workspace directory."
+  (or (terminal-ui-completion-root ui)
+      (uiop:getcwd)))
+
+(-> terminal-ui--matching-path-completions (terminal-ui string (integer 0)) list)
+(defun terminal-ui--matching-path-completions (ui text cursor)
+  "Return workspace path completions for the token at CURSOR in TEXT."
+  (multiple-value-bind (start end token)
+      (terminal-path-token text cursor)
+    (when (and token (terminal-path-token-p token))
+      (terminal-path-completion-entries
+       (terminal-ui--completion-root ui)
+       token
+       :token-start start
+       :token-end end
+       :search-function (terminal-ui-path-search-function ui)))))
+
 (-> terminal-ui--matching-completions (terminal-ui) list)
 (defun terminal-ui--matching-completions (ui)
-  "Return registered operation completions extending the current name prefix.
+  "Return command, operation, or workspace path completions for UI's input.
 
 Entries stay hidden behind their :PRIMARY entry while that entry still matches,
 so finite options and aliases appear once the typed text passes the canonical
-name."
-  (let ((text (line-editor-text (terminal-ui-editor ui)))
-        (completions (terminal-ui--current-completions ui)))
-    (if (and (terminal-interactive-p (terminal-ui-terminal ui))
-             completions
-             (terminal-ui--operation-completion-prefix-p text))
-        (terminal-ui--shadowed-completions
-         (remove-if-not
-          (lambda (entry)
-            (uiop:string-prefix-p (string-downcase text)
-                                  (string-downcase (getf entry :name))))
-          completions))
-        nil)))
+name. Path completions apply when no command prefix matches."
+  (unless (terminal-interactive-p (terminal-ui-terminal ui))
+    (return-from terminal-ui--matching-completions nil))
+  (let* ((editor (terminal-ui-editor ui))
+         (text (line-editor-text editor))
+         (cursor (line-editor-cursor editor))
+         (command-matches
+           (and (terminal-ui--operation-completion-prefix-p text)
+                (terminal-ui--shadowed-completions
+                 (remove-if-not
+                  (lambda (entry)
+                    (uiop:string-prefix-p (string-downcase text)
+                                          (string-downcase (getf entry :name))))
+                  (terminal-ui--current-completions ui))))))
+    (if command-matches
+        command-matches
+        (terminal-ui--matching-path-completions ui text cursor))))
 
 (-> terminal-ui--reconcile-completions (terminal-ui) list)
 (defun terminal-ui--reconcile-completions (ui)
@@ -781,13 +820,26 @@ name, tally, and description."
   (clinedi:line-editor-restore editor state)
   nil)
 
+(-> terminal-ui--path-token-present-p (terminal-ui) boolean)
+(defun terminal-ui--path-token-present-p (ui)
+  "Return true when the cursor sits on an @ workspace path token."
+  (let ((editor (terminal-ui-editor ui)))
+    (and (nth-value 2
+                    (terminal-path-token (line-editor-text editor)
+                                         (line-editor-cursor editor)))
+         t)))
+
 (-> terminal-ui--completion-offered-p (terminal-ui) boolean)
 (defun terminal-ui--completion-offered-p (ui)
-  "Return true when UI may paint or begin command completion."
+  "Return true when UI may paint or begin completion.
+
+History traversal hides command suggestions so arrows keep moving through
+recalled drafts. An @ path token still offers file completion."
   (or (terminal-ui-completion-active-p ui)
       (and (not (terminal-ui-completion-dismissed-p ui))
-           (not (terminal-ui--editor-history-navigating-p
-                 (terminal-ui-editor ui))))))
+           (or (not (terminal-ui--editor-history-navigating-p
+                     (terminal-ui-editor ui)))
+               (terminal-ui--path-token-present-p ui)))))
 
 
 (-> terminal-ui-completion-menu-present-p (terminal-ui) boolean)
@@ -809,17 +861,42 @@ name, tally, and description."
     (terminal-ui--reconcile-completions ui)
     (terminal-ui--choice-rows (terminal-ui-completion-selector ui) row-width)))
 
+(-> terminal-ui--accept-path-completion (terminal-ui list) null)
+(defun terminal-ui--accept-path-completion (ui entry)
+  "Replace ENTRY's original path token in UI's input with its completed name."
+  (let* ((editor (terminal-ui-editor ui))
+         (original (or (terminal-ui-completion-prefix ui)
+                       (line-editor-text editor)))
+         (start (getf entry :token-start))
+         (end (getf entry :token-end))
+         (insert (getf entry :name)))
+    (when (and (integerp start)
+               (integerp end)
+               (<= 0 start end (length original))
+               (stringp insert))
+      (line-editor-set-text
+       editor
+       (sanitize-text
+        (concatenate 'string
+                     (subseq original 0 start)
+                     insert
+                     (subseq original end)))
+       :cursor (+ start (length insert)))))
+  nil)
+
 (-> terminal-ui--accept-completion (terminal-ui list) null)
 (defun terminal-ui--accept-completion (ui entry)
-  "Replace UI's input with ENTRY's name, adding a space when it takes an argument."
-  (line-editor-set-text
-   (terminal-ui-editor ui)
-   (sanitize-text
-    (concatenate 'string
-                 (getf entry :name)
-                 (if (getf entry :argument)
-                     " "
-                     ""))))
+  "Apply ENTRY to UI's input as a command name or a spliced path token."
+  (if (eq (getf entry :kind) ':path)
+      (terminal-ui--accept-path-completion ui entry)
+      (line-editor-set-text
+       (terminal-ui-editor ui)
+       (sanitize-text
+        (concatenate 'string
+                     (getf entry :name)
+                     (if (getf entry :argument)
+                         " "
+                         "")))))
   nil)
 
 (-> terminal-ui--begin-completion (terminal-ui) null)
@@ -877,8 +954,13 @@ name, tally, and description."
                             '(:up :down :complete :complete-previous
                               :submit :escape)))
           (return (values nil nil)))
-      (when (member event '(:up :down :complete :complete-previous))
-        (terminal-ui--begin-completion ui))
+        (when (and (member event '(:up :down))
+                   (not (terminal-ui-completion-active-p ui))
+                   (terminal-ui--editor-history-navigating-p
+                    (terminal-ui-editor ui)))
+          (return (values nil nil)))
+        (when (member event '(:up :down :complete :complete-previous))
+          (terminal-ui--begin-completion ui))
       (multiple-value-bind (selector-action entry)
           (selector-handle-event selector event)
         (case selector-action
@@ -887,10 +969,12 @@ name, tally, and description."
            (terminal-ui--repaint-live ui)
            (values :changed nil))
           (:accept
-           (terminal-ui--end-completion ui)
            (terminal-ui--accept-completion ui entry)
+           (terminal-ui--end-completion ui)
            (cond
-             ((getf entry :argument)
+             ((or (getf entry :argument)
+                  (eq (getf entry :kind) ':path)
+                  (not (getf entry :submit-p t)))
               (terminal-ui--repaint-live ui)
               (values :changed nil))
              (t
@@ -3159,3 +3243,4 @@ thread."
               (when (member action '(:changed :cleared :submit :queue))
                 (terminal-ui--repaint-live ui))
               (values action payload)))))))
+

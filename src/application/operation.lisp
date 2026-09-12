@@ -606,15 +606,71 @@ options appear only after the typed text passes the function name."
               (group "Local evaluation" 'application-local-operation)
               (group "Tools" 'application-tool-operation)))))
 
+(-> application-path--file-result-paths (string) list)
+(defun application-path--file-result-paths (text)
+  "Return relative paths from one rendered fff file-search TEXT."
+  (loop for line in (uiop:split-string text :separator '(#\Newline))
+        for marker = (search " [" line)
+        when (and marker
+                  (not (search "indexed; page" line))
+                  (not (uiop:string-prefix-p "next-page:" line)))
+          collect (subseq line 0 marker)))
+
+(-> application-path--query-match-p (string string) boolean)
+(defun application-path--query-match-p (path query)
+  "Return true when PATH contains QUERY as a contiguous case-insensitive substring."
+  (or (zerop (length query))
+      (and (search (string-downcase query) (string-downcase path))
+           t)))
+
+(-> application-path-search-files
+    (application string &key (:limit (integer 1)))
+    list)
+(defun application-path-search-files
+    (application query &key (limit *terminal-path-completion-limit*))
+  "Return ranked workspace-relative paths for QUERY through fff.
+
+fff's own fuzzy matcher is a loose subsequence. Keep its ranking, then drop
+paths that do not contain QUERY as a contiguous substring."
+  (let* ((registry (application-tool-registry application))
+         (tool (and registry (tool-registry-find registry "search" "files"))))
+    (unless (typep tool 'search-tool)
+      (return-from application-path-search-files '()))
+    (handler-case
+        (let ((paths
+                (remove-if-not
+                 (lambda (path)
+                   (application-path--query-match-p path query))
+                 (application-path--file-result-paths
+                  (search-worker-request
+                   (search-tool-engine tool)
+                   (application-configuration application)
+                   :operation ':files
+                   :arguments (list query
+                                    :glob-p nil
+                                    :page 0
+                                    :page-size *search-maximum-result-limit*))))))
+          (subseq paths 0 (min limit (length paths))))
+      (error ()
+        '()))))
+
 (-> application-operation-connect-ui (application) application)
 (defun application-operation-connect-ui (application)
-  "Connect APPLICATION's UI to its dynamic per-session operation completions."
+  "Connect APPLICATION's UI to its dynamic per-session operation
+ and fff path completions."
   (let ((ui (and (slot-boundp application 'ui)
                  (application-ui application))))
     (when (typep ui 'terminal-ui)
       (setf (terminal-ui-completion-function ui)
             (lambda ()
-              (application-operation-completion-entries application)))))
+              (application-operation-completion-entries application))
+            (terminal-ui-path-search-function ui)
+            (lambda (query)
+              (application-path-search-files application query)))
+      (when (slot-boundp application 'configuration)
+        (setf (terminal-ui-completion-root ui)
+              (configuration-working-directory
+               (application-configuration application))))))
   application)
 
 (defmethod initialize-instance :after ((application application) &key)

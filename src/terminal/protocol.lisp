@@ -126,6 +126,20 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :type (option function)
     :documentation
     "Optional function returning the current completion entries on demand.")
+   (completion-root
+    :initarg :completion-root
+    :initform nil
+    :accessor terminal-ui-completion-root
+    :type (option pathname)
+    :documentation
+    "Workspace directory used for path completion. NIL uses the process working directory.")
+   (path-search-function
+    :initarg :path-search-function
+    :initform nil
+    :accessor terminal-ui-path-search-function
+    :type (option function)
+    :documentation
+    "Optional function of QUERY returning ranked workspace-relative paths.")
    (completion-selector
     :initarg :completion-selector
     :reader terminal-ui-completion-selector

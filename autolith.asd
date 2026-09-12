@@ -176,6 +176,7 @@
                              (:file "terminal/layout")
                              (:file "terminal/stream")
                              (:file "localgroup/terminal")
+                             (:file "terminal/path-completion")
                              (:file "terminal/ui")
                              (:file "terminal/fullscreen")
                              (:file "terminal/boot-screen")
@@ -332,3 +333,4 @@
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (uiop:symbol-call '#:autolith '#:run-tests)))
+

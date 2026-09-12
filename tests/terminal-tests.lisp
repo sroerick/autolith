@@ -1864,6 +1864,189 @@
   nil)
 
 
+(-> test-terminal-path-completion-write (pathname string) null)
+(defun test-terminal-path-completion-write (pathname contents)
+  "Write CONTENTS to PATHNAME, creating parent directories as needed."
+  (ensure-directories-exist pathname)
+  (with-open-file (stream pathname :direction ':output :if-exists ':supersede)
+    (write-string contents stream))
+  nil)
+
+(-> test-terminal-path-completion () null)
+(defun test-terminal-path-completion ()
+  "Test @ workspace file completion in prose and Lisp drafts."
+  (let ((root
+          (uiop:ensure-directory-pathname
+           (merge-pathnames
+            (format nil "autolith-path-completion-~A/" (make-identifier))
+            (uiop:temporary-directory)))))
+    (unwind-protect
+         (let* ((docs (merge-pathnames "docs/" root))
+                (git (merge-pathnames ".git/" root)))
+           (test-terminal-path-completion-write
+            (merge-pathnames "documentation.org" docs) "docs")
+           (test-terminal-path-completion-write
+            (merge-pathnames "guide.org" docs) "guide")
+           (test-terminal-path-completion-write
+            (merge-pathnames "src/main.lisp" root) "(defpackage #:demo)")
+           (test-terminal-path-completion-write
+            (merge-pathnames "config" git) "gitdir")
+           (multiple-value-bind (start end token)
+               (terminal-path-token "see @docs/docu please" 13)
+             (test-assert (and (eql start 4) (eql end 14) (string= token "@docs/docu"))
+                          "@ tokens are bounded by whitespace"))
+           (multiple-value-bind (start end token)
+               (terminal-path-token "(prompt \"read @docs/g\")" 20)
+             (test-assert (and (eql start 14) (eql end 21) (string= token "@docs/g"))
+                          "@ tokens stop at Lisp string quotes"))
+           (test-assert (null (nth-value 2 (terminal-path-token "see docs" 3)))
+                        "a cursor in whitespace has no path token")
+           (test-assert (null (nth-value 2 (terminal-path-token "docs/g" 5)))
+                        "a path without @ does not complete")
+           (let ((names
+                   (mapcar (lambda (entry) (getf entry :name))
+                           (terminal-path-completion-entries root "@docs/docu"))))
+             (test-assert (equal names '("docs/documentation.org"))
+                          "accepting @ inserts the path without @"))
+           (test-assert
+            (equal '("src/model-selection.lisp" "docs/guide.org")
+                   (application-path--file-result-paths
+                    (format nil
+                            "2 results shown, 2 matched, 80 indexed; page 0.~%src/model-selection.lisp [git:clean] [12 bytes]~%docs/guide.org [40 bytes]~%next-page: 1~%")))
+            "fff result text yields relative paths")
+           (test-assert (application-path--query-match-p "docs/guide.org" "guide")
+                        "a contiguous query matches the path")
+           (test-assert (not (application-path--query-match-p
+                              "src/configuration/directory.lisp" "guide"))
+                        "a loose subsequence is not a path match")
+           (test-assert
+            (equal '("docs/guide.org")
+                   (mapcar (lambda (entry) (getf entry :name))
+                           (terminal-path-completion-entries
+                            root
+                            "@g"
+                            :search-function
+                            (lambda (query)
+                              (and (string= query "g")
+                                   '("docs/guide.org"))))))
+            "a search function ranks all files for the @ query")
+           (test-assert (null (terminal-path-completion-entries root "/docs/g"))
+                        "a slash path without @ does not complete")
+           (let ((entries (terminal-path-completion-entries root "@"))
+                 (names nil))
+             (setf names (mapcar (lambda (entry) (getf entry :name)) entries))
+             (test-assert (member "docs/" names :test #'string=)
+                          "@ lists workspace directories with a trailing slash")
+             (test-assert (not (find ".git/" names :test #'string=))
+                          "path completion skips .git")
+             (test-assert (every (lambda (entry)
+                                   (eq (getf entry :kind) ':path))
+                                 entries)
+                          "path entries are insert-only"))
+           (let* ((terminal (make-instance 'recording-terminal :columns 72))
+                  (ui (terminal-ui-create
+                       :terminal terminal
+                       :completion-root root
+                       :completions
+                       '((:name "/help" :argument nil
+                          :description "show this reference")))))
+             (with-terminal-ui (active-ui ui)
+               (terminal-ui-set-input active-ui "/help")
+               (test-assert
+                (find "/help"
+                      (terminal-ui--matching-completions active-ui)
+                      :key (lambda (entry) (getf entry :name))
+                      :test #'string=)
+                "slash commands still win over path completion")
+               (terminal-ui-set-input active-ui "/docs/docu")
+               (test-assert (null (terminal-ui--matching-completions active-ui))
+                            "/docs/docu without @ is not a file mention")
+               (terminal-ui-set-input active-ui "read @docs/g and stop")
+               (line-editor-set-text
+                (terminal-ui-editor active-ui)
+                "read @docs/g and stop"
+                :cursor 11)
+               (test-assert
+                (equal '("docs/guide.org")
+                       (mapcar (lambda (entry) (getf entry :name))
+                               (terminal-ui--matching-completions active-ui)))
+                "@ mentions complete in the middle of a draft")
+               (terminal-ui-process-event active-ui :complete)
+               (test-assert
+                (string= (line-editor-text (terminal-ui-editor active-ui))
+                         "read docs/guide.org and stop")
+                "accepting an @ mention drops @ and keeps the rest")
+               (terminal-ui--end-completion active-ui)
+               (selector-set-items (terminal-ui-completion-selector active-ui) nil)
+               (let ((source "(prompt \"read @docs/g\")"))
+                 (line-editor-set-text
+                  (terminal-ui-editor active-ui)
+                  source
+                  :cursor 20)
+                 (test-assert
+                  (equal '("docs/guide.org")
+                         (mapcar (lambda (entry) (getf entry :name))
+                                 (terminal-ui--matching-completions active-ui)))
+                  "@ mentions complete inside a Lisp prompt form")
+                 (terminal-ui-process-event active-ui :complete)
+                 (test-assert
+                  (string= (line-editor-text (terminal-ui-editor active-ui))
+                           "(prompt \"read docs/guide.org\")")
+                  "accepting @ inside Lisp drops @ and keeps the quotes"))
+               (terminal-ui-set-input active-ui "(resource.read :uri")
+               (test-assert (null (terminal-ui--matching-completions active-ui))
+                            "operation arguments still do not complete as paths"))))
+      (platform-delete-directory-tree *platform* root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
+
+
+(-> test-terminal-path-completion-history () null)
+(defun test-terminal-path-completion-history ()
+  "Test @ file completion on a recalled history draft."
+  (let* ((terminal (make-instance 'recording-terminal :columns 72))
+         (editor (line-editor-create
+                  :history '("see docs" "see @g")
+                  :history-limit 8))
+         (ui (terminal-ui-create
+              :terminal terminal
+              :editor editor
+              :path-search-function
+              (lambda (query)
+                (list (format nil "hit-~A" query))))))
+    (with-terminal-ui (active-ui ui)
+      (terminal-ui-process-event active-ui :history-previous)
+      (test-assert (string= (line-editor-text editor) "see @g")
+                   "history recall restores the newest draft")
+      (test-assert (terminal-ui--editor-history-navigating-p editor)
+                   "history recall stays in traversal")
+      (test-assert (terminal-ui--path-token-present-p active-ui)
+                   "the cursor on a recalled @ token is a path token")
+      (test-assert (terminal-ui--completion-offered-p active-ui)
+                   "an @ token offers completion during history traversal")
+      (test-assert
+       (equal '("hit-g")
+              (mapcar (lambda (entry) (getf entry :name))
+                      (terminal-ui--matching-completions active-ui)))
+       "recalled @ tokens still search workspace files")
+      (terminal-ui-process-event active-ui :up)
+      (test-assert (string= (line-editor-text editor) "see docs")
+                   "arrows keep moving through history while @ completion is passive")
+      (terminal-ui-process-event active-ui '(:insert " @g"))
+      (test-assert (not (terminal-ui--editor-history-navigating-p editor))
+                   "typing on a recalled draft leaves history traversal")
+      (test-assert
+       (equal '("hit-g")
+              (mapcar (lambda (entry) (getf entry :name))
+                      (terminal-ui--matching-completions active-ui)))
+       "@ completion works after editing a recalled draft")
+      (terminal-ui-process-event active-ui :complete)
+      (test-assert (string= (line-editor-text editor) "see docs hit-g")
+                   "tab accepts an @ mention on an edited history draft")))
+  nil)
+
+
 
 
 (-> test-terminal-modal-selection () null)
@@ -2208,6 +2391,8 @@ sources keeps the tests deterministic under an interactive terminal."
   (test-terminal-stream-update)
   (test-terminal-command-completion)
   (test-terminal-lisp-operation-completion)
+  (test-terminal-path-completion)
+  (test-terminal-path-completion-history)
   (test-terminal-modal-selection)
   (test-terminal-modal-default-polling)
   (test-terminal-modal-resize)
@@ -2289,3 +2474,4 @@ sources keeps the tests deterministic under an interactive terminal."
 (defun prompt-recording-terminal-write-count (terminal)
   "Return the number of captured prompt marker writes."
   (length (prompt-recording-terminal-chunks terminal)))
+
