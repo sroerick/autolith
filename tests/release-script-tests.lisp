@@ -3082,6 +3082,33 @@ esac
     (test-assert (not started-p) "update never falls through to a session"))
   nil)
 
+(-> release-script-tests--models-command () null)
+(defun release-script-tests--models-command ()
+    "Verify the non-interactive model catalog command."
+  (let* ((output (with-output-to-string (*standard-output*)
+                    (main-dispatch '("models"))))
+         (models (remove-if (lambda (line)
+                              (zerop (length line)))
+                              (uiop:split-string output :separator #(#\Newline))))
+         (sorted (sort (copy-list models) #'string<)))
+    (test-assert
+     (equal models sorted)
+     "models output is sorted")
+    (test-assert
+     (equal (length models)
+            (length (remove-duplicates models :test #'string=)))
+     "models output is deduplicated")
+    (test-assert
+     (member "gpt-5.6-luna" models :test #'string=)
+     "models includes catalog entries without authentication")
+    (test-assert
+     (every (lambda (model)
+              (and (plusp (length model))
+                   (not (find #\Return model))))
+            models)
+     "models emits one plain identifier per line"))
+  nil)
+
 (-> test-release-scripts () null)
 (defun test-release-scripts ()
   "Test shell bootstrap boundaries through Common Lisp fixtures."
@@ -3096,6 +3123,7 @@ esac
               (release-script-tests--syntax source-root)
               (release-script-tests--launcher-preflight source-root)
               (release-script-tests--update-dispatch)
+              (release-script-tests--models-command)
               (release-script-tests--bootstrap-dependency-order source-root root)
               (release-script-tests--darwin-fff-library-path
                source-root root)

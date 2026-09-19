@@ -250,6 +250,7 @@
   "The paths and runtime one launch works with."
   source-root sbcl data-root state-root
   recovery-core recovery-manifest active-core active-manifest
+  restart-pointer
   crash-pointer recovery-session-pointer)
 
 (defun launcher-environment-pathname (variable default)
@@ -286,6 +287,9 @@
                                      state-root)
      :recovery-session-pointer
      (merge-pathnames (format nil "recovery-session-pointers/launcher-~D.sexp" process-id)
+                      state-root)
+     :restart-pointer
+     (merge-pathnames (format nil "restart-pointers/launcher-~D.sexp" process-id)
                       state-root))))
 
 (defun launcher-run (command &key (output t) (error-output t))
@@ -440,12 +444,82 @@
          (run-source))))))
 
 
+(defun launcher-restart-pending-p (context)
+  "Return true when the active process left an exact-heap restart envelope."
+  (probe-file (launcher-context-restart-pointer context)))
+
+(defun launcher-restart-generation-core (context)
+  "Return the published core named by a complete restart envelope, or NIL."
+  (let ((pointer (launcher-context-restart-pointer context)))
+    (when (probe-file pointer)
+      (handler-case
+          (with-open-file (stream pointer :direction :input :external-format :utf-8)
+            (let* ((*read-eval* nil)
+                   (end (list :end))
+                   (record (read stream nil end))
+                   (extra (read stream nil end)))
+              (when (and (not (eq record end))
+                         (eq extra end)
+                         (consp record)
+                         (listp (rest record))
+                         (eq (first record) :autolith-restart))
+                (let ((identifier (getf (rest record) :identifier)))
+                  (when (and (stringp identifier)
+                             (plusp (length identifier))
+                             (every (lambda (character)
+                                     (or (alphanumericp character)
+                                         (char= character #\-)))
+                                    identifier))
+                    (merge-pathnames
+                     (format nil "generations/~A/autolith.core" identifier)
+                     (launcher-context-data-root context)))))))
+        (error () nil)))))
+
+(defun launcher-publish-restart (context)
+  "Publish the saved exact heap described by CONTEXT's restart envelope."
+  (launcher-run
+   (launcher-script-command
+    context "script/restart-publisher.lisp"
+    (uiop:native-namestring (launcher-context-restart-pointer context)))))
+
+(defun launcher-run-with-restarts (context request)
+  "Run REQUEST, publishing and booting every exact-heap restart core.
+
+The envelope remains until the saved core has returned successfully. A failed
+boot therefore leaves the generation identity available to recovery."
+  (loop with saved-core = nil
+        for status =
+          (if saved-core
+              (launcher-run
+               (apply #'launcher-core-command
+                      context saved-core
+                      (launcher-request-arguments request)))
+              (launcher-run-active context request))
+        do (cond
+             ((and saved-core (not (zerop status)))
+              (return status))
+             ((and (zerop status) (launcher-restart-pending-p context))
+              (let ((core (launcher-restart-generation-core context)))
+                (cond
+                  ((and saved-core core (equal core saved-core))
+                   (ignore-errors
+                     (delete-file (launcher-context-restart-pointer context)))
+                   (return status))
+                  ((and core (zerop (launcher-publish-restart context)))
+                   (setf saved-core core)
+                   (launcher-note "Resuming the exact saved session."))
+                  (t
+                   (return 1)))))
+             (t
+              (return status)))))
+
 ;;;; -- Crash Pointers --
 
 (defun launcher-prepare-pointers (context)
   "Create the pointer directories, clear stale pointers, and export their paths."
   (dolist (pointer (list (launcher-context-crash-pointer context)
-                         (launcher-context-recovery-session-pointer context)))
+                         (launcher-context-recovery-session-pointer context)
+                         (launcher-context-restart-pointer context)))
     (ensure-directories-exist pointer)
     (when (probe-file pointer)
       (delete-file pointer)))
@@ -454,12 +528,15 @@
   (autolith-script-setenv "AUTOLITH_RECOVERY_SESSION_POINTER"
                           (uiop:native-namestring
                            (launcher-context-recovery-session-pointer context)))
+  (autolith-script-setenv "AUTOLITH_RESTART_POINTER"
+                          (uiop:native-namestring
+                           (launcher-context-restart-pointer context)))
   nil)
 
 (defun launcher-delete-pointers (context)
-  "Delete the pointer files this launch owned."
+  "Delete transient launch pointers, retaining any failed restart envelope."
   (dolist (pointer (list (launcher-context-crash-pointer context)
-                         (launcher-context-recovery-session-pointer context)))
+                        (launcher-context-recovery-session-pointer context)))
     (when (probe-file pointer)
       (ignore-errors (delete-file pointer))))
   nil)
@@ -507,7 +584,7 @@
                (launcher-run-recovery context (launcher-request-arguments request)))
              (progn
                (launcher-prepare-pointers context)
-               (let ((status (launcher-run-active context request)))
+               (let ((status (launcher-run-with-restarts context request)))
                  (launcher-restore-console console)
                  (cond
                    ((zerop status)

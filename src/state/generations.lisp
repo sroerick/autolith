@@ -319,11 +319,22 @@ structured type and message survive the round trip."
 
 (-> checkpoint-resume-main (list) null)
 (defun checkpoint-resume-main (arguments)
-  "Run Autolith's normal entry point inside a booted retained core."
-  (main arguments)
-  nil)
+  "Resume the saved session by its persisted conversation identity."
+  (let* ((application (and (boundp '*active-application*)
+                           (symbol-value '*active-application*)))
+         (conversation (and application (application-conversation application)))
+         (identifier (and conversation (conversation-identifier conversation))))
+    (if (non-empty-string-p identifier)
+        (let ((previous (uiop:getenv "AUTOLITH_SESSION_STYLE")))
+          (unwind-protect
+               (progn
+                 (platform-set-environment-variable
+                  *platform* "AUTOLITH_SESSION_STYLE" "direct")
+                 (main (list "resume" identifier)))
+            (platform-set-environment-variable
+             *platform* "AUTOLITH_SESSION_STYLE" previous)))
+        (main arguments))))
 
-(-> checkpoint--source-snapshot (configuration) string)
 (defun checkpoint--source-snapshot (configuration)
   "Return the clean checked commit from CONFIGURATION's source tree."
   (labels ((clean-commit ()
@@ -342,9 +353,8 @@ structured type and message survive the round trip."
     (let ((before (clean-commit)))
       (handler-case
           (uiop:run-program
-           (list (namestring
-                  (merge-pathnames "script/check"
-                                   (configuration-source-root configuration))))
+           (platform-source-check-command
+           *platform* (configuration-source-root configuration))
            :directory (configuration-source-root configuration)
            :output ':string
            :error-output ':output)
@@ -409,7 +419,10 @@ dropped and inherited worker descriptors detached before the image is saved."
         *active-secret-use-count* 0
         *secret-use-depth* 0
         *secret-use-quiescence-owner* nil)
-  (checkpoint--detach-worker worker)
+  (if (platform-supports-p *platform* ':restartable-image-saver)
+      (when worker
+        (lisp-worker-manager-stop worker))
+      (checkpoint--detach-worker worker))
   (when (boundp '*active-application*)
     (checkpoint-detach-state (symbol-value '*active-application*)))
   nil)
@@ -420,15 +433,19 @@ dropped and inherited worker descriptors detached before the image is saved."
 (defun checkpoint-backend-create (configuration worker &key tool-registry)
   "Return the checkpoint backend supported by this runtime.
 
-Checkpoints save a forked copy of this process, so hosts without a forked
-image saver withhold them here, before any generation state is touched."
-  (unless (platform-supports-p *platform* ':forked-image-saver)
+POSIX hosts save a forked copy while Windows saves and restarts the exact
+current heap under its stable launcher.  Both paths use the same validation,
+quiescence, metadata, and probe hooks."
+  (unless (or (platform-supports-p *platform* ':forked-image-saver)
+              (platform-supports-p *platform* ':restartable-image-saver))
     (error 'platform-capability-unavailable
            :capability ':forked-image-saver
-           :message "This host cannot fork a checkpoint saver, so checkpoints and rollback are withheld."))
+           :message "This host cannot save a checkpoint image."))
   (let ((quiesced-runtime-tools nil))
     (with-generation-errors
-      (make-checkpoint-backend
+      (funcall (if (platform-supports-p *platform* ':restartable-image-saver)
+                   #'make-restart-checkpoint-backend
+                   #'make-checkpoint-backend)
        :store (generation-store-for configuration)
        :toplevel-function #'checkpoint-resume-main
        :identifier-function #'make-identifier
@@ -486,6 +503,36 @@ image saver withhold them here, before any generation state is touched."
            (tool-registry-resume-runtime-state
             tool-registry :tools quiesced-runtime-tools)))))))
 
+(-> checkpoint-restart-save (checkpoint-backend generation) null)
+(defun checkpoint-restart-save (backend generation)
+  "Persist the restart envelope and save BACKEND's exact heap.
+
+The launcher owns the envelope pathname through AUTOLITH_RESTART_POINTER.  The
+ready callback writes the final generation metadata only after validation at the
+real save boundary, then the library saves and exits.  A missing pointer is a
+configuration error rather than a silent restart without publication."
+  (let ((pointer (uiop:getenv "AUTOLITH_RESTART_POINTER")))
+    (unless (non-empty-string-p pointer)
+      (error 'checkpoint-error
+             :message "The stable launcher did not provide a restart envelope path."
+             :stage ':save
+             :pathname nil))
+    (sbcl-generations:checkpoint-restart-save-and-exit
+     backend generation
+     :ready-function
+     (lambda (final-generation)
+       (snapshot-write
+        (pathname pointer)
+        (list :autolith-restart
+              :version 1
+              :identifier (sbcl-generations:generation-identifier
+                           final-generation)
+              :created-at (sbcl-generations:generation-created-at
+                           final-generation)
+              :metadata (copy-list
+                         (sbcl-generations:generation-metadata
+                          final-generation))))))))
+
 (-> checkpoint-create (checkpoint-backend) generation)
 (defun checkpoint-create (backend)
   "Begin a validated checkpoint through BACKEND and return its pending generation."
@@ -510,19 +557,28 @@ image saver withhold them here, before any generation state is touched."
 (defmethod tool-execute ((tool self-checkpoint-tool)
                          (context tool-context)
                          (arguments hash-table))
-  "Begin a validated non-stopping checkpoint of CONTEXT's active image."
+  "Begin a validated checkpoint of CONTEXT's active image."
   (declare (ignore tool arguments))
-  (let ((generation
-          (checkpoint-create
-           (checkpoint-backend-create
-            (tool-context-configuration context)
-            (tool-context-worker context)
-            :tool-registry (tool-context-registry context)))))
-    (tool-success
-     (format nil "Checkpoint ~A is being published by coordinator process ~D."
-             (generation-identifier generation)
-             (generation-coordinator-pid generation)))))
-
+  (let* ((configuration (tool-context-configuration context))
+         (backend (checkpoint-backend-create
+                   configuration
+                   (tool-context-worker context)
+                   :tool-registry (tool-context-registry context)))
+         (generation (checkpoint-create backend))
+         (application (and (boundp '*active-application*)
+                          (symbol-value '*active-application*))))
+    (if (and (platform-supports-p *platform* ':restartable-image-saver)
+             (typep application 'application))
+        (progn
+          (setf (application-checkpoint-restart-request application)
+                (cons backend generation))
+          (tool-success
+           (format nil "Exact heap checkpoint ~A is scheduled after this turn; Autolith will restart and resume the current session."
+                   (generation-identifier generation))))
+        (tool-success
+         (format nil "Checkpoint ~A is being published by coordinator process ~D."
+                 (generation-identifier generation)
+                 (generation-coordinator-pid generation))))))
 (defmethod tool-execute ((tool self-generations-tool)
                          (context tool-context)
                          (arguments hash-table))

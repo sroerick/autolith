@@ -6,9 +6,10 @@
   (with-open-file (stream pathname :direction ':output :if-exists ':supersede
                                    :external-format ':utf-8)
     (with-standard-io-syntax
-      (dolist (form forms)
-        (write form :stream stream)
-        (terpri stream))))
+      (let ((*package* (find-package '#:autolith)))
+        (dolist (form forms)
+          (write form :stream stream)
+          (terpri stream)))))
   pathname)
 
 (defun windows-tests--command (script &rest arguments)
@@ -121,7 +122,7 @@
                           (write :ran :stream stream)))))
              (process-handle nil))
         (test-call-with-function-replacements
-         (list (cons 'win32--assign-process-to-job-object
+         (list (list 'win32--assign-process-to-job-object
                      (lambda (job process)
                        (declare (ignore job))
                        (setf process-handle process)

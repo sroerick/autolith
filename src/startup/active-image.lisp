@@ -46,6 +46,7 @@
                     "bin/autolith-runtime"
                     "script/build-active"
                     "script/build-active.lisp"
+                    "script/restart-publisher.lisp"
                     "autolith.asd"
                     "qlfile"
                     "qlfile.lock"

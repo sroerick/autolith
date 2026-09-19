@@ -1896,20 +1896,28 @@ are forwarded to TERMINAL-UI-SELECT."
 
 (-> application-checkpoint (application) null)
 (defun application-checkpoint (application)
-  "Begin a non-stopping retained generation for APPLICATION."
+  "Begin a retained generation for APPLICATION."
   (application-set-activity application "checking source before checkpoint")
   (unwind-protect
-       (let ((generation
-               (checkpoint-create
+       (let* ((configuration (application-configuration application))
+              (backend
                 (checkpoint-backend-create
-                 (application-configuration application)
-                 (application-worker application)
-                 :tool-registry (application-tool-registry application)))))
-         (application-present
-          application
-          (format nil "Checkpoint ~A is publishing in process ~D."
-                  (generation-identifier generation)
-                  (generation-coordinator-pid generation))))
+                 configuration (application-worker application)
+                 :tool-registry (application-tool-registry application)))
+              (generation (checkpoint-create backend)))
+         (if (platform-supports-p *platform* ':restartable-image-saver)
+             (progn
+               (setf (application-checkpoint-restart-request application)
+                     (cons backend generation))
+               (application-present
+                application
+                (format nil "Exact heap checkpoint ~A is scheduled. Autolith will restart after this command and resume this session."
+                        (generation-identifier generation))))
+             (application-present
+              application
+              (format nil "Checkpoint ~A is publishing in process ~D."
+                      (generation-identifier generation)
+                      (generation-coordinator-pid generation)))))
     (application-set-activity application nil))
   nil)
 

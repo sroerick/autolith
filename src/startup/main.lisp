@@ -472,18 +472,21 @@
                                input-controller)
                             while work
                             do (handler-case
-                                   (unwind-protect
-                                        (progn
-                                          (application-input-controller--run-work
-                                           input-controller work)
-                                          (when
-                                              (application-input-controller--consume-turn-cancellation-delivery-p
-                                               input-controller)
-                                            (error
-                                             (make-condition
-                                              'application-turn-cancelled))))
-                                     (application-input-controller--finish-work
-                                      input-controller))
+                                     (progn
+                                       (unwind-protect
+                                            (progn
+                                              (application-input-controller--run-work
+                                               input-controller work)
+                                              (when
+                                                  (application-input-controller--consume-turn-cancellation-delivery-p
+                                                   input-controller)
+                                                (error
+                                                 (make-condition
+                                                  'application-turn-cancelled))))
+                                         (application-input-controller--finish-work
+                                          input-controller))
+                                       (application--finish-checkpoint-restart
+                                        application))
                                  (application-turn-cancelled ()
                                    (conversation--repair-incomplete-tool-calls
                                     (application-conversation application))
@@ -1073,6 +1076,31 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
            (uiop:quit status)))))))
 
 
+(-> main--known-model-identifiers () list)
+(defun main--known-model-identifiers ()
+  "Return all known model identifiers in deterministic display order."
+  (sort (remove-duplicates (copy-list (provider-model-identifiers))
+                           :test #'string=)
+        #'string<))
+
+(-> main--models-command () clingon:command)
+(defun main--models-command ()
+  "Return the non-interactive model catalog sub-command definition."
+  (make-command
+   :name "models"
+   :description "list known model identifiers and exit"
+   :handler
+   (lambda (command)
+     (declare (ignore command))
+     (let ((configuration
+             (configuration-create :immutable-p t
+                                    :defer-provider-validation-p t)))
+       (user-init-load configuration)
+       (provider-bootstrap-configuration configuration)
+       (dolist (model (main--known-model-identifiers))
+         (format t "~A~%" model))
+         (force-output)))))
+
 (-> main--update-command () clingon:command)
 (defun main--update-command ()
   "Describe the launcher-owned update operation without starting a session."
@@ -1119,6 +1147,7 @@ both update the packaged installation and exit without starting a session."
                        (main--replay-command)
                        (main--fork-command)
                        (main--auth-command)
+                         (main--models-command)
                        (main--update-command)
                        (main--data-command)
                        (main--run-job-command)

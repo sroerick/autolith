@@ -237,6 +237,11 @@
     :accessor application-presentation-counter
     :type integer
     :documentation "The identifier source for non-conversation terminal notices.")
+   (checkpoint-restart-request
+    :initform nil
+    :accessor application-checkpoint-restart-request
+    :type (option cons)
+    :documentation "The pending exact-heap checkpoint scheduled after the current turn.")
    (project-adaptation-offer-p
     :initform nil
     :accessor application-project-adaptation-offer-p
@@ -250,6 +255,21 @@
 
 (defvar *terminal-resize-pending-p* nil
   "True after SIGWINCH until the active UI recomputes its dimensions.")
+
+(-> application--finish-checkpoint-restart (application) null)
+(defun application--finish-checkpoint-restart (application)
+  "Save the scheduled heap after results and input completion are durable."
+  (let ((request (application-checkpoint-restart-request application)))
+    (when request
+      (finish-output)
+      ;; The saved application must not schedule the same checkpoint again.
+      (setf (application-checkpoint-restart-request application) nil)
+      (handler-case
+          (checkpoint-restart-save (first request) (rest request))
+        (error (condition)
+          (setf (application-checkpoint-restart-request application) request)
+          (error condition)))))
+  nil)
 
 (defgeneric application-input-controller-wake (controller)
   (:documentation

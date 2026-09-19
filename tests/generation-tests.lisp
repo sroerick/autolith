@@ -639,9 +639,47 @@
 
 ;;;; -- Subsystem Tests --
 
+(-> generation-tests--test-checkpoint-resume-identity () null)
+(defun generation-tests--test-checkpoint-resume-identity ()
+  "Verify retained sessions resume directly by their persisted conversation ID."
+  (let ((main-arguments nil)
+        (style-events nil))
+    (let ((*active-application* t))
+      (test-call-with-function-replacements
+       (list
+        (list 'application-conversation
+              (lambda (application)
+                (declare (ignore application))
+                :conversation))
+        (list 'conversation-identifier
+              (lambda (conversation)
+                (declare (ignore conversation))
+                "conversation-identity"))
+        (list 'main
+              (lambda (arguments)
+                (setf main-arguments arguments)
+                nil))
+        (list 'platform-set-environment-variable
+              (lambda (platform name value)
+                (declare (ignore platform))
+                (when (string= name "AUTOLITH_SESSION_STYLE")
+                  (push value style-events)))))
+       (lambda ()
+         (checkpoint-resume-main '("--localgroup-handoff" "consumed"))))
+    (test-assert (equal main-arguments '("resume" "conversation-identity"))
+                 "saved checkpoints resume their originating conversation")
+    (test-assert (member "direct" style-events :test #'string=)
+                 "saved checkpoints bypass client-first startup")
+    (test-assert (member nil style-events)
+                 "saved checkpoint startup restores the prior session style")))
+  nil)
+
+
 (-> test-generation-manifest () null)
 (defun test-generation-manifest ()
   "Test generation publication, loading, selection, and compatibility checks."
+  (generation-tests--test-checkpoint-resume-identity)
+  (generation-tests--test-checkpoint-restart-finish-boundary)
   (with-platform-capability (':forked-image-saver "checkpoint backend behaviour")
     (generation-tests--test-checkpoint-runtime-resume)
     (generation-tests--test-partial-runtime-quiescence)
@@ -911,4 +949,31 @@
                            previous-session-pointer)
           (platform-unsetenv "AUTOLITH_RECOVERY_SESSION_POINTER"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+(-> generation-tests--test-checkpoint-restart-finish-boundary () null)
+(defun generation-tests--test-checkpoint-restart-finish-boundary ()
+  "Test that a scheduled restart saves only at the completed-turn boundary."
+  (let ((application (make-instance 'application))
+        (calls nil)
+        (backend :checkpoint-backend)
+        (generation :pending-generation))
+    (setf (application-checkpoint-restart-request application)
+          (cons backend generation))
+    (test-assert (null calls)
+                 "scheduling a restart does not save before the boundary")
+    (test-call-with-function-replacements
+     (list
+      (list 'checkpoint-restart-save
+            (lambda (actual-backend actual-generation)
+              (push (list actual-backend actual-generation) calls))))
+     (lambda ()
+       (application--finish-checkpoint-restart application)))
+    (test-assert (null (application-checkpoint-restart-request application))
+                 "the pending restart request is consumed at the boundary")
+    (test-assert (equal calls (list (list backend generation)))
+                 "the completed boundary saves the exact scheduled generation")
+    (application--finish-checkpoint-restart application)
+    (test-assert (equal calls (list (list backend generation)))
+                 "a completed boundary cannot save the same request twice"))
   nil)
