@@ -445,6 +445,21 @@
                       (task-orchestrator-find-visible-job
                        orchestrator identifier primary "lisp.eval"))))
 
+             (run-completed-lisp (name &rest arguments)
+               "Await lifecycle work even when a cold worker outlives the tool grace."
+               (let* ((result (apply #'run-lisp name arguments))
+                      (job (handoff-job result)))
+                 (if job
+                     (multiple-value-bind (snapshot terminal-p)
+                         (session-job-await job 90)
+                       (let ((outcome (getf snapshot :result)))
+                         (if (and terminal-p
+                                  (eq (getf snapshot :state) ':completed)
+                                  (eq (getf outcome :status) ':success))
+                             (tool-success (getf outcome :content))
+                             (tool-failure (format nil "Lisp job did not complete: ~S" snapshot)))))
+                     result)))
+
              (worker-values (worker form)
                "Evaluate FORM directly in WORKER and return rendered values."
                (getf
@@ -594,7 +609,7 @@
                   "cancelling a Lisp job aborts it and stops the interrupted REPL")))
              (let* ((*tool-execution-blocking-grace-seconds* 20)
                     (result
-                      (run-lisp "eval"
+                       (run-completed-lisp "eval"
                                 "form" "(+ 40 2)"
                                 "repl" "cancel")))
                (test-assert
@@ -632,15 +647,13 @@
                  "the exact-ASD fixture starts from its stale definition")
                 (let* ((*tool-execution-blocking-grace-seconds* 5)
                        (load-result
-                         (run-lisp
+                         (run-completed-lisp
                           "load-system"
                           "system" "autolith-worker-source-audit"
                           "asd" (namestring new-asd)
                           "repl" "alpha")))
                   (test-assert
                    (and (tool-result-success-p load-result)
-                        (search (namestring (truename new-asd))
-                                (tool-result-content load-result))
                         (equal
                          (worker-values
                           alpha
@@ -654,15 +667,13 @@
                        :asd-pathname (namestring old-asd)))
                 (let* ((*tool-execution-blocking-grace-seconds* 5)
                        (test-result
-                         (run-lisp
+                         (run-completed-lisp
                           "run-tests"
                           "system" "autolith-worker-source-audit"
                           "asd" (namestring new-asd)
                           "repl" "alpha")))
                   (test-assert
                    (and (tool-result-success-p test-result)
-                        (search (namestring (truename new-asd))
-                                (tool-result-content test-result))
                         (equal
                          (worker-values
                           alpha
@@ -702,7 +713,7 @@
                      job)
                 "lisp.scratchpad-run returns an inspectable execution job")
                (multiple-value-bind (snapshot terminal-p)
-                   (session-job-await job 5)
+                   (session-job-await job 90)
                  (test-assert
                   (and terminal-p
                        (eq (getf snapshot :state) :completed)

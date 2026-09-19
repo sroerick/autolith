@@ -270,22 +270,29 @@
                (search-tests--write-file frecency-marker "discard me")
                (search-tests--write-file history-marker "discard me")
                (platform-terminate-process *platform* failed-pid :force t)
-               (loop repeat 100
-                     while (uiop:process-alive-p failed-process)
-                     do (sleep 0.01))
+               (test-assert
+                (task-tests--wait-until
+                 (lambda () (not (uiop:process-alive-p failed-process))) 10)
+                "the killed search helper exits before its replacement starts")
                (let ((result (search-tests--call registry context
                                                  "search" "files"
                                                  "query" "model selection")))
                  (test-assert
-                  (and (tool-result-success-p result)
-                       (not (probe-file frecency-marker))
-                       (not (probe-file history-marker))
-                       (probe-file (search-worker--log-path configuration))
+                  (tool-result-success-p result)
+                  (format nil "search restarts after helper death: ~A"
+                          (tool-result-content result)))
+                 (test-assert (not (probe-file frecency-marker))
+                              "restart discards the dead helper's ranking database")
+                 (test-assert (not (probe-file history-marker))
+                              "restart discards the dead helper's history database")
+                 (test-assert (probe-file (search-worker--log-path configuration))
+                              "the replacement helper has a diagnostic log")
+                 (test-assert
+                  (and (worker-process worker)
                        (uiop:process-alive-p (worker-process worker))
                        (/= failed-pid
-                           (uiop:process-info-pid
-                            (worker-process worker))))
-                  "a killed helper resets its databases and restarts without killing Autolith")))
+                           (uiop:process-info-pid (worker-process worker))))
+                  "search runs in a new live helper after the old one dies")))
              (tool-registry-close-runtime-state registry)
              (test-assert
               (null (worker-process (search-tool-engine files-tool)))
