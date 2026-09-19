@@ -306,6 +306,7 @@
                              (:file "localgroup-tests")
                              (:file "localgroup-handoff-tests")
                              (:file "localgroup-handoff-boundary-tests")
+                             (:file "windows-lifecycle-tests")
 
                              (:file "release-script-tests" :if-feature (:not :win32))
                              (:file "installer-checksum-tests" :if-feature (:not :win32))

@@ -504,6 +504,39 @@
                :reason ':failed)))))
 
 
+(defmethod platform-source-check-command ((platform posix-platform) source-root)
+  "Run the executable repository check script on POSIX."
+  (declare (ignore platform))
+  (list (namestring (merge-pathnames "script/check" source-root))))
+
+(defmethod platform-session-launch-command ((platform posix-platform) source-root)
+  "Return the executable stable POSIX launcher."
+  (let ((pathname (merge-pathnames "bin/autolith" source-root)))
+    (unless (platform-executable-file-p platform pathname)
+      (error 'platform-error :operation ':launch :pathname pathname
+             :message "The stable Autolith launcher is unavailable."))
+    (list (namestring pathname))))
+
+(defmethod platform-launch-detached-process
+    ((platform posix-platform) arguments
+     &key directory output launcher-pid-pathname gate-pathname supervisor-script)
+  "Launch ARGUMENTS behind the POSIX process-group supervisor."
+  (declare (ignore platform))
+  (uiop:launch-program
+   (append
+    (list "bash" "-c" supervisor-script
+          "autolith-localgroup-handoff"
+          (first arguments)
+          (namestring launcher-pid-pathname)
+          (namestring gate-pathname))
+    (rest arguments))
+   :input nil
+   :output output
+   :error-output ':output
+   :directory directory
+   :wait nil))
+
+
 ;;;; -- Installation --
 
 (setf *platform* (make-instance 'posix-platform))

@@ -40,7 +40,9 @@
            (let ((record (localgroup-handoff--read configuration pathname)))
              (setf process
                    (localgroup-handoff--launch-supervised
-                    :arguments '("sleep" "30")
+                     :arguments (list (namestring sb-ext:*runtime-pathname*)
+                                      "--noinform" "--non-interactive"
+                                      "--eval" "(sleep 30)")
                     :handoff-pathname pathname
                     :directory (configuration-working-directory configuration)
                     :output (make-broadcast-stream))
@@ -62,7 +64,7 @@
              (join-thread startup-thread)
              (test-assert
               (and startup-cancelled-p
-                   (not (uiop:process-alive-p process))
+                   (not (platform-process-object-alive-p *platform* process))
                    (probe-file
                     (localgroup-handoff--cancelled-pathname pathname)))
               "a delayed replacement cannot reclaim an invalidated handoff"))
@@ -113,8 +115,9 @@
         (with-lock-held (claim-lock)
           (setf release-claim-p t))
         (ignore-errors (join-thread claim-thread)))
-      (when (and process (ignore-errors (uiop:process-alive-p process)))
-        (ignore-errors (uiop:terminate-process process)))
+      (when (and process (platform-process-object-alive-p *platform* process))
+        (platform-terminate-process-object *platform* process :force t)
+        (platform-wait-process *platform* process))
       (when pathname
         (localgroup-handoff--delete-state-pathnames pathname))
       (when claimed-pathname

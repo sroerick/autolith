@@ -122,6 +122,59 @@ as for PLATFORM-TERMINATE-PROCESS."))
 
 Signal PLATFORM-ERROR with operation :DETACH when the process cannot detach."))
 
+(defgeneric platform-session-launch-command (platform source-root)
+  (:documentation "Return the stable launcher's executable and prefix arguments."))
+
+(defgeneric platform-launch-detached-process
+    (platform arguments &key directory output launcher-pid-pathname gate-pathname
+                             supervisor-script)
+  (:documentation
+   "Launch ARGUMENTS with a gated, owned process tree, writing OUTPUT.
+
+Write the launcher PID at LAUNCHER-PID-PATHNAME before releasing the startup
+gate. POSIX uses GATE-PATHNAME and SUPERVISOR-SCRIPT; Windows uses a suspended
+initial thread and a native Job Object. Return an owned process object."))
+
+(defgeneric platform-release-process (platform process)
+  (:documentation "Release caller resources without terminating the process."))
+
+(defmethod platform-release-process ((platform platform) process)
+  "Leave UIOP's process lifetime management to its runtime."
+  (declare (ignore platform process))
+  nil)
+
+(defgeneric platform-wait-process (platform process)
+  (:documentation "Wait for PROCESS and release its operating-system resources."))
+
+(defgeneric platform-process-object-pid (platform process)
+  (:documentation "Return PROCESS's operating-system process ID."))
+
+(defgeneric platform-process-object-alive-p (platform process)
+  (:documentation "Return whether PROCESS is still running."))
+
+(defgeneric platform-terminate-process-object (platform process &key force)
+  (:documentation "Terminate PROCESS."))
+
+(defmethod platform-process-object-pid ((platform platform) process)
+  "Return a UIOP process object's operating-system process ID."
+  (declare (ignore platform))
+  (uiop:process-info-pid process))
+
+(defmethod platform-process-object-alive-p ((platform platform) process)
+  "Return whether a UIOP process object is still running."
+  (declare (ignore platform))
+  (uiop:process-alive-p process))
+
+(defmethod platform-terminate-process-object ((platform platform) process &key force)
+  "Terminate a UIOP process object."
+  (declare (ignore platform))
+  (uiop:terminate-process process :urgent force))
+
+(defmethod platform-wait-process ((platform platform) process)
+  "Wait for a UIOP process object."
+  (declare (ignore platform))
+  (uiop:wait-process process))
+
 (defgeneric platform-run-image-saver (platform child-function)
   (:documentation
    "Run CHILD-FUNCTION in a saver child sharing this image's heap and wait for it.
@@ -359,6 +412,10 @@ interrupt context and must do no more than record the event."))
 (defgeneric platform-shell-command-line (platform command)
   (:documentation
    "Return the program and arguments that run shell COMMAND on this host."))
+
+(defgeneric platform-source-check-command (platform source-root)
+  (:documentation
+   "Return the argv that runs the repository check for SOURCE-ROOT on this host."))
 
 (defgeneric platform-call-with-command-sandbox (platform workspace function)
   (:documentation

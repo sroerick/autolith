@@ -179,6 +179,12 @@
   test-conversation-fork-rejections
   test-conversation-fork-command-line)
 
+(define-test-suite windows-lifecycle
+  test-windows-detached-arguments
+  test-windows-detached-descendants
+  test-windows-detached-startup-failure
+  test-windows-detached-release
+  test-windows-restart-library)
 (define-test-suite plan
   test-workspace-plan)
 

@@ -42,7 +42,7 @@ jobs:
 
       - name: Cache Linux Nix builds
         if: runner.os == 'Linux'
-        timeout-minutes: 3
+        timeout-minutes: 10
         uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7
         with:
           use-gha-cache: enabled

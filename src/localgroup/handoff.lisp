@@ -351,18 +351,6 @@ exit \"$status\""
     (:sandboxed "sandbox")
     (:full-access "full")))
 
-(-> localgroup-handoff--launcher-pathname (configuration) pathname)
-(defun localgroup-handoff--launcher-pathname (configuration)
-  "Return CONFIGURATION's executable stable source launcher pathname."
-  (let ((pathname
-          (merge-pathnames "bin/autolith"
-                           (configuration-source-root configuration))))
-    (unless (and (probe-file pathname)
-                 (platform-executable-file-p *platform* pathname))
-      (error 'localgroup-error
-             :message "The stable Autolith launcher is unavailable for detach."
-             :operation ':handoff))
-    pathname))
 
 (-> localgroup-handoff--launch-supervised
     (&key (:arguments list)
@@ -372,7 +360,7 @@ exit \"$status\""
     t)
 (defun localgroup-handoff--launch-supervised
     (&key arguments handoff-pathname directory output)
-  "Launch ARGUMENTS behind a gated Bash process-group supervisor.
+  "Launch ARGUMENTS behind the platform's gated process-tree supervisor.
 
 Signal PLATFORM-CAPABILITY-UNAVAILABLE on hosts without detached sessions
 before any shell is involved."
@@ -386,19 +374,13 @@ before any shell is involved."
     (dolist (pathname (list launcher-pid-pathname gate-pathname))
       (when (probe-file pathname)
         (ignore-errors (delete-file pathname))))
-    (uiop:launch-program
-     (append
-      (list "bash" "-c" *localgroup-handoff-supervisor-script*
-            "autolith-localgroup-handoff"
-            (first arguments)
-            (namestring launcher-pid-pathname)
-            (namestring gate-pathname))
-      (rest arguments))
-     :input nil
-     :output output
-     :error-output ':output
+    (platform-launch-detached-process
+     *platform* arguments
      :directory directory
-     :wait nil)))
+     :output output
+     :launcher-pid-pathname launcher-pid-pathname
+     :gate-pathname gate-pathname
+     :supervisor-script *localgroup-handoff-supervisor-script*)))
 
 (-> localgroup-handoff--launch (application pathname) t)
 
@@ -418,13 +400,14 @@ before any shell is involved."
 (defun localgroup-handoff--launch-for
     (configuration session-id handoff-pathname permission-argument immutable-p)
   "Launch one detached session process from HANDOFF-PATHNAME."
-  (let ((launcher (localgroup-handoff--launcher-pathname configuration))
+  (let ((launcher (platform-session-launch-command
+                   *platform* (configuration-source-root configuration)))
         (log-pathname
           (localgroup-handoff-log-pathname configuration session-id)))
     (let ((arguments
             (append
-             (list (namestring launcher)
-                   "--permissions" permission-argument)
+             launcher
+             (list "--permissions" permission-argument)
              (when immutable-p
                (list "--immutable"))
              (when (configuration-fullscreen-p configuration)
@@ -511,6 +494,7 @@ detach is immediate and never interrupts session work."
                                 configuration launch-id)))
                       :operation ':spawn
                       :session-id session-id))
+             (platform-release-process *platform* process)
              (setf completed-p t)
              session-id)
         (unless completed-p
@@ -733,11 +717,23 @@ detach is immediate and never interrupts session work."
       (ignore-errors (delete-file candidate))))
   nil)
 
+(defun localgroup-handoff--process-object-pid (process)
+  "Return PROCESS's adapter PID."
+  (platform-process-object-pid *platform* process))
+
+(defun localgroup-handoff--process-object-alive-p (process)
+  "Return whether PROCESS is alive through its platform adapter."
+  (platform-process-object-alive-p *platform* process))
+
+(defun localgroup-handoff--terminate-process-object (process force-p)
+  "Terminate PROCESS through its platform adapter."
+  (platform-terminate-process-object *platform* process :force force-p))
+
 (-> localgroup-handoff--stop-replacement (t pathname) boolean)
 (defun localgroup-handoff--stop-replacement (process handoff-pathname)
   "Cancel, terminate, and positively reap PROCESS and its replacement session."
   (localgroup-handoff--cancel handoff-pathname)
-  (let* ((root-pid (ignore-errors (uiop:process-info-pid process)))
+  (let* ((root-pid (localgroup-handoff--process-object-pid process))
          (known-pids nil)
          (started-at (get-internal-real-time))
          (kill-at
@@ -771,11 +767,15 @@ detach is immediate and never interrupts session work."
           (localgroup-handoff--signal-pid pid force-p))
         (when root-pid
           (localgroup-handoff--signal-pid root-pid force-p))
+        ;; Discover descendants before forcefully closing the platform object.
+        (when (and force-p
+                   (localgroup-handoff--process-object-alive-p process))
+          (localgroup-handoff--terminate-process-object process t))
         (setf known-pids
               (remove-if-not #'localgroup-handoff--pid-alive-p known-pids))
         (let ((root-alive-p
-                (or (and root-pid (localgroup-handoff--pid-alive-p root-pid))
-                    (ignore-errors (uiop:process-alive-p process))))
+                  (or (and root-pid (localgroup-handoff--pid-alive-p root-pid))
+                      (localgroup-handoff--process-object-alive-p process)))
               (launcher-alive-p
                 (and launcher-pid
                      (or (localgroup-handoff--pid-alive-p launcher-pid)
@@ -787,7 +787,7 @@ detach is immediate and never interrupts session work."
                           (- replacement-pid))))))
           (unless (or root-alive-p launcher-alive-p replacement-alive-p
                       known-pids)
-            (ignore-errors (uiop:wait-process process))
+                (platform-wait-process *platform* process)
             (return t)))
         (when (>= now deadline)
           (error 'localgroup-error
@@ -1037,6 +1037,7 @@ recalled draft lives only in this editor, not in the snapshot."
                                                                     :operation ':handoff
                                                                     :session-id
                                                                     session-id))
+                                                                 (platform-release-process *platform* process)
                                                                  (setf completed-p t)
                                                                  (application-input-controller--prepare-shutdown
                                                                   controller
