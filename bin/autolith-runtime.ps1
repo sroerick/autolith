@@ -36,20 +36,18 @@ function Get-DataRoot {
 
 function Get-RuntimeVersion([string]$candidate) {
   try {
-    $output = & $candidate --noinform --no-userinit --no-sysinit --non-interactive `
-      --eval '(write-string (lisp-implementation-version))' 2>$null
+    $output = & $candidate --noinform --no-userinit --no-sysinit `
+      --script (Join-Path $sourceRoot 'script/runtime-probe.lisp') 2>$null
     if ($LASTEXITCODE -ne 0) { return $null }
     $text = ($output | Out-String).Trim()
-    if ($text -match '^\d+\.\d+\.\d+$') { return $text }
+    if ($text) { return $text }
   } catch {}
   return $null
 }
 
 function Test-RuntimeCompatible([string]$candidate) {
   if (-not $candidate -or -not (Test-Path -LiteralPath $candidate -PathType Leaf)) { return $false }
-  $version = Get-RuntimeVersion $candidate
-  if (-not $version) { return $false }
-  return ([version]$version -ge [version]$script:minimumVersion)
+  return [bool](Get-RuntimeVersion $candidate)
 }
 
 function Resolve-Command([string]$name) {

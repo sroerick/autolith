@@ -71,30 +71,8 @@ cleanup()
 
 runtime_version()
 {
-  "$1" --noinform --no-userinit --no-sysinit --non-interactive \
-    --eval '(write-string (lisp-implementation-version))' 2>/dev/null
-}
-
-version_at_least()
-{
-  local IFS=.
-  local -a candidate_fields=($1)
-  local -a minimum_fields=($2)
-  local index candidate_field minimum_field
-
-  for index in 0 1 2; do
-    candidate_field=${candidate_fields[index]:-0}
-    minimum_field=${minimum_fields[index]:-0}
-    candidate_field=${candidate_field%%[!0-9]*}
-    minimum_field=${minimum_field%%[!0-9]*}
-    if ((10#${candidate_field:-0} > 10#${minimum_field:-0})); then
-      return 0
-    fi
-    if ((10#${candidate_field:-0} < 10#${minimum_field:-0})); then
-      return 1
-    fi
-  done
-  return 0
+  "$1" --noinform --no-userinit --no-sysinit \
+    --script "$source_root/script/runtime-probe.lisp" 2>/dev/null
 }
 
 runtime_compatible()
@@ -106,12 +84,8 @@ runtime_compatible()
     return 1
   fi
   actual_version=$(runtime_version "$candidate") || return 1
-  [[ "$actual_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-  if version_at_least "$actual_version" "$minimum_version"; then
-    selected_version=$actual_version
-    return 0
-  fi
-  return 1
+  selected_version=$actual_version
+  return 0
 }
 
 sha256_of()
@@ -256,8 +230,6 @@ runtime_install()
   local installation
   local stale_installation=
 
-  version_at_least "$runtime_release" "$minimum_version" ||
-    fail "sbcl.version requires a newer runtime than the pinned download."
   [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] ||
     fail "no SBCL $minimum_version or newer was found, and automatic runtime binary installation supports Linux x86-64 only. On macOS, install SBCL (for example: brew install sbcl) or set AUTOLITH_SBCL."
   for command in curl tar; do
@@ -373,7 +345,12 @@ managed_source=$runtime_root/source
 source_identity_path=$runtime_root/source.identity
 
 if [[ "$install_requested" == true ]] && ! source_available; then
-  source_install
+  if source_checksum "$selected_version" >/dev/null; then
+    source_install
+  else
+    printf 'SBCL %s has no tracked source archive; continuing without managed implementation sources.\n' \
+      "$selected_version" >&2
+  fi
 fi
 
 runtime_record "$sbcl_command"

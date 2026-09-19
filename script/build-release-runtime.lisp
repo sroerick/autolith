@@ -1,5 +1,8 @@
 (require :asdf)
 
+(load (merge-pathnames "runtime-requirement.lisp"
+                       (uiop:pathname-directory-pathname *load-truename*)))
+
 (let* ((arguments (uiop:command-line-arguments))
        (source-root
          (and (first arguments)
@@ -21,59 +24,6 @@
              "Read PATHNAME and remove surrounding ASCII whitespace."
              (string-trim '(#\Space #\Tab #\Newline #\Return)
                           (uiop:read-file-string pathname)))
-
-           (semantic-version-p (value)
-             "Return true when VALUE has three numeric components."
-             (let ((components
-                     (uiop:split-string value :separator '(#\.))))
-               (and (= (length components) 3)
-                    (every (lambda (component)
-                             (and (plusp (length component))
-                                  (every #'digit-char-p component)))
-                           components)
-                    t)))
-
-           (host-version-components (value)
-             "Return the first three numeric components of host SBCL VALUE."
-             (block invalid
-               (let ((components '())
-                     (length     (length value))
-                     (start      0))
-                 (dotimes (index 3)
-                   (when (>= start length)
-                     (return-from invalid nil))
-                   (let ((end (or (position-if-not #'digit-char-p value
-                                                   :start start)
-                                  length)))
-                     (when (= end start)
-                       (return-from invalid nil))
-                     (push (parse-integer value :start start :end end)
-                           components)
-                     (if (< index 2)
-                         (progn
-                           (unless (and (< end length)
-                                        (char= (char value end) #\.))
-                             (return-from invalid nil))
-                           (setf start (1+ end)))
-                         (unless (or (= end length)
-                                     (and (< (1+ end) length)
-                                          (find (char value end) ".-")))
-                           (return-from invalid nil)))))
-                 (nreverse components))))
-
-           (host-version-at-least-p (candidate minimum)
-             "Return true when host SBCL CANDIDATE satisfies MINIMUM."
-             (let ((candidate-components (host-version-components candidate))
-                   (minimum-components (host-version-components minimum)))
-               (and candidate-components
-                    minimum-components
-                    (loop for candidate-component in candidate-components
-                          for minimum-component in minimum-components
-                          when (> candidate-component minimum-component)
-                            return t
-                          when (< candidate-component minimum-component)
-                            return nil
-                          finally (return t)))))
 
            (sha256-p (value)
              "Return true when VALUE is a lowercase SHA-256 identity."
@@ -199,7 +149,7 @@
                  (runtime-source
                    (merge-pathnames (format nil "sbcl-~A/" runtime-version)
                                     temporary-root)))
-            (unless (semantic-version-p runtime-version)
+            (unless (autolith-version-components runtime-version)
               (fail "sbcl.version is malformed."))
             (unless (sha256-p runtime-sha256)
               (fail "sbcl-source.sha256 is malformed."))
@@ -210,7 +160,7 @@
                      (or (uiop:getenv "AUTOLITH_HOST_BOOTSTRAP_MINIMUM")
                          "2.0.0")))
               (if host-bootstrap-p
-                  (unless (host-version-at-least-p bootstrap-version host-minimum)
+                  (unless (autolith-version-at-least-p bootstrap-version host-minimum)
                     (fail "the host bootstrap compiler ~A does not satisfy SBCL ~A or newer."
                           bootstrap-version host-minimum))
                   (unless (string= bootstrap-version "2.4.0")

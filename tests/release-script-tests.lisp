@@ -1811,6 +1811,11 @@ esac
      (list bin-directory tools-directory data-home))
     (uiop:copy-file (merge-pathnames "bin/autolith-runtime" source-root)
                     adapter-target)
+    (dolist (name '("runtime-probe.lisp" "runtime-requirement.lisp"))
+      (let ((target (merge-pathnames (format nil "script/~A" name) fixture-root)))
+        (ensure-directories-exist target)
+        (uiop:copy-file (merge-pathnames (format nil "script/~A" name) source-root)
+                        target)))
     (release-script-tests--chmod "755" adapter-target)
     (sb-posix:symlink (namestring adapter-target) (namestring adapter))
     (release-script-tests--write-file
@@ -1886,10 +1891,15 @@ printf '\"%s\"\n' \"$version\" > \"$destination/sbcl-$version/version.lisp-expr\
                         "#!/bin/sh
 set -eu
 case \" $* \" in
-  *'(write-string (lisp-implementation-version))'*) printf '%s' '~A' ;;
-  *' --script '*) printf 'ADAPTER-SCRIPT %s\\n' \"$*\" ;;
+  *runtime-probe.lisp*) shift 3; exec ~A --noinform --no-userinit --no-sysinit --eval ~A \"$@\" ;;
+  *' --script '*) printf 'ADAPTER-SCRIPT version=~A source=%s %s\\n' \"${AUTOLITH_SBCL_SOURCE_ROOT-}\" \"$*\" ;;
 esac
 "
+                        (test-fixture-shell-quote *platform* (namestring sb-ext:*runtime-pathname*))
+                        (test-fixture-shell-quote
+                         *platform*
+                         (format nil "(progn (require :asdf) (sb-ext:without-package-locks (setf (symbol-function 'lisp-implementation-version) (lambda () ~S))))"
+                                 version))
                         version))
                (release-script-tests--chmod "755" pathname)
                pathname))
@@ -1947,9 +1957,8 @@ esac
                      "the adapter compares version fields numerically"))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.10.0") :install-p t)
-        (declare (ignore output))
-        (test-assert (not (zerop status))
-                     "source installation rejects an untracked newer release"))
+        (test-assert (and (zerop status) (search "ADAPTER-SCRIPT" output))
+                     "an untracked newer runtime can bootstrap without managed source"))
       (let ((identity
               (merge-pathnames "autolith/runtimes/2.6.7/source.identity"
                                data-home)))
@@ -1965,11 +1974,18 @@ esac
           (declare (ignore output))
           (test-assert (not (zerop status))
                        "source installation rejects a mismatched archive digest")))
-      (multiple-value-bind (output status)
-          (run-adapter (fake-runtime "2.7.0.123-gabc"))
-        (declare (ignore output))
-        (test-assert (not (zerop status))
-                     "the adapter rejects builds without release source archives"))
+      (dolist (version '("2.6.8.termux" "2.6.6-local" "2.7.0.123-gabc" "2.6.6+build_1"))
+        (multiple-value-bind (output status)
+            (run-adapter (fake-runtime version) :install-p t)
+          (test-assert (and (zerop status)
+                            (search (format nil "version=~A source= " version) output))
+                       (format nil "custom runtime ~A keeps its identity without mismatched source" version))))
+      (dolist (version '("2.6.5.termux" "2.6" "2..8" "2.6.8." "2.6.8garbage"))
+        (multiple-value-bind (output status)
+            (run-adapter (fake-runtime version))
+          (declare (ignore output))
+          (test-assert (not (zerop status))
+                       (format nil "the adapter rejects invalid or old runtime ~S" version))))
       (multiple-value-bind (output status)
           (run-adapter (fake-runtime "2.6.3"))
         (declare (ignore output))
@@ -1987,8 +2003,13 @@ esac
                    "the version requirement accepts the minimum itself")
       (test-assert (funcall at-least-p "2.10.0" "2.6.6")
                    "the version requirement compares fields numerically")
-      (test-assert (not (funcall at-least-p "2.7.0.123-gabc" "2.6.6"))
-                   "the version requirement rejects non-release builds")
+      (dolist (version '("2.6.8.termux" "2.7.0.123-gabc" "2.6.6-local" "2.6.6+build_1"))
+        (test-assert (funcall at-least-p version "2.6.6")
+                     (format nil "the shared requirement accepts custom build ~S" version)))
+      (dolist (version '("" "2" "2.6" "2..6" "2.6.6." "2.6.6-" "2.6.6+"
+                          "2.6.6/termux" "2.6.6. ../bad" "2.6.6termux" "2.6.5.termux"))
+        (test-assert (not (funcall at-least-p version "2.6.6"))
+                     (format nil "the shared requirement rejects invalid or old build ~S" version)))
       (test-assert (not (funcall at-least-p "2.6.3" "2.6.6"))
                    "the version requirement rejects older versions")
       (test-assert (not (funcall at-least-p "1.9.9" "2.6.6"))
