@@ -701,9 +701,13 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                                                    "type" "string"))
                            "required" (json-array "answer"))
                "calls" 1))))
-      (test-assert (and (not (tool-result-success-p result))
-                        (search "budget" (tool-result-content result)))
-                   "rlm.infer reports budget exhaustion as a tool failure"))
+      (let ((partial (let ((*read-eval* nil))
+                       (read-from-string (tool-result-content result)))))
+        (test-assert (and (tool-result-success-p result)
+                          (eq (getf partial :status) ':incomplete)
+                          (getf partial :trace)
+                          (not (member :value partial)))
+                     "rlm.infer returns incomplete evidence without a validated value")))
     (let* ((provider
              (make-instance 'rlm-inference-test-provider :results nil))
            (tool (rlm-infer-tool-create
@@ -832,10 +836,10 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                            :configuration configuration
                            :concurrency 1)))
     (test-assert (equal (mapcar (lambda (result)
-                                  (if (getf result ':error) ':error ':value))
-                                results)
-                        '(:value :value :error :error))
-                 "budget exhaustion mid-map keeps finished frames and fails the rest"))
+                                 (or (getf result :status) ':complete))
+                               results)
+                        '(:complete :complete :incomplete :incomplete))
+                 "budget exhaustion keeps finished siblings and labels unfinished frames"))
   (test-assert (null (rlm-map nil))
                "an empty task list maps to no results")
   (test-assert (handler-case
@@ -2032,4 +2036,135 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
         (test-assert (not (tool-result-success-p
                            (run (json-object "object" "context:00ff"))))
                      "unknown context object digests are refused"))))
+  nil)
+
+
+(-> test-rlm-partial-results () null)
+(defun test-rlm-partial-results ()
+  "Preserve unvalidated frame evidence and completed map siblings on exhaustion."
+  (with-test-configuration (configuration)
+    (dolist (dimension '(:calls :tokens))
+      (let* ((provider
+               (make-instance 'rlm-inference-test-provider
+                              :results (list (rlm-inference-test-result
+                                              "partial" "useful but invalid JSON" 10))))
+             (budget (rlm-budget-create :calls (if (eq dimension ':calls) 1 2)
+                                        :tokens (if (eq dimension ':tokens) 10 100)
+                                        :depth 1))
+             (partial
+               (handler-case
+                   (infer "Answer with an integer."
+                          :contract '(:type :integer)
+                          :budget budget :provider provider
+                          :configuration configuration)
+                 (rlm-partial-result (condition)
+                   (rlm-partial-result-observation condition)))))
+        (test-assert (eq (getf partial :status) ':incomplete)
+                     "exhaustion returns an explicit incomplete observation")
+        (test-assert (eq (getf partial :dimension) dimension)
+                     "the exhausted allowance is identified")
+        (test-assert (and (null (getf partial :validated-p))
+                          (not (member :value partial)))
+                     "invalid contract output is never exposed as a validated value")
+        (test-assert (equal (getf (first (getf partial :partial-items)) :text)
+                            "useful but invalid JSON")
+                     "useful assistant output survives exhaustion")
+        (test-assert (search "useful but invalid JSON"
+                            (rlm--trace-content configuration (getf partial :trace)))
+                     "the complete output is available through its durable trace")))
+    (let* ((provider
+             (make-instance 'rlm-inference-test-provider
+                            :results (list (rlm-inference-test-result "complete" "42" 10)
+                                           (rlm-inference-test-result "partial" "evidence" 10))))
+           (results (rlm-map '("first" "second" "third")
+                             :contract '(:type :integer)
+                             :budget (rlm-budget-create :calls 2 :tokens 100 :depth 1)
+                             :provider provider :configuration configuration
+                             :concurrency 1)))
+      (test-assert (= (getf (first results) :value) 42)
+                   "a completed sibling retains its validated result")
+      (test-assert (and (eq (getf (second results) :status) ':incomplete)
+                        (getf (second results) :partial-items)
+                        (getf (second results) :trace))
+                   "an unfinished sibling retains its own evidence and trace")
+      (test-assert (and (eq (getf (third results) :status) ':incomplete)
+                        (null (getf (third results) :partial-items)))
+                   "a frame without a provider call does not inherit another frame's output")))
+  nil)
+
+(-> test-rlm-read-partial-results () null)
+(defun test-rlm-read-partial-results ()
+  "Preserve read-frame tool evidence and report incomplete tool results."
+  (with-test-configuration (configuration)
+    (let* ((source (make-instance 'tool-registry))
+           (provider
+             (make-instance
+              'rlm-inference-test-provider
+              :results
+              (list (agent-test-result
+                     "read"
+                     (list (agent-test-call :call-id "evidence-call"
+                                            :namespace "search" :name "content"
+                                            :arguments "{}")))
+                    (rlm-inference-test-result "draft" "unvalidated draft" 10)))))
+      (tool-registry-register source (rlm-frame-test-tool "search" "content"))
+      (let* ((result
+               (rlm--guarded-tool-result
+                (lambda ()
+                  (infer "Inspect then answer with an integer."
+                         :capabilities ':read :contract '(:type :integer)
+                         :budget (rlm-budget-create :calls 2 :tokens 100 :depth 1)
+                         :provider provider :configuration configuration
+                         :source-registry source))))
+             (partial (let ((*read-eval* nil))
+                        (read-from-string (tool-result-content result)))))
+        (test-assert (tool-result-success-p result)
+                     "tool callers receive the incomplete observation instead of losing evidence")
+        (test-assert (eq (getf partial :status) ':incomplete)
+                     "the tool response does not claim completion")
+        (test-assert (some (lambda (item)
+                            (and (eq (getf item :kind) ':tool)
+                                 (equal (getf item :call-id) "evidence-call")))
+                          (getf partial :partial-items))
+                     "completed tool evidence is retained alongside assistant output"))))
+  nil)
+
+(-> test-rlm-incomplete-environment-reuse () null)
+(defun test-rlm-incomplete-environment-reuse ()
+  "Continue an exhausted root with its actual intermediate Lisp state."
+  (rlm-environment-pool-flush)
+  (with-test-configuration (configuration)
+    (unwind-protect
+         (let* ((context '(:label "partial corpus" :content "retained corpus"))
+                (partial
+                  (handler-case
+                      (rlm-complete
+                       "Remember a value before finishing."
+                       :context context
+                       :model "gpt-5.6-luna"
+                       :budget (rlm-budget-create :calls 1 :tokens 50000 :depth 1)
+                       :provider (rlm-environment-reuse--provider
+                                  "(defparameter *partial-sentinel* 41)")
+                       :configuration configuration)
+                    (rlm-partial-result (condition)
+                      (rlm-partial-result-observation condition)))))
+           (test-assert (and (eq (getf partial :status) ':incomplete)
+                             (getf partial :context)
+                             (getf partial :trace))
+                        "an exhausted root exposes context and trace references")
+           (test-assert (= (length *rlm-environment-pool*) 1)
+                        "an exhausted root retains its live environment")
+           (test-assert
+            (= (rlm-complete
+                "Continue using the retained intermediate value."
+                :context (rlm-context-object-find
+                          configuration (subseq (getf partial :context) 8))
+                :model "gpt-5.6-luna"
+                :budget (rlm-budget-create :calls 2 :tokens 50000 :depth 1)
+                :provider (rlm-environment-reuse--provider
+                           "(finish (1+ *partial-sentinel*))")
+                :configuration configuration)
+               42)
+            "continuation reuses the actual state rather than recomputing it"))
+      (rlm-environment-pool-flush)))
   nil)

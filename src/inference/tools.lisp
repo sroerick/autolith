@@ -561,9 +561,12 @@ filesystem paths are only a programmatic Lisp designator."
 
 (-> rlm--guarded-tool-result (function) tool-result)
 (defun rlm--guarded-tool-result (function)
-  "Call FUNCTION, converting expected inference conditions to tool failures."
+  "Return explicit incomplete observations and convert other expected failures."
   (handler-case
       (funcall function)
+    (rlm-partial-result (condition)
+      (tool-success
+       (rlm--result-sexp (rlm-partial-result-observation condition))))
     ((or rlm-budget-exhausted rlm-inference-error rlm-view-error task-error
          resource-scheme-unknown resource-access-denied
          resource-operation-unsupported)
@@ -711,6 +714,7 @@ turn, and async requests hand off at admission."
                                :budget budget
                                :provider provider
                                :configuration configuration
+                               :environment-owner tool-configuration
                                :activity-callback activity-callback)
                (let* ((printed (rlm--result-sexp value))
                       (value-fields

@@ -437,6 +437,9 @@
   test-rlm-response-usage-normalization
   test-rlm-context-object-adapter
   test-rlm-infer
+  test-rlm-partial-results
+  test-rlm-read-partial-results
+  test-rlm-incomplete-environment-reuse
   test-rlm-frame-registry
   test-rlm-framed-inference
   test-rlm-infer-tool

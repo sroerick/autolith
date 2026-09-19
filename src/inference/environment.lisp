@@ -351,10 +351,13 @@ PREVIOUS-LOST-P notes that an earlier environment's state is gone."
                  (:effort (option string))
                  (:provider (option model-provider))
                  (:configuration (option configuration))
+                 (:environment-owner (option configuration))
                  (:activity-callback (option function)))
     (values t string))
 (defun rlm-complete
     (task &key context budget model effort provider configuration
+               (environment-owner
+                 (or configuration (nth-value 1 (rlm--environment))))
                activity-callback)
   "Run TASK as the root of a recursive language model over CONTEXT.
 
@@ -364,7 +367,9 @@ environment where the content, every intermediate value, and the recursion
 live. Sub-inferences proxy back to the host and descend BUDGET's subtree.
 ACTIVITY-CALLBACK receives compact environment and request descriptions.
 Returns the value the environment recorded through finish plus the root trace
-conversation identifier."
+conversation identifier. Budget exhaustion signals RLM-PARTIAL-RESULT and parks
+the environment for continuation. ENVIRONMENT-OWNER identifies the originating
+configuration before per-call model routing, so routing copies share its pool."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "A root completion requires a non-empty task."))
@@ -399,7 +404,7 @@ conversation identifier."
            (progn
              (rlm--note-activity activity-callback "starting environment")
              (multiple-value-bind (pooled lost-p)
-                 (rlm--environment-pool-claim object configuration)
+                 (rlm--environment-pool-claim object environment-owner)
                (setf previous-lost-p lost-p)
                (when pooled
                  (setf worker pooled
@@ -464,30 +469,39 @@ conversation identifier."
                       (*system-prompt-override* *rlm-root-system-prompt*))
                  (tool-registry-register registry
                                          (rlm-environment-tool-create worker))
-                 (loop
-                   (let ((*agent-restricted-maximum-tool-rounds*
-                           (max 1 (rlm-budget-remaining-calls budget)))
-                         (*provider-maximum-output-tokens* nil))
-                     (unwind-protect
-                          (agent-run-user-turn agent request
-                                               :observer observer
-                                               :tool-allowlist
-                                               (list "env.eval")
-                                               :tool-restriction-p t)
-                       (funcall flush-tranche)))
-                   (multiple-value-bind (value final-p)
-                       (rlm-endpoint-final endpoint)
-                     (when final-p
-                       ;; A finished environment parks for reuse over the
-                       ;; same context; a failed run's worker stops instead.
-                       (rlm--environment-pool-park object configuration
-                                                   worker)
+                 (handler-case
+                     (loop
+                       (let ((*agent-restricted-maximum-tool-rounds*
+                               (max 1 (rlm-budget-remaining-calls budget)))
+                             (*provider-maximum-output-tokens* nil))
+                         (unwind-protect
+                              (agent-run-user-turn agent request
+                                                   :observer observer
+                                                   :tool-allowlist (list "env.eval")
+                                                   :tool-restriction-p t)
+                           (funcall flush-tranche)))
+                       (multiple-value-bind (value final-p)
+                           (rlm-endpoint-final endpoint)
+                         (when final-p
+                           (rlm--environment-pool-park object environment-owner worker)
+                           (setf parked-p t)
+                           (return (values value
+                                           (conversation-identifier conversation)))))
+                       (setf request
+                             "No final value is recorded yet. Continue from the environment's evidence. When the answer is complete, call (finish value) exactly once."))
+                   (rlm-budget-exhausted (condition)
+                     (let ((names (rlm--environment-persisted-names worker)))
+                       (rlm--environment-pool-park object environment-owner worker)
                        (setf parked-p t)
-                       (return (values value
-                                       (conversation-identifier
-                                        conversation)))))
-                   (setf request
-                         "No final value is recorded yet. Audit the task against what the environment has actually computed: do not treat intent, partial progress, or a plausible unverified answer as completion. Continue decomposing in the environment, and when the answer is complete, or the remaining budget cannot support further sub-inferences, compose the best supported value and call (finish value) exactly once.")))))
+                       (multiple-value-bind (value final-p)
+                           (rlm-endpoint-final endpoint)
+                         (if final-p
+                             (values value (conversation-identifier conversation))
+                             (rlm--signal-partial
+                              condition conversation budget
+                              :context (format nil "context:~A"
+                                               (rlm-context-object-digest object))
+                              :environment names)))))))))
         (unless parked-p
           (when worker
             (ignore-errors (lisp-worker-stop worker))))

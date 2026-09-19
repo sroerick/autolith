@@ -51,6 +51,79 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
              (rlm-inference-error-task condition)
              (rlm-inference-error-message condition)))))
 
+(define-condition rlm-partial-result (rlm-budget-exhausted)
+  ((observation
+    :initarg :observation
+    :reader rlm-partial-result-observation
+    :type list
+    :documentation "The explicitly incomplete result and durable evidence references."))
+  (:documentation "A budget ended with recoverable evidence, not a validated answer.")
+  (:report
+   (lambda (condition stream)
+     (format stream "Inference incomplete: ~A budget exhausted; evidence at inference:~A."
+             (rlm-budget-exhausted-dimension condition)
+             (getf (rlm-partial-result-observation condition) :trace)))))
+
+(defparameter *rlm-partial-item-limit* 8
+  "The most recent assistant and tool outputs included in an incomplete result.")
+
+(defparameter *rlm-partial-text-limit* 2000
+  "The maximum characters per partial output; the complete output is in the trace.")
+
+(-> rlm--partial-items (conversation) list)
+(defun rlm--partial-items (conversation)
+  "Extract bounded public outputs, excluding prompts and private provider reasoning."
+  (let ((outputs nil))
+    (dolist (item (conversation-input-items conversation))
+      (let ((text
+              (cond
+                ((equal (json-get item "type") "function_call_output")
+                 (json-get item "output"))
+                ((equal (json-get item "role") "assistant")
+                 (let ((content (json-get item "content")))
+                   (if (stringp content)
+                       content
+                       (format nil "~{~A~}"
+                               (loop for block across (coerce content 'vector)
+                                     for text = (and (json-object-p block)
+                                                     (json-get block "text"))
+                                     when (stringp text) collect text)))))
+                (t nil))))
+        (when (non-empty-string-p text)
+          (push (list :kind (if (equal (json-get item "role") "assistant")
+                               ':assistant
+                               ':tool)
+                      :call-id (json-get item "call_id")
+                      :text (bounded-string text :limit *rlm-partial-text-limit*)
+                      :truncated-p (> (length text) *rlm-partial-text-limit*))
+                outputs))))
+    (nreverse (subseq outputs 0 (min (length outputs) *rlm-partial-item-limit*)))))
+
+(-> rlm--signal-partial
+    (rlm-budget-exhausted conversation rlm-budget
+     &key (:context (option string)) (:environment list))
+    nil)
+(defun rlm--signal-partial (condition conversation budget &key context environment)
+  "Signal recoverable budget exhaustion without returning an unvalidated value."
+  (error 'rlm-partial-result
+         :dimension (rlm-budget-exhausted-dimension condition)
+         :task (rlm-budget-exhausted-task condition)
+         :observation
+         (append
+          (list :status ':incomplete
+                :validated-p nil
+                :dimension (rlm-budget-exhausted-dimension condition)
+                :trace (conversation-identifier conversation)
+                :partial-items (rlm--partial-items conversation)
+                :calls-remaining (rlm-budget-remaining-calls budget)
+                :tokens-remaining (rlm-budget-remaining-tokens budget))
+          (when context
+            (list :context context :environment environment))
+          (list :continuation
+                (if context
+                    "Call rlm.complete with the same context and a fresh budget. The environment is retained in this process until evicted or stopped; inspect environment-names before continuing."
+                    "Read the inference trace for complete outputs, then use that evidence in a new inference with a fresh budget.")))))
+
 (-> rlm--environment () (values model-provider configuration))
 (defun rlm--environment ()
   "Return the active application's provider and configuration."
@@ -413,8 +486,9 @@ ACTIVITY-CALLBACK receives compact live request descriptions. The frame
 runs on a private conversation persisted under the inference trace root
 and never touches the caller's conversation; the second value is the
 trace conversation identifier and the third is the frame's settled
-billable token spend. Contract violations are repaired by re-asking
-until BUDGET signals RLM-BUDGET-EXHAUSTED."
+billable token spend. Contract violations are repaired by re-asking.
+Budget exhaustion signals RLM-PARTIAL-RESULT, a subtype of RLM-BUDGET-EXHAUSTED,
+with bounded public outputs and a durable trace, never an unvalidated answer."
   (unless (non-empty-string-p task)
     (error 'rlm-inference-error
            :message "An inference frame requires a non-empty task."))
@@ -434,11 +508,14 @@ until BUDGET signals RLM-BUDGET-EXHAUSTED."
            (request (rlm--frame-request
                      task views (rlm--contract-instructions contract)))
            (*system-prompt-override* (rlm--frame-prompt capabilities)))
-      (if (eq capabilities ':read)
-          (rlm--run-framed-inference
-           task request contract budget provider configuration conversation
-           (or source-registry (rlm--environment-registry))
-           :activity-callback activity-callback)
-          (rlm--run-direct-inference
-           task request contract budget provider conversation
-           :activity-callback activity-callback)))))
+      (handler-case
+          (if (eq capabilities ':read)
+              (rlm--run-framed-inference
+               task request contract budget provider configuration conversation
+               (or source-registry (rlm--environment-registry))
+               :activity-callback activity-callback)
+              (rlm--run-direct-inference
+               task request contract budget provider conversation
+               :activity-callback activity-callback))
+        (rlm-budget-exhausted (condition)
+          (rlm--signal-partial condition conversation budget))))))

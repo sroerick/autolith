@@ -316,6 +316,16 @@ leaves a machine-readable invocation tree instead of orphaned frames."
                      endpoint
                      (getf fields ':operation)
                      (getf fields ':arguments))))))
+           (rlm-partial-result (condition)
+             (let ((observation (rlm-partial-result-observation condition)))
+               (rlm-endpoint--record
+                endpoint (list :operation ':incomplete :result observation))
+               (when stream
+                 (ignore-errors
+                   (daemon-write-packet
+                    stream
+                    (list :rlm-response :status ':error
+                          :message (format nil "~A~%~S" condition observation)))))))
            (error (condition)
              (when stream
                (ignore-errors

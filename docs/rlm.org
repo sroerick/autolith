@@ -71,11 +71,13 @@ exist:
   type, object and array included, and the parsed, validated value is
   returned as portable tagged native data.
 
-A malformed answer is repaired by re-asking within the remaining call
-budget. When the budget is gone the failure signals a condition, so
-callers can retry with more context or a different model; partial
-completed results are a property of =rlm-map=, which returns finished
-frames alongside failed ones.
+A malformed answer is repaired by re-asking within the remaining budget.
+On exhaustion, =infer= signals =rlm-partial-result=, a subtype of
+=rlm-budget-exhausted=. Read =rlm-partial-result-observation= for the explicit
+=:incomplete= status, exhausted allowance, remaining budget, trace identifier,
+and bounded recent assistant and tool outputs. These outputs are evidence,
+not a validated answer. Read =inference:<trace-id>= for the complete record.
+The tool response contains this observation rather than a bare failure.
 
 * Budgets
 
@@ -96,8 +98,8 @@ at most a share of the remaining pool (a quarter by default, capped
 at 16000 tokens) and never more than the pool holds, so concurrent
 siblings keep headroom and combined reservations cannot oversubscribe
 the allocation; only input tokens stay post hoc, gating the next
-reservation rather than the current one. Exhaustion signals
-=rlm-budget-exhausted= instead of silently degrading.
+reservation rather than the current one. Exhaustion stops further provider
+calls; incomplete observations preserve the work already performed.
 
 * Root completions
 
@@ -149,23 +151,28 @@ decomposition authored by the root model as Lisp, no provider request
 exceeding the window, intermediate values staying in the environment,
 and the exact answer returned.
 
-Environments persist across runs. A run that records its final value
-parks its worker keyed by the context digest, and the next completion
-over the same object under the same configuration reuses it: the root
-model is told its earlier definitions survive, the request lists them,
-and =(environment-names)= reports them live. The pool retains at most
-two idle workers, eviction and application shutdown stop them, and a
-pooled worker whose process died yields a fresh environment plus an
-explicit loss notice instead of silently vanished state. A failed run
-stops its worker rather than parking it.
+After completion or budget exhaustion, the worker is retained for another run
+over the same context under the same originating configuration. Per-call model
+routing does not change that ownership. The next request includes earlier
+names; inspect =(environment-names)= to see them live.
+
+An incomplete =rlm.complete= response includes a =context:= URI and continuation
+instructions. Call it again with that URI in =context.object= and a fresh budget
+to continue from the retained variables. In Lisp, resolve the digest with
+=rlm-context-object-find= and pass the object as =:context=.
+
+Retention is in memory, not a saved image: at most two idle workers are kept.
+Eviction, shutdown, and other failures stop them. If a retained worker dies,
+the next run starts a fresh environment and reports the loss. Trace and context
+files remain available independently of the worker.
 
 * Parallel maps
 
 =rlm-map= fans a list of tasks out as frames sharing one budget
 subtree, each task a string or a =(:task ... :context ...)= plist.
-Results keep task order, and a failed frame reports its error in
-place instead of discarding the finished ones, so exhausting the
-shared budget degrades to partial results. The model reaches the same
+Results keep task order. Finished frames retain their validated values;
+budget-exhausted frames carry =:status :incomplete= with their own evidence and
+trace identifiers. Other failures carry =:error=. The model reaches the same
 fan-out through the =rlm.map= tool.
 
 * Policies

@@ -260,6 +260,7 @@
                 #:rlm-budget-descend
                 #:rlm-budget-exhausted
                 #:rlm-budget-exhausted-dimension
+                #:rlm-budget-exhausted-task
                 #:rlm-budget-remaining-calls
                 #:rlm-budget-remaining-tokens
                 #:rlm-budget-settle-output
