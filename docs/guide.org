@@ -854,7 +854,10 @@ A role is one bounded UTF-8 =*.sexp= property list:
 - optional: =:tools=, =:spawns=, =:models=, =:reasoning-effort=, =:output=,
   =:blocking-p=
 
-Roles cannot grant =self.*=, =task.*=, =job.*=, or =yield.*=.
+Roles cannot grant =self.*=, =task.*=, or =yield.*=. Grant =job.*= when a role
+needs to inspect, await, or cancel asynchronous work. Children can access only
+their own jobs and descendant jobs, not parent or sibling jobs. This is
+independent of permission to spawn another child.
 
 - =:tools= may be =nil=, =:all=, or canonical tool names and namespace
   patterns.

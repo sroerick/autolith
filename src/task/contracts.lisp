@@ -99,7 +99,7 @@
   "The complete native child-role plist vocabulary.")
 
 (defparameter *task-forbidden-child-tool-namespaces*
-  '("self" "task" "job" "yield")
+  '("self" "task" "yield")
   "Tool namespaces structurally unavailable to ordinary child-role grants.")
 
 (defparameter *task-model-aliases*

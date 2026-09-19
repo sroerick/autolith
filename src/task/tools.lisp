@@ -2,6 +2,11 @@
 
 ;;;; -- Task Provider Tools --
 
+(defmethod tool-child-safe-p ((tool task-job-tool))
+  "Permit job management with the existing executing-agent visibility checks."
+  (declare (ignore tool))
+  t)
+
 (defun task--repair-prose (value)
   "Repair a provider string that was JSON-encoded one extra time."
   (if (not (stringp value))

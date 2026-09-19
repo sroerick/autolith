@@ -129,9 +129,9 @@
                   (tool-registry-find child-registry "task" "agents")
                   (every
                    (lambda (name)
-                     (null (tool-registry-find child-registry "job" name)))
-                   '("list" "get" "wait" "cancel")))
-                 "child spawning excludes the primary session job surface")
+                     (tool-registry-find child-registry "job" name))
+                   '("list" "get" "wait" "cancel" "send")))
+                 "task children can manage jobs within their existing visibility scope")
                 (test-assert
                  (and
                   (null (tool-registry-find non-spawning-registry "task" "run"))
@@ -671,4 +671,69 @@
                    (null (getf (rest (third results)) :cpu-microseconds)))
               "executed child calls retain timings while rejected calls omit them")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
+(-> test-task-child-execution-job-controls () null)
+(defun test-task-child-execution-job-controls ()
+  "Collect child-owned asynchronous results without exposing parent jobs."
+  (with-test-configuration (configuration)
+    (let* ((registry (task-augment-tool-registry (make-default-tool-registry)))
+           (orchestrator
+             (task-run-tool-orchestrator (tool-registry-find registry "task" "run")))
+           (definition
+             (task-agent-definition-create
+              :name "job-reader" :description "Inspect owned asynchronous work."
+              :instructions "Await the result." :tools ':all :spawns nil
+              :source ':test))
+           (primary (task-tests--primary-agent configuration "child-jobs" registry))
+           (child-job (task-tests--register-job orchestrator primary definition
+                                                 :name "child-owner"))
+           (child-registry (task-child-tool-registry registry definition orchestrator 1))
+           (child (task-tests--child-viewer configuration child-job
+                                             :registry child-registry))
+           (context (make-instance 'tool-context
+                                   :configuration configuration
+                                   :conversation (agent-conversation child)
+                                   :registry child-registry :agent child :worker nil)))
+      (unwind-protect
+           (progn
+             (dolist (role '("reviewer" "librarian"))
+               (let* ((role-definition
+                        (task-find-agent-definition (task-bundled-agent-definitions) role))
+                      (role-registry
+                        (task-child-tool-registry registry role-definition orchestrator 1)))
+                 (test-assert (tool-registry-find role-registry "job" "wait")
+                              (format nil "~A can await its execution jobs" role))))
+             (let* ((handoff
+                      (tool-execution-invoke
+                       orchestrator child :tool-name "test.async" :summary "child result"
+                       :operation-function (lambda () (tool-success "owned-result"))
+                       :async-p t))
+                    (identifier (getf (getf (rest (tool-result-details handoff)) :job) :id)))
+               (test-assert (and identifier
+                                 (null (tool-registry-find child-registry "task" "run")))
+                            "a non-spawning child can still own an execution job")
+               (dolist (operation '("wait" "get"))
+                 (let ((result
+                         (tool-execute
+                          (tool-registry-find child-registry "job" operation) context
+                          (if (string= operation "wait")
+                              (json-object "id" identifier "timeout-seconds" 10)
+                              (json-object "id" identifier)))))
+                   (test-assert (and (tool-result-success-p result)
+                                     (search "owned-result" (tool-result-content result)))
+                                (format nil "child job.~A returns its asynchronous result"
+                                        operation)))))
+             (dolist (operation '("get" "wait" "cancel"))
+               (test-assert
+                (handler-case
+                    (progn
+                      (tool-execute
+                       (tool-registry-find child-registry "job" operation) context
+                       (json-object "id" (job-identifier child-job)))
+                      nil)
+                  (task-error () t))
+                (format nil "child job.~A cannot operate on its parent-owned job" operation))))
+        (tool-registry-close-runtime-state registry))))
   nil)
