@@ -205,9 +205,9 @@ in the workspace and a private temporary directory, read system applications
 and explicit tool directories, and have no network access. Repository metadata
 is protected. Bootstrap builds the helper with Clang; release archives include it.
 
-Windows withholds, with a message where the feature would be reached:
-detaching a session from its terminal and client-first starts, checkpoints and
-rollback, and the =unix= management REPL transport.
+Windows supports supervised detached sessions, client-first starts, and exact-heap
+restart checkpoints. It withholds fork-based checkpoint saving and the =unix=
+management REPL transport.
 
 * Talk to Autolith
 
@@ -708,6 +708,15 @@ Register a OpenAI-compatible provider:
  :models-endpoint "https://api.example.com/v1/models")
 #+END_SRC
 
+List every model ID known to Autolith without authenticating or starting a session:
+
+#+BEGIN_SRC sh
+autolith models | grep gpt
+#+END_SRC
+
+The command prints one sorted, deduplicated model ID per line from built-in and
+locally configured catalogs.
+
 Inside a session, =/auth= and =(auth)= are the same operation. Omit the
 provider to pick one interactively, or use =/auth my-provider= and
 =(auth "my-provider")= for an explicit selection. Use
@@ -947,8 +956,9 @@ was selected. The role allowlist remains the child capability boundary.
 * Generations and recovery
 
 =(checkpoint)= requires a clean Git worktree and a passing =./script/check=.
-It saves pending reconstructible mutations and publishes a retained image
-without stopping the active session.
+On POSIX it saves a retained image without stopping the active session. On
+Windows it saves the exact live heap, restarts through the stable launcher, and
+resumes the active conversation after the saved image passes its probe.
 
 - =(generations)= lists retained images.
 - =(rollback ID)= selects a compatible image and exits through recovery.

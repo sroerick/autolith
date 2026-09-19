@@ -32,15 +32,15 @@ another requirement, stop and ask.
 Supported source-development targets are Linux x86-64, macOS arm64, and
 Windows x86-64 on SBCL with a terminal interface, one primary agent, and no
 claim of hostile-code sandboxing. Nix builds support Linux x86-64 and macOS
-arm64. Packaged binary releases support Linux x86-64 and aarch64 with glibc or
-musl, macOS x86-64 and arm64, FreeBSD x86-64, NetBSD x86-64, and OpenBSD x86-64.
+musl, macOS x86-64 and arm64, FreeBSD x86-64, NetBSD x86-64, OpenBSD x86-64,
+    and Windows x86-64.
 
 Host differences live behind the platform protocol in `src/core/platform.lisp`
 with one adapter per host family; `#+win32` appears only in those adapters, in
 `autolith.asd` feature expressions, and in the standalone scripts that run
-before the system loads. Windows withholds, each with a user-visible reason:
-detached sessions and the localgroup handoff, fork-based checkpoints and forked
-image saves, and filesystem sockets. Windows commands use the native AppContainer
+before the system loads. Windows supports supervised detached sessions and
+exact-heap restart checkpoints, while withholding fork-based image saves and
+filesystem sockets. Windows commands use the native AppContainer
 helper with explicit workspace, private temporary, and read-only tool scopes. Checks
 that depend on POSIX facilities go through the test fixture protocol in
 `tests/test-support.lisp` and are recorded as skipped where the host lacks
