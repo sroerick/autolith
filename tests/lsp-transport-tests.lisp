@@ -114,8 +114,11 @@
     (let* ((transport (lsp-transport-tests--open
                        (configuration-working-directory configuration) '(sleep 60)))
            (process (lsp-transport-process transport)))
-      (unwind-protect (lsp-transport-close transport)
-        (when (lsp-transport-process transport) (lsp-transport-close transport)))
-      (test-assert (not (uiop:process-alive-p process))
-                   "close terminates a server that ignores closed stdin")))
+      (unwind-protect
+           (progn
+             (sb-sys:with-deadline (:seconds 0.01)
+               (lsp-transport-close transport))
+             (test-assert (not (uiop:process-alive-p process))
+                          "cleanup reaps a stubborn server even under a shorter caller deadline"))
+        (when (lsp-transport-process transport) (lsp-transport-close transport)))))
   nil)

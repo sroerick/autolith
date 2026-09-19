@@ -1130,7 +1130,7 @@
 
 (-> test-active-turn-interrupt-events () null)
 (defun test-active-turn-interrupt-events ()
-  "Test Ctrl-C holds follow-ups while Escape runs the newest steer first."
+  "Test cancellation preserves FIFO steering, with Ctrl-C pausing follow-ups."
   (dolist (event '(:interrupt :escape))
     (let* ((now 10)
            (terminal (make-instance 'recording-terminal :columns 80))
@@ -1149,6 +1149,14 @@
       (deque-push-back
        (application-input-controller-work-items controller)
        (list ':message "queued"))
+      (dolist (content '("first in flight" "second in flight"))
+        (deque-push-back
+         (application-input-controller-steering-items controller) content))
+      (test-assert
+       (equal (mapcar #'agent-steering-input-content
+                      (application-input-controller--take-steering controller))
+              '("first in flight" "second in flight"))
+       "ordinary steering delivery drains inputs in FIFO order")
       (dolist (steering '("older steering" "newest steering"))
         (deque-push-back
          (application-input-controller-steering-items controller)
@@ -1164,17 +1172,12 @@
        "active-turn stop keys preserve the current draft")
       (test-assert
        (equal (application-input-controller--state controller :work-items)
-              (if (eq event ':escape)
-                  (list (list ':message "newest steering")
-                        (list ':message "queued"))
-                  (list (list ':message "queued"))))
-       "Escape puts the newest steer ahead of queued work")
+              (list (list ':message "queued")))
+       "cancellation defers steering promotion until active work finishes")
       (test-assert
        (equal (application-input-controller--state controller :steering-items)
-              (if (eq event ':escape)
-                  (list "older steering")
-                  (list "older steering" "newest steering")))
-       "Escape removes only the newest steer from steering work")
+              (list "older steering" "newest steering"))
+       "cancellation preserves pending steering order")
       (test-assert
        (application-input-controller-turn-cancellation-p controller)
        "the cancellation lifecycle remains active until work cleanup finishes")
@@ -1233,13 +1236,14 @@
             (null
              (application-input-controller-interrupt-deadline controller)))
        "work cleanup ends the cancellation lifecycle and force window")
-      (when (eq event ':escape)
-        (test-assert
-         (equal (application-input-controller--state controller :work-items)
-                (list (list ':message "newest steering")
-                      (list ':message "older steering")
-                      (list ':message "queued")))
-         "cancellation cleanup keeps the newest steer first"))
+      (test-assert
+       (equal (application-input-controller--state controller :work-items)
+              (list (list ':message "first in flight")
+                    (list ':message "second in flight")
+                    (list ':message "older steering")
+                    (list ':message "newest steering")
+                    (list ':message "queued")))
+       "cancellation promotes in-flight and pending steering in FIFO order")
       (test-assert
        (eq (not (null (terminal-ui-notice ui)))
            (eq event ':interrupt))

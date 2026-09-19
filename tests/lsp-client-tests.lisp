@@ -283,3 +283,132 @@
                             (search "more" instruction))
                        "long server lists are summarized")))))
   nil)
+
+
+(-> test-lsp-client-independent-diagnostic-sources () null)
+(defun test-lsp-client-independent-diagnostic-sources ()
+  "Keep push and pull reports independent across replacement, clearing, and edits."
+  (with-test-configuration (configuration)
+    (let* ((path (lsp-client-tests--write configuration "mixed.txt" "x"))
+           (client (lsp-client-tests--client (test-configuration-root configuration)
+                                            :capabilities (json-object "diagnosticProvider" t)))
+           (document (lsp-client-sync client path))
+           (compiler-error (json-object "message" "compiler error"))
+           (native-error (json-object "message" "native error"))
+           (pulled #()))
+      (labels ((publish (items &key (source ':push) (version (lsp-document-version document)))
+                 (lsp-client--publish-diagnostics
+                  client (json-object "uri" (lsp-path-uri path) "version" version "diagnostics" items)
+                  :source source))
+
+               (messages (report)
+                 (map 'list (lambda (item) (json-get item "message")) (json-get report "items"))))
+        (lsp-client-tests--with-replacements
+         (list (list 'lsp-transport-request
+                     (lambda (&rest arguments)
+                       (declare (ignore arguments))
+                       (json-object "kind" "full" "items" pulled))))
+         (publish (vector compiler-error))
+         (dotimes (iteration 2)
+           (test-assert (equal '("compiler error")
+                               (messages (lsp-client-diagnostics client document :wait-seconds 0)))
+                        "repeated empty pulls cannot erase pushed compiler errors"))
+         (setf pulled (vector native-error compiler-error))
+         (test-assert (equal '("compiler error" "native error")
+                             (messages (lsp-client-diagnostics client document :wait-seconds 0)))
+                      "both diagnostic sources are included without duplicate items")
+         (publish #())
+         (test-assert (= 2 (length (lsp-document-diagnostics document)))
+                      "clearing push reports does not clear pull reports")
+         (setf pulled #())
+         (test-assert (null (messages (lsp-client-diagnostics client document :wait-seconds 0)))
+                      "each source can clear its own report")
+         (publish (vector compiler-error) :version nil)
+         (let ((report (lsp-client-diagnostics client document :wait-seconds 0)))
+           (test-assert (and (string= "unversioned" (json-get report "state"))
+                             (eq yason:false (json-get report "versioned")))
+                        "a versioned pull does not upgrade an unversioned push"))
+         (let ((*lsp-maximum-diagnostics* 1))
+           (publish (vector compiler-error))
+           (setf pulled (vector native-error))
+           (let ((report (lsp-client-diagnostics client document :wait-seconds 0)))
+             (test-assert (and (= 1 (length (json-get report "items")))
+                               (json-get report "truncated"))
+                          "the combined report obeys the document diagnostic bound")))
+         (workspace-resource-tests--write-text path "xx")
+         (lsp-client-sync client path)
+         (dolist (source '(:push :pull))
+           (publish (vector compiler-error) :source source :version 1))
+         (let ((report (lsp-document--diagnostic-snapshot document t)))
+           (test-assert (and (zerop (length (json-get report "items")))
+                             (string= "pending" (json-get report "state")))
+                        "an edit invalidates both reports and rejects stale replacements"))))))
+  nil)
+
+(-> lsp-client-tests--idle-transport () lsp-transport)
+(defun lsp-client-tests--idle-transport ()
+  "Build a real transport state that accepts writes but never receives a reply."
+  (make-instance 'lsp-transport :process nil
+                 :input (flexi-streams:make-in-memory-input-stream #())
+                 :output (make-in-memory-output-stream)
+                 :error-output (flexi-streams:make-in-memory-input-stream #())
+                 :request-handler (lambda (&rest arguments) (declare (ignore arguments)))
+                 :notification-handler (lambda (&rest arguments) (declare (ignore arguments)))))
+
+(-> test-lsp-edit-diagnostics-deadline () null)
+(defun test-lsp-edit-diagnostics-deadline ()
+  "Bound startup and pull waits after a real edit, sharing one deadline across servers."
+  (dolist (stage '(:startup :pull :write))
+    (with-test-configuration (base-configuration root)
+      (let* ((configuration (configuration--clone base-configuration :working-directory root))
+             (path (lsp-client-tests--write configuration "deadline.txt" "before"))
+             (registry (lsp-register-tools (make-default-tool-registry)))
+             (context (make-instance 'tool-context :configuration configuration :worker nil
+                                    :registry registry
+                                    :conversation (conversation-create configuration)))
+             (manager (lsp-tool-manager (tool-registry-find registry "lsp" "diagnostics")))
+             (servers (list (lsp-client-tests--configuration :name "first")
+                            (lsp-client-tests--configuration :name "second")))
+             (transport (lsp-client-tests--idle-transport))
+             (starts 0)
+             (*lsp-edit-diagnostics-timeout-seconds* 0.1))
+        (setf (lsp-manager-loaded-p manager) t
+              (lsp-manager-configurations manager) servers)
+        (unless (eq stage ':startup)
+          (let ((client (lsp-client-tests--client root :transport transport
+                                                :capabilities (json-object "diagnosticProvider" t))))
+            (setf (gethash (list "first" (namestring (platform-truename *platform* root)))
+                           (lsp-manager-clients manager)) client)))
+        (unwind-protect
+             (lsp-client-tests--with-replacements
+              (append
+               (list (list 'lsp-transport-open
+                           (lambda (&rest arguments)
+                             (declare (ignore arguments))
+                             (incf starts)
+                             transport)))
+               (when (eq stage ':write)
+                 (list (list 'lsp-write-message
+                             (lambda (&rest arguments)
+                               (declare (ignore arguments))
+                               (sleep 10))))))
+              (let* ((read-result (workspace-resource-tests--call registry context "resource" "read"
+                                                                 "uri" "workspace:deadline.txt"))
+                     (revision (workspace-resource-tests--field (tool-result-content read-result) "Revision: "))
+                     (start (lsp--seconds))
+                     (result (workspace-resource-tests--call
+                              registry context "resource" "edit"
+                              "uri" "workspace:deadline.txt" "base-revision" revision
+                              "operations" (vector (json-object "op" "replace-lines" "start-line" 1
+                                                                "end-line" 1 "content" "after")))))
+                (test-assert (tool-result-success-p result) "diagnostic timeout does not undo a saved edit")
+                (test-assert (search "after" (uiop:read-file-string path)) "the edit is durable")
+                (test-assert (< (- (lsp--seconds) start) 0.8) "automatic waits share the short edit deadline")
+                (test-assert (= starts (if (eq stage ':startup) 1 0))
+                             "the deadline escapes the server loop before another startup")
+                (test-assert (= 1 (lsp-transport-next-id transport)) "the blocking request was attempted")
+                (test-assert (zerop (hash-table-count (lsp-transport-pending transport)))
+                             "deadline unwinding removes the pending request")))
+          (tool-registry-close-runtime-state registry)
+          (lsp-transport-close transport)))))
+  nil)

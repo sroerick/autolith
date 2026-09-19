@@ -294,8 +294,10 @@ Retry does not roll back effects completed before the failure.
 
 Escape during diagnosis cancels only the diagnosis and returns to the live
 restarts. Escape at the ordinary restart picker aborts the failed operation.
-During an active provider turn, Ctrl-C keeps the existing cancellation and
-second-interrupt force-exit behavior.
+During an active provider turn, Escape cancels the turn and continues queued
+steering in submission order, oldest first. Ctrl-C cancels and pauses queued
+work until you submit input; a second interrupt within the force-exit window
+exits the application.
 
 ** Parking and editing queued input
 
@@ -519,12 +521,18 @@ filename suffixes are queried. The project root is the nearest ancestor with a
 configured root marker, bounded by the workspace; otherwise it is the workspace.
 Open files are refreshed from disk before queries, including shell edits.
 
-Results contain native file URIs and zero-based UTF-16 ranges. Diagnostic state
-=received= identifies a versioned report, =unversioned= identifies a report whose
-snapshot cannot be confirmed, and =pending= means no report arrived within the
-wait, not that the file is error-free. Explicit diagnostics allow two seconds
-for push reports; edit follow-ups allow half a second. Pull requests use the
-configured request timeout. Reports retain at most 200 diagnostics per file and
+Results contain native file URIs and zero-based UTF-16 ranges. Push and pull
+reports are retained independently and combined, removing duplicate items.
+Diagnostic state =received= identifies versioned reports, =unversioned= means a
+report's snapshot cannot be confirmed, and =pending= means no report arrived.
+The =sources= field gives push and pull freshness separately.
+
+Explicit diagnostics allow two seconds for push reports and use the configured
+request timeout for pull requests. Edit follow-ups have one shared one-second
+blocking deadline across lock acquisition, startup, synchronization, and all
+matching servers, with at most half a second for push settling. Failed startup
+also reaps its process. If automatic diagnostics time out, use =lsp.diagnostics=
+for the full server timeout. Reports retain at most 200 diagnostics per file and
 mark truncation. Files are limited to 2 MiB, with 64 open documents per server
 and 16 live project/server pairs per registry. Use =lsp.restart= to release them.
 Server shutdown occurs when the tool runtime is retired.

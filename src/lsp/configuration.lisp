@@ -123,6 +123,7 @@
                                            :pathname pathname))
                (sb-ext:octets-to-string buffer :external-format ':utf-8 :end count))
           (close stream)))
+    (sb-sys:deadline-timeout (condition) (error condition))
     (lsp-configuration-error (condition) (error condition))
     (serious-condition (cause)
       (lsp-configuration--error (format nil "Could not read native LSP configuration: ~A" cause)

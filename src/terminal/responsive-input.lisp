@@ -1868,50 +1868,21 @@ work receive steering as soon as possible instead of as follow-ups."
     (with-lock-held ((application-input-controller-lock controller))
       (application-input-controller-turn-cancellation-p controller)))))
 
-(-> application-input-controller--promote-newest-steering-locked
-    (application-input-controller)
-    boolean)
-(defun application-input-controller--promote-newest-steering-locked (controller)
-  "Move CONTROLLER's newest unacknowledged steer to the front of queued work."
-  (let* ((steering
-           (application-input-controller-steering-items controller))
-         (in-flight
-           (application-input-controller-steering-in-flight-items controller))
-         (input
-           (cond
-             ((not (deque-empty-p steering))
-              (deque-remove-at steering (1- (deque-count steering))))
-             ((not (deque-empty-p in-flight))
-              (agent-steering-input-content
-               (deque-remove-at in-flight (1- (deque-count in-flight))))))))
-    (when input
-      (deque-push-front
-       (application-input-controller-work-items controller)
-       (list ':message input))
-      (incf
-       (application-input-controller-steering-promotion-prefix-count controller))
-      (when (application-input-controller-follow-up-edit-index controller)
-        (incf (application-input-controller-follow-up-edit-index controller)))
-      t)))
-
 (-> application-input-controller--request-active-turn-cancellation
     (application-input-controller
      &key (:force-exit-window-p boolean)
-          (:pause-queued-work-p boolean)
-          (:promote-newest-steering-p boolean))
+          (:pause-queued-work-p boolean))
     boolean)
 (defun application-input-controller--request-active-turn-cancellation
-    (controller
-     &key force-exit-window-p pause-queued-work-p promote-newest-steering-p)
+    (controller &key force-exit-window-p pause-queued-work-p)
   "Atomically request cancellation only for CONTROLLER's current active turn.
 
 When FORCE-EXIT-WINDOW-P is true, arm the repeated-Ctrl-C option before
 cancellation can finish and schedule the hint that explains it. When
 PAUSE-QUEUED-WORK-P is true, hold follow-ups after cancellation until explicit
-new input resumes them. When PROMOTE-NEWEST-STEERING-P is true, run the newest
-unacknowledged steer before every older queued input after cancellation."
+new input resumes them. Unconsumed steering is promoted in FIFO order when
+the active work finishes."
   (let ((accepted-p nil)
-        (promoted-p nil)
         (message
           (and force-exit-window-p
                (application-input-controller--forced-exit-message
@@ -1928,10 +1899,6 @@ unacknowledged steer before every older queued input after cancellation."
               (application-input-controller-queued-work-paused-p controller)
               pause-queued-work-p
               accepted-p t)
-        (when promote-newest-steering-p
-          (setf promoted-p
-                (application-input-controller--promote-newest-steering-locked
-                 controller)))
         (when force-exit-window-p
           (let ((now
                   (funcall
@@ -1943,8 +1910,6 @@ unacknowledged steer before every older queued input after cancellation."
                   (+ now *application-interrupt-hint-delay-seconds*)
                   (application-input-controller-forced-exit-message controller)
                   message)))))
-    (when promoted-p
-      (application-input-controller--persist-pending controller))
     (when accepted-p
       (let ((application
               (application-input-controller-application controller)))
@@ -2719,7 +2684,7 @@ may execute immediately; other Lisp waits for the idle boundary."
                (application-input-controller--turn-cancellation-active-p
                 controller)
                (application-input-controller--request-active-turn-cancellation
-                controller :promote-newest-steering-p t)))
+                controller)))
          nil)
         (t
          (let ((turn-active-p

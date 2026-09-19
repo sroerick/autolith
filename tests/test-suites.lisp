@@ -15,6 +15,10 @@
   test-lsp-client-diagnostics-and-stale-invalidation
   test-lsp-client-document-bounds
   test-lsp-client-diagnostics-push-pull
+  test-lsp-client-independent-diagnostic-sources
+  test-lsp-tool-position-and-query
+  test-lsp-client-manager-reuse-restart-and-cleanup
+  test-lsp-edit-diagnostics-deadline
   test-lsp-tool-conditional-registration
   test-lsp-session-context)
 

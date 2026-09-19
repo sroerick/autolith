@@ -14,6 +14,19 @@
 (defparameter *lsp-maximum-diagnostics* 200
   "The maximum retained diagnostics for one open document.")
 
+(defclass lsp-diagnostic-report ()
+  ((items :initform #() :accessor lsp-diagnostic-report-items
+          :documentation "Bounded items from one diagnostic source.")
+   (received-p :initform nil :accessor lsp-diagnostic-report-received-p
+               :documentation "Whether this source has reported for the current version.")
+   (versioned-p :initform nil :accessor lsp-diagnostic-report-versioned-p
+                :documentation "Whether the report explicitly identifies the document version.")
+   (received-at :initform 0 :accessor lsp-diagnostic-report-received-at
+                :documentation "Monotonic arrival time for diagnostic settling.")
+   (truncated-p :initform nil :accessor lsp-diagnostic-report-truncated-p
+                :documentation "Whether this source exceeded the retained item limit."))
+  (:documentation "The latest push or pull report, guarded by the client lock."))
+
 (defclass lsp-document ()
   ((path :initarg :path :reader lsp-document-path
          :documentation "Canonical local pathname.")
@@ -21,17 +34,13 @@
          :documentation "Last synchronized complete text.")
    (version :initform 1 :accessor lsp-document-version
             :documentation "Monotonically increasing document version.")
-   (diagnostics :initform #() :accessor lsp-document-diagnostics
-                :documentation "Bounded diagnostic items for the current version.")
-   (received-p :initform nil :accessor lsp-document-received-p
-               :documentation "Whether any current diagnostic report arrived.")
-   (versioned-p :initform nil :accessor lsp-document-versioned-p
-                :documentation "Whether the report explicitly identifies this version.")
-   (received-at :initform 0 :accessor lsp-document-received-at
-                :documentation "Monotonic arrival time for diagnostic settling.")
-   (truncated-p :initform nil :accessor lsp-document-truncated-p
-                :documentation "Whether retained diagnostics omit excess items."))
-  (:documentation "One synchronized file and its diagnostic state, guarded by its client lock."))
+   (push-report :initform (make-instance 'lsp-diagnostic-report)
+                :accessor lsp-document-push-report
+                :documentation "Latest published diagnostics for this version.")
+   (pull-report :initform (make-instance 'lsp-diagnostic-report)
+                :accessor lsp-document-pull-report
+                :documentation "Latest pulled diagnostics for this version."))
+  (:documentation "One synchronized file with independent push and pull diagnostic state."))
 
 (defclass lsp-client ()
   ((configuration :initarg :configuration :reader lsp-client-configuration
@@ -122,9 +131,10 @@
      (error 'lsp-rpc-error :code -32601
             :message (format nil "Unsupported language server request: ~A" method)))))
 
-(-> lsp-client--publish-diagnostics (lsp-client json-object) null)
-(defun lsp-client--publish-diagnostics (client params)
-  "Accept reports only for open files and discard explicitly stale versions."
+(-> lsp-client--publish-diagnostics
+    (lsp-client json-object &key (:source (member :push :pull))) null)
+(defun lsp-client--publish-diagnostics (client params &key (source ':push))
+  "Replace only SOURCE's report for an open file, rejecting explicitly stale versions."
   (let ((uri (json-get params "uri"))
         (version (json-get params "version"))
         (items (json-get params "diagnostics")))
@@ -134,13 +144,16 @@
           (when (and document
                      (or (null version)
                          (eql version (lsp-document-version document))))
-            (setf (lsp-document-diagnostics document)
-                  (subseq items 0 (min (length items) *lsp-maximum-diagnostics*))
-                  (lsp-document-truncated-p document)
-                  (> (length items) *lsp-maximum-diagnostics*)
-                  (lsp-document-received-p document) t
-                  (lsp-document-versioned-p document) (integerp version)
-                  (lsp-document-received-at document) (lsp--seconds)))))))
+            (let ((report (ecase source
+                            (:push (lsp-document-push-report document))
+                            (:pull (lsp-document-pull-report document)))))
+              (setf (lsp-diagnostic-report-items report)
+                    (subseq items 0 (min (length items) *lsp-maximum-diagnostics*))
+                    (lsp-diagnostic-report-truncated-p report)
+                    (> (length items) *lsp-maximum-diagnostics*)
+                    (lsp-diagnostic-report-received-p report) t
+                    (lsp-diagnostic-report-versioned-p report) (integerp version)
+                    (lsp-diagnostic-report-received-at report) (lsp--seconds))))))))
   nil)
 
 (-> lsp-client--notification (lsp-client string t) null)
@@ -302,10 +315,8 @@
         (setf old-text (lsp-document-text document)
               changed-p t
               (lsp-document-text document) text
-              (lsp-document-diagnostics document) #()
-              (lsp-document-received-p document) nil
-              (lsp-document-versioned-p document) nil
-              (lsp-document-truncated-p document) nil)
+              (lsp-document-push-report document) (make-instance 'lsp-diagnostic-report)
+              (lsp-document-pull-report document) (make-instance 'lsp-diagnostic-report))
         (incf (lsp-document-version document))))
     (multiple-value-bind (kind open-close-p save) (lsp-client--sync-options client)
       (when (and opened-p open-close-p)
@@ -353,38 +364,85 @@
                 (remhash (first entry) (lsp-client-documents client))))))))
   nil)
 
+(-> lsp-diagnostic-report--state (lsp-diagnostic-report) string)
+(defun lsp-diagnostic-report--state (report)
+  "Describe freshness for one diagnostic source."
+  (cond
+    ((not (lsp-diagnostic-report-received-p report))
+     "pending")
+    ((lsp-diagnostic-report-versioned-p report)
+     "received")
+    (t
+     "unversioned")))
+
+(-> lsp-document-diagnostics (lsp-document) (values vector boolean))
+(defun lsp-document-diagnostics (document)
+  "Return the bounded union and truncation flag; the caller holds the client lock."
+  (let* ((reports (list (lsp-document-push-report document) (lsp-document-pull-report document)))
+         (items (remove-duplicates
+                 (concatenate 'vector (lsp-diagnostic-report-items (first reports))
+                                      (lsp-diagnostic-report-items (second reports)))
+                 :test #'equalp :from-end t)))
+    (values (subseq items 0 (min (length items) *lsp-maximum-diagnostics*))
+            (not (null (or (> (length items) *lsp-maximum-diagnostics*)
+                           (some #'lsp-diagnostic-report-truncated-p reports)))))))
+
+(-> lsp-document--diagnostic-snapshot (lsp-document boolean) json-object)
+(defun lsp-document--diagnostic-snapshot (document pull-p)
+  "Combine independent reports without treating an empty source as clearing another."
+  (let* ((push-report (lsp-document-push-report document))
+         (pull-report (lsp-document-pull-report document))
+         (reports (remove-if-not #'lsp-diagnostic-report-received-p
+                                 (list push-report pull-report)))
+         (versioned-p (and reports (every #'lsp-diagnostic-report-versioned-p reports))))
+    (multiple-value-bind (items truncated-p) (lsp-document-diagnostics document)
+      (json-object "uri" (lsp-path-uri (lsp-document-path document))
+                   "version" (lsp-document-version document)
+                   "state" (cond
+                             ((null reports)
+                              "pending")
+                             (versioned-p
+                              "received")
+                             (t
+                              "unversioned"))
+                   "sources" (json-object "push" (lsp-diagnostic-report--state push-report)
+                                          "pull" (if pull-p
+                                                     (lsp-diagnostic-report--state pull-report)
+                                                     "unsupported"))
+                   "versioned" (if versioned-p t yason:false)
+                   "truncated" (if truncated-p t yason:false)
+                   "items" items))))
+
 (-> lsp-client-diagnostics (lsp-client lsp-document &key (:wait-seconds real)) json-object)
 (defun lsp-client-diagnostics (client document &key (wait-seconds 2))
-  "Request pull diagnostics or wait for a quiet push report, distinguishing pending from empty."
-  (when (json-get (lsp-client-capabilities client) "diagnosticProvider")
-    (let ((reply (lsp-transport-request
-                  (lsp-client-transport client) "textDocument/diagnostic"
-                  (json-object "textDocument" (json-object "uri" (lsp-path-uri (lsp-document-path document))))
-                  :timeout (lsp-server-configuration-timeout-seconds (lsp-client-configuration client)))))
-      ;; No previousResultId is sent: a full report is required for this snapshot.
-      (unless (and (hash-table-p reply) (json-string= (json-get reply "kind") "full")
-                   (vectorp (json-get reply "items")) (not (stringp (json-get reply "items"))))
-        (error 'lsp-error :message "Language server returned no full diagnostic report."))
-      (lsp-client--publish-diagnostics
-       client (json-object "uri" (lsp-path-uri (lsp-document-path document))
-                           "version" (lsp-document-version document)
-                           "diagnostics" (json-get reply "items")))))
-  (let ((deadline (+ (lsp--seconds) wait-seconds)))
-    (loop
-      (with-lock-held ((lsp-client-lock client))
-        (when (or (>= (lsp--seconds) deadline)
-                  (and (lsp-document-received-p document)
-                       (>= (- (lsp--seconds) (lsp-document-received-at document)) 0.15)))
-          (return
-            (json-object "uri" (lsp-path-uri (lsp-document-path document))
-                         "version" (lsp-document-version document)
-                         "state" (cond
-                                   ((not (lsp-document-received-p document)) "pending")
-                                   ((lsp-document-versioned-p document) "received")
-                                   (t "unversioned"))
-                         "versioned" (if (lsp-document-versioned-p document) t yason:false)
-                         "truncated" (if (lsp-document-truncated-p document) t yason:false)
-                         "items" (lsp-document-diagnostics document)))))
-      (unless (lsp-transport-live-p (lsp-client-transport client))
-        (error 'lsp-error :message "Language server exited while waiting for diagnostics."))
-      (sleep 0.02))))
+  "Pull one report and wait for quiet push reports, retaining both diagnostic sources."
+  (let ((pull-p (not (null (json-get (lsp-client-capabilities client) "diagnosticProvider")))))
+    (when pull-p
+      (let ((reply (lsp-transport-request
+                    (lsp-client-transport client) "textDocument/diagnostic"
+                    (json-object "textDocument" (json-object "uri" (lsp-path-uri (lsp-document-path document))))
+                    :timeout (lsp-server-configuration-timeout-seconds (lsp-client-configuration client)))))
+        ;; No previousResultId is sent: a full report is required for this snapshot.
+        (unless (and (hash-table-p reply) (json-string= (json-get reply "kind") "full")
+                     (vectorp (json-get reply "items")) (not (stringp (json-get reply "items"))))
+          (error 'lsp-error :message "Language server returned no full diagnostic report."))
+        (lsp-client--publish-diagnostics
+         client (json-object "uri" (lsp-path-uri (lsp-document-path document))
+                             "version" (lsp-document-version document)
+                             "diagnostics" (json-get reply "items"))
+         :source ':pull)))
+    (let ((deadline (+ (lsp--seconds) wait-seconds)))
+      (loop
+        (with-lock-held ((lsp-client-lock client))
+          (let ((reports (remove-if-not #'lsp-diagnostic-report-received-p
+                                       (list (lsp-document-push-report document)
+                                             (lsp-document-pull-report document)))))
+            (when (or (>= (lsp--seconds) deadline)
+                      (and reports
+                           (every (lambda (report)
+                                    (>= (- (lsp--seconds) (lsp-diagnostic-report-received-at report)) 0.15))
+                                  reports)))
+              (return (lsp-document--diagnostic-snapshot document pull-p)))))
+        (unless (lsp-transport-live-p (lsp-client-transport client))
+          (error 'lsp-error :message "Language server exited while waiting for diagnostics."))
+        (sleep 0.02)))))
