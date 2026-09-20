@@ -3,10 +3,14 @@
 ;;; Build the platform helper. Windows also installs a private copy outside
 ;;; the source workspace, since the helper cannot be exposed as writable.
 #+(or linux darwin freebsd netbsd openbsd)
-(let* ((system-root (asdf:system-source-directory :cl-exec-sandbox))
-       (environment (uiop:getenv "CL_EXEC_SANDBOX_HELPER")))
-  (unless (and environment (probe-file environment))
-    (let ((builder (merge-pathnames "scripts/build-helper" system-root)))
+(let ((variables '("CL_EXEC_SANDBOX_PROCESS_GROUP_HELPER"
+                   #+linux "CL_EXEC_SANDBOX_HELPER")))
+  (unless (every (lambda (variable)
+                   (let ((path (uiop:getenv variable)))
+                     (and path (plusp (length path)) (probe-file path))))
+                 variables)
+    (let* ((system-root (asdf:system-source-directory :cl-exec-sandbox))
+           (builder (merge-pathnames "scripts/build-helper" system-root)))
       (unless (probe-file builder)
         (error "cl-exec-sandbox helper builder is missing at ~A." builder))
       (uiop:run-program (list "/usr/bin/env" "bash" (namestring builder))

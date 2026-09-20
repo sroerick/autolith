@@ -21,6 +21,47 @@
     (write-string content stream))
   pathname)
 
+(-> test-build-sandbox-packaged-helpers () null)
+(defun test-build-sandbox-packaged-helpers ()
+  "Build POSIX helpers only when a platform-required packaged helper is missing."
+  (let* ((script (asdf:system-relative-pathname :autolith "script/build-sandbox.lisp"))
+         (existing (namestring script))
+         (missing (namestring (merge-pathnames "missing-sandbox-helper" script))))
+    (dolist (platform '(:linux :darwin :freebsd :netbsd :openbsd))
+      (dolist (case '((:existing :existing nil)
+                      (:existing nil t)
+                      (nil :existing t)
+                      (:missing :existing t)
+                      (:empty :existing t)))
+        (destructuring-bind (process-group helper linux-build-p) case
+          (flet ((path (value)
+                   (case value
+                     (:existing
+                      existing)
+                     (:missing
+                      missing)
+                     (:empty
+                      ""))))
+            (let ((*features* (cons platform
+                                   (set-difference *features*
+                                                   '(:linux :darwin :freebsd
+                                                     :netbsd :openbsd :win32))))
+                  (built-p nil))
+              (with-test-environment
+                  (("CL_EXEC_SANDBOX_PROCESS_GROUP_HELPER" (path process-group))
+                   ("CL_EXEC_SANDBOX_HELPER" (path helper)))
+                (test-call-with-function-replacements
+                 (list (list 'uiop:run-program
+                             (lambda (&rest arguments)
+                               (declare (ignore arguments))
+                               (setf built-p t))))
+                 (lambda () (load script))))
+              (test-assert
+               (eq built-p (if (eq platform ':linux)
+                               linux-build-p
+                               (not (eq process-group ':existing))))
+               "Packaged helper detection respects platform requirements"))))))))
+
 (-> release-script-tests--run
     (list &key (:directory (option pathname)) (:environment list)
                (:ignore-error-status boolean) (:output t))
