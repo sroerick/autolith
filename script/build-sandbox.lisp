@@ -2,7 +2,7 @@
 
 ;;; Build the platform helper. Windows also installs a private copy outside
 ;;; the source workspace, since the helper cannot be exposed as writable.
-#+linux
+#+(or linux darwin freebsd netbsd openbsd)
 (let* ((system-root (asdf:system-source-directory :cl-exec-sandbox))
        (environment (uiop:getenv "CL_EXEC_SANDBOX_HELPER")))
   (unless (and environment (probe-file environment))
@@ -37,5 +37,5 @@
            (autolith-script-replace-file staged installed))
       (when (probe-file staged) (delete-file staged)))))
 
-#-(or linux win32)
+#-(or linux darwin freebsd netbsd openbsd win32)
 (format t "~&Skipping the cl-exec-sandbox native helper on this platform.~%")
