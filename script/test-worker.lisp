@@ -10,6 +10,13 @@
   (load (merge-pathnames "check.lisp"
                          (uiop:pathname-directory-pathname *load-truename*))))
 
+(defun test-worker--report-live-threads ()
+  "Name every Lisp thread still alive after the cases, so leaks are visible."
+  (let ((others (remove sb-thread:*current-thread* (sb-thread:list-all-threads))))
+    (when others
+      (format *error-output* "~&Live threads after cases: ~{~A~^, ~}~%"
+              (mapcar #'sb-thread:thread-name others)))))
+
 (defun test-worker-main (arguments source-root)
   "Run one assigned shard and atomically publish its portable result."
   (handler-case
@@ -39,6 +46,7 @@
             (let ((result (uiop:symbol-call '#:autolith '#:tests-run-cases cases
                                             :temporary-root (getf request :temporary-root))))
               (check--validate-result result names)
+              (test-worker--report-live-threads)
               (unwind-protect
                    (progn
                      (check--write-form staging-path result)
