@@ -166,7 +166,27 @@
           (when (platform-process-alive-p *platform* pid)
             (platform-terminate-process *platform* pid :force t)))))))
 (defun test-windows-restart-library ()
-  "Save and boot the library's exact cyclic heap on native Windows."
+  "Save and boot the library's exact cyclic heap on native Windows.
+
+The library checks whole-process facts, such as being the only live Lisp
+thread before a save, so its test operation runs in a fresh runtime instead of
+this shared test worker."
   (with-platform-capability (':restartable-image-saver "native Windows exact heap save")
-    (asdf:test-system "sbcl-generations")
-    (test-assert t "native exact-heap restart and failed-save fixtures passed")))
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((setup (merge-pathnames ".qlot/setup.lisp"
+                                     (asdf:system-source-directory ':autolith)))
+             (script (windows-tests--script
+                      (merge-pathnames "library-tests.lisp" root)
+                      `((require :asdf)
+                        (load ,(namestring setup))
+                        (asdf:test-system "sbcl-generations")))))
+        (multiple-value-bind (output error-output code)
+            (uiop:run-program (windows-tests--command script)
+                              :output ':string
+                              :error-output ':output
+                              :ignore-error-status t)
+          (declare (ignore error-output))
+          (test-assert (zerop code)
+                       (format nil "library tests in a fresh runtime exit ~D:~%~A"
+                               code output)))))))
