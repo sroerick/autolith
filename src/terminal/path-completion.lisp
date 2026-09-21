@@ -179,6 +179,10 @@ submit."
   (let ((root (uiop:ensure-directory-pathname root)))
     (unless (uiop:directory-exists-p root)
       (return-from terminal-path-completion-entries nil))
+    ;; Directory listings come back canonical, so ROOT must be canonical too
+    ;; before children are made relative to it: a Windows temporary root spelt
+    ;; with an 8.3 short name never prefixes its own long-named children.
+    (setf root (uiop:ensure-directory-pathname (platform-truename *platform* root)))
     (let* ((relative (terminal-path--relative token))
            (slash (position #\/ relative :from-end t))
            (directory-relative
