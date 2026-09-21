@@ -140,8 +140,8 @@
   :version "git-482f87cf0803c4583579eb12c58f0c1078199c94"))
 ("sbcl-generations" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "c0a6f5fdeb9c9e14ff0c355b4e4f1c3491a90ca5")
-  :version "git-c0a6f5fdeb9c9e14ff0c355b4e4f1c3491a90ca5"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-generations.git" :ref "4cfe637597a90263c6259ad2d114053618312243")
+  :version "git-4cfe637597a90263c6259ad2d114053618312243"))
 ("sexp-config" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/sexp-config.git" :ref "408fa906e2d16aa515b39c943d3affcab3811ffc")
