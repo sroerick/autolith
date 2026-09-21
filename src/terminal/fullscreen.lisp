@@ -230,7 +230,11 @@
 (-> terminal-ui-fullscreen-paint
     (fullscreen-terminal-ui &key (:rows list) (:cursor-row integer) (:cursor-column integer)) null)
 (defun terminal-ui-fullscreen-paint (ui &key rows (cursor-row 0) (cursor-column 0))
-  "Diff trusted display-string ROWS at absolute positions, without scrolling the terminal."
+  "Diff trusted display-string ROWS at absolute positions, without scrolling the terminal.
+
+ROWS are already wrapped to the terminal width by their composers, so they are
+compared and written as they are; the frame disables autowrap, which clips any
+row that still overruns instead of scrolling."
   (when (fullscreen-terminal-ui-active-p ui)
     (let* ((terminal (terminal-ui-terminal ui))
            (height (max 1 (terminal-rows terminal)))
@@ -240,9 +244,7 @@
            (complete-p (or (null previous) (/= height (length previous))
                            (/= width (fullscreen-terminal-ui-frame-width ui)))))
       (loop for row in rows for index from 0 below height
-            do (setf (aref frame index)
-                     (second (first (clinedi:wrap-styled-text
-                                     (clinedi:ansi-strip row) row width)))))
+            do (setf (aref frame index) row))
       (handler-case
           (progn
             (terminal--write
