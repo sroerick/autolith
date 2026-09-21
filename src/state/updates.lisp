@@ -111,6 +111,34 @@ equal even where TRUENAME leaves directory links unresolved, as on Windows."
            (equal left-identity right-identity)
            t))))
 
+(-> installation--release-platform-p (t) boolean)
+(defun installation--release-platform-p (value)
+  "Return true when VALUE is a release platform identifier such as x86_64-netbsd."
+  (and (non-empty-string-p value)
+       (every (lambda (character)
+                (or (digit-char-p character)
+                    (char<= #\a character #\z)
+                    (find character "_-")))
+              value)
+       t))
+
+(-> installation--release-directory-name-p
+    (string string (option string))
+    boolean)
+(defun installation--release-directory-name-p (name tag platform)
+  "Return true when release directory NAME is TAG, or TAG qualified by PLATFORM.
+
+The installer names a release directory after its tag and platform, as in
+v0.50.2-x86_64-netbsd, while older installations used the bare tag. A record
+that carries a platform accepts only that platform's qualified name."
+  (or (string= name tag)
+      (let ((prefix (concatenate 'string tag "-")))
+        (and (uiop:string-prefix-p prefix name)
+             (let ((suffix (subseq name (length prefix))))
+               (if platform
+                   (string= suffix platform)
+                   (installation--release-platform-p suffix)))))))
+
 (-> installation--release-fields (pathname) list)
 (defun installation--release-fields (pathname)
   "Return the strict legacy key-value release record at PATHNAME."
@@ -127,10 +155,13 @@ equal even where TRUENAME leaves directory links unresolved, as on Windows."
               (when (assoc key fields :test #'string=)
                 (return-from installation--release-fields nil))
               (push (cons key value) fields))))
-        (let ((version (rest (assoc "version" fields :test #'string=)))
-              (tag     (rest (assoc "tag" fields :test #'string=)))
-              (commit  (rest (assoc "commit" fields :test #'string=))))
-          (and (= (length fields) 3)
+        (let ((version  (rest (assoc "version" fields :test #'string=)))
+              (tag      (rest (assoc "tag" fields :test #'string=)))
+              (commit   (rest (assoc "commit" fields :test #'string=)))
+              (platform (rest (assoc "platform" fields :test #'string=))))
+          (and (or (and (= (length fields) 3) (null platform))
+                   (and (= (length fields) 4)
+                        (installation--release-platform-p platform)))
                version
                tag
                commit
@@ -167,6 +198,8 @@ equal even where TRUENAME leaves directory links unresolved, as on Windows."
            (tag (and fields (rest (assoc "tag" fields :test #'string=))))
            (version
              (and fields (rest (assoc "version" fields :test #'string=))))
+           (platform
+             (and fields (rest (assoc "platform" fields :test #'string=))))
            (release-directory-name
              (and release-root (first (last (pathname-directory release-root)))))
            (releases-root
@@ -181,7 +214,8 @@ equal even where TRUENAME leaves directory links unresolved, as on Windows."
                  tag
                  (string= version *autolith-version*)
                  (stringp release-directory-name)
-                 (string= release-directory-name tag)
+                 (installation--release-directory-name-p
+                  release-directory-name tag platform)
                  (installation--same-directory-p
                   source-root
                   (merge-pathnames "libexec/autolith/" release-root))

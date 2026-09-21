@@ -2,20 +2,65 @@
 
 ;;;; -- Update State and Provenance Tests --
 
-(-> update-tests--write-release-record (pathname string) pathname)
-(defun update-tests--write-release-record (pathname tag)
-  "Write a strict release record carrying TAG to PATHNAME."
+(-> update-tests--write-release-record
+    (pathname string &key (:platform (option string)))
+    pathname)
+(defun update-tests--write-release-record (pathname tag &key platform)
+  "Write a strict release record carrying TAG, and PLATFORM when given, to PATHNAME."
   (ensure-directories-exist pathname)
   (with-open-file (stream pathname
                           :direction ':output
                           :if-exists ':supersede
                           :if-does-not-exist ':create
                           :external-format ':utf-8)
-    (format stream "version=~A~%tag=~A~%commit=~A~%"
+    (format stream "version=~A~%tag=~A~%commit=~A~%~@[platform=~A~%~]"
             (subseq tag 1)
             tag
-            "0123456789abcdef0123456789abcdef01234567"))
+            "0123456789abcdef0123456789abcdef01234567"
+            platform))
   pathname)
+
+(-> update-tests--packaged-configuration (configuration pathname) configuration)
+(defun update-tests--packaged-configuration (configuration packaged-source)
+  "Return CONFIGURATION rehomed on the bundled PACKAGED-SOURCE tree."
+  (make-instance
+   'configuration
+   :source-root packaged-source
+   :working-directory packaged-source
+   :config-root (configuration-config-root configuration)
+   :data-root (configuration-data-root configuration)
+   :state-root (configuration-state-root configuration)
+   :cache-root (configuration-cache-root configuration)
+   :codex-auth-path (configuration-codex-auth-path configuration)
+   :model *default-model*
+   :reasoning-effort *default-reasoning-effort*
+   :provider-endpoint *codex-responses-endpoint*))
+
+(-> update-tests--qualified-release-provenance
+    (configuration pathname string string (option string))
+    installation-provenance)
+(defun update-tests--qualified-release-provenance
+    (configuration install-root release-tag directory-name record-platform)
+  "Install RELEASE-TAG under DIRECTORY-NAME with RECORD-PLATFORM and detect it."
+  (let* ((release-root (merge-pathnames
+                        (format nil "releases/~A/" directory-name)
+                        install-root))
+         (packaged-source (merge-pathnames "libexec/autolith/" release-root)))
+    (ensure-directories-exist (merge-pathnames ".keep" packaged-source))
+    (update-tests--write-release-record
+     (merge-pathnames "RELEASE" release-root)
+     release-tag
+     :platform record-platform)
+    (let ((current (uiop:native-namestring (merge-pathnames "current" install-root))))
+      (test-fixture-remove-link *platform* current)
+      (test-fixture-make-symbolic-link
+       *platform*
+       (format nil "releases/~A" directory-name)
+       current))
+    (installation-provenance-detect
+     (update-tests--packaged-configuration configuration packaged-source)
+     :kind "release"
+     :release-root (namestring release-root))))
 
 (-> test-update-state-and-installation-provenance () null)
 (defun test-update-state-and-installation-provenance ()
@@ -66,19 +111,8 @@
               (format nil "releases/~A" release-tag)
               (uiop:native-namestring (merge-pathnames "current" install-root)))
              (let* ((packaged-configuration
-                      (make-instance
-                       'configuration
-                       :source-root packaged-source
-                       :working-directory packaged-source
-                       :config-root (configuration-config-root configuration)
-                       :data-root (configuration-data-root configuration)
-                       :state-root (configuration-state-root configuration)
-                       :cache-root (configuration-cache-root configuration)
-                       :codex-auth-path
-                       (configuration-codex-auth-path configuration)
-                       :model *default-model*
-                       :reasoning-effort *default-reasoning-effort*
-                       :provider-endpoint *codex-responses-endpoint*))
+                      (update-tests--packaged-configuration
+                       configuration packaged-source))
                     (release
                       (installation-provenance-detect
                        packaged-configuration
@@ -89,6 +123,37 @@
                (test-assert
                 (string= (installation-provenance-current-tag release) release-tag)
                 "release provenance carries its validated current tag")
+               (let ((qualified
+                       (update-tests--qualified-release-provenance
+                        configuration install-root release-tag
+                        (format nil "~A-x86_64-netbsd" release-tag)
+                        "x86_64-netbsd")))
+                 (test-assert
+                  (and (eq (installation-provenance-method qualified) ':release)
+                       (string= (installation-provenance-current-tag qualified)
+                                release-tag))
+                  "a platform-qualified release directory validates release provenance"))
+               (test-assert
+                (eq (installation-provenance-method
+                     (update-tests--qualified-release-provenance
+                      configuration install-root release-tag
+                      (format nil "~A-x86_64-netbsd" release-tag)
+                      "x86_64-linux"))
+                    ':source)
+                "a release directory qualified by another platform remains source")
+               (test-assert
+                (eq (installation-provenance-method
+                     (update-tests--qualified-release-provenance
+                      configuration install-root release-tag
+                      (format nil "~A-x86_64-linux" release-tag)
+                      nil))
+                    ':release)
+                "a legacy record accepts its platform-qualified directory")
+               (let ((current (uiop:native-namestring
+                               (merge-pathnames "current" install-root))))
+                 (test-fixture-remove-link *platform* current)
+                 (test-fixture-make-symbolic-link
+                  *platform* (format nil "releases/~A" release-tag) current))
 
                (update-state--write
                 configuration
