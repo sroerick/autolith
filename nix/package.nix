@@ -166,8 +166,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "clinedi";
-      rev = "6554bac55885b07de61c106dc550189c9e2a2d00";
-      hash = "sha256-0nx4kRpmNnrk0pfnREjrs0wXGBDTThQZOp8lxpes5nc=";
+      rev = "51a4a6933298014a0b8296885f56c002fee91587";
+      hash = "sha256-9vPj+uHYgkmuCSW95n/okHeGOB5kPrvwjKQpXNArOz0=";
     };
     systems = [ "clinedi" "clinedi/posix" ];
     lispLibs = [ clColorist ];
@@ -375,8 +375,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sbcl-generations";
-      rev = "fb142592d5ce0b6b7cd53bd495fb32bd7533c1f0";
-      hash = "sha256-OzgNuSv18lPpEov58+VQY4PLA8UqevOjOE5r16RyCdk=";
+      rev = "c0a6f5fdeb9c9e14ff0c355b4e4f1c3491a90ca5";
+      hash = "sha256-fpg4XNO+LinNh7wzoQ9JBKp18+mteSwpl/mjLw6RjqY=";
     };
     lispLibs = with pkgs.sbclPackages; [ bordeaux-threads ];
   };
