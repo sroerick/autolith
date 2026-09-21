@@ -1111,7 +1111,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
          (application-set-activity application nil))
        (application-present
         application
-        "Compacted; a summary now stands in for the earlier history."))))
+        "Compacted history."))))
   nil)
 
 
