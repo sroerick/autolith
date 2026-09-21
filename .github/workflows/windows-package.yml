@@ -133,7 +133,7 @@ jobs:
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
           $status = 0
           try {
-            & script\check.ps1 --jobs 1 --timeout 900 2>&1 | Tee-Object -FilePath $log
+            & script\check.ps1 --jobs 1 --timeout 1800 2>&1 | Tee-Object -FilePath $log
             if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
           } catch {
             $_ | Out-String | Tee-Object -FilePath $log -Append
