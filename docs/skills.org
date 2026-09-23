@@ -44,6 +44,16 @@ to a native cache below the configured cache root at
 cache across restarts. Changed content gets a new conversion. A malformed or
 corrupt cache is regenerated from =SKILL.md=.
 
+* Authoring global skills
+
+Use =skill.edit= with the exact =name= and complete =content= of a =SKILL.md=
+definition to create or replace
+=${XDG_CONFIG_HOME:-~/.config}/autolith/skills/NAME/SKILL.md=.
+The source is limited to 262144 characters. Autolith validates the frontmatter
+and instruction body before atomically replacing the file. Failed validation
+or publication preserves the previous source. If that directory contains a
+native =SKILL.sexp=, edit the native definition directly instead.
+
 * Native =SKILL.sexp=
 
 The native format remains available:

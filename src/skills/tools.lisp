@@ -99,7 +99,6 @@
         (tool-string-property
          "The exact case-sensitive name from the request's Skills catalog."))
        '("name")))))
-  (skill-edit-augment-tool-registry registry)
   registry)
 
 
@@ -124,23 +123,23 @@
                     (char= character #\-)))
               name)))
 
-(-> skill-edit-tool--validate (configuration pathname string string) null)
-(defun skill-edit-tool--validate (configuration root name content)
+(-> skill-edit-tool--validate (configuration string string) null)
+(defun skill-edit-tool--validate (configuration name content)
   "Validate CONTENT through the same catalog discovery used at skill load time."
-  (let* ((probe-root (merge-pathnames (format nil "skill-edit-~A/" (gensym))
+  (let* ((probe-root (merge-pathnames (format nil "skill-edit-~A/" (make-identifier))
                                       (configuration-cache-root configuration)))
          (probe-file (merge-pathnames (format nil "~A/SKILL.md" name) probe-root)))
     (unwind-protect
          (progn
            (ensure-directories-exist probe-file)
            (with-open-file (stream probe-file
-                                   :direction :output
-                                   :if-does-not-exist :create
-                                   :if-exists :supersede
-                                   :external-format :utf-8)
+                                  :direction ':output
+                                  :if-does-not-exist ':create
+                                  :if-exists ':supersede
+                                  :external-format ':utf-8)
              (write-string content stream))
            (let* ((catalog (skill-catalog-discover (list probe-root)
-                                                   :cache-root root))
+                                                  :cache-root (merge-pathnames "converted/" probe-root)))
                   (metadata (skill-catalog-find catalog name))
                   (diagnostics (skill-catalog-diagnostics catalog)))
              (unless metadata
@@ -150,7 +149,9 @@
                       (if diagnostics
                           (format nil "Skill validation failed: ~{~A~^; ~}"
                                   (mapcar #'skill-diagnostic-message diagnostics))
-                          "Skill validation failed: required name and description frontmatter are missing or invalid.")))))
+                          "Skill validation failed: required name and description frontmatter are missing or invalid.")))
+             (skill-metadata-read metadata)
+             nil))
       (when (probe-file probe-root)
         (platform-delete-directory-tree *platform* probe-root
                                         :validate t
@@ -159,11 +160,11 @@
 (defmethod tool-execute ((tool skill-edit-tool) (context tool-context) (arguments hash-table))
   "Validate then atomically replace one global SKILL.md source file."
   (declare (ignore tool))
-  (let* ((name (skill-load-tool--name arguments))
+  (let* ((name (tool-argument arguments "name" :required t))
          (content (tool-argument arguments "content" :required t))
          (configuration (tool-context-configuration context))
          (root (skill-global-root configuration)))
-    (unless (skill-edit-tool--name-valid-p name)
+    (unless (and (stringp name) (skill-edit-tool--name-valid-p name))
       (error 'tool-error
              :tool-name "skill.edit"
              :message "skill.edit name must be 1-64 lowercase letters, digits, or single internal hyphens."))
@@ -172,15 +173,26 @@
       (error 'tool-error
              :tool-name "skill.edit"
              :message "skill.edit content must be a string no larger than 262144 characters."))
-    (skill-edit-tool--validate configuration root name content)
-    (let ((pathname (merge-pathnames (format nil "~A/SKILL.md" name) root)))
+    (skill-edit-tool--validate configuration name content)
+    (let* ((pathname (merge-pathnames (format nil "~A/SKILL.md" name) root))
+           (native (make-pathname :type "sexp" :defaults pathname))
+           (temporary (merge-pathnames (format nil ".skill-~A.tmp" (make-identifier))
+                                      (uiop:pathname-directory-pathname pathname))))
+      (when (probe-file native)
+        (error 'tool-error :tool-name "skill.edit"
+               :message (format nil "Edit the native skill at ~A instead; it takes precedence over SKILL.md."
+                                native)))
       (ensure-directories-exist pathname)
-      (with-open-file (stream pathname
-                              :direction :output
-                              :if-does-not-exist :create
-                              :if-exists :supersede
-                              :external-format :utf-8)
-        (write-string content stream))
+      (unwind-protect
+           (progn
+             (with-open-file (stream temporary :direction ':output
+                                               :if-does-not-exist ':create
+                                               :if-exists ':error
+                                               :external-format ':utf-8)
+               (write-string content stream))
+             (uiop:rename-file-overwriting-target temporary pathname))
+        (when (probe-file temporary)
+          (delete-file temporary)))
       (make-instance 'tool-result
                      :success-p t
                      :content (format nil "Validated and wrote global skill ~A at ~A."

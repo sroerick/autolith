@@ -385,10 +385,9 @@
                              :identifier "relevant"
                              :workspace
                              (namestring
-                              (truename
+                              (platform-truename *platform*
                                (configuration-working-directory
                                 empty-configuration)))
-                             :query nil
                              :records nil))
                 "empty relevant revision identity includes workspace and exact empty state"))
              (let* ((first-read (read-resource first-context "memory:global"))

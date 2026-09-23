@@ -405,6 +405,12 @@ and =sequence= jump to a location; =raw= shows the selected replay form; and
 =quit= exits. Replay reads complete persisted forms without acquiring the
 conversation lease or repairing, appending, or resuming the conversation.
 
+Ask the agent to search past conversations with =session.search=. Supply a
+nonempty =query= and optionally =max-results= (default 20, maximum 100).
+Matching is case-insensitive. Use the returned conversation ID and zero-based
+message offset as =conversation-id= and =offset= with =session.read=;
+=context= selects the number of messages on either side (default 2, maximum 20).
+
 ** Local sessions
 
 Every running Autolith session publishes a private authenticated local endpoint.

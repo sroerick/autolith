@@ -249,7 +249,7 @@ also keeps the already-consumed expansion from re-entering the prompt."
                             (coerce hosted-tools 'vector))))
          (delivery
            (unless compaction-p
-             (context-resolve-request configuration conversation effective-namespaces
+             (context-resolve-request configuration conversation request-namespaces
                                       :goal-context goal-context)))
          (projection
            (make-instance 'cl-llm-provider-api::wire-request :model

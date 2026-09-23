@@ -365,14 +365,14 @@ STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
             &key goal-context compaction-p)
   "Project product history and context into a Chat Completions request."
   (let* ((configuration (provider-configuration provider))
-         (effective-tools
+         (request-namespaces
           (if compaction-p
               #()
-              (openai-compatible--wire-tools
-               (provider-request-tool-namespaces configuration tool-namespaces))))
+              (provider-request-tool-namespaces configuration tool-namespaces)))
+         (effective-tools (openai-compatible--wire-tools request-namespaces))
          (delivery
           (unless compaction-p
-            (context-resolve-request configuration conversation effective-tools
+            (context-resolve-request configuration conversation request-namespaces
                                      :goal-context goal-context :compaction-p
                                      compaction-p)))
          (projection

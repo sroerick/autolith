@@ -60,7 +60,7 @@
     :initarg :tool-namespaces
     :reader request-context-tool-namespaces
     :type vector
-    :documentation "The provider-visible local tool namespaces.")
+    :documentation "The filtered local tool namespaces, before provider wire encoding.")
    (goal-context
     :initarg :goal-context
     :initform nil

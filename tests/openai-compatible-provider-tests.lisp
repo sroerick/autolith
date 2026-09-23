@@ -765,7 +765,8 @@
                 (astra-model (provider-model-for "gpt-6-astra"))
                 (built-in-models
                  (append
-                  (list "gpt-6-astra" "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+                  (list "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
+                        "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
                   (mapcar (lambda (entry) (getf entry ':name))
                           *gemini-code-assist-models*)
                   (list "grok-4.6" "grok-4.5" "accounts/fireworks/models/kimi-k3"
@@ -784,6 +785,18 @@
                  (equal (provider-model-reasoning-efforts astra-model)
                         '("low" "medium" "high" "xhigh" "max" "ultra")))
             "ChatGPT exposes gpt-6-astra with current Codex metadata")
+            (dolist (entry '(("gpt-6-sol" "low" "medium" "high" "xhigh" "max" "ultra")
+                             ("gpt-6-luna" "low" "medium" "high" "xhigh" "max")))
+              (let* ((name (first entry))
+                     (model-metadata (provider-model-for name))
+                     (model-configuration (configuration-with-model configuration name)))
+                (test-assert
+                 (and model-metadata
+                      (= (provider-model-context-window model-metadata) 272000)
+                      (equal (provider-model-reasoning-efforts model-metadata) (rest entry))
+                      (eq (provider-family (provider-create model-configuration)) ':codex)
+                      (configuration-codex-fast-mode-available-p model-configuration))
+                 (format nil "~A exposes Codex reasoning, context, and Fast support" name))))
            (test-assert
             (and registration
                  (string= (provider-registration-description registration)

@@ -7327,7 +7327,7 @@
            (test-assert (typep (application-agent application) 'agent)
                         "switching effort reconnects the agent")
            (let ((items (application--model-items application)))
-              (test-assert (= (length items) 4)
+              (test-assert (= (length items) 6)
                            "every configured ChatGPT model is offered")
              (test-assert (string= (getf (find "current" items
                                                :key (lambda (item)

@@ -51,15 +51,14 @@
   "Project product prompts and history into the shared Anthropic wire request.
 Return the encoded request and its unconsumed context delivery."
   (let* ((configuration (provider-configuration provider))
-         (effective-tools
+         (request-namespaces
            (if compaction-p
                #()
-               (provider-wire-tools
-                provider
-                (provider-request-tool-namespaces configuration tool-namespaces))))
+               (provider-request-tool-namespaces configuration tool-namespaces)))
+         (effective-tools (provider-wire-tools provider request-namespaces))
          (delivery
            (unless compaction-p
-             (context-resolve-request configuration conversation effective-tools
+             (context-resolve-request configuration conversation request-namespaces
                                       :goal-context goal-context)))
          (durable-items
            (conversation-input-items-for-family

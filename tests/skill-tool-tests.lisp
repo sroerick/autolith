@@ -28,6 +28,70 @@
     "arguments" (json-encode (json-object "name" name)))
    context))
 
+(-> test-skill-provider-context () null)
+(defun test-skill-provider-context ()
+  "Exercise selection and ephemeral injection through every provider projection."
+  (with-test-configuration (configuration)
+    (let* ((body "SELECTED-SKILL-PROVIDER-BOUNDARY-PROBE")
+           (conversation (conversation-create configuration :identifier "skill-provider"))
+           (registry (skill-edit-augment-tool-registry
+                      (skill-augment-tool-registry (make-instance 'tool-registry))))
+           (namespaces (tool-registry-provider-schemas registry))
+           (hidden (tool-registry-provider-schemas registry :canonical-names '("skill.edit")))
+           (context (make-instance 'tool-context :configuration configuration
+                                                :worker nil :conversation conversation
+                                                :registry registry))
+           (providers (list (provider-create configuration)
+                            (grok-provider-create configuration)
+                            (openai-compatible-provider-create
+                             configuration :name "skill-test" :family ':skill-test)
+                            (anthropic-provider-create configuration)
+                            (gemini-code-assist-provider-create configuration))))
+      (skill-tool-tests--write
+       (skill-global-root configuration) "probe/SKILL.sexp"
+       (skill-tests--definition "probe" "Probe request-local injection." body))
+      (conversation-append-user-message conversation "Use the probe skill.")
+      (dolist (provider providers)
+        (call-with-skill-logical-turn
+         (user-message-input-create :text "Select probe.")
+         (lambda ()
+           (test-assert
+            (not (search body (json-encode
+                              (provider-request-object provider conversation namespaces))))
+            "an unselected skill contributes only catalog metadata")
+           (let ((result (skill-tool-tests--call registry context "probe")))
+             (test-assert (and (tool-result-success-p result)
+                               (not (search body (tool-result-content result))))
+                          "skill.load selects without returning instructions"))
+           (dotimes (attempt 2)
+             (multiple-value-bind (request delivery)
+                 (provider-request-object provider conversation namespaces)
+               (test-assert
+                (and (search body (json-encode request))
+                     (skill-tool-tests--contribution
+                      (context-delivery-contributions delivery) "skill-selected-probe"))
+                (format nil "~A injects the selected body on subsequent requests"
+                        (class-name (class-of provider))))))
+           (dolist (schemas (list #() hidden))
+             (test-assert
+              (not (search body (json-encode
+                                (provider-request-object provider conversation schemas))))
+              "requests without skill.load do not receive selected instructions"))
+           (test-assert
+            (not (search body (json-encode
+                              (provider-request-object provider conversation namespaces
+                                                       :compaction-p t))))
+            "compaction excludes selected instructions")))
+        (test-assert
+         (not (search body (json-encode
+                           (provider-request-object provider conversation namespaces))))
+         "selection ends with the logical turn"))
+      (test-assert
+       (and (= 1 (length (conversation-input-items conversation)))
+            (not (search body (json-encode (conversation-input-items conversation)))))
+       "provider context never persists the selected body")))
+  nil)
+
 (-> skill-tool-tests--contribution
     (list string)
     (option context-contribution))
@@ -37,6 +101,65 @@
         contributions
         :key #'context-contribution-identifier
         :test #'string=))
+
+(-> test-skill-edit-tool () null)
+(defun test-skill-edit-tool ()
+  "Exercise global skill creation, replacement, validation, and failed publication."
+  (with-test-configuration (configuration)
+    (let* ((registry (skill-edit-augment-tool-registry (make-instance 'tool-registry)))
+           (context (make-instance 'tool-context :configuration configuration
+                                                :worker nil :registry registry))
+           (root (skill-global-root configuration))
+           (pathname (merge-pathnames "editable/SKILL.md" root))
+           (initial (skill-tests--agent-definition "editable" "An editable skill." "First body."))
+           (replacement (skill-tests--agent-definition "editable" "Updated skill." "Second body.")))
+      (labels ((edit (name content)
+                 (tool-registry-execute-call
+                  registry
+                  (json-object "namespace" "skill" "name" "edit"
+                               "arguments" (json-encode (json-object "name" name "content" content)))
+                  context)))
+        (test-assert (tool-result-success-p (edit "editable" initial))
+                     "skill.edit creates a global skill")
+        (test-assert (string= initial (uiop:read-file-string pathname))
+                     "creation writes the supplied source")
+        (test-assert (skill-catalog-find
+                      (skill-catalog-discover (list root)
+                                              :cache-root (configuration-cache-root configuration))
+                      "editable")
+                     "the created skill is discoverable")
+        (test-assert (tool-result-success-p (edit "editable" replacement))
+                     "skill.edit replaces an existing Markdown skill")
+        (dolist (entry (list (list "../editable" initial)
+                             (list "Bad-Name" initial)
+                             (list "editable" "Missing frontmatter")
+                             (list "editable" (skill-tests--agent-definition
+                                               "other" "Wrong name." "Body."))
+                             (list "editable" (make-string (1+ *skill-edit-maximum-content-characters*)
+                                                           :initial-element #\x))))
+          (test-assert (not (tool-result-success-p (apply #'edit entry)))
+                       "invalid skill edits fail"))
+        (test-assert (string= replacement (uiop:read-file-string pathname))
+                     "validation failures preserve the prior skill")
+        (let ((rename #'uiop:rename-file-overwriting-target))
+          (test-call-with-function-replacements
+           (list (list 'uiop:rename-file-overwriting-target
+                       (lambda (source target)
+                         (if (equal target pathname)
+                             (error 'file-error :pathname target)
+                             (funcall rename source target)))))
+           (lambda ()
+             (test-assert (not (tool-result-success-p (edit "editable" initial)))
+                          "publication failure is reported"))))
+        (test-assert (and (string= replacement (uiop:read-file-string pathname))
+                          (= 1 (length (uiop:directory-files
+                                        (uiop:pathname-directory-pathname pathname)))))
+                     "failed publication preserves the original and removes its temporary file")
+        (skill-tool-tests--write root "editable/SKILL.sexp"
+                                 (skill-tests--definition "editable" "Native skill." "Native body."))
+        (test-assert (not (tool-result-success-p (edit "editable" initial)))
+                     "a native skill cannot silently shadow an edited Markdown skill"))))
+  nil)
 
 (-> test-skill-load-tool () null)
 (defun test-skill-load-tool ()

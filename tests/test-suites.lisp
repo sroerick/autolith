@@ -103,6 +103,8 @@
 
 (define-test-suite skill-tool
   test-skill-load-tool
+  test-skill-provider-context
+  test-skill-edit-tool
   test-skill-load-presentation)
 
 

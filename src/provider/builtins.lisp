@@ -154,6 +154,8 @@
                            :stream (or stream *standard-output*)))
 
 
+;; ChatGPT subscription metadata: https://github.com/openai/codex,
+;; codex-rs/models-manager/models.json at 27969c0ae9c1ec23e359ff5133b4c36a8dd5b1ac.
 (register-provider
  "chatgpt"
  :description "ChatGPT Codex subscription"
@@ -162,6 +164,12 @@
  :models '((:name "gpt-6-astra"
             :context-window 272000
             :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+           (:name "gpt-6-sol"
+            :context-window 272000
+            :reasoning-efforts ("low" "medium" "high" "xhigh" "max" "ultra"))
+           (:name "gpt-6-luna"
+            :context-window 272000
+            :reasoning-efforts ("low" "medium" "high" "xhigh" "max"))
            "gpt-5.6-sol"
            "gpt-5.6-luna"
            "gpt-5.6-terra")
