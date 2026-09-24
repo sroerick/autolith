@@ -482,6 +482,49 @@ The file is ordinary Common Lisp in package =AUTOLITH=, with your full
 privileges. It is not copied into private replay or the pristine recovery
 image.
 
+** Settings
+
+Every knob Autolith exposes is a named setting with a type, a description, a
+default, and, where the choices are finite, its options. =/settings= opens the
+settings page: a picker listing each setting with its current value and where
+that value came from. Choosing an adjustable setting opens its options;
+choosing a read-only one explains why it cannot change in a running session.
+The page returns to the list after every change until you cancel.
+
+The same operations work without the page. =/settings NAME= describes one
+setting, =/settings NAME VALUE= changes it, and =(settings)= prints every
+setting grouped by area. Values are written as they appear on the page: =on=
+and =off= for switches, option names for choices, and integers or paths as
+text. A change to a durable setting is saved at once for future sessions.
+
+Settings live in one of four scopes. Durable settings, such as the model,
+reasoning effort, Fast mode, reasoning traces, compact view, timestamps,
+cache miss notices, Simple Technical English, generated titles, fullscreen,
+and the saved permission mode, persist in =preferences.sexp= under the state
+directory. Session settings, such as hurry-up mode, last until exit. Process
+settings, such as the immutable flag, the management endpoint, and the roots,
+come from the command line, the environment, or defaults at startup and stay
+fixed. Derived settings, such as the context window and provider endpoint,
+follow the model.
+
+A durable value is chosen at startup from the first source that supplies it:
+an explicit command-line choice, the setting's environment variable, then the
+saved file. A saved model or effort that no registered provider serves is
+dropped rather than applied.
+
+From Lisp, user initialization and replay scripts read a setting with
+=(config :model)=, which uses the current configuration, or
+=(config :model configuration)= for an explicit one, and change it with
+=(setf (config :reasoning-traces-p) t)=. Unknown setting names signal a
+configuration error. The former =configuration-<name>= readers,
+=configuration-with-<name>= copiers, and =preferences-<name>= functions keep
+working through 0.51, warn on every call from 0.52, and are deleted in 0.54.
+
+The preferences file is version 8 from this release: one flat record of
+setting names and values that keeps keys it does not understand. Earlier
+versions are read once and rewritten. Autolith releases before 0.51 do not
+read a version 8 file and fall back to defaults with a warning.
+
 ** Language servers
 
 Install your language server, then configure it in =lsp.sexp= under Autolith's

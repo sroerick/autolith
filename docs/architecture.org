@@ -110,6 +110,34 @@ holds the same file lock as source invalidation and writes.
 - Identifiers use =idsmall= Base58 IDs, which are not the most secure, but they encode a timestamp and are short enough that
   you can at least remember the prefix.
 
+** Configuration
+
+A =configuration= holds a table of settings and their values. Each setting is
+an instance of a =setting= kind (=boolean-setting=, =choice-setting=,
+=integer-setting=, =string-setting=, =pathname-setting=, =derived-setting=,
+and the Autolith-specific =model-setting= and =reasoning-effort-setting=)
+declaring its name, type, documentation, label and group for the settings
+page, default, options, scope, and environment variable. =define-setting=
+registers a knob once; each configuration snapshots the registry at creation,
+so user initialization may add knobs and children may carry different ones.
+
+=config= reads a value and =(setf config)= coerces, validates, stores, and
+notifies listeners; =*configuration*= supplies the default instance. Values
+are chosen at creation by source precedence: explicit override, environment,
+durable file, default. Scopes are =:process= (fixed for the process),
+=:durable= (persisted through the preferences store on every session
+change), =:session= (forgotten at exit), and =:derived= (computed on read).
+=configuration-copy= produces an independent instance for children and
+inference frames; listeners stay with the original.
+
+The preferences file is a version 8 record of durable settings that keeps
+unknown keys across rewrites. =preferences-legacy.lisp= reads versions 1 to
+7 for migration and hosts the deprecated =preferences-<name>= entry points;
+=legacy-configuration.lisp= hosts the deprecated =configuration-<name>=
+readers and copiers. Both files and =define-deprecated-function= are deleted
+in 0.54.0, which the canary case =test-legacy-configuration-removal-due=
+enforces by failing from that release on.
+
 * Provider and tools
 
 - =src/provider/client.lisp= integrates product providers with
