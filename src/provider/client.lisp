@@ -559,7 +559,14 @@ conversations, and a per-process value would route them all together."
     ((provider codex-subscription-provider)
      (request hash-table)
      &key credentials conversation)
-  "Open a direct authenticated SSE request to the ChatGPT Codex endpoint."
+  "Open a direct authenticated SSE request to the ChatGPT Codex endpoint.
+
+The connection is kept alive and pooled so the requests of one turn reuse one
+transport connection. The ChatGPT load balancer keeps a connection on one
+backend, and the prompt cache lives on that backend; a fresh connection per
+request lands on a different backend often enough that the cached prefix stops
+growing between tool rounds. The Codex reference reuses one connection across
+the requests of a turn for the same reason, at commit 6f51c65958."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (let ((configuration (provider-configuration provider)))
@@ -573,7 +580,8 @@ conversations, and a per-process value would route them all together."
         :content (json-encode-utf8 request)
         :want-stream t
         :force-string t
-        :keep-alive nil
+        :keep-alive t
+        :use-connection-pool t
         :connect-timeout 30
         :read-timeout 300)))))
 
@@ -581,7 +589,10 @@ conversations, and a per-process value would route them all together."
     ((provider codex-subscription-provider)
      (request hash-table)
      &key credentials conversation)
-  "POST a JSON native compaction REQUEST to the ChatGPT Codex endpoint."
+  "POST a JSON native compaction REQUEST to the ChatGPT Codex endpoint.
+
+The pooled connection is shared with the streaming requests so a compaction
+reaches the backend holding the conversation's cached prefix."
   (declare (type oauth-credentials credentials)
            (type conversation conversation))
   (provider-call-with-response-deadline
@@ -593,7 +604,8 @@ conversations, and a per-process value would route them all together."
                 provider credentials conversation :accept "application/json")
       :content (json-encode-utf8 request)
       :force-string t
-      :keep-alive nil
+      :keep-alive t
+      :use-connection-pool t
       :connect-timeout 30
       :read-timeout 300))))
 
