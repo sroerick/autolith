@@ -143,6 +143,18 @@ SOURCE records how the value was chosen. Returns the stored value."))
       (configuration--note-change configuration setting old coerced)
       coerced)))
 
+(-> configuration-persist (configuration keyword) null)
+(defun configuration-persist (configuration name)
+  "Write CONFIGURATION's current value of durable setting NAME to the preferences store."
+  (let ((setting (configuration-setting configuration name)))
+    (unless (eq (setting-scope setting) ':durable)
+      (error 'configuration-error
+             :message (format nil "~A is not a durable setting." (setting-label setting))))
+    (when *configuration-persist-function*
+      (funcall *configuration-persist-function* configuration name
+               (configuration-setting-value configuration setting))))
+  nil)
+
 (-> configuration-unset (configuration keyword) null)
 (defun configuration-unset (configuration name)
   "Forget CONFIGURATION's stored value for NAME so its default applies again."
