@@ -221,6 +221,7 @@
   test-provider-native-compaction
   test-provider-rate-limits
   test-provider-transport-boundary
+  test-provider-codex-request-headers
   test-provider-credential-echo-containment
   test-provider-authentication-retries
   test-provider-persistent-transient-retries

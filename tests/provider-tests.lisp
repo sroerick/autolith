@@ -2338,3 +2338,42 @@
                "retry exhaustion permits exactly seven total attempts")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-provider-codex-request-headers () null)
+(defun test-provider-codex-request-headers ()
+  "Test Codex requests carry conversation identity and only pinned turn state."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "provider-headers"))
+         (provider (provider-tests--transport-provider configuration nil))
+         (credentials (provider-tests--credentials configuration)))
+    (unwind-protect
+         (flet ((header (headers name)
+                  (rest (assoc name headers :test #'string=))))
+           (let ((headers (provider--codex-request-headers
+                           provider credentials conversation
+                           :accept "text/event-stream")))
+             (test-assert
+              (every (lambda (name)
+                       (string= (header headers name)
+                                (conversation-identifier conversation)))
+                     '("session-id" "thread-id" "x-client-request-id"))
+              "cache affinity and request identity headers name the conversation")
+             (test-assert
+              (not (string= (header headers "session-id")
+                            (provider-session-id provider)))
+              "the per-process provider session identity stays out of the headers")
+             (test-assert
+              (null (assoc "x-codex-turn-state" headers :test #'string=))
+              "an unpinned turn sends no routing token"))
+           (setf (conversation-turn-state conversation) "turn-state-1")
+           (test-assert
+            (string= (header (provider--codex-request-headers
+                              provider credentials conversation
+                              :accept "text/event-stream")
+                             "x-codex-turn-state")
+                     "turn-state-1")
+            "a pinned turn replays its routing token"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

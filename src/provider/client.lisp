@@ -519,7 +519,14 @@ stay outside it."
     list)
 (defun provider--codex-request-headers
     (provider credentials conversation &key accept)
-  "Return authenticated Codex headers for one request to CONVERSATION."
+  "Return authenticated Codex headers for one request to CONVERSATION.
+
+The ChatGPT backend derives prompt-cache affinity from the session-id header,
+so it carries CONVERSATION's identifier on every request, as the Codex
+reference does for its thread identifier at commit 6f51c65958. The provider
+session identity stays out of these headers: one process may serve several
+conversations, and a per-process value would route them all together."
+  (declare (ignore provider))
   (append
    (list
     (cons "Authorization"
@@ -529,9 +536,9 @@ stay outside it."
     (cons "Accept" accept)
     (cons "originator" "autolith")
     (cons "User-Agent" (provider-user-agent))
-    (cons "session-id" (provider-session-id provider))
+    (cons "session-id" (conversation-identifier conversation))
     (cons "thread-id" (conversation-identifier conversation))
-    (cons "x-client-request-id" (make-identifier)))
+    (cons "x-client-request-id" (conversation-identifier conversation)))
    (when (conversation-turn-state conversation)
      (list (cons "x-codex-turn-state" (conversation-turn-state conversation))))))
 
