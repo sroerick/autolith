@@ -14,7 +14,7 @@
            (test-assert
             (equal (configuration-permissions-path configuration)
                    (merge-pathnames "permissions.sexp"
-                                    (configuration-state-root configuration)))
+                                    (config :state-root configuration)))
             "persistent command approvals live under the state root")
            (ensure-directories-exist other)
            (test-assert

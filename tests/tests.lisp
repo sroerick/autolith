@@ -128,16 +128,16 @@
          (cases
            (list
             (list "XDG_CONFIG_HOME"
-                  #'configuration-config-root
+                  (lambda (configuration) (config :config-root configuration))
                   (merge-pathnames ".config/autolith/" home))
             (list "XDG_DATA_HOME"
-                  #'configuration-data-root
+                  (lambda (configuration) (config :data-root configuration))
                   (merge-pathnames ".local/share/autolith/" home))
             (list "XDG_STATE_HOME"
-                  #'configuration-state-root
+                  (lambda (configuration) (config :state-root configuration))
                   (merge-pathnames ".local/state/autolith/" home))
             (list "XDG_CACHE_HOME"
-                  #'configuration-cache-root
+                  (lambda (configuration) (config :cache-root configuration))
                   (merge-pathnames ".cache/autolith/" home))))
          (saved
            (mapcar (lambda (name) (cons name (uiop:getenv name)))
@@ -198,16 +198,16 @@
                       (lambda (directory)
                         (test-fixture-permissions-p
                          *platform* directory ':private-directory))
-                      (list (configuration-config-root configuration)
-                            (configuration-data-root configuration)
-                            (configuration-state-root configuration)
-                            (configuration-cache-root configuration)))
+                      (list (config :config-root configuration)
+                            (config :data-root configuration)
+                            (config :state-root configuration)
+                            (config :cache-root configuration)))
                      "new XDG application roots are private to the user")
                     ;; A file that plain OPEN creates below a private root
                     ;; must stay usable by its creator: Windows gives it the
                     ;; root's inheritable entries, POSIX the process umask.
                     (let ((created (merge-pathnames "created-inside.txt"
-                                                    (configuration-state-root configuration))))
+                                                    (config :state-root configuration))))
                       (with-open-file (stream created
                                               :direction ':output
                                               :if-exists ':supersede
@@ -237,11 +237,11 @@
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith)
                         :durable-p nil)))
-    (test-assert (string= (configuration-model configuration) "gpt-5.6-sol")
+    (test-assert (string= (config :model configuration) "gpt-5.6-sol")
                  "the default model is gpt-5.6-sol")
     (let ((*default-model* "gpt-5.6-luna"))
       (test-assert
-       (string= (configuration-model
+       (string= (config :model
                  (configuration-create
                   :source-root (asdf:system-source-directory :autolith)
                   :working-directory
@@ -249,66 +249,66 @@
                   :durable-p nil))
                 "gpt-5.6-luna")
        "live default parameters affect newly created configurations"))
-    (test-assert (string= (configuration-model
-                           (configuration-with-model configuration
+    (test-assert (string= (config :model
+                           (configuration-copy configuration :model
                                                      "gpt-5.6-luna"))
                           "gpt-5.6-luna")
                  "model copies swap only the model")
-    (test-assert (plusp (configuration-context-window configuration))
+    (test-assert (plusp (config :context-window configuration))
                  "the default model carries a catalog context window")
-    (test-assert (= (configuration-context-window
-                     (configuration-with-model configuration "gpt-5.6-terra"))
+    (test-assert (= (config :context-window
+                     (configuration-copy configuration :model "gpt-5.6-terra"))
                     (provider-model-context-window-for "gpt-5.6-terra"))
                  "model copies recompute the context window from the catalog")
     (test-assert (plusp *default-context-window*)
                  "unknown models retain a conservative context window fallback")
     (test-assert (= (configuration-compaction-token-limit configuration)
-                    (floor (* (configuration-context-window configuration)
-                              (configuration-compaction-threshold-percent
+                    (floor (* (config :context-window configuration)
+                              (config :compaction-threshold-percent
                                configuration))
                            100))
                  "compaction triggers at the threshold share of the window")
     (test-assert (handler-case
                      (progn
-                       (configuration-with-model configuration "gpt-4")
+                       (configuration-copy configuration :model "gpt-4")
                        nil)
                    (configuration-error ()
                      t))
                  "model copies reject identifiers outside the 5.6 family")
-    (let ((moved (configuration-with-working-directory configuration "tests")))
+    (let ((moved (configuration-copy configuration :working-directory "tests")))
       (test-assert
-       (equal (configuration-working-directory moved)
+       (equal (config :working-directory moved)
               (truename (merge-pathnames "tests/"
-                                         (configuration-working-directory
+                                         (config :working-directory
                                           configuration))))
        "working-directory copies resolve relative existing directories")
       (test-assert
-       (equal (configuration-source-root moved)
-              (configuration-source-root configuration))
+       (equal (config :source-root moved)
+              (config :source-root configuration))
        "working-directory copies preserve unrelated configuration"))
     (test-assert
      (handler-case
          (progn
-           (configuration-with-working-directory configuration "README.org")
+           (configuration-copy configuration :working-directory "README.org")
            nil)
        (working-directory-error (condition)
          (eq (working-directory-error-stage condition) ':validation)))
      "working-directory copies reject files with a structured condition")
-    (test-assert (string= (configuration-reasoning-effort configuration) "ultra")
+    (test-assert (string= (config :reasoning-effort configuration) "ultra")
                  "the default reasoning effort is ultra")
-    (test-assert (not (configuration-immutable-p configuration))
+    (test-assert (not (config :immutable-p configuration))
                  "ordinary configuration enables active-image mutation tools")
     (test-assert
-     (configuration-immutable-p
-      (configuration-with-model
-       (configuration--clone configuration :immutable-p t)
+     (config :immutable-p
+      (configuration-copy
+       (configuration-copy configuration :immutable-p t) :model
        "gpt-5.6-luna"))
      "configuration clones preserve immutable mode")
     (test-assert (string= (configuration-wire-effort configuration) "max")
                  "ultra maps to the provider max effort")
     (test-assert
      (string= (configuration-wire-effort
-               (configuration-with-reasoning-effort configuration "none"))
+               (configuration-copy configuration :reasoning-effort "none"))
               "none")
      "none is passed through as a provider reasoning effort")
     (test-assert (= (json-get (json-object "answer" 42) "answer") 42)

@@ -24,7 +24,7 @@
                (uiop:run-program
                 (list "git"
                       "-C"
-                      (namestring (configuration-source-root configuration))
+                      (namestring (config :source-root configuration))
                       "rev-parse"
                       "HEAD")
                 :output ':string
@@ -40,7 +40,7 @@
   "Convert Autolith CONFIGURATION into an sbcl-workers host environment."
   (let ((worker-launcher
           (merge-pathnames "bin/autolith-active"
-                           (configuration-source-root configuration))))
+                           (config :source-root configuration))))
     (sbcl-worker-environment-create
      :sbcl-command (lisp-worker-sbcl-command)
      :pristine-command
@@ -48,7 +48,7 @@
            "--script"
            (namestring worker-launcher)
            "--worker")
-     :working-directory (configuration-working-directory configuration)
+     :working-directory (config :working-directory configuration)
      :image-root (configuration-lisp-image-root configuration)
      :evaluation-package "AUTOLITH"
      :protocol-tag ':autolith-worker

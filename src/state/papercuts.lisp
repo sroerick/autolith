@@ -324,7 +324,7 @@
 (-> papercut--workspace (configuration) non-empty-string)
 (defun papercut--workspace (configuration)
   "Return CONFIGURATION's current workspace identity used by papercut records."
-  (namestring (configuration-working-directory configuration)))
+  (namestring (config :working-directory configuration)))
 
 (-> papercut--workspace-reports (configuration list) list)
 (defun papercut--workspace-reports (configuration active)

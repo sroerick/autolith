@@ -1111,7 +1111,7 @@ as the POSIX adapter does not on Windows."
   "Return complete tracked top-level definitions whose name is SYMBOL.
 
 Files the system withholds from this image through :IF-FEATURE are left out."
-  (let* ((source-root (configuration-source-root configuration))
+  (let* ((source-root (config :source-root configuration))
          (editable-root (merge-pathnames "src/" source-root))
          (withheld (self-source--withheld-files)))
     (self-source--definitions

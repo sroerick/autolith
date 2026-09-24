@@ -63,7 +63,7 @@
            (ensure-directories-exist (merge-pathnames ".git/" repository))
            (ensure-directories-exist nested)
            (let* ((configuration
-                    (configuration-with-working-directory base nested))
+                    (configuration-copy base :working-directory nested))
                   (project-root (workspace-project-root nested))
                   (notes (workspace-autolith-notes-path nested))
                   (now 4000000000))
@@ -243,8 +243,8 @@
                (ensure-directories-exist
                 (merge-pathnames ".git/" other-repository))
                (setf other-configuration
-                     (configuration-with-working-directory
-                      configuration other-repository))
+                     (configuration-copy
+                      configuration :working-directory other-repository))
                (test-assert
                 (not
                  (project-adaptation-resume-qualifies-p

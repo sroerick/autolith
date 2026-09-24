@@ -61,11 +61,11 @@
     (ensure-directories-exist outside)
     (unwind-protect
          (let* ((configuration
-                  (configuration-with-working-directory
-                   base-configuration project))
+                  (configuration-copy
+                   base-configuration :working-directory project))
                 (outside-configuration
-                  (configuration-with-working-directory
-                   base-configuration outside))
+                  (configuration-copy
+                   base-configuration :working-directory outside))
                 (global-server
                   (test-directory-configuration--server-form
                    "global-only" :prompt))

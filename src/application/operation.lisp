@@ -669,7 +669,7 @@ paths that do not contain QUERY as a contiguous substring."
               (application-path-search-files application query)))
       (when (slot-boundp application 'configuration)
         (setf (terminal-ui-completion-root ui)
-              (configuration-working-directory
+              (config :working-directory
                (application-configuration application))))))
   application)
 

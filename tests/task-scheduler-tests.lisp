@@ -18,7 +18,7 @@
              (let* ((base-configuration (test-configuration))
                     (root (test-configuration-root base-configuration))
                     (configuration
-                      (configuration--clone
+                      (configuration-copy
                        base-configuration :working-directory root))
                     (registry (make-default-tool-registry))
                     (blocking-tool
@@ -390,7 +390,7 @@
          (root          (test-configuration-root configuration))
          (group-root
            (merge-pathnames "tasks/retention-test/"
-                            (configuration-data-root configuration)))
+                            (config :data-root configuration)))
          (oldest       (merge-pathnames "artifact-1/" group-root))
          (middle       (merge-pathnames "artifact-2/" group-root))
          (newest       (merge-pathnames "artifact-3/" group-root))

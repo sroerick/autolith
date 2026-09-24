@@ -68,7 +68,7 @@
                  (test-assert
                   (equal (concatenate 'string
                                       (uiop:native-namestring
-                                       (configuration-working-directory configuration))
+                                       (config :working-directory configuration))
                                       workspace)
                          (uiop:native-namestring (third (first observed))))
                   "both interfaces pass the requested native workspace pathname"))))

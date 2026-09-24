@@ -446,7 +446,7 @@
     (server-configuration configuration transport)
   "Resolve TRANSPORT's configured directory against CONFIGURATION."
   (let* ((configured (mcp-stdio-configuration-directory transport))
-         (workspace (configuration-working-directory configuration))
+         (workspace (config :working-directory configuration))
          (candidate
            (if (eq configured :workspace)
                workspace

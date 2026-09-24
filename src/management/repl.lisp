@@ -597,8 +597,8 @@
   "Evaluate REQUEST once with bounded output and a hard per-request timeout."
   (let* ((configuration (management-repl-runtime-configuration runtime))
          (output-limit
-           (min (configuration-management-repl-maximum-output-size configuration)
-                (max 16 (floor (configuration-management-repl-maximum-frame-size
+           (min (config :management-repl-maximum-output-size configuration)
+                (max 16 (floor (config :management-repl-maximum-frame-size
                                 configuration)
                                4))))
          (output (make-instance 'management-repl-bounded-output-stream
@@ -696,7 +696,7 @@
 (defun management-repl--submit (runtime source)
   "Submit bounded SOURCE to RUNTIME and wait no longer than its request deadline."
   (let* ((configuration (management-repl-runtime-configuration runtime))
-         (timeout (configuration-management-repl-evaluation-timeout configuration))
+         (timeout (config :management-repl-evaluation-timeout configuration))
          (request
            (make-instance
             'management-repl-request
@@ -706,7 +706,7 @@
     (with-lock-held ((management-repl-runtime-lock runtime))
       (when (or (management-repl-runtime-stopping-p runtime)
                 (>= (length (management-repl-runtime-requests runtime))
-                    (configuration-management-repl-queue-capacity configuration)))
+                    (config :management-repl-queue-capacity configuration)))
         (error 'management-repl-capacity-error
                :message "The management evaluation queue is full or stopping."
                :operation ':queue))
@@ -815,25 +815,25 @@
     (values sb-bsd-sockets:socket (option pathname)))
 (defun management-repl--make-listener (configuration)
   "Create CONFIGURATION's validated Unix or loopback TCP listener."
-  (when (< (configuration-management-repl-maximum-frame-size configuration)
+  (when (< (config :management-repl-maximum-frame-size configuration)
            *management-repl-minimum-frame-size*)
     (error 'management-repl-configuration-error
            :message "Management maximum frame size must be at least 128 octets."
            :operation ':listen
            :reason ':frame-size))
-  (ecase (configuration-management-repl-transport configuration)
+  (ecase (config :management-repl-transport configuration)
     (:unix
      (let ((pathname
-             (configuration-management-repl-unix-socket-path configuration)))
+             (config :management-repl-unix-socket-path configuration)))
        (management-repl--prepare-unix-path pathname)
        (values (platform-local-listener
                 *platform* pathname
-                :backlog (configuration-management-repl-maximum-clients
+                :backlog (config :management-repl-maximum-clients
                           configuration))
                pathname)))
     (:tcp
      (let ((address
-             (configuration-management-repl-tcp-address configuration))
+             (config :management-repl-tcp-address configuration))
            (listener
              (make-instance 'sb-bsd-sockets:inet-socket
                             :type ':stream
@@ -849,10 +849,10 @@
              (sb-bsd-sockets:socket-bind
               listener
               (sb-bsd-sockets:make-inet-address address)
-              (configuration-management-repl-tcp-port configuration))
+              (config :management-repl-tcp-port configuration))
              (sb-bsd-sockets:socket-listen
               listener
-              (configuration-management-repl-maximum-clients configuration))
+              (config :management-repl-maximum-clients configuration))
              (values listener nil))
          (error (condition)
            (ignore-errors (sb-bsd-sockets:socket-close listener))
@@ -877,7 +877,7 @@
   "Authenticate and serve bounded serial requests on SOCKET."
   (let* ((configuration (management-repl-runtime-configuration runtime))
          (maximum
-           (configuration-management-repl-maximum-frame-size configuration))
+           (config :management-repl-maximum-frame-size configuration))
          (stream nil))
     (unwind-protect
          (handler-case
@@ -890,14 +890,14 @@
                       :element-type '(unsigned-byte 8)
                       :buffering ':none
                       :timeout
-                      (configuration-management-repl-evaluation-timeout
+                      (config :management-repl-evaluation-timeout
                        configuration)))
                (sb-ext:with-timeout
-                   (configuration-management-repl-authentication-timeout
+                   (config :management-repl-authentication-timeout
                     configuration)
                  (management-repl--authenticate
                   stream
-                  (configuration-management-repl-token-file-path configuration)
+                  (config :management-repl-token-file-path configuration)
                   maximum))
                (loop for request = (management-repl-read-frame stream maximum)
                      until (eq request ':end-of-input)
@@ -907,7 +907,7 @@
                           runtime
                           (management-repl--request-source
                            request
-                           (configuration-management-repl-maximum-source-size
+                           (config :management-repl-maximum-source-size
                             configuration)))
                          maximum)))
            (management-repl-configuration-error (condition)
@@ -950,7 +950,7 @@
               (ignore-errors (sb-bsd-sockets:socket-close socket))
               (return))
             (if (>= (length (management-repl-runtime-client-sockets runtime))
-                    (configuration-management-repl-maximum-clients
+                    (config :management-repl-maximum-clients
                      (management-repl-runtime-configuration runtime)))
                 (ignore-errors (sb-bsd-sockets:socket-close socket))
                 (handler-case
@@ -974,7 +974,7 @@
 (defun management-repl-start (application)
   "Start APPLICATION's configured management endpoint when enabled."
   (unless
-      (configuration-management-repl-enabled-p
+      (config :management-repl-enabled-p
        (application-configuration application))
     (return-from management-repl-start nil))
   (when (application-management-repl-runtime application)
@@ -1048,12 +1048,12 @@
         (socket nil))
     (unwind-protect
          (ignore-errors
-           (ecase (configuration-management-repl-transport configuration)
+           (ecase (config :management-repl-transport configuration)
              (:unix
               (setf socket
                     (platform-connect-local
                      *platform*
-                     (configuration-management-repl-unix-socket-path
+                     (config :management-repl-unix-socket-path
                       configuration))))
              (:tcp
               (setf socket
@@ -1063,8 +1063,8 @@
               (sb-bsd-sockets:socket-connect
                socket
                (sb-bsd-sockets:make-inet-address
-                (configuration-management-repl-tcp-address configuration))
-               (configuration-management-repl-tcp-port configuration)))))
+                (config :management-repl-tcp-address configuration))
+               (config :management-repl-tcp-port configuration)))))
       (when socket
         (ignore-errors (sb-bsd-sockets:socket-close socket)))))
   nil)

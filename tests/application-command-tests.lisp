@@ -649,7 +649,7 @@
 (defun test-application-codex-fast-mode-command ()
   "Test /fast status, persistence, runtime installation, and validation."
   (let* ((configuration
-           (configuration-with-codex-fast-mode (test-configuration) nil))
+           (configuration-copy (test-configuration) :codex-fast-mode-p nil))
          (root (test-configuration-root configuration))
          (application (make-instance 'application
                                      :configuration configuration))
@@ -673,7 +673,7 @@
               (lambda (candidate replacement &key conversation)
                 (declare (ignore conversation))
                 (setf (application-configuration candidate) replacement)
-                (push (configuration-codex-fast-mode-p replacement) installed)
+                (push (config :codex-fast-mode-p replacement) installed)
                 nil))
              (list
               'application-publish-recovery-session
@@ -702,7 +702,7 @@
               (let ((codex-configuration
                       (application-configuration application)))
                 (setf (application-configuration application)
-                      (configuration-with-model codex-configuration "grok-4.5"))
+                      (configuration-copy codex-configuration :model "grok-4.5"))
                 (application--builtin-fast-command application "status")
                 (test-assert
                  (and (search "preference is off" (first presented))
@@ -721,7 +721,7 @@
                    ':continue)
                "/fast on completes through the canonical command")
               (test-assert
-               (and (configuration-codex-fast-mode-p
+               (and (config :codex-fast-mode-p
                      (application-configuration application))
                     (eq (saved-fast-mode-p) t)
                     (eq (first installed) t)
@@ -734,7 +734,7 @@
                "/fast off completes through the canonical command")
               (test-assert
                (and (not
-                     (configuration-codex-fast-mode-p
+                     (config :codex-fast-mode-p
                       (application-configuration application)))
                     (null (saved-fast-mode-p))
                     (null (first installed))

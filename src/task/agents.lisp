@@ -614,12 +614,12 @@ the offending object rather than only reporting that one was rejected."
 (-> task--user-agents-directory (configuration) pathname)
 (defun task--user-agents-directory (configuration)
   "Return the user child-agent directory under CONFIGURATION's config root."
-  (merge-pathnames "agents/" (configuration-config-root configuration)))
+  (merge-pathnames "agents/" (config :config-root configuration)))
 
 (-> task--project-agents-directory (configuration) (option pathname))
 (defun task--project-agents-directory (configuration)
   "Return the nearest project .autolith/agents directory, or NIL."
-  (let* ((start (configuration-working-directory configuration))
+  (let* ((start (config :working-directory configuration))
          (root (workspace-project-root start)))
     (loop repeat 64
           for directory = start

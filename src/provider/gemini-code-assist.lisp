@@ -683,7 +683,7 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
                (provider-output-ceiling-p provider))
       (setf (gethash "maxOutputTokens" generation)
             *provider-maximum-output-tokens*))
-    (let ((effort (configuration-reasoning-effort configuration)))
+    (let ((effort (config :reasoning-effort configuration)))
       (unless (string= effort "none")
         (setf (gethash "thinkingConfig" generation)
               (json-object "includeThoughts" t))))
@@ -692,7 +692,7 @@ catalog follows the exact model identifiers consumed by streamGenerateContent."
     (values
      (json-object
       "model" (gemini-code-assist-model-name
-               (configuration-model configuration))
+               (config :model configuration))
       "project" (gemini-code-assist-provider-project provider)
       "user_prompt_id" (make-identifier)
       "request" inner)

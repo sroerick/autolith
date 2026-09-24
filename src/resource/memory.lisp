@@ -219,7 +219,7 @@
   (namestring
    (platform-truename
     *platform*
-    (configuration-working-directory
+    (config :working-directory
      (tool-context-configuration context)))))
 
 (-> memory-resource--collection-workspace-identity

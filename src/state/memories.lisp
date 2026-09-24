@@ -271,7 +271,7 @@
 (defun memory--visible-p (memory configuration visibility)
   "Return true when MEMORY belongs to CONFIGURATION under VISIBILITY."
   (let ((current-workspace
-          (namestring (configuration-working-directory configuration))))
+          (namestring (config :working-directory configuration))))
     (case visibility
       (:all
        t)
@@ -367,7 +367,7 @@
                                              (eq (memory-scope existing) :workspace))
                                         (memory-workspace existing)
                                         (namestring
-                                         (configuration-working-directory
+                                         (config :working-directory
                                           configuration)))
                                     nil)
                      :title validated-title

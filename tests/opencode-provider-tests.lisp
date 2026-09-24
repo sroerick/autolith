@@ -51,10 +51,10 @@
            (platform-setenv "AUTOLITH_OPENCODE_PROVIDER_ENDPOINT" "")
            (platform-setenv *opencode-models-environment-variable* "")
            (let ((selected
-                   (configuration-with-model
-                    configuration "opencode/endpoint-test")))
+                   (configuration-copy
+                    configuration :model "opencode/endpoint-test")))
              (test-assert
-              (string= (configuration-provider-endpoint selected)
+              (string= (config :provider-endpoint selected)
                        *opencode-chat-completions-endpoint*)
               "OpenCode uses its default chat endpoint")
              (test-assert
@@ -65,10 +65,10 @@
            (platform-setenv *opencode-models-environment-variable*
                             "https://models.invalid/v1/models")
            (let ((selected
-                   (configuration-with-model
-                    configuration "opencode/endpoint-test")))
+                   (configuration-copy
+                    configuration :model "opencode/endpoint-test")))
              (test-assert
-              (string= (configuration-provider-endpoint selected)
+              (string= (config :provider-endpoint selected)
                        "https://chat.invalid/v1/chat/completions")
               "the OpenCode chat override takes precedence over registration metadata")
              (let* ((provider (opencode-provider-create selected))
@@ -312,7 +312,7 @@
               (string= (json-get request "model") "gpt-5.6-luna")
               "OpenCode strips its namespace from the transmitted model")
              (test-assert
-              (string= (configuration-model configuration)
+              (string= (config :model configuration)
                        "opencode/gpt-5.6-luna")
               "OpenCode retains the namespaced model in local configuration"))
            (test-assert
@@ -380,8 +380,8 @@
            (let ((reconfigured
                    (provider-with-configuration
                     provider
-                    (configuration-with-model
-                     configuration "opencode/session-test"))))
+                    (configuration-copy
+                     configuration :model "opencode/session-test"))))
              (test-assert
               (equal (openai-compatible-provider-headers reconfigured)
                      (list (cons "x-opencode-session"

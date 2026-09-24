@@ -398,7 +398,7 @@ discarded or obsolete candidates.
   "Return true when resumed history merits offering project adaptation notes."
   (let* ((project-root
            (workspace-project-root
-            (configuration-working-directory configuration)))
+            (config :working-directory configuration)))
          (project-key (project-adaptation--project-key project-root))
          (current-metadata
            (and (conversation-persisted-p conversation)
@@ -472,7 +472,7 @@ discarded or obsolete candidates.
     (let* ((configuration (request-context-configuration context))
            (pathname
              (workspace-autolith-notes-path
-              (configuration-working-directory configuration))))
+              (config :working-directory configuration))))
       (when (uiop:file-exists-p pathname)
         (make-context-contribution
          :identifier "project-autolith-notes"

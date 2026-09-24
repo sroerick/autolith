@@ -899,7 +899,7 @@
          (let* ((conversation (conversation-create configuration
                                                    :identifier "origin"))
                 (expected (namestring
-                           (configuration-working-directory configuration))))
+                           (config :working-directory configuration))))
            (test-assert (string= (conversation-origin-directory conversation)
                                  expected)
                         "a new conversation records its origin directory")
@@ -1288,22 +1288,22 @@
     (prin1-to-string
      `(make-configuration
        :source-root
-       (pathname ,(namestring (configuration-source-root configuration)))
+       (pathname ,(namestring (config :source-root configuration)))
        :working-directory
-       (pathname ,(namestring (configuration-working-directory configuration)))
+       (pathname ,(namestring (config :working-directory configuration)))
        :config-root
-       (pathname ,(namestring (configuration-config-root configuration)))
+       (pathname ,(namestring (config :config-root configuration)))
        :data-root
-       (pathname ,(namestring (configuration-data-root configuration)))
+       (pathname ,(namestring (config :data-root configuration)))
        :state-root
-       (pathname ,(namestring (configuration-state-root configuration)))
+       (pathname ,(namestring (config :state-root configuration)))
        :cache-root
-       (pathname ,(namestring (configuration-cache-root configuration)))
+       (pathname ,(namestring (config :cache-root configuration)))
        :codex-auth-path
-       (pathname ,(namestring (configuration-codex-auth-path configuration)))
+       (pathname ,(namestring (config :codex-auth-path configuration)))
        :grok-bootstrap-auth-path
        (pathname
-        ,(namestring (configuration-grok-bootstrap-auth-path configuration)))
+        ,(namestring (config :grok-bootstrap-auth-path configuration)))
        :model ,*default-model*
        :reasoning-effort ,*default-reasoning-effort*))))
 
@@ -2520,10 +2520,10 @@ assistant needle"))
          (sidecars (conversation-picker-sidecar-pathnames pathname))
          (image-root
            (merge-pathnames "conversation-images/delete-me/"
-                            (configuration-data-root configuration)))
+                            (config :data-root configuration)))
          (task-root
            (merge-pathnames "tasks/delete-me/"
-                            (configuration-data-root configuration)))
+                            (config :data-root configuration)))
          (lease nil))
     (unwind-protect
          (progn
@@ -2614,7 +2614,7 @@ assistant needle"))
                   (failed-image-root
                     (merge-pathnames
                      "conversation-images/cleanup-failure/"
-                     (configuration-data-root configuration)))
+                     (config :data-root configuration)))
                   (reported nil))
              (conversation-append-user-message failed "temporary")
              (snapshot-write

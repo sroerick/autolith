@@ -89,7 +89,7 @@ exit \"$status\""
 (defun localgroup-handoff-directory (configuration)
   "Return CONFIGURATION's private detached-process handoff directory."
   (merge-pathnames "localgroup/handoffs/"
-                   (configuration-state-root configuration)))
+                   (config :state-root configuration)))
 
 (-> localgroup-handoff-log-pathname (configuration string) pathname)
 (defun localgroup-handoff-log-pathname (configuration session-id)
@@ -97,7 +97,7 @@ exit \"$status\""
   (merge-pathnames
    (make-pathname :name session-id :type "log")
    (merge-pathnames "localgroup/logs/"
-                    (configuration-state-root configuration))))
+                    (config :state-root configuration))))
 
 (-> localgroup-handoff--pathname (configuration string) pathname)
 (defun localgroup-handoff--pathname (configuration session-id)
@@ -391,7 +391,7 @@ before any shell is involved."
                                    (application-localgroup-session application))
                                   handoff-pathname
                                   (localgroup-handoff--permission-argument application)
-                                  (configuration-immutable-p
+                                  (config :immutable-p
                                    (application-configuration application))))
 
 (-> localgroup-handoff--launch-for
@@ -401,7 +401,7 @@ before any shell is involved."
     (configuration session-id handoff-pathname permission-argument immutable-p)
   "Launch one detached session process from HANDOFF-PATHNAME."
   (let ((launcher (platform-session-launch-command
-                   *platform* (configuration-source-root configuration)))
+                   *platform* (config :source-root configuration)))
         (log-pathname
           (localgroup-handoff-log-pathname configuration session-id)))
     (let ((arguments
@@ -410,7 +410,7 @@ before any shell is involved."
              (list "--permissions" permission-argument)
              (when immutable-p
                (list "--immutable"))
-             (when (configuration-fullscreen-p configuration)
+             (when (config :fullscreen-p configuration)
                (list "--fullscreen"))
              (list "--localgroup-handoff" (namestring handoff-pathname)))))
       (ensure-directories-exist log-pathname)
@@ -423,7 +423,7 @@ before any shell is involved."
         (localgroup-handoff--launch-supervised
          :arguments arguments
          :handoff-pathname handoff-pathname
-         :directory (configuration-working-directory configuration)
+         :directory (config :working-directory configuration)
          :output output)))))
 
 (-> localgroup-handoff-spawn-fresh

@@ -65,7 +65,7 @@
     model-provider)
 (defun nous-provider--make (configuration manager session-id &key registration)
   "Create the Nous wire implementation selected by CONFIGURATION's model."
-  (if (nous-provider--messages-model-p (configuration-model configuration))
+  (if (nous-provider--messages-model-p (config :model configuration))
       (make-instance
        'nous-messages-provider
        :configuration configuration

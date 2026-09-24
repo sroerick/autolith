@@ -59,7 +59,7 @@
         (values (pathname override) t)
         (values (merge-pathnames (format nil "native/fff/~A"
                                          *fff-library-file-name*)
-                                 (configuration-data-root configuration))
+                                 (config :data-root configuration))
                 nil))))
 
 (-> search--installed-manifest-valid-p (pathname) boolean)
@@ -93,7 +93,7 @@
                (format nil "The private fff library is missing at ~A; run ~A."
                        library
                        (merge-pathnames "script/bootstrap"
-                                        (configuration-source-root
+                                        (config :source-root
                                          configuration)))
                :operation ':load
                :pathname library
@@ -106,7 +106,7 @@
                        library
                        *fff-source-commit*
                        (merge-pathnames "script/bootstrap"
-                                        (configuration-source-root
+                                        (config :source-root
                                          configuration)))
                :operation ':load
                :pathname library

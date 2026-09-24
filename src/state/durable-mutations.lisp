@@ -282,11 +282,11 @@ Historical journals may name tracked src/ files or retired overlay paths."
        (non-empty-string-p (getf (rest record) :pathname))
        (let ((pathname (merge-pathnames
                         (getf (rest record) :pathname)
-                        (configuration-source-root configuration))))
+                        (config :source-root configuration))))
          (or (uiop:subpathp pathname
                             (merge-pathnames
                              "src/"
-                             (configuration-source-root configuration)))
+                             (config :source-root configuration)))
              (uiop:subpathp pathname
                             (configuration-image-commit-root configuration))
              ;; Journals may be replayed under a different data root, so a
@@ -497,7 +497,7 @@ Historical journals may name tracked src/ files or retired overlay paths."
   "Run Git ARGUMENTS in CONFIGURATION's source root and return combined output."
   (uiop:run-program
    (append (list "git" "-C"
-                 (namestring (configuration-source-root configuration)))
+                 (namestring (config :source-root configuration)))
            arguments)
    :output ':string
    :error-output ':output

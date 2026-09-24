@@ -53,7 +53,7 @@
                   ':dim
                   (format nil "  ~A~%"
                           (namestring
-                           (configuration-working-directory configuration)))))
+                           (config :working-directory configuration)))))
            (loop for item in items
                  append
                  (list
@@ -311,7 +311,7 @@ persisted provider usage, so a resumed session notices its cold cache."
     (setf (application-prompt-cache-request-started-at application)
           (get-universal-time)
           (application-prompt-cache-request-model application)
-          (configuration-model (application-configuration application))))
+          (config :model (application-configuration application))))
   nil)
 
 (-> application-note-prompt-cache-request-completed (application list) null)
@@ -403,20 +403,20 @@ notice preference is on, so enabling it mid-session takes effect immediately."
     (append
      (list (terminal-span ':brand (format nil "settings~%")))
      (application--field-spans "model"
-                               (configuration-model configuration))
+                               (config :model configuration))
      (application--field-spans "effort"
-                               (configuration-reasoning-effort configuration))
+                               (config :reasoning-effort configuration))
      (application--field-spans
       "Codex fast"
       (cond
         ((configuration-codex-fast-mode-active-p configuration)
          "on")
-        ((configuration-codex-fast-mode-p configuration)
+        ((config :codex-fast-mode-p configuration)
          "on (saved; inactive)")
         (t
          "off")))
      (application--field-spans "web search"
-                               (configuration-web-search-mode configuration))
+                               (config :web-search-mode configuration))
      (application--field-spans
       "trace"
       (application--toggle-state
@@ -462,8 +462,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
            (terminal-span :dim (format nil " v~A~%" *autolith-version*)))
      (application--field-spans "model"
                                (format nil "~A (effort ~A)"
-                                       (configuration-model configuration)
-                                       (configuration-reasoning-effort
+                                       (config :model configuration)
+                                       (config :reasoning-effort
                                         configuration)))
      (application--field-spans "reasoning trace"
                                (if (application-reasoning-traces-p application)
@@ -476,7 +476,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
      (application--field-spans "workspace"
                                (or (application--abbreviated-directory
                                     (namestring
-                                     (configuration-working-directory
+                                     (config :working-directory
                                       configuration)))
                                    ""))
      (application--field-spans
@@ -485,7 +485,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
           "fast (2x Codex plan usage)"
           "standard"))
      (application--field-spans "web search"
-                               (configuration-web-search-mode configuration))
+                               (config :web-search-mode configuration))
      (application--field-spans "goal"
                                (let ((goal (application-goal application)))
                                  (if goal
@@ -510,12 +510,12 @@ notice preference is on, so enabling it mid-session takes effect immediately."
       "context"
       (let ((used (conversation-last-total-tokens
                    (application-conversation application)))
-            (window (configuration-context-window configuration)))
+            (window (config :context-window configuration)))
         (format nil "~A of ~A used (~D%), compacts at ~D%"
                 (application--token-count-description used)
                 (application--token-count-description window)
                 (round (* 100 used) (max 1 window))
-                (configuration-compaction-threshold-percent configuration))))
+                (config :compaction-threshold-percent configuration))))
      (cond
        ((null snapshot)
         (list (terminal-span :dim
@@ -637,7 +637,7 @@ notice preference is on, so enabling it mid-session takes effect immediately."
          (current-identifier
            (conversation-identifier (application-conversation application)))
          (current-directory
-           (configuration-working-directory configuration))
+           (config :working-directory configuration))
          (current-group
            (format nil "current directory · ~A"
                    (application--abbreviated-directory
@@ -701,10 +701,10 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (defun application--effort-items (application)
   "Return picker items for the active model's supported reasoning efforts."
   (let* ((configuration (application-configuration application))
-         (current (configuration-reasoning-effort configuration)))
+         (current (config :reasoning-effort configuration)))
     (loop for effort in
           (configuration--reasoning-efforts-for
-           (configuration-model configuration))
+           (config :model configuration))
           collect (list :name effort
                         :argument nil
                         :description (if (string= effort current)
@@ -724,9 +724,13 @@ The durable copy was written when the setting changed."
 
 (-> application-set-reasoning-effort (application string) null)
 (defun application-set-reasoning-effort (application effort)
-  "Switch APPLICATION to reasoning EFFORT and save it as the global default."
+  "Switch APPLICATION to reasoning EFFORT and save it as the global default.
+
+The model the effort belongs to is saved beside it, so a later start pairs
+the effort with the same model even when the model was never chosen."
   (let ((configuration (application-configuration application)))
     (setf (config :reasoning-effort configuration) effort)
+    (configuration-persist configuration :model)
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
 
@@ -758,7 +762,7 @@ The durable copy was written when the setting changed."
   "Set or report APPLICATION's persisted Codex Fast mode."
   (let* ((configuration (application-configuration application))
          (mode (and argument (string-downcase argument)))
-         (enabled-p (configuration-codex-fast-mode-p configuration))
+         (enabled-p (config :codex-fast-mode-p configuration))
          (available-p
            (configuration-codex-fast-mode-available-p configuration)))
     (cond
@@ -1006,7 +1010,7 @@ The durable copy was written when the setting changed."
 (-> application--model-items (application) list)
 (defun application--model-items (application)
   "Return picker items for every credentialed provider's models."
-  (let* ((current (configuration-model
+  (let* ((current (config :model
                    (application-configuration application)))
          (current-provider (provider-model-provider-name current))
          (credentialed
@@ -1032,7 +1036,7 @@ The durable copy was written when the setting changed."
 (-> application--models-description (application) string)
 (defun application--models-description (application)
   "Return a readable listing of every credentialed provider's models."
-  (let* ((current (configuration-model
+  (let* ((current (config :model
                    (application-configuration application)))
          (current-provider (provider-model-provider-name current))
          (credentialed
@@ -1477,7 +1481,7 @@ are forwarded to TERMINAL-UI-SELECT."
      :title "pick the model"
      :items (application--model-items application)
      :visible-count 15
-     :initial-name (configuration-model configuration)
+     :initial-name (config :model configuration)
      :search-p t
      :usage "Usage: /model NAME"
      :empty-notice "No registered provider models exist.")))
@@ -1491,7 +1495,7 @@ are forwarded to TERMINAL-UI-SELECT."
      application
      :title "pick the reasoning effort"
      :items (application--effort-items application)
-     :initial-name (configuration-reasoning-effort configuration)
+     :initial-name (config :reasoning-effort configuration)
      :search-p t
      :usage "Usage: /effort LEVEL"
      :empty-notice "No supported reasoning efforts exist.")))
@@ -1517,7 +1521,7 @@ are forwarded to TERMINAL-UI-SELECT."
          (ui (application-ui application))
          (project-root
            (workspace-project-root
-            (configuration-working-directory configuration))))
+            (config :working-directory configuration))))
     (when (terminal-interactive-p (terminal-ui-terminal ui))
       (handler-case
           (when (and (project-adaptation-offer-due-p
@@ -1578,7 +1582,7 @@ are forwarded to TERMINAL-UI-SELECT."
        application
        (format nil "Working directory: ~A"
                (namestring
-                (configuration-working-directory
+                (config :working-directory
                  (application-configuration application))))))
   nil)
 
@@ -1590,7 +1594,7 @@ are forwarded to TERMINAL-UI-SELECT."
   "Return picker items for every effective registered provider."
   (let ((current-provider
           (provider-model-provider-name
-           (configuration-model
+           (config :model
             (application-configuration application)))))
     (loop for registration in (provider-registrations)
           for name = (provider-registration-name registration)
@@ -1611,7 +1615,7 @@ are forwarded to TERMINAL-UI-SELECT."
    :items (application--authentication-provider-items application)
    :initial-name
    (provider-model-provider-name
-    (configuration-model
+    (config :model
      (application-configuration application)))
    :search-p t
    :usage "Usage: /auth PROVIDER"
@@ -2254,9 +2258,9 @@ are forwarded to TERMINAL-UI-SELECT."
         (application-present
          application
          (format nil "The model is now ~A with reasoning effort ~A."
-                 (configuration-model
+                 (config :model
                   (application-configuration application))
-                 (configuration-reasoning-effort
+                 (config :reasoning-effort
                   (application-configuration application)))))))
   ':continue)
 
@@ -2291,7 +2295,7 @@ are forwarded to TERMINAL-UI-SELECT."
       (application-present
        application
        (format nil "Reasoning effort is now ~A."
-               (configuration-reasoning-effort
+               (config :reasoning-effort
                 (application-configuration application))))))
   ':continue)
 

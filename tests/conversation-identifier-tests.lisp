@@ -126,14 +126,14 @@ match a new library version is never the correct repair."
                   (conversation-picker-sidecar-pathnames old-path))
                 (old-image-root
                   (merge-pathnames (format nil "conversation-images/~A/" old)
-                                   (configuration-data-root configuration)))
+                                   (config :data-root configuration)))
                 (old-task-root
                   (merge-pathnames (format nil "tasks/~A/" old)
-                                   (configuration-data-root configuration)))
+                                   (config :data-root configuration)))
                 (old-task-result (merge-pathnames "run/result.sexp" old-task-root))
                 (crash
                   (merge-pathnames "crashes/legacy.sexp"
-                                   (configuration-state-root configuration))))
+                                   (config :state-root configuration))))
            (declare (ignore other-conversation))
            (test-assert
             (string= (conversation-identifier-migration-resolve
@@ -206,10 +206,10 @@ match a new library version is never the correct repair."
                   (new-image-root
                     (merge-pathnames
                      (format nil "conversation-images/~A/" new)
-                     (configuration-data-root configuration)))
+                     (config :data-root configuration)))
                   (new-task-root
                     (merge-pathnames (format nil "tasks/~A/" new)
-                                     (configuration-data-root configuration)))
+                                     (config :data-root configuration)))
                   (new-task-result
                     (merge-pathnames "run/result.sexp" new-task-root))
                   (task-record (snapshot-read new-task-result))

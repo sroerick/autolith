@@ -180,11 +180,11 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
     (merge-pathnames
      ".autolith/skills/"
      (workspace-project-root
-      (configuration-working-directory configuration)))
+      (config :working-directory configuration)))
     (merge-pathnames "skills/"
-                     (configuration-config-root configuration))
+                     (config :config-root configuration))
     (merge-pathnames "skills/"
-                     (configuration-source-root configuration)))
+                     (config :source-root configuration)))
    :test #'equal
    :from-end nil))
 
@@ -193,13 +193,13 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
   "Discover the current request's skill catalog for CONFIGURATION."
   (skill-catalog-discover
    (skill-roots configuration)
-   :cache-root (configuration-cache-root configuration)))
+   :cache-root (config :cache-root configuration)))
 
 
 (-> skill-global-root (configuration) pathname)
 (defun skill-global-root (configuration)
   "Return the only skill root accepted by native skill authoring tools."
-  (merge-pathnames "skills/" (configuration-config-root configuration)))
+  (merge-pathnames "skills/" (config :config-root configuration)))
 
 
 ;;;; -- Request-Local Skill Instructions --

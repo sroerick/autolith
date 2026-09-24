@@ -6,7 +6,7 @@
 (defun rlm-object-root (configuration)
   "Return the content-addressed inference object directory."
   (merge-pathnames "inferences/objects/"
-                   (configuration-data-root configuration)))
+                   (config :data-root configuration)))
 
 (-> rlm-context--store (configuration) cl-llm-provider-api:rlm-context-store)
 (defun rlm-context--store (configuration)

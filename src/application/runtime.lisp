@@ -289,7 +289,7 @@
              (root
                (merge-pathnames
                 "recovery-session-pointers/"
-                (configuration-state-root configuration))))
+                (config :state-root configuration))))
         (and (uiop:absolute-pathname-p pathname)
              (uiop:subpathp pathname root)
              pathname)))))
@@ -463,16 +463,16 @@ model's effort choice to CONFIGURATION--CLONE."
          (model (if (and recorded-model
                          (configuration--model-supported-p recorded-model))
                     recorded-model
-                    (configuration-model configuration)))
+                    (config :model configuration)))
          (recorded-effort (conversation-reasoning-effort conversation)))
     (if (and recorded-effort
              (member recorded-effort
                      (configuration--reasoning-efforts-for model)
                      :test #'string=))
-        (configuration--clone configuration
+        (configuration-copy configuration
                               :model model
                               :reasoning-effort recorded-effort)
-        (configuration--clone configuration :model model))))
+        (configuration-copy configuration :model model))))
 
 (-> application--task-orchestrator
     (application)
@@ -615,7 +615,7 @@ model's effort choice to CONFIGURATION--CLONE."
          (progn
            (setf registry
                  (make-default-tool-registry
-                  :immutable-p (configuration-immutable-p configuration)
+                  :immutable-p (config :immutable-p configuration)
                   :configuration configuration))
            (setf registry
                  (task-augment-tool-registry registry))
@@ -728,7 +728,7 @@ model's effort choice to CONFIGURATION--CLONE."
   "Reject a reload that loses the provider serving the active model."
   (let* ((previous-registration (model-provider-registration provider))
          (selected-registration
-           (provider-registration-for-model (configuration-model configuration))))
+           (provider-registration-for-model (config :model configuration))))
     (when (and previous-registration
                (or (null selected-registration)
                    (not (and
@@ -741,7 +741,7 @@ model's effort choice to CONFIGURATION--CLONE."
              (format nil
                      "Provider ~A no longer serves active model ~A after configuration reload."
                      (provider-registration-name previous-registration)
-                     (configuration-model configuration)))))
+                     (config :model configuration)))))
   nil)
 
 (-> application-reload-mcp (application) (values list list))
@@ -1138,7 +1138,7 @@ newly acquired lease."
          (effective-immutable-p
            (if immutable-p-supplied-p
                immutable-p
-               (configuration-immutable-p previous)))
+               (config :immutable-p previous)))
          (retained-conversation (application-conversation application))
          (retained-conversation-lease
            (and (slot-boundp application 'conversation-lease)
@@ -1388,7 +1388,7 @@ newly acquired lease."
            ui
            :used (conversation-last-total-tokens
                   (application-conversation application))
-           :window (configuration-context-window configuration)
+           :window (config :context-window configuration)
            :compaction-limit
            (configuration-compaction-token-limit configuration))))))
   nil)
@@ -1527,7 +1527,7 @@ command replaced the active conversation."
     (format nil "autolith - ~A"
             (application--window-title-path
              (namestring
-              (configuration-working-directory
+              (config :working-directory
                (application-configuration application)))))))
 
 (-> application-sync-window-title (application) boolean)
@@ -1546,10 +1546,10 @@ command replaced the active conversation."
   "Atomically replace APPLICATION's runtime in existing directory LOCATION."
   (let* ((previous-configuration (application-configuration application))
          (configuration
-           (configuration-with-working-directory previous-configuration location))
+           (configuration-copy previous-configuration :working-directory location))
          (previous-directory
-           (configuration-working-directory previous-configuration))
-         (directory (configuration-working-directory configuration))
+           (config :working-directory previous-configuration))
+         (directory (config :working-directory configuration))
          (manager (application-worker application))
          (previous-process-directory (uiop:getcwd))
          (previous-defaults *default-pathname-defaults*)
@@ -2956,13 +2956,13 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                        (conversation-identifier conversation)))))
            (branch
              (application--git-branch
-              (configuration-working-directory configuration))))
+              (config :working-directory configuration))))
       (append
        (list (terminal-span ':status-model
-                            (configuration-model configuration))
+                            (config :model configuration))
              (terminal-span ':status-dim " · ")
              (terminal-span ':status-effort
-                            (configuration-reasoning-effort configuration)))
+                            (config :reasoning-effort configuration)))
        (when (configuration-codex-fast-mode-active-p configuration)
          (list (terminal-span ':status-dim " · ")
                (terminal-span ':status-accent "FAST")))

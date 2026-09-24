@@ -54,7 +54,7 @@
 (-> lsp-configuration-path (configuration) pathname)
 (defun lsp-configuration-path (configuration)
   "Return CONFIGURATION's user-controlled native LSP configuration pathname."
-  (merge-pathnames "lsp.sexp" (configuration-config-root configuration)))
+  (merge-pathnames "lsp.sexp" (config :config-root configuration)))
 
 (-> lsp-configuration--error (string &key (:pathname t) (:server-name t) (:field t) (:cause t)) nil)
 (defun lsp-configuration--error (message &key pathname server-name field cause)

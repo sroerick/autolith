@@ -415,7 +415,7 @@
          (progn
            (platform-unsetenv "AUTOLITH_RECOVERED")
            (let* ((immutable-configuration
-                    (configuration--clone configuration :immutable-p t))
+                    (configuration-copy configuration :immutable-p t))
                   (immutable-application
                     (make-instance 'application
                                    :configuration immutable-configuration
@@ -2595,7 +2595,7 @@
   "Test recovered crash context becomes one bounded diagnosis-only prompt."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (state-root (configuration-state-root configuration))
+         (state-root (config :state-root configuration))
          (capsule-pathname
            (merge-pathnames "crashes/diagnosis.sexp" state-root))
          (pointer-pathname
@@ -3345,7 +3345,7 @@
                   (= (terminal-ui-context-compaction-limit ui) 217600))
             "application refresh projects current provider usage into the idle meter")
             (test-assert
-             (search (configuration-model configuration)
+             (search (config :model configuration)
                      (terminal-ui--raw-spans-text
                       (terminal-ui-idle-status-details ui)))
              "application refresh projects static model details into the idle row")
@@ -4878,13 +4878,13 @@
             (eq (application-command application "/titles off") ':continue)
             "/titles off remains a nonmodal command")
            (test-assert
-            (not (preferences-session-title-generation-p configuration))
+            (not (config :session-title-generation-p configuration))
             "/titles off persists disabled provider title generation")
            (test-assert
             (null (application-operation-call application "titles" "on"))
             "the callable titles operation completes without a loop action")
            (test-assert
-            (preferences-session-title-generation-p configuration)
+            (config :session-title-generation-p configuration)
             "the callable titles operation persists enabled generation")
            (test-assert
             (search "session titles"
@@ -4927,7 +4927,7 @@
               (<= (reduce #'+ context :key #'length)
                   *conversation-title-context-maximum-characters*)
               "title transcript data stays bounded"))
-           (preferences-set-session-title-generation configuration nil)
+           (setf (config :session-title-generation-p configuration) nil)
            (let ((generation-count 0))
              (test-call-with-function-replacements
               (list
@@ -4944,7 +4944,7 @@
               (string= (conversation-title conversation)
                        "Ship </transcript> session titles")
               "the cheap local initial title is independent of provider generation"))
-           (preferences-set-session-title-generation configuration t)
+           (setf (config :session-title-generation-p configuration) t)
            (let ((outputs '(nil "generated session title")))
              (test-call-with-function-replacements
               (list
@@ -5151,12 +5151,12 @@
     (ensure-directories-exist other-workspace)
     (unwind-protect
          (let* ((configuration
-                  (configuration-with-working-directory
-                   base-configuration
+                  (configuration-copy
+                   base-configuration :working-directory
                    current-workspace))
                 (other-configuration
-                  (configuration-with-working-directory
-                   base-configuration
+                  (configuration-copy
+                   base-configuration :working-directory
                    other-workspace))
                 (current-older
                   (conversation-create configuration
@@ -5213,7 +5213,7 @@
                     (failed-image-root
                       (merge-pathnames
                        "conversation-images/cleanup-failure/"
-                       (configuration-data-root configuration))))
+                       (config :data-root configuration))))
                (conversation-append-user-message failed "temporary")
                (platform-set-file-times
                 *platform*
@@ -5253,10 +5253,10 @@
                "the keep confirmation preserves the conversation")
              (let ((image-root
                      (merge-pathnames "conversation-images/current-older/"
-                                      (configuration-data-root configuration)))
+                                      (config :data-root configuration)))
                    (task-root
                      (merge-pathnames "tasks/current-older/"
-                                      (configuration-data-root configuration))))
+                                      (config :data-root configuration))))
                (snapshot-write (merge-pathnames "image.sexp" image-root)
                                '(:image))
                (snapshot-write (merge-pathnames "task/result.sexp" task-root)
@@ -5403,7 +5403,7 @@
              (test-assert (equal selected (truename workspace))
                           "workspace switching returns the selected directory")
              (test-assert
-              (equal (configuration-working-directory
+              (equal (config :working-directory
                       (application-configuration application))
                      (truename workspace))
               "workspace switching replaces the application configuration")
@@ -5429,12 +5429,12 @@
                               (namestring (truename workspace))))
                  "directory initialization observes the target process and pathname directories"))
              (test-assert
-              (equal (configuration-working-directory
+              (equal (config :working-directory
                       (agent-configuration (application-agent application)))
                      (truename workspace))
               "workspace switching reconnects the agent with the new directory")
              (test-assert
-              (equal (configuration-working-directory
+              (equal (config :working-directory
                       (provider-configuration
                        (application-provider application)))
                      (truename workspace))
@@ -5446,7 +5446,7 @@
                (and (= (terminal-ui-context-used ui)
                        (conversation-last-total-tokens conversation))
                     (= (terminal-ui-context-window ui)
-                       (configuration-context-window active-configuration))
+                       (config :context-window active-configuration))
                     (= (terminal-ui-context-compaction-limit ui)
                        (configuration-compaction-token-limit
                         active-configuration)))
@@ -6536,7 +6536,7 @@
                                      &allow-other-keys)
                          (declare (ignore source-root
                                     defer-provider-validation-p))
-                         (configuration--clone
+                         (configuration-copy
                           configuration
                           :working-directory working-directory
                           :model model
@@ -7210,7 +7210,7 @@
                  ':continue)
             "/cwd continues the application loop")
            (test-assert
-            (equal (configuration-working-directory
+            (equal (config :working-directory
                     (application-configuration application))
                    (truename workspace))
             "/cwd passes the complete path to workspace switching")
@@ -7238,7 +7238,7 @@
               (eq (application-lisp-evaluation-status evaluation) ':ok)
               "a canonical CWD call accepts a pathname object")
              (test-assert
-              (equal (configuration-working-directory
+              (equal (config :working-directory
                       (application-configuration application))
                      (truename lisp-workspace))
               "a canonical CWD pathname switches workspaces")))
@@ -7279,31 +7279,31 @@
                                  :ui ui)))
            (setf (provider-rate-limits provider) '(:primary (:used-percent 25)))
            (application-set-reasoning-effort application "low")
-           (test-assert (string= (configuration-reasoning-effort
+           (test-assert (string= (config :reasoning-effort
                                   (application-configuration application))
                                  "low")
                         "switching effort replaces the configuration")
            (test-assert
             (string= (conversation-reasoning-effort conversation) "low")
             "switching effort updates the active conversation")
-           (let ((preferences (preferences-load configuration)))
+           (let ((preferences (preferences-load-values configuration)))
              (test-assert
-              (string= (preference-state-reasoning-effort preferences) "low")
+              (string= (getf preferences :reasoning-effort) "low")
               "switching effort saves the global effort default")
              (test-assert
-              (string= (preference-state-model preferences) "gpt-5.6-sol")
+              (string= (getf preferences :model) "gpt-5.6-sol")
               "switching effort saves the accompanying model default"))
            (let ((updated (application-configuration application)))
-             (test-assert (equal (configuration-source-root updated)
-                                 (configuration-source-root configuration))
+             (test-assert (equal (config :source-root updated)
+                                 (config :source-root configuration))
                           "effort switching preserves the source root")
-             (test-assert (equal (configuration-state-root updated)
-                                 (configuration-state-root configuration))
+             (test-assert (equal (config :state-root updated)
+                                 (config :state-root configuration))
                           "effort switching preserves private state paths")
-             (test-assert (string= (configuration-provider-endpoint updated)
-                                   (configuration-provider-endpoint configuration))
+             (test-assert (string= (config :provider-endpoint updated)
+                                   (config :provider-endpoint configuration))
                           "effort switching preserves the provider endpoint")
-             (test-assert (string= (configuration-web-search-mode updated) "live")
+             (test-assert (string= (config :web-search-mode updated) "live")
                           "effort switching preserves hosted web search mode"))
            (test-assert
             (string= (provider-session-id (application-provider application))
@@ -7326,23 +7326,23 @@
                                    "gpt-5.6-sol")
                           "the active model is marked current"))
            (application-set-model application "gpt-5.6-terra")
-           (test-assert (string= (configuration-model
+           (test-assert (string= (config :model
                                   (application-configuration application))
                                  "gpt-5.6-terra")
                         "switching the model replaces the configuration")
-           (test-assert (string= (configuration-reasoning-effort
+           (test-assert (string= (config :reasoning-effort
                                   (application-configuration application))
                                  "low")
                         "model switching preserves the reasoning effort")
            (test-assert (string= (conversation-model conversation)
                                 "gpt-5.6-terra")
                         "model switching updates the active conversation")
-           (let ((preferences (preferences-load configuration)))
+           (let ((preferences (preferences-load-values configuration)))
              (test-assert
-              (string= (preference-state-model preferences) "gpt-5.6-terra")
+              (string= (getf preferences :model) "gpt-5.6-terra")
               "switching models saves the global model default")
              (test-assert
-              (string= (preference-state-reasoning-effort preferences) "low")
+              (string= (getf preferences :reasoning-effort) "low")
               "switching models preserves the global effort default"))
            (let ((model-installed-before-effort-p nil))
              (setf (scripted-terminal-events terminal)
@@ -7352,7 +7352,7 @@
                      (setf model-installed-before-effort-p
                            (or model-installed-before-effort-p
                                (string=
-                                (configuration-model
+                                (config :model
                                  (application-configuration application))
                                 "gpt-5.6-luna")))))
              (unwind-protect
@@ -7368,10 +7368,10 @@
               model-installed-before-effort-p
               "model commands install the selection before prompting for effort"))
            (test-assert
-            (and (string= (configuration-model
+            (and (string= (config :model
                            (application-configuration application))
                           "gpt-5.6-luna")
-                 (string= (configuration-reasoning-effort
+                 (string= (config :reasoning-effort
                            (application-configuration application))
                           "medium"))
             "model commands apply the prompted effort after switching models")
@@ -7379,11 +7379,11 @@
             (and (string= (conversation-model conversation) "gpt-5.6-luna")
                  (string= (conversation-reasoning-effort conversation) "medium"))
             "model commands persist both choices in the active conversation")
-           (let ((preferences (preferences-load configuration)))
+           (let ((preferences (preferences-load-values configuration)))
              (test-assert
-              (and (string= (preference-state-model preferences)
+              (and (string= (getf preferences :model)
                             "gpt-5.6-luna")
-                   (string= (preference-state-reasoning-effort preferences)
+                   (string= (getf preferences :reasoning-effort)
                             "medium"))
               "model commands persist both choices as global defaults"))
            (test-assert
@@ -7399,8 +7399,8 @@
                         "unsupported models are rejected with the choices")
            (conversation-append-user-message conversation "persist this choice")
            (let* ((resumed-configuration
-                    (configuration-with-reasoning-effort
-                     (configuration-with-model configuration "gpt-5.6-luna")
+                    (configuration-copy
+                     (configuration-copy configuration :model "gpt-5.6-luna") :reasoning-effort
                      "xhigh"))
                   (resumed (conversation-create resumed-configuration
                                                 :identifier "resumed-model")))
@@ -7409,27 +7409,27 @@
               application
               (conversation-load-by-id configuration "resumed-model"))
              (test-assert
-              (string= (configuration-model
+              (string= (config :model
                         (application-configuration application))
                        "gpt-5.6-luna")
               "resuming restores the conversation model")
              (test-assert
-              (string= (configuration-reasoning-effort
+              (string= (config :reasoning-effort
                         (application-configuration application))
                        "xhigh")
               "resuming restores the conversation effort")
              (test-assert
-              (string= (configuration-model
+              (string= (config :model
                         (provider-configuration
                          (application-provider application)))
                        "gpt-5.6-luna")
               "the reconnected provider uses the conversation model"))
-           (let ((preferences (preferences-load configuration)))
+           (let ((preferences (preferences-load-values configuration)))
              (test-assert
-              (string= (preference-state-model preferences) "gpt-5.6-luna")
+              (string= (getf preferences :model) "gpt-5.6-luna")
               "resuming does not replace the global model default")
              (test-assert
-              (string= (preference-state-reasoning-effort preferences) "medium")
+              (string= (getf preferences :reasoning-effort) "medium")
               "resuming does not replace the global effort default")))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

@@ -226,7 +226,7 @@
                    (make-instance 'prompt-cache-baseline
                                   :prompt-tokens 32000
                                   :completed-at (- (get-universal-time) 900)
-                                  :model (configuration-model configuration)))
+                                  :model (config :model configuration)))
              (request (prompt-cache-tests--usage 33000 0))
              (let ((output (recording-terminal-output terminal)))
                (test-assert
@@ -239,7 +239,7 @@
                                   :prompt-tokens 72000
                                   :cached-tokens 63872
                                   :completed-at (get-universal-time)
-                                  :model (configuration-model configuration)))
+                                  :model (config :model configuration)))
              (request (append
                        (prompt-cache-tests--usage 73000 63872)
                        (list
@@ -303,7 +303,7 @@
            (application-cache-miss-notices-command application "on")
            (test-assert
             (and (application-cache-miss-notices-p application)
-                 (preferences-cache-miss-notices-p configuration))
+                 (config :cache-miss-notices-p configuration))
             "/cache-misses on applies and persists the preference")
            (recording-terminal-reset terminal)
            (application-cache-miss-notices-command application nil)
@@ -313,7 +313,7 @@
            (application-cache-miss-notices-command application "OFF")
            (test-assert
             (and (not (application-cache-miss-notices-p application))
-                 (not (preferences-cache-miss-notices-p configuration)))
+                 (not (config :cache-miss-notices-p configuration)))
             "/cache-misses off applies and persists the preference")
            (test-assert
             (handler-case

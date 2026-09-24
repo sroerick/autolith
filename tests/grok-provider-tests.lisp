@@ -5,7 +5,7 @@
 (-> grok-provider-test--configuration () configuration)
 (defun grok-provider-test--configuration ()
   "Return an isolated configuration selecting the Grok model."
-  (configuration-with-model (test-configuration) "grok-4.5"))
+  (configuration-copy (test-configuration) :model "grok-4.5"))
 
 
 (-> grok-provider-test--item-normalization () null)
@@ -54,7 +54,7 @@
   (let* ((base-configuration (grok-provider-test--configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root)))
+           (configuration-copy base-configuration :working-directory root)))
     (unwind-protect
          (let* ((conversation
                   (conversation-create configuration :identifier "grok-shape"))
@@ -88,7 +88,7 @@
                                  "no_inline_citations"))
              "enabled Grok search requests citation metadata")
             (let* ((disabled
-                     (configuration--clone configuration
+                     (configuration-copy configuration
                                            :web-search-mode "disabled"))
                    (request
                      (provider-request-object
@@ -141,7 +141,7 @@
            (flet ((header (name)
                     (rest (assoc name captured-headers :test #'string-equal))))
              (test-assert (string= captured-url
-                                   (configuration-provider-endpoint
+                                   (config :provider-endpoint
                                     configuration))
                           "the Grok transport posts to the configured proxy")
              (test-assert (string= (header "Authorization")
@@ -181,10 +181,10 @@
            (test-assert (typep provider 'grok-subscription-provider)
                         "Grok models select the Grok subscription provider")
            (test-assert
-            (string= (configuration-provider-endpoint configuration)
+            (string= (config :provider-endpoint configuration)
                      *grok-responses-endpoint*)
             "Grok models select the Grok proxy endpoint")
-           (test-assert (= (configuration-context-window configuration) 500000)
+           (test-assert (= (config :context-window configuration) 500000)
                         "Grok models select the Grok context window"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)

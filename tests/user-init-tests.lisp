@@ -227,7 +227,7 @@
          (mcp-registrations (mcp--registry-snapshot)))
     (ensure-directories-exist workspace)
     (setf configuration
-          (configuration-with-working-directory base-configuration workspace))
+          (configuration-copy base-configuration :working-directory workspace))
     (test-directory-configuration--write-manifest
      configuration
      (list (namestring anchor)))
@@ -237,7 +237,7 @@
             directory-init
             "(progn
                (push (list :directory *user-init-pathname*
-                           (configuration-working-directory
+                           (config :working-directory
                             *user-init-configuration*))
                      *directory-user-init-test-log*)
                (defun directory-user-init-tests--definition () :loaded)

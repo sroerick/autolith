@@ -62,7 +62,7 @@
 (-> tool-test--grok-web-run () null)
 (defun tool-test--grok-web-run ()
   "Test standalone Grok web search dispatch and authentication without network access."
-  (let* ((configuration (configuration-with-model (test-configuration) "grok-4.5"))
+  (let* ((configuration (configuration-copy (test-configuration) :model "grok-4.5"))
          (root          (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation
@@ -458,7 +458,7 @@
                      (web--search-request
                       (make-instance 'tool-context
                                      :configuration
-                                     (configuration--clone configuration
+                                     (configuration-copy configuration
                                                            :web-search-mode "live")
                                      :worker nil
                                      :conversation conversation)
@@ -472,7 +472,7 @@
                      (web--search-request
                       (make-instance 'tool-context
                                      :configuration
-                                     (configuration--clone configuration
+                                     (configuration-copy configuration
                                                            :web-search-mode "indexed")
                                      :worker nil
                                      :conversation conversation)
@@ -649,7 +649,7 @@
          (base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root)))
+           (configuration-copy base-configuration :working-directory root)))
     (unwind-protect
          (let ((conversation (conversation-create configuration
                                                   :identifier "workspace")))
@@ -755,7 +755,7 @@
                        (format nil "autolith-blocked-~A.txt" (make-identifier))
                        (user-homedir-pathname)))
                     (sandbox-configuration
-                      (configuration--clone configuration
+                      (configuration-copy configuration
                                             :working-directory root)))
                (unwind-protect
                     (if (application--command-sandbox-available-p)

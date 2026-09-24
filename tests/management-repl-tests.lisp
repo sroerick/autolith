@@ -37,7 +37,7 @@
 (-> management-repl-test-write-token (configuration string) null)
 (defun management-repl-test-write-token (configuration token)
   "Write TOKEN to CONFIGURATION's private credential file."
-  (let ((pathname (configuration-management-repl-token-file-path configuration)))
+  (let ((pathname (config :management-repl-token-file-path configuration)))
     (ensure-directories-exist pathname)
     (with-open-file (stream pathname
                             :direction ':output
@@ -52,11 +52,11 @@
 (defun management-repl-test-connect (configuration token)
   "Connect and authenticate to CONFIGURATION with TOKEN."
   (let ((socket
-          (ecase (configuration-management-repl-transport configuration)
+          (ecase (config :management-repl-transport configuration)
             (:unix
              (platform-connect-local
               *platform*
-              (configuration-management-repl-unix-socket-path configuration)))
+              (config :management-repl-unix-socket-path configuration)))
             (:tcp
              (let ((socket (make-instance 'sb-bsd-sockets:inet-socket
                                           :type ':stream
@@ -64,11 +64,11 @@
                (sb-bsd-sockets:socket-connect
                 socket
                 (sb-bsd-sockets:make-inet-address
-                 (configuration-management-repl-tcp-address configuration))
-                (configuration-management-repl-tcp-port configuration))
+                 (config :management-repl-tcp-address configuration))
+                (config :management-repl-tcp-port configuration))
                socket)))))
     (let* ((maximum
-             (configuration-management-repl-maximum-frame-size configuration))
+             (config :management-repl-maximum-frame-size configuration))
            (stream
              (sb-bsd-sockets:socket-make-stream
               socket
@@ -122,20 +122,14 @@
   "Return true when LEFT and RIGHT have equal management endpoint settings."
   (every
    (lambda (reader)
-     (equal (funcall reader left) (funcall reader right)))
-   (list #'configuration-management-repl-enabled-p
-         #'configuration-management-repl-transport
-         #'configuration-management-repl-unix-socket-path
-         #'configuration-management-repl-tcp-address
-         #'configuration-management-repl-tcp-port
-         #'configuration-management-repl-token-file-path
-         #'configuration-management-repl-evaluation-timeout
-         #'configuration-management-repl-maximum-frame-size
-         #'configuration-management-repl-maximum-source-size
-         #'configuration-management-repl-maximum-output-size
-         #'configuration-management-repl-queue-capacity
-         #'configuration-management-repl-maximum-clients
-         #'configuration-management-repl-authentication-timeout)))
+     (equal (config reader left) (config reader right)))
+   (list :management-repl-enabled-p :management-repl-transport
+         :management-repl-unix-socket-path :management-repl-tcp-address
+         :management-repl-tcp-port :management-repl-token-file-path
+         :management-repl-evaluation-timeout :management-repl-maximum-frame-size
+         :management-repl-maximum-source-size :management-repl-maximum-output-size
+         :management-repl-queue-capacity :management-repl-maximum-clients
+         :management-repl-authentication-timeout)))
 
 
 ;;;; -- Focused Tests --
@@ -151,7 +145,7 @@
            (management-repl-test-configuration
             root :transport ':tcp :address "127.0.0.2" :port 4545
             :timeout 7 :maximum-output-size 2048))
-         (clone (configuration--clone configuration))
+         (clone (configuration-copy configuration))
          (reconnect
            (application--reconnect-configuration configuration nil)))
     (unwind-protect
@@ -163,7 +157,7 @@
              (management-repl-test-same-settings-p configuration reconnect)
              "non-environment reconnect preserves explicit management settings")
            (test-assert
-            (not (configuration-management-repl-enabled-p
+            (not (config :management-repl-enabled-p
                   (configuration-create
                    :source-root (asdf:system-source-directory :autolith)
                    :working-directory
@@ -179,9 +173,9 @@
              (test-assert
               (and
                (uiop:absolute-pathname-p
-                (configuration-management-repl-unix-socket-path relative))
+                (config :management-repl-unix-socket-path relative))
                (uiop:absolute-pathname-p
-                (configuration-management-repl-token-file-path relative)))
+                (config :management-repl-token-file-path relative)))
               "management filesystem paths are anchored when configured"))
            (test-assert
             (handler-case
@@ -342,7 +336,7 @@
            (management-repl-stop application)
            (test-assert
             (not (probe-file
-                  (configuration-management-repl-unix-socket-path configuration)))
+                  (config :management-repl-unix-socket-path configuration)))
             "management shutdown idempotently removes its owned Unix socket"))
       (when stream
         (ignore-errors (close stream)))
@@ -411,7 +405,7 @@
            (test-assert
             (and (null (application-management-repl-runtime application))
                  (not (probe-file
-                       (configuration-management-repl-unix-socket-path
+                       (config :management-repl-unix-socket-path
                         configuration))))
             "management startup failure removes all partially started state"))
       (ignore-errors (management-repl-stop application))
@@ -489,7 +483,7 @@
            (sb-bsd-sockets:socket-connect
             socket
             (sb-bsd-sockets:make-inet-address "127.0.0.1")
-            (configuration-management-repl-tcp-port configuration))
+            (config :management-repl-tcp-port configuration))
            (setf stream
                  (sb-bsd-sockets:socket-make-stream
                   socket
@@ -508,7 +502,7 @@
            (sb-bsd-sockets:socket-connect
             overload-socket
             (sb-bsd-sockets:make-inet-address "127.0.0.1")
-            (configuration-management-repl-tcp-port configuration))
+            (config :management-repl-tcp-port configuration))
            (setf overload-stream
                  (sb-bsd-sockets:socket-make-stream
                   overload-socket

@@ -160,11 +160,11 @@ Reply exactly in the requested shape with no preamble and no meta commentary."
     (let* ((configuration (or configuration environment-configuration))
            (configuration
              (if model
-                 (configuration-with-model configuration model)
+                 (configuration-copy configuration :model model)
                  configuration))
            (configuration
              (if effort
-                 (configuration-with-reasoning-effort configuration effort)
+                 (configuration-copy configuration :reasoning-effort effort)
                  configuration))
            (provider
              (if (or model effort)

@@ -837,7 +837,7 @@ signal and the middle is the safe part to drop."
 A failing probe keeps its complete output beside SCRIPT in
 replay-probe.log and carries the output tail in the signaled error, so
 the failure stays diagnosable after the tool call ends."
-  (let* ((source-root (configuration-source-root configuration))
+  (let* ((source-root (config :source-root configuration))
          (entry (merge-pathnames "bin/autolith-active" source-root))
          (configured-command (uiop:getenv "AUTOLITH_SBCL"))
          (sbcl-command (if (non-empty-string-p configured-command)

@@ -44,7 +44,7 @@
 (-> localgroup-registry-directory (configuration) pathname)
 (defun localgroup-registry-directory (configuration)
   "Return CONFIGURATION's private localgroup endpoint directory."
-  (merge-pathnames "localgroup/" (configuration-state-root configuration)))
+  (merge-pathnames "localgroup/" (config :state-root configuration)))
 
 (defun localgroup-registry-pathname (configuration session-id)
   "Return the discovery pathname for SESSION-ID under CONFIGURATION."
@@ -229,14 +229,14 @@ conversation transaction can roll back before releasing either lease."
             :autolith-version *autolith-version* :state state :idle-p (not (null idle-p))
             :waiting-for-input-p (not (null waiting-for-input-p)) :paused-p
             (not (null paused-p)) :handoff-p (not (null handoff-p)) :cwd
-            (namestring (configuration-working-directory configuration)) :conversation-id
+            (namestring (config :working-directory configuration)) :conversation-id
             (conversation-identifier conversation) :conversation-display-id
             (conversation-identifier-display (conversation-identifier conversation))
             :conversation-title (conversation-title conversation)
             :conversation-persisted-p
             (not (null (conversation-persisted-p conversation))) :model
-            (configuration-model configuration) :reasoning-effort
-            (configuration-reasoning-effort configuration) :permission-mode
+            (config :model configuration) :reasoning-effort
+            (config :reasoning-effort configuration) :permission-mode
             (application-permission-mode application) :active-turn-p
             (not (null active-p)) :queued-input-count queued-count :steering-input-count
             steering-count :recalled-input-p (not (null recalled-p)) :turn-cancelling-p

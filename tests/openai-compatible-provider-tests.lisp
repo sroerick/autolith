@@ -40,32 +40,32 @@
             :source ':runtime)
            (let ((selected (preferences-tests--create configuration)))
              (test-assert
-              (and (string= (configuration-model selected) model)
-                   (string= (configuration-reasoning-effort selected) "minimal"))
+              (and (string= (config :model selected) model)
+                   (string= (config :reasoning-effort selected) "minimal"))
               "registered model metadata completes deferred preference selection"))
            (let ((conversation
                    (conversation-create
-                    (configuration-with-model configuration model)
+                    (configuration-copy configuration :model model)
                     :identifier "bootstrap-unserved-model")))
              (unregister-provider "bootstrap-openai" :source ':runtime)
              (let ((selected (preferences-tests--create configuration)))
                (test-assert
-                (and (not (string= (configuration-model selected) model))
-                     (string= (configuration-model selected)
-                              (configuration-model configuration))
-                     (string= (configuration-reasoning-effort selected)
-                              (configuration-reasoning-effort configuration)))
+                (and (not (string= (config :model selected) model))
+                     (string= (config :model selected)
+                              (config :model configuration))
+                     (string= (config :reasoning-effort selected)
+                              (config :reasoning-effort configuration)))
                 "a saved model no registered provider serves is dropped"))
              (let ((restored
                      (application--configuration-for-conversation
                       configuration
                       conversation)))
                (test-assert
-                (and (string= (configuration-model restored)
-                              (configuration-model configuration))
-                     (member (configuration-reasoning-effort restored)
+                (and (string= (config :model restored)
+                              (config :model configuration))
+                     (member (config :reasoning-effort restored)
                              (configuration--reasoning-efforts-for
-                              (configuration-model configuration))
+                              (config :model configuration))
                              :test #'string=))
                 "an unserved conversation model falls back to the active model"))
              (setf (conversation-model conversation) nil
@@ -75,18 +75,18 @@
                       configuration
                       conversation)))
                (test-assert
-                (and (string= (configuration-model restored)
-                              (configuration-model configuration))
-                     (string= (configuration-reasoning-effort restored)
-                              (configuration-reasoning-effort configuration)))
+                (and (string= (config :model restored)
+                              (config :model configuration))
+                     (string= (config :reasoning-effort restored)
+                              (config :reasoning-effort configuration)))
                 "a conversation without a recorded selection keeps the active choices")))
            (platform-setenv "AUTOLITH_MODEL" model)
            (platform-setenv "AUTOLITH_REASONING_EFFORT" "minimal")
            (let ((selected (configuration-create
                             :defer-provider-validation-p t)))
              (test-assert
-              (and (string= (configuration-model selected) model)
-                   (string= (configuration-reasoning-effort selected) "minimal"))
+              (and (string= (config :model selected) model)
+                   (string= (config :reasoning-effort selected) "minimal"))
               "startup defers environment effort validation for init-defined models")))
       (if old-environment-model
           (platform-setenv "AUTOLITH_MODEL" old-environment-model)
@@ -137,8 +137,8 @@
                 (main-dispatch nil)))
              (test-assert
               (and observed-configuration
-                   (string= (configuration-model observed-configuration) model)
-                   (string= (configuration-reasoning-effort
+                   (string= (config :model observed-configuration) model)
+                   (string= (config :reasoning-effort
                              observed-configuration)
                             "minimal"))
               "main startup defers custom provider validation until user init"))
@@ -157,8 +157,8 @@
                 (main-dispatch '("localgroup" "status"))))
              (test-assert
               (and observed-configuration
-                   (string= (configuration-model observed-configuration) model)
-                   (string= (configuration-reasoning-effort
+                   (string= (config :model observed-configuration) model)
+                   (string= (config :reasoning-effort
                              observed-configuration)
                             "minimal"))
               "localgroup commands do not validate custom providers before init")))
@@ -258,8 +258,8 @@
                   (and (typep (first bare) 'configuration)
                        (null (second bare))
                        (null (third bare))
-                       (string= (configuration-model (first bare)) model)
-                       (string= (configuration-reasoning-effort (first bare))
+                       (string= (config :model (first bare)) model)
+                       (string= (config :reasoning-effort (first bare))
                                 "minimal"))
                   "bare auth selects the persisted registered provider")
                  (test-assert
@@ -760,7 +760,7 @@
            (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
             "the provider-key store is private to the user"))
          (let* ((model "test/chat-model")
-                (provider-configuration (configuration-with-model configuration model))
+                (provider-configuration (configuration-copy configuration :model model))
                 (provider (provider-create provider-configuration))
                 (registration (provider-registration-find "test-openai"))
                 (metadata (provider-model-for model))
@@ -791,7 +791,7 @@
                              ("gpt-6-luna" "low" "medium" "high" "xhigh" "max")))
               (let* ((name (first entry))
                      (model-metadata (provider-model-for name))
-                     (model-configuration (configuration-with-model configuration name)))
+                     (model-configuration (configuration-copy configuration :model name)))
                 (test-assert
                  (and model-metadata
                       (= (provider-model-context-window model-metadata) 272000)
@@ -810,7 +810,7 @@
             "registered models retain context and reasoning metadata")
            (test-assert
             (and (equal (configuration--reasoning-efforts-for model) '("none" "high"))
-                 (string= (configuration-reasoning-effort provider-configuration)
+                 (string= (config :reasoning-effort provider-configuration)
                           "none"))
             "model selection uses the registered reasoning efforts")
            (test-assert
@@ -819,11 +819,11 @@
                  (eq (provider-wire-protocol provider) ':chat-completions)
                  (eq (provider-family provider) ':test-openai)
                  (openai-compatible-provider-stream-usage-p provider)
-                 (string= (configuration-provider-endpoint provider-configuration)
+                 (string= (config :provider-endpoint provider-configuration)
                           "https://provider.invalid/v1/chat/completions"))
             "registered models create the configured OpenAI-compatible provider")
            (let* ((reconfiguration
-                   (configuration-with-reasoning-effort provider-configuration "high"))
+                   (configuration-copy provider-configuration :reasoning-effort "high"))
                   (reconfigured (provider-with-configuration provider reconfiguration)))
              (test-assert
               (and (eq (class-of reconfigured) (class-of provider))
@@ -940,7 +940,7 @@
                                                 "https://provider.invalid/v1/chat/completions"
                                                 :stream-usage-p nil)
            (let* ((opt-out-configuration
-                   (configuration-with-model configuration "test/no-stream-usage"))
+                   (configuration-copy configuration :model "test/no-stream-usage"))
                   (opt-out-provider (provider-create opt-out-configuration))
                   (opt-out-conversation
                    (conversation-create opt-out-configuration :identifier

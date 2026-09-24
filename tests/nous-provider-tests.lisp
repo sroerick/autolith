@@ -127,13 +127,13 @@
             "OAuth model-discovery failures describe credentials rather than an API key")
            (provider--refresh-registration-models registration configuration)
            (let* ((chat-configuration
-                    (configuration-with-model configuration "open-model"))
+                    (configuration-copy configuration :model "open-model"))
                   (messages-configuration
-                    (configuration-with-model
-                     configuration
+                    (configuration-copy
+                     configuration :model
                      "anthropic/claude-test")))
              (test-assert
-              (string= (configuration-provider-endpoint chat-configuration)
+              (string= (config :provider-endpoint chat-configuration)
                        "https://override.nous.test/chat")
               "AUTOLITH_NOUS_PROVIDER_ENDPOINT overrides the Chat Completions route")
              (let ((chat (provider-create chat-configuration))
@@ -206,10 +206,10 @@
                     nil)))
            (provider--refresh-registration-models registration configuration)
            (let* ((chat-configuration
-                    (configuration-with-model configuration "open-model"))
+                    (configuration-copy configuration :model "open-model"))
                   (messages-configuration
-                    (configuration-with-model
-                     configuration
+                    (configuration-copy
+                     configuration :model
                      "anthropic/claude-test"))
                   (chat (provider-create chat-configuration))
                   (messages (provider-create messages-configuration))

@@ -167,7 +167,7 @@
 (defun plan--directory-name (configuration)
   "Return CONFIGURATION's canonical workspace directory key."
   (workspace-directory-name
-   (configuration-working-directory configuration)))
+   (config :working-directory configuration)))
 
 (-> plan--pathname (configuration) pathname)
 (defun plan--pathname (configuration)
@@ -175,7 +175,7 @@
   (configuration-plan-path
    configuration
    (workspace-directory-identifier
-    (configuration-working-directory configuration))))
+    (config :working-directory configuration))))
 
 (-> plan--read-path (pathname) (option workspace-plan))
 (defun plan--read-path (pathname)
@@ -277,7 +277,7 @@
 (defun plan--call-with-lock (configuration function)
   "Call FUNCTION under the process-local and shared plan publication locks."
   (with-recursive-lock-held (*plan-lock*)
-    (call-with-file-lock (merge-pathnames "plans.lock" (configuration-state-root configuration))
+    (call-with-file-lock (merge-pathnames "plans.lock" (config :state-root configuration))
                          function)))
 
 (-> plan-load (configuration) (option workspace-plan))

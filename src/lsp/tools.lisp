@@ -51,7 +51,7 @@
     (error 'lsp-error :message "LSP path must name a workspace source file."))
   (let* ((resolved (workspace-tool-path context path))
          (root (workspace-tool--canonical-path
-                (configuration-working-directory (tool-context-configuration context)))))
+                (config :working-directory (tool-context-configuration context)))))
     (unless (and (workspace-tool--read-path-allowed-p resolved (list root))
                  (eq (workspace-file--path-kind resolved) ':file))
       (error 'lsp-error :message "LSP path must be a regular file inside the current workspace."))
@@ -73,7 +73,7 @@
   (with-recursive-lock-held ((lsp-manager-lock manager))
     (let* ((configurations (lsp-tool--matching-configurations manager context path))
            (workspace (workspace-tool--canonical-path
-                       (configuration-working-directory (tool-context-configuration context)))))
+                       (config :working-directory (tool-context-configuration context)))))
       (unless configurations
         (error 'lsp-error :message "No enabled language server matches this file; configure lsp.sexp."))
       (map 'vector

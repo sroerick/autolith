@@ -294,7 +294,7 @@ The primary blocking field and legacy inverse async field are mutually exclusive
            (or (conversation-identifier-path-fragment conversation-identifier)
                (task--identifier-fragment conversation-identifier)
                "conversation"))
-   (configuration-data-root configuration)))
+   (config :data-root configuration)))
 
 (-> task--artifact-field
     (t keyword &key (:preview-limit integer)

@@ -133,7 +133,7 @@
          (authorization-requests nil))
     (ensure-directories-exist workspace)
     (setf configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory workspace))
     (unwind-protect
          (let* ((first-conversation

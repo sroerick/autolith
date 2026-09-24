@@ -10,11 +10,11 @@
       (ensure-directories-exist workspace-b)
       (configuration-ensure-directories base-configuration)
       (let ((configuration-a
-              (configuration-with-working-directory
-               base-configuration workspace-a))
+              (configuration-copy
+               base-configuration :working-directory workspace-a))
             (configuration-b
-              (configuration-with-working-directory
-               base-configuration workspace-b)))
+              (configuration-copy
+               base-configuration :working-directory workspace-b)))
         (test-assert (null (plan-load configuration-a))
                      "a workspace begins without a plan")
         (let ((plan

@@ -76,7 +76,7 @@ reasoning effort value at the serving stack, so NIL tells the shared
 request builder to omit the reasoning object entirely."
   (declare (ignore provider))
   (when (fireworks-model-reasoning-effort-p
-         (configuration-model configuration))
+         (config :model configuration))
     (configuration-fireworks-wire-effort configuration)))
 
 (defmethod provider-responses-request-fields
@@ -101,7 +101,7 @@ request builder to omit the reasoning object entirely."
    300
    (lambda ()
      (dexador:post
-      (configuration-provider-endpoint (provider-configuration provider))
+      (config :provider-endpoint (provider-configuration provider))
       :headers (list
                 (cons "Authorization"
                       (format nil "Bearer ~A"

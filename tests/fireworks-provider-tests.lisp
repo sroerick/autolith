@@ -13,7 +13,7 @@
 (-> fireworks-provider-test--configuration () configuration)
 (defun fireworks-provider-test--configuration ()
   "Return an isolated configuration selecting the Fireworks model."
-  (configuration-with-model (test-configuration)
+  (configuration-copy (test-configuration) :model
                             "accounts/fireworks/models/kimi-k3"))
 
 (-> fireworks-provider-test--selection () null)
@@ -21,23 +21,23 @@
   "Test Fireworks model selection and reasoning boundaries."
   (let ((configuration (fireworks-provider-test--configuration)))
     (test-assert
-     (eq (model-family (configuration-model configuration)) ':fireworks)
+     (eq (model-family (config :model configuration)) ':fireworks)
      "the Fireworks model selects its provider family")
     (test-assert
-     (string= (configuration-provider-endpoint configuration)
+     (string= (config :provider-endpoint configuration)
               *fireworks-responses-endpoint*)
      "the Fireworks model selects its endpoint")
     (test-assert
-     (= (configuration-context-window configuration) 1048576)
+     (= (config :context-window configuration) 1048576)
      "the Fireworks model selects its context window")
     (test-assert
      (string= (configuration-fireworks-wire-effort
-               (configuration-with-reasoning-effort configuration "none"))
+               (configuration-copy configuration :reasoning-effort "none"))
               "low")
      "Fireworks clamps reasoning at its low boundary")
     (test-assert
      (string= (configuration-fireworks-wire-effort
-               (configuration-with-reasoning-effort configuration "ultra"))
+               (configuration-copy configuration :reasoning-effort "ultra"))
               "high")
      "Fireworks clamps reasoning at its high boundary"))
   nil)
@@ -114,8 +114,8 @@
 (defun fireworks-provider-test--reasoning-omission ()
   "Test reasoning-free Fireworks models omit the reasoning object."
   (let* ((configuration
-           (configuration-with-model
-            (test-configuration) "accounts/fireworks/models/qwen3p7-plus"))
+           (configuration-copy
+            (test-configuration) :model "accounts/fireworks/models/qwen3p7-plus"))
          (root (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation

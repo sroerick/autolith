@@ -5,13 +5,13 @@
 (-> generation-root (configuration) pathname)
 (defun generation-root (configuration)
   "Return CONFIGURATION's retained-generation directory."
-  (merge-pathnames "generations/" (configuration-data-root configuration)))
+  (merge-pathnames "generations/" (config :data-root configuration)))
 
 (-> generation-current-pathname (configuration) pathname)
 (defun generation-current-pathname (configuration)
   "Return CONFIGURATION's selected-generation record pathname."
   (merge-pathnames "current-generation.sexp"
-                   (configuration-state-root configuration)))
+                   (config :state-root configuration)))
 
 (-> generation--validate-manifest (list pathname) null)
 (defun generation--validate-manifest (properties pathname)
@@ -346,7 +346,7 @@ structured type and message survive the round trip."
                  (error 'checkpoint-error
                         :message "A checkpoint requires a clean source revision."
                         :stage ':validation
-                        :pathname (configuration-source-root configuration))))
+                        :pathname (config :source-root configuration))))
              (string-trim
               '(#\Space #\Tab #\Newline #\Return)
               (self-git-command configuration '("rev-parse" "HEAD")))))
@@ -354,21 +354,21 @@ structured type and message survive the round trip."
       (handler-case
           (uiop:run-program
            (platform-source-check-command
-           *platform* (configuration-source-root configuration))
-           :directory (configuration-source-root configuration)
+           *platform* (config :source-root configuration))
+           :directory (config :source-root configuration)
            :output ':string
            :error-output ':output)
         (error (condition)
           (error 'checkpoint-error
                  :message (format nil "The repository check failed: ~A" condition)
                  :stage ':validation
-                 :pathname (configuration-source-root configuration))))
+                 :pathname (config :source-root configuration))))
       (let ((after (clean-commit)))
         (unless (string= before after)
           (error 'checkpoint-error
                  :message "The source revision changed during checkpoint validation."
                  :stage ':validation
-                 :pathname (configuration-source-root configuration)))
+                 :pathname (config :source-root configuration)))
         after))))
 
 (-> checkpoint--revalidate-source (configuration string) null)
@@ -383,7 +383,7 @@ structured type and message survive the round trip."
       (error 'checkpoint-error
              :message "The source changed after checkpoint validation."
              :stage ':validation
-             :pathname (configuration-source-root configuration))))
+             :pathname (config :source-root configuration))))
   nil)
 
 (-> checkpoint--process-identifier () integer)

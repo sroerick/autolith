@@ -25,7 +25,7 @@
         (tool-context-authorize-command
          context
          "true"
-         (configuration-working-directory
+         (config :working-directory
           (tool-context-configuration context))))
   (tool-success (string-downcase *task-test-command-decision*)))
 
@@ -685,7 +685,7 @@ admission offers no such thing on purpose."
           :request-count 1
           :usage nil
           :duration-ms 1
-          :model (configuration-model
+          :model (config :model
                   (agent-configuration (task-job-parent-agent job)))
           :conversation-file nil
           :detached (task-job-detached-p job))))

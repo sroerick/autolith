@@ -177,7 +177,7 @@
   "Return PATH's stable canonical workspace URI under CONTEXT."
   (let* ((working-directory
            (workspace-tool--canonical-path
-            (configuration-working-directory
+            (config :working-directory
              (tool-context-configuration context))))
          (canonical-path (workspace-tool--canonical-path path))
           (identifier
@@ -1046,7 +1046,7 @@ the final check-to-rename window. Missing-file publication rejects that race."
                (decision
                  (tool-context-authorize-command
                   context command
-                  (configuration-working-directory
+                  (config :working-directory
                    (tool-context-configuration context)))))
           (unless (eq decision ':full-access)
             (error 'tool-error

@@ -94,7 +94,7 @@
                                    "an immutable session omits live-image guidance"))
            (setf (config :immutable-p configuration) nil)
            (let ((stable-prompt (system-prompt configuration)))
-             (preferences-set-simple-technical-english configuration t)
+             (setf (config :simple-technical-english-p configuration) t)
              (test-assert (string= stable-prompt (system-prompt configuration))
                           "an STE toggle does not rewrite the stable system prompt")
              (prompt-tests--contains

@@ -510,7 +510,7 @@
            (test-assert
             (equal (configuration-auth-path configuration)
                    (merge-pathnames "auth.sexp"
-                                    (configuration-state-root configuration)))
+                                    (config :state-root configuration)))
             "private credentials live under the state root")
            (credential-source-save source credentials)
            (let ((loaded (credential-source-load source)))
@@ -561,7 +561,7 @@
   "Test one-way Codex bootstrap import, account continuity, and refresh parsing."
   (let* ((configuration (test-configuration))
          (root (test-configuration-root configuration))
-         (bootstrap-pathname (configuration-codex-auth-path configuration))
+         (bootstrap-pathname (config :codex-auth-path configuration))
          (manager (credential-manager-create configuration)))
     (unwind-protect
          (progn

@@ -603,14 +603,14 @@ large conversations that contain no legacy reference."
       (conversation-identifier-migration--rewrite-file memory entries)))
   (let ((crash-root
           (merge-pathnames "crashes/"
-                           (configuration-state-root configuration))))
+                           (config :state-root configuration))))
     (when (uiop:directory-exists-p crash-root)
       (dolist (pathname (uiop:directory-files crash-root "*.sexp"))
         (conversation-identifier-migration--rewrite-file pathname entries))))
   (dolist (pathname
            (conversation-identifier-migration--sexp-files-recursively
             (merge-pathnames "tasks/"
-                             (configuration-data-root configuration))))
+                             (config :data-root configuration))))
     (conversation-identifier-migration--rewrite-file pathname entries))
   nil)
 
@@ -647,15 +647,15 @@ large conversations that contain no legacy reference."
       (conversation-identifier-migration--move-directory
        configuration
        (merge-pathnames (format nil "conversation-images/~A/" old)
-                        (configuration-data-root configuration))
+                        (config :data-root configuration))
        (merge-pathnames (format nil "conversation-images/~A/" new)
-                        (configuration-data-root configuration)))
+                        (config :data-root configuration)))
       (conversation-identifier-migration--move-directory
        configuration
        (merge-pathnames (format nil "tasks/~A/" (string-downcase old))
-                        (configuration-data-root configuration))
+                        (config :data-root configuration))
        (merge-pathnames (format nil "tasks/~A/" new)
-                        (configuration-data-root configuration)))))
+                        (config :data-root configuration)))))
   nil)
 
 (-> conversation-identifier-migration--remove-sources
@@ -698,7 +698,7 @@ large conversations that contain no legacy reference."
   "Call FUNCTION while holding CONFIGURATION's process-shared migration lock."
   (let ((pathname
           (merge-pathnames "conversation-identifier-migration.lock"
-                           (configuration-state-root configuration))))
+                           (config :state-root configuration))))
     (handler-case
         (call-with-file-lock pathname function)
       (conversation-identifier-migration-error (condition)

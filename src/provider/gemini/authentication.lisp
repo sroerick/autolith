@@ -52,7 +52,7 @@
 (-> configuration-gemini-auth-path (configuration) pathname)
 (defun configuration-gemini-auth-path (configuration)
   "Return Autolith's private Gemini OAuth credential pathname."
-  (merge-pathnames "gemini-auth.sexp" (configuration-state-root configuration)))
+  (merge-pathnames "gemini-auth.sexp" (config :state-root configuration)))
 
 (-> gemini-credential-manager-create (configuration) gemini-credential-manager)
 (defun gemini-credential-manager-create (configuration)

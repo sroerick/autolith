@@ -147,7 +147,7 @@ process-global fixture parent on exit; parallel runs need separate processes."
 (defun test-configuration-root (configuration)
   "Return the common temporary root containing CONFIGURATION's data directory."
   (uiop:pathname-parent-directory-pathname
-   (configuration-data-root configuration)))
+   (config :data-root configuration)))
 
 
 ;;;; -- Reusable Test Fixtures --

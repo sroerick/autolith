@@ -127,7 +127,7 @@
 (defun skill-edit-tool--validate (configuration name content)
   "Validate CONTENT through the same catalog discovery used at skill load time."
   (let* ((probe-root (merge-pathnames (format nil "skill-edit-~A/" (make-identifier))
-                                      (configuration-cache-root configuration)))
+                                      (config :cache-root configuration)))
          (probe-file (merge-pathnames (format nil "~A/SKILL.md" name) probe-root)))
     (unwind-protect
          (progn

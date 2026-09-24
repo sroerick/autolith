@@ -766,7 +766,7 @@ handed rather than storing a second copy."
                 (or (getf result :model)
                     (and parent
                          definition
-                         (configuration-model
+                         (config :model
                           (task-configuration-for-definition
                            (agent-configuration parent)
                            definition))))))))))

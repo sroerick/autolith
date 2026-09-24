@@ -377,7 +377,7 @@ STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
                                      compaction-p)))
          (projection
           (make-instance 'cl-llm-provider-api::wire-request :model
-                         (configuration-model configuration) :items
+                         (config :model configuration) :items
                          (conversation-input-items-for-family conversation
                                                               (provider-family
                                                                provider)
@@ -397,7 +397,7 @@ STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
                                (openai-compatible-provider-reasoning-parameter
                                 provider)
                                :reasoning-effort
-                               (configuration-reasoning-effort configuration)
+                               (config :reasoning-effort configuration)
                                :maximum-output-tokens
                                (and (provider-output-ceiling-p provider)
                                     *provider-maximum-output-tokens*)
@@ -432,7 +432,7 @@ STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
    300
    (lambda ()
      (dexador:post
-      (configuration-provider-endpoint (provider-configuration provider))
+      (config :provider-endpoint (provider-configuration provider))
       :headers (openai-compatible--request-headers provider credentials conversation)
       :content (json-encode-utf8 request)
       :want-stream t

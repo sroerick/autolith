@@ -26,7 +26,7 @@
    '(#\Space #\Tab #\Newline #\Return)
    (uiop:read-file-string
     (merge-pathnames "native/fff/commit"
-                     (configuration-source-root configuration)))))
+                     (config :source-root configuration)))))
 
 (-> search-tests--call
     (tool-registry tool-context string string &rest t)
@@ -61,7 +61,7 @@
                (pathname configured-library)
                (merge-pathnames (format nil "native/fff/~A"
                                         *fff-library-file-name*)
-                                (configuration-data-root
+                                (config :data-root
                                  default-configuration))))
          (previous-library (uiop:getenv "AUTOLITH_FFF_LIBRARY"))
          (workspace-root (uiop:ensure-directory-pathname
@@ -251,10 +251,10 @@
                     (failed-pid (uiop:process-info-pid failed-process))
                     (frecency-marker
                       (merge-pathnames "fff/frecency/test-marker"
-                                       (configuration-cache-root configuration)))
+                                       (config :cache-root configuration)))
                     (history-marker
                       (merge-pathnames "fff/history/test-marker"
-                                       (configuration-cache-root configuration))))
+                                       (config :cache-root configuration))))
                (search-tests--write-file frecency-marker "discard me")
                (search-tests--write-file history-marker "discard me")
                (platform-terminate-process *platform* failed-pid :force t)

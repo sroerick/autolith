@@ -189,7 +189,7 @@ that carries a platform accepts only that platform's qualified name."
              (installation--canonical-directory release-root-value))
            (source-root
              (installation--canonical-directory
-              (configuration-source-root configuration)))
+              (config :source-root configuration)))
            (record-path (and release-root
                              (merge-pathnames "RELEASE" release-root)))
            (fields (and record-path
@@ -240,7 +240,7 @@ that carries a platform accepts only that platform's qualified name."
   "Return validated Nix provenance, or NIL."
   (let ((source-root
           (installation--canonical-directory
-           (configuration-source-root configuration)))
+           (config :source-root configuration)))
         (nix-source-root
           (and (non-empty-string-p nix-source-root-value)
                (installation--canonical-directory nix-source-root-value))))

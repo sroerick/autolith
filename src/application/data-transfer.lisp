@@ -10,7 +10,7 @@
   (merge-pathnames (if (pathnamep value)
                       value
                       (uiop:parse-native-namestring value))
-                   (configuration-working-directory configuration)))
+                   (config :working-directory configuration)))
 
 (-> data-transfer--command-workspace (list configuration &key (:export-p boolean))
     (option pathname))

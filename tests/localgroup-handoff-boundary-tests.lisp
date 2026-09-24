@@ -44,7 +44,7 @@
                                       "--noinform" "--non-interactive"
                                       "--eval" "(sleep 30)")
                     :handoff-pathname pathname
-                    :directory (configuration-working-directory configuration)
+                    :directory (config :working-directory configuration)
                     :output (make-broadcast-stream))
                    startup-thread
                    (make-thread

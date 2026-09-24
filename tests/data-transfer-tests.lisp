@@ -12,7 +12,7 @@
 (defun test-data-transfer--workspace (configuration directory)
   "Return a fixture configuration for a real workspace directory."
   (ensure-directories-exist directory)
-  (configuration-with-working-directory configuration directory))
+  (configuration-copy configuration :working-directory directory))
 
 (-> test-data-transfer--populate (configuration pathname) list)
 (defun test-data-transfer--populate (configuration root)
@@ -85,7 +85,7 @@
 (defun test-data-transfer--empty-and-log-boundaries ()
   "Exercise empty archives, native archive names, and append-only log boundaries."
   (with-test-configuration (source root)
-    (dolist (workspace (list nil (configuration-working-directory source)))
+    (dolist (workspace (list nil (config :working-directory source)))
       (with-test-configuration (target target-root)
         ;; Archive names carry pathname metacharacters where the host allows
         ;; them in file names, and stay plain elsewhere.
@@ -183,7 +183,7 @@
                (image-name (first (getf (rest queued) :image-pathnames))))
           (delete-file (getf fixture :image))
           (test-assert (probe-file image-name) "queued images no longer rely on the source machine")
-          (test-assert (uiop:string-prefix-p (namestring (configuration-data-root target)) image-name)
+          (test-assert (uiop:string-prefix-p (namestring (config :data-root target)) image-name)
                        "queued images resolve under the importing data root"))
         (test-assert (not (probe-file (configuration-auth-path target))) "authentication is outside the archive")
         (test-assert (not (probe-file (configuration-user-init-path target))) "initialization code is outside the archive"))))
@@ -216,7 +216,7 @@
                               :captures (list (list :id "context-capture" :captured-at (get-universal-time)
                                                     :active-work nil :steering-in-flight nil
                                                     :steering (list (third references)) :work nil))))
-        (data-export path :workspace (configuration-working-directory source) :configuration source)
+        (data-export path :workspace (config :working-directory source) :configuration source)
         (data-import path :configuration target)
         (loop for digest in digests for text in texts do
           (test-assert (equal text (nth-value 1 (rlm-context-object-find target digest)))
@@ -264,7 +264,7 @@
   (with-test-configuration (source root)
     (with-test-configuration (target target-root)
       (let ((path (merge-pathnames "native-workspace.sexp" root)))
-        (data-export path :workspace (configuration-working-directory source) :configuration source)
+        (data-export path :workspace (config :working-directory source) :configuration source)
         ;; Literal metacharacters appear only where the host allows them.
         (dolist (name (if (test-fixture-available-p *platform* ':wildcard-file-names)
                           '("new [repo]" "new \\repo" "new *repo")
@@ -308,7 +308,7 @@
         (conversation-append-user-message
          (getf fixture :conversation)
          (format nil "Literal foreign id ~A and folder ~A must remain prose."
-                 (conversation-identifier foreign) (configuration-working-directory source)))
+                 (conversation-identifier foreign) (config :working-directory source)))
         (memory-remember source :scope ':global :title "Unlinked global" :content "not a workspace dependency")
         (rlm-context-intern source "unreferenced object")
         ;; An old agenda may contain a link whose memory later moved elsewhere.
@@ -316,7 +316,7 @@
                (item (first (getf (rest (first (getf (rest form) :records))) :items))))
           (push (memory-identifier foreign-memory) (getf (rest item) :memory-ids))
           (snapshot-write (configuration-agenda-path source) form))
-        (let* ((report (data-export path :workspace (configuration-working-directory source) :configuration source))
+        (let* ((report (data-export path :workspace (config :working-directory source) :configuration source))
                (archive (data-transfer--read path)))
           (test-assert (= (getf report :conversations) 1) "mentions of foreign IDs do not export foreign conversations")
           (test-assert (= (getf report :memories) 3) "only owned histories and the linked global are exported")
@@ -327,7 +327,7 @@
                        "links cannot pull another workspace's memory into an export"))
         (ensure-directories-exist destination)
         (data-import path :workspace destination :configuration target)
-        (let* ((target (configuration-with-working-directory target destination))
+        (let* ((target (configuration-copy target :working-directory destination))
                (identifier (conversation-identifier (getf fixture :conversation)))
                (loaded (conversation-load-by-id target identifier))
                (archive (data-transfer--collect target nil))
@@ -478,7 +478,7 @@
         (when (probe-file path) (delete-file path))
         (data-export path :configuration source)
         (test-assert (test-data-transfer--fails-p
-                      (lambda () (data-import path :workspace (configuration-working-directory source)
+                      (lambda () (data-import path :workspace (config :working-directory source)
                                                    :configuration target)))
                      "an all-data archive cannot be remapped as one workspace")
         (let ((legacy (copy-tree (first (getf archive :plans))))

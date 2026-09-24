@@ -5,7 +5,7 @@
 (-> anthropic-provider-test--configuration () configuration)
 (defun anthropic-provider-test--configuration ()
   "Return an isolated configuration selecting the Anthropic model."
-  (configuration-with-model (test-configuration)
+  (configuration-copy (test-configuration) :model
                             "claude-haiku-4-5-20251001"))
 
 (-> anthropic-provider-test--selection () null)
@@ -16,10 +16,10 @@
   (let* ((configuration (anthropic-provider-test--configuration))
          (provider (anthropic-provider-create configuration)))
     (test-assert
-     (string= (configuration-provider-endpoint configuration)
+     (string= (config :provider-endpoint configuration)
               *anthropic-messages-endpoint*)
      "Anthropic configurations select the Anthropic Messages endpoint")
-    (test-assert (= (configuration-context-window configuration) 200000)
+    (test-assert (= (config :context-window configuration) 200000)
                  "Claude models carry the Anthropic context window")
     (test-assert
      (and (handler-case

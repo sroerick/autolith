@@ -363,7 +363,7 @@
            (let* ((agent-directory (merge-pathnames ".autolith/agents/" root))
                   (agent-path      (merge-pathnames "scout.sexp" agent-directory))
                   (project-configuration
-                    (configuration--clone configuration :working-directory root)))
+                    (configuration-copy configuration :working-directory root)))
              (task-tests--write-native-form
               agent-path
               (task-tests--role-form
@@ -378,7 +378,7 @@
                                      "Project instructions.")
                             "agent discovery retains native role instructions")))
            (let* ((immutable
-                    (configuration--clone configuration :immutable-p t))
+                    (configuration-copy configuration :immutable-p t))
                   (definition
                     (task-agent-definition-create
                      :name "inheritance"
@@ -390,17 +390,17 @@
                   (child-configuration
                     (task-configuration-for-definition immutable definition)))
              (test-assert
-              (and (configuration-immutable-p child-configuration)
-                   (equal (configuration-config-root child-configuration)
-                          (configuration-config-root immutable))
-                   (equal (configuration-data-root child-configuration)
-                          (configuration-data-root immutable))
-                   (equal (configuration-state-root child-configuration)
-                          (configuration-state-root immutable))
-                   (equal (configuration-cache-root child-configuration)
-                          (configuration-cache-root immutable))
-                   (equal (configuration-provider-endpoint child-configuration)
-                          (configuration-provider-endpoint immutable)))
+              (and (config :immutable-p child-configuration)
+                   (equal (config :config-root child-configuration)
+                          (config :config-root immutable))
+                   (equal (config :data-root child-configuration)
+                          (config :data-root immutable))
+                   (equal (config :state-root child-configuration)
+                          (config :state-root immutable))
+                   (equal (config :cache-root child-configuration)
+                          (config :cache-root immutable))
+                   (equal (config :provider-endpoint child-configuration)
+                          (config :provider-endpoint immutable)))
               "task model selection preserves every parent runtime boundary"))
            (let* ((definition
                     (task-agent-definition-create

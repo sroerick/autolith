@@ -1498,12 +1498,12 @@
                 "self.commit writes a complete executable replay script")
                (test-assert
                 (uiop:subpathp (image-commit-manifest-pathname committed)
-                               (configuration-data-root configuration))
+                               (config :data-root configuration))
                 "self.commit writes only beneath private Autolith data")
                (test-assert
                 (uiop:subpathp
                  (configuration-current-image-commit-path configuration)
-                 (configuration-state-root configuration))
+                 (config :state-root configuration))
                 "self.commit selects its result beneath private Autolith state")
                (test-assert (string= head-before head-after)
                             "self.commit never changes workspace Git history")

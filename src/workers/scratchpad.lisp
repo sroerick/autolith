@@ -58,7 +58,7 @@
             (conversation-identifier conversation))))
     (merge-pathnames
      (format nil "scratchpads/~A/" fragment)
-     (configuration-cache-root configuration))))
+     (config :cache-root configuration))))
 
 (-> lisp-scratchpad-path (tool-context string) pathname)
 (defun lisp-scratchpad-path (context relative-path)

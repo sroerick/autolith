@@ -324,7 +324,7 @@
                   (moved-configuration nil))
              (ensure-directories-exist workspace)
              (setf moved-configuration
-                   (configuration-with-working-directory configuration workspace))
+                   (configuration-copy configuration :working-directory workspace))
              (lisp-worker-pool-change-working-directory pool moved-configuration)
              (let ((marker
                      (lisp-worker-request alpha :eval
@@ -356,7 +356,7 @@
                 "new REPLs start in the moved pool workspace"))
              (lisp-worker-pool-change-working-directory pool configuration))
            (let ((invalid-configuration
-                   (configuration--clone
+                   (configuration-copy
                     configuration
                     :working-directory (merge-pathnames "missing/" root))))
              (test-assert
@@ -405,7 +405,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root))
+           (configuration-copy base-configuration :working-directory root))
          (pool (lisp-worker-pool-create configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))
@@ -736,7 +736,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root))
+           (configuration-copy base-configuration :working-directory root))
          (pool (lisp-worker-pool-create configuration))
          (registry
            (task-augment-tool-registry (make-default-tool-registry)))

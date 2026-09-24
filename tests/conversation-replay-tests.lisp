@@ -165,7 +165,7 @@
             (lambda (configuration identifier selection &rest arguments)
               (declare (ignore arguments))
               (setf observed
-                    (list (configuration-immutable-p configuration)
+                    (list (config :immutable-p configuration)
                           identifier
                           selection)))))
      (lambda ()

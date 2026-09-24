@@ -46,7 +46,7 @@
                               :type "tmp"
                               :defaults pointer-pathname)))
         (when (uiop:subpathp pointer-pathname
-                             (configuration-state-root configuration))
+                             (config :state-root configuration))
           (ensure-directories-exist pointer-pathname)
           (with-open-file (stream temporary-pathname
                                   :direction ':output
@@ -71,7 +71,7 @@
          (pathname (merge-pathnames
                     (make-pathname :name identifier :type "sexp")
                     (merge-pathnames "crashes/"
-                                     (configuration-state-root configuration))))
+                                     (config :state-root configuration))))
          (commit
            (handler-case
                (string-trim
@@ -212,10 +212,10 @@
           (let* ((pointer-pathname (pathname pointer-value))
                  (pointer-root
                    (merge-pathnames "crash-pointers/"
-                                    (configuration-state-root configuration)))
+                                    (config :state-root configuration)))
                  (crash-root
                    (merge-pathnames "crashes/"
-                                    (configuration-state-root configuration))))
+                                    (config :state-root configuration))))
             (when (and (uiop:absolute-pathname-p pointer-pathname)
                        (uiop:subpathp pointer-pathname pointer-root)
                        (probe-file pointer-pathname)
@@ -274,7 +274,7 @@
                  (pointer-root
                    (merge-pathnames
                     "recovery-session-pointers/"
-                    (configuration-state-root configuration))))
+                    (config :state-root configuration))))
             (unless (and (uiop:absolute-pathname-p pointer-pathname)
                          (uiop:subpathp pointer-pathname pointer-root)
                          (probe-file pointer-pathname)

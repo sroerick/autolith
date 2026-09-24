@@ -75,7 +75,7 @@
                           :scope ':workspace
                           :workspace
                           (namestring
-                           (configuration-working-directory configuration))
+                           (config :working-directory configuration))
                           :title title
                           :content content
                           :tags '("resource-uri-fixture")
@@ -106,10 +106,10 @@
     (ensure-directories-exist (merge-pathnames "marker" first-workspace))
     (ensure-directories-exist (merge-pathnames "marker" second-workspace))
     (setf configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory first-workspace)
           second-configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory second-workspace))
     (unwind-protect
          (let* ((first-conversation
@@ -386,7 +386,7 @@
                              :workspace
                              (namestring
                               (platform-truename *platform*
-                               (configuration-working-directory
+                               (config :working-directory
                                 empty-configuration)))
                              :records nil))
                 "empty relevant revision identity includes workspace and exact empty state"))
@@ -585,10 +585,10 @@
     (ensure-directories-exist (merge-pathnames "marker" workspace))
     (ensure-directories-exist (merge-pathnames "marker" switched-workspace))
     (setf configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory workspace)
           switched-configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory switched-workspace))
     (unwind-protect
          (let* ((conversation
@@ -1004,7 +1004,7 @@
          (configuration
            (progn
              (ensure-directories-exist (merge-pathnames "marker" workspace))
-             (configuration--clone base-configuration :working-directory workspace)))
+             (configuration-copy base-configuration :working-directory workspace)))
          (conversation
            (conversation-create configuration :identifier "memory-filtered-read-write"))
          (context

@@ -90,8 +90,8 @@
               "the disabled reminder stays silent"))
            (let ((immutable
                    (configuration-create
-                    :source-root (configuration-source-root configuration)
-                    :working-directory (configuration-working-directory
+                    :source-root (config :source-root configuration)
+                    :working-directory (config :working-directory
                                         configuration)
                     :immutable-p t)))
              (test-assert

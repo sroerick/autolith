@@ -149,7 +149,7 @@ trailing slash, and the separator is a slash whatever the host writes natively."
 (defun workspace-tool-resolve-path (context path)
   "Return PATH resolved against CONTEXT's working directory without confinement."
   (let* ((configuration (tool-context-configuration context))
-         (working-directory (configuration-working-directory configuration))
+         (working-directory (config :working-directory configuration))
          (resolved
            (if (non-empty-string-p path)
                (merge-pathnames (uiop:parse-native-namestring path)
@@ -161,9 +161,9 @@ trailing slash, and the separator is a slash whatever the host writes natively."
 (defun workspace-tool-readable-roots (context)
   "Return the exact path roots allowed for workspace operations under CONTEXT."
   (or *workspace-tool-readable-roots*
-      (list (configuration-working-directory
+      (list (config :working-directory
              (tool-context-configuration context))
-            (configuration-source-root
+            (config :source-root
              (tool-context-configuration context)))))
 
 (-> workspace-tool-path (tool-context (option string)) pathname)
@@ -318,7 +318,7 @@ existing symlinks and the nearest existing parent before checking the boundary."
                  (ecase authorization
                    (:sandboxed
                     (platform-call-with-command-sandbox
-                     *platform* (configuration-working-directory configuration) #'run))
+                     *platform* (config :working-directory configuration) #'run))
                    (:full-access
                     (run (external-sandbox-policy) nil)))))
              :async-p async-p

@@ -21,7 +21,7 @@
 (-> search-worker--cache-directory (configuration) pathname)
 (defun search-worker--cache-directory (configuration)
   "Return CONFIGURATION's private fff database directory."
-  (merge-pathnames "fff/" (configuration-cache-root configuration)))
+  (merge-pathnames "fff/" (config :cache-root configuration)))
 
 (-> search-worker--log-path (configuration) pathname)
 (defun search-worker--log-path (configuration)
@@ -37,7 +37,7 @@
       (worker-request
        worker
        :library-path (search--validated-library-path configuration)
-       :base-path (configuration-working-directory configuration)
+       :base-path (config :working-directory configuration)
        :cache-directory (search-worker--cache-directory configuration)
        :log-pathname (search-worker--log-path configuration)
        :operation operation
@@ -47,7 +47,7 @@
              :message (princ-to-string condition)
              :operation (clifff-error-operation condition)
              :pathname (or (clifff-error-pathname condition)
-                           (configuration-working-directory configuration))
+                           (config :working-directory configuration))
              :cause (or (clifff-error-cause condition) condition)))))
 
 (defmethod tool-runtime-identity ((tool search-tool))

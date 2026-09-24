@@ -284,7 +284,7 @@ its protocol-level close operation."
                                   :pathname (configuration-auth-path configuration))
                  :bootstrap-source (make-instance
                                     'codex-bootstrap-credential-source
-                                    :pathname (configuration-codex-auth-path configuration))))
+                                    :pathname (config :codex-auth-path configuration))))
 
 (-> oauth-refresh-response-credentials
     (credential-manager oauth-credentials string)

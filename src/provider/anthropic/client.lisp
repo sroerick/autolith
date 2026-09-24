@@ -72,7 +72,7 @@ Return the encoded request and its unconsumed context delivery."
          (projection
            (make-instance
             'cl-llm-provider-api:wire-request
-            :model (configuration-model configuration)
+            :model (config :model configuration)
             :items durable-items
             :prefix (append
                      (list (let ((*system-prompt-hosted-web-search-p* nil))
@@ -114,7 +114,7 @@ Return the encoded request and its unconsumed context delivery."
    300
    (lambda ()
      (dexador:post
-      (configuration-provider-endpoint (provider-configuration provider))
+      (config :provider-endpoint (provider-configuration provider))
       :headers (anthropic--request-headers credentials)
       :content (json-encode-utf8 request)
       :want-stream t

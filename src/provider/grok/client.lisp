@@ -83,7 +83,7 @@ The Grok proxy executes search server-side. Grok Build reference commit
 5163763e splices these bare entries into the request tools array whenever
 backend search is enabled."
   (declare (ignore provider))
-  (unless (string= (configuration-web-search-mode configuration) "disabled")
+  (unless (string= (config :web-search-mode configuration) "disabled")
     (list (json-object "type" "web_search")
           (json-object "type" "x_search"))))
 
@@ -122,7 +122,7 @@ key, both matching Grok Build reference commit 5163763e."
         (cache-key (conversation-prompt-cache-key conversation)))
     (append
      (list "include"
-           (if (string= (configuration-web-search-mode configuration)
+           (if (string= (config :web-search-mode configuration)
                         "disabled")
                (json-array "reasoning.encrypted_content")
                (json-array "reasoning.encrypted_content"
@@ -271,7 +271,7 @@ instead of an empty assistant turn."
      (cons "x-grok-conv-id" (conversation-identifier conversation))
      (cons "x-grok-req-id" (make-identifier))
      (cons "x-grok-model-override"
-           (configuration-model configuration))
+           (config :model configuration))
      (cons "x-grok-doom-loop-check"
            (format nil "~D" *grok-doom-loop-window-tokens*)))))
 
@@ -287,7 +287,7 @@ instead of an empty assistant turn."
      300
      (lambda ()
        (dexador:post
-        (configuration-provider-endpoint configuration)
+        (config :provider-endpoint configuration)
         :headers (grok--request-headers
                   provider credentials conversation :accept "text/event-stream")
         :content (json-encode-utf8 request)

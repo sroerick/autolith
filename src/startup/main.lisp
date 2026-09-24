@@ -64,14 +64,14 @@
            (application--banner-metadata-field
             "model"
             (format nil "~A (effort ~A)"
-                    (configuration-model configuration)
-                    (configuration-reasoning-effort configuration))))
+                    (config :model configuration)
+                    (config :reasoning-effort configuration))))
          (workspace
            (application--banner-metadata-field
             "workspace"
-            (namestring (configuration-working-directory configuration))))
+            (namestring (config :working-directory configuration))))
          (mode
-           (and (configuration-immutable-p configuration)
+           (and (config :immutable-p configuration)
                 (application--banner-metadata-field "mode" "immutable")))
          (detail-rows (append (list title model workspace)
                               (when mode (list mode))))
@@ -344,7 +344,7 @@
          (recovery-input-storage-ready-p
            (or (not recovery-startup-p)
                (application-recovery-input-vault-import application))))
-    (when (and (configuration-fullscreen-p (application-configuration application))
+    (when (and (config :fullscreen-p (application-configuration application))
                (not (terminal-ui-fullscreen-p ui)))
       (change-class ui 'fullscreen-terminal-ui))
     (when (terminal-ui-fullscreen-p ui)
@@ -609,7 +609,7 @@ dependencies."
              (format t "~&~A~%"
                      (provider-authenticate-with-method
                       provider method :stream *standard-output* :open-browser-p t)))))
-    (if (configuration-fullscreen-p configuration)
+    (if (config :fullscreen-p configuration)
         (multiple-value-bind (rows columns) (terminal-current-size)
           (with-terminal-ui
               (ui (terminal-ui-create

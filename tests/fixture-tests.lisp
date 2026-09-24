@@ -90,7 +90,7 @@
                             "configuration fixtures expose a canonical root")
                (let ((pathname
                        (merge-pathnames "nested/marker.sexp"
-                                        (configuration-data-root configuration))))
+                                        (config :data-root configuration))))
                  (snapshot-write pathname '(:fixture :present))
                  (test-assert (probe-file pathname)
                               "fixture bodies can create nested state"))
@@ -120,31 +120,30 @@
 (defun test-configuration-fixture-isolation ()
   "Test nested configurations keep distinct roots and independent durable state."
   (with-test-configuration (outer outer-root)
-    (preferences-set-codex-fast-mode outer t)
+    (setf (config :codex-fast-mode-p outer) t)
     (let ((inner-root nil))
       (with-test-configuration (inner root)
         (setf inner-root root)
         (test-assert (not (equal outer-root root))
                      "nested configurations receive distinct temporary roots")
-        (dolist (accessor '(configuration-config-root
-                            configuration-data-root
-                            configuration-state-root
-                            configuration-cache-root))
+        (dolist (name '(:config-root :data-root :state-root :cache-root))
           (test-assert
-           (and (uiop:subpathp (funcall accessor outer) outer-root)
-                (uiop:subpathp (funcall accessor inner) root)
-                (not (equal (funcall accessor outer) (funcall accessor inner))))
+           (and (uiop:subpathp (config name outer) outer-root)
+                (uiop:subpathp (config name inner) root)
+                (not (equal (config name outer) (config name inner))))
            "every mutable configuration root belongs to its own fixture"))
-        (test-assert (not (preference-state-codex-fast-mode-p
-                          (preferences-load inner)))
+        (test-assert (not (config :codex-fast-mode-p inner))
                      "an inner configuration cannot read outer preferences")
-        (preferences-set-reasoning-traces inner t))
+        (test-assert
+         (not (getf (preferences-load-values inner) :codex-fast-mode-p))
+         "an inner configuration's durable store is its own")
+        (setf (config :reasoning-traces-p inner) t))
       (test-assert (not (probe-file inner-root))
                    "inner cleanup removes only the inner configuration")
       (test-assert
        (and (probe-file outer-root)
-            (preference-state-codex-fast-mode-p (preferences-load outer))
-            (not (preference-state-reasoning-traces-p (preferences-load outer))))
+            (getf (preferences-load-values outer) :codex-fast-mode-p)
+            (not (getf (preferences-load-values outer) :reasoning-traces-p)))
        "outer configuration state survives inner mutation and cleanup")))
   nil)
 

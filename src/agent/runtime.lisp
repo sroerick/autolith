@@ -954,9 +954,9 @@ commit 6f51c65958."
               (agent-observer-authorize-tool observer tool arguments))))
          (*workspace-tool-readable-roots*
            (list
-            (configuration-working-directory
+            (config :working-directory
              (agent-configuration agent))
-            (configuration-source-root
+            (config :source-root
              (agent-configuration agent))))
          (*resource-readable-schemes*
            (and tool-restriction-p '("workspace")))

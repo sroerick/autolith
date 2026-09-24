@@ -104,7 +104,7 @@
                  :bootstrap-source
                  (make-instance
                   'grok-bootstrap-credential-source
-                  :pathname (configuration-grok-bootstrap-auth-path
+                  :pathname (config :grok-bootstrap-auth-path
                              configuration))))
 
 (-> grok-refresh-response-credentials

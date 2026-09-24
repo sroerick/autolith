@@ -58,10 +58,10 @@
     (ensure-directories-exist (merge-pathnames "marker" first-workspace))
     (ensure-directories-exist (merge-pathnames "marker" second-workspace))
     (setf configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory first-workspace)
           second-configuration
-          (configuration--clone base-configuration
+          (configuration-copy base-configuration
                                 :working-directory second-workspace))
     (unwind-protect
          (let* ((first-conversation

@@ -6,7 +6,7 @@
 (defun gemini-code-assist-test--provider ()
   "Return an isolated Code Assist provider with an existing test manager."
   (let* ((configuration
-           (configuration-with-model (test-configuration)
+           (configuration-copy (test-configuration) :model
                                      "gemini-3-flash-preview")))
     (gemini-code-assist-provider-create
      configuration
@@ -415,7 +415,7 @@
 (defun gemini-code-assist-test--builtin-registration ()
   "Test built-in model selection and OAuth authentication wiring."
   (let* ((configuration
-           (configuration-with-model (test-configuration)
+           (configuration-copy (test-configuration) :model
                                      "gemini-3-flash-preview"))
          (registration (provider-registration-find "gemini"))
          (provider (provider-create configuration)))

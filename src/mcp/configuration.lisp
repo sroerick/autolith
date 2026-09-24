@@ -248,7 +248,7 @@
 (-> configuration-mcp-path (configuration) pathname)
 (defun configuration-mcp-path (configuration)
   "Return CONFIGURATION's native versioned MCP file."
-  (merge-pathnames "mcp.sexp" (configuration-config-root configuration)))
+  (merge-pathnames "mcp.sexp" (config :config-root configuration)))
 
 (-> mcp-configuration--error
     (string &key (:pathname (option pathname))

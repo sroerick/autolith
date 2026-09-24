@@ -47,7 +47,7 @@ the turn's whole request loop."
         (conversation (request-context-conversation request)))
     (when (and *self-review-enabled-p*
                (not (request-context-compaction-p request))
-               (not (configuration-immutable-p configuration)))
+               (not (config :immutable-p configuration)))
       (let* ((identifier (conversation-identifier conversation))
              (turns (conversation-user-turn-count conversation))
              (worked (conversation-working-seconds conversation))

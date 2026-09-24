@@ -16,7 +16,7 @@
                          (plan--call-with-lock configuration function))))
             (acquire
              (list (merge-pathnames "data-transfer.lock"
-                                    (configuration-state-root configuration))
+                                    (config :state-root configuration))
                    (readable-state-lock-pathname (configuration-agenda-path configuration)
                                                  "agendas.lock")
                    (readable-state-lock-pathname (configuration-memory-path configuration)
@@ -110,7 +110,7 @@
 (defun data-transfer--child-root (configuration owner identifier)
   "Return the canonical transcript root of an owned child session."
   (merge-pathnames (format nil "tasks/~A/~A/" owner identifier)
-                   (configuration-data-root configuration)))
+                   (config :data-root configuration)))
 
 (-> data-transfer--children (configuration list) (values list list))
 (defun data-transfer--children (configuration sessions)
@@ -120,7 +120,7 @@
       (when (eq (getf session :kind) ':conversation)
         (let* ((owner (getf session :id))
                (root (merge-pathnames (format nil "tasks/~A/" owner)
-                                      (configuration-data-root configuration))))
+                                      (config :data-root configuration))))
           (when (uiop:directory-exists-p root)
             (dolist (directory (uiop:subdirectories root))
               (let* ((identifier (first (last (pathname-directory directory))))
@@ -163,13 +163,13 @@
      (:scratchpad (format nil "scratchpads/~A/" owner))
      (:tasks (format nil "tasks/~A/" owner))
      (:context "inferences/objects/"))
-   (configuration-data-root configuration)))
+   (config :data-root configuration)))
 
 (-> data-transfer--assets (configuration keyword string) list)
 (defun data-transfer--assets (configuration area owner)
   "Collect only files owned by one session asset subtree."
   (let ((root (data-transfer--asset-root configuration area owner)))
-    (data-transfer--check-path (configuration-data-root configuration) root)
+    (data-transfer--check-path (config :data-root configuration) root)
     (loop for pathname in (data-transfer--walk-files root)
           collect (list :area area :owner owner
                         :path (data-transfer--relative-components pathname root)
@@ -239,11 +239,11 @@
                 for identifier = (getf session :id)
                 for path = (merge-pathnames
                             (format nil "~A~A.sexp" directory identifier)
-                            (configuration-state-root configuration))
+                            (config :state-root configuration))
                 when (probe-file path)
                   collect (progn
                             (data-transfer--check-path
-                             (configuration-state-root configuration) path)
+                             (config :state-root configuration) path)
                             (multiple-value-bind (form complete-p) (snapshot-read path)
                               (unless complete-p
                                 (data-transfer--fail path ':invalid "Incomplete session state."))
@@ -252,14 +252,14 @@
 (-> data-transfer--plans (configuration t) list)
 (defun data-transfer--plans (configuration workspace)
   "Collect workspace plan snapshots, including a surviving legacy plan."
-  (let* ((root (merge-pathnames "plans/" (configuration-state-root configuration)))
+  (let* ((root (merge-pathnames "plans/" (config :state-root configuration)))
          (paths (append (when (uiop:directory-exists-p root)
                           (uiop:directory-files root "*.sexp"))
                         (when (probe-file (configuration-legacy-plan-path configuration))
                           (list (configuration-legacy-plan-path configuration)))))
          (plans nil))
     (dolist (path paths)
-      (data-transfer--check-path (configuration-state-root configuration) path)
+      (data-transfer--check-path (config :state-root configuration) path)
       (multiple-value-bind (form complete-p) (snapshot-read path)
         (unless (and complete-p (plan--form-p form))
           (data-transfer--fail path ':invalid "Invalid workspace plan."))
@@ -327,12 +327,12 @@
                                        (sb-ext:octets-to-string (getf file :bytes)
                                                                 :external-format ':utf-8))
                           when text collect text)))
-          (root (merge-pathnames "inferences/objects/" (configuration-data-root configuration))))
+          (root (merge-pathnames "inferences/objects/" (config :data-root configuration))))
       (when (uiop:directory-exists-p root)
         (dolist (path (uiop:directory-files root "*.txt"))
           (when (or (null workspace)
                     (data-transfer--referenced-p (pathname-name path) strings))
-            (data-transfer--check-path (configuration-data-root configuration) path)
+            (data-transfer--check-path (config :data-root configuration) path)
             (push (list :area ':context :owner (pathname-name path)
                         :path (list (file-namestring path))
                         :bytes (data-transfer--bytes path)) files)))))

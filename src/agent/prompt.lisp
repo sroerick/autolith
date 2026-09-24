@@ -66,7 +66,7 @@ prompt instead of the full Autolith persona.")
   "Return the concatenated AGENTS.md instructions along the workspace path."
   (let ((sections
           (loop for path in (system-prompt--instruction-paths
-                             (configuration-working-directory configuration))
+                             (config :working-directory configuration))
                 for contents = (handler-case
                                    (uiop:read-file-string path)
                                  (error ()
@@ -118,7 +118,7 @@ prompt instead of the full Autolith persona.")
 (defun system-prompt--web-run-p (configuration)
   "Return true when this request should advertise web.run."
   (and (not *system-prompt-hosted-web-search-p*)
-       (not (string= (configuration-web-search-mode configuration) "disabled"))
+       (not (string= (config :web-search-mode configuration) "disabled"))
        t))
 
 (-> system-prompt--template-path () pathname)
@@ -196,11 +196,11 @@ prompt instead of the full Autolith persona.")
         :lisp (system-prompt--context-value (lisp-implementation-type))
         :lisp-version (system-prompt--context-value (lisp-implementation-version))
         :lang (system-prompt--environment-value "LANG")
-        :immutable-p (configuration-immutable-p configuration)
+        :immutable-p (config :immutable-p configuration)
         :source-root (system-prompt--context-value
-                      (namestring (configuration-source-root configuration)))
+                      (namestring (config :source-root configuration)))
         :workspace (system-prompt--context-value
-                    (namestring (configuration-working-directory configuration)))
+                    (namestring (config :working-directory configuration)))
         :current-date (system-prompt--current-date)
         :workspace-instructions
         (system-prompt--workspace-instructions configuration)))

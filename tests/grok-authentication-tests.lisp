@@ -68,7 +68,7 @@
 (defun grok-authentication-tests--test-bootstrap (configuration)
   "Test one-way Grok Build bootstrap import and its rejection rules."
   (let* ((bootstrap-pathname
-           (configuration-grok-bootstrap-auth-path configuration))
+           (config :grok-bootstrap-auth-path configuration))
          (manager (grok-credential-manager-create configuration)))
     (test-write-grok-auth bootstrap-pathname
                           :auth-mode "api_key"
@@ -237,7 +237,7 @@
            (test-assert
             (equal (configuration-grok-auth-path configuration)
                    (merge-pathnames "grok-auth.sexp"
-                                    (configuration-state-root configuration)))
+                                    (config :state-root configuration)))
             "private Grok credentials live under the state root")
            (grok-authentication-tests--test-bootstrap configuration)
            (grok-authentication-tests--test-refresh configuration))

@@ -139,7 +139,7 @@
     (let* ((model (json-get request "model"))
            (effort
             (openrouter--reasoning-effort
-             (configuration-reasoning-effort
+             (config :reasoning-effort
               (provider-configuration provider))))
            (model-supports-reasoning-p
             (openrouter--model-supports-reasoning-p model)))

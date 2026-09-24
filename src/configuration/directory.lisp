@@ -125,7 +125,7 @@
 Anchors are ordered from the outermost directory to the nearest directory."
   (let* ((workspace
            (uiop:ensure-directory-pathname
-            (platform-truename *platform* (configuration-working-directory configuration))))
+            (platform-truename *platform* (config :working-directory configuration))))
          (active
            (remove-if-not
             (lambda (directory)

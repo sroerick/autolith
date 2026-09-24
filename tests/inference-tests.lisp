@@ -509,7 +509,7 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
     (declare (ignore root))
     (let* ((model (find-if
                    (lambda (candidate)
-                     (and (not (equal candidate (configuration-model configuration)))
+                     (and (not (equal candidate (config :model configuration)))
                           (provider-model-reasoning-efforts-for candidate)))
                    (provider-model-identifiers)))
            (effort (first (provider-model-reasoning-efforts-for model)))
@@ -524,8 +524,8 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                    (test-assert
                     (and routes
                          (every (lambda (route)
-                                  (and (equal model (configuration-model route))
-                                       (equal effort (configuration-reasoning-effort route))))
+                                  (and (equal model (config :model route))
+                                       (equal effort (config :reasoning-effort route))))
                                 routes))
                     "the operation uses the requested model and effort"))))
         (dolist (constructor (list #'rlm-infer-tool-create
@@ -535,8 +535,8 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
             (multiple-value-bind (selected routed)
                 (rlm--tool-routing tool context (json-object "model" model "effort" effort))
               (test-assert (eq selected provider) "the scripted provider handles the selected route")
-              (test-assert (and (equal model (configuration-model routed))
-                                (equal effort (configuration-reasoning-effort routed)))
+              (test-assert (and (equal model (config :model routed))
+                                (equal effort (config :reasoning-effort routed)))
                            "explicit routing changes the configuration")
               (let ((nested-context
                       (make-instance 'tool-context :configuration routed

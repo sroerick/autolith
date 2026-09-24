@@ -475,13 +475,13 @@
    (make-pathname :name identifier :type "lock")
    (merge-pathnames
     "conversation-leases/"
-    (configuration-state-root configuration))))
+    (config :state-root configuration))))
 
 (-> conversation--lease-guard-pathname (configuration) pathname)
 (defun conversation--lease-guard-pathname (configuration)
   "Return the shared lock serializing conversation lease-file lifecycle."
   (merge-pathnames "conversation-leases.lock"
-                   (configuration-state-root configuration)))
+                   (config :state-root configuration)))
 
 (-> conversation--lease-in-use (string pathname pathname) null)
 (defun conversation--lease-in-use
@@ -1045,7 +1045,7 @@ a crash may leave one that a later lease acquisition can reuse safely."
             (or identifier
                 (conversation-identifier-generate root :timestamp created-at))))
          (origin-directory (namestring
-                            (configuration-working-directory configuration)))
+                            (config :working-directory configuration)))
          (identity (merge-pathnames
                     (make-pathname :name conversation-id :type "sexp")
                     root))
@@ -1064,9 +1064,9 @@ a crash may leave one that a later lease acquisition can reuse safely."
                    :incomplete-tail-p nil
                    :created-at created-at
                    :origin-directory origin-directory
-                   :model (configuration-model configuration)
+                   :model (config :model configuration)
                    :reasoning-effort
-                   (configuration-reasoning-effort configuration)
+                   (config :reasoning-effort configuration)
                    :next-sequence 1
                    :input-items nil)))
 
@@ -3154,10 +3154,10 @@ storage is missing, IDENTIFIER is invalid, or another process owns it."
            (list
             (merge-pathnames
              (format nil "conversation-images/~A/" normalized)
-             (configuration-data-root configuration))
+             (config :data-root configuration))
             (merge-pathnames
              (format nil "tasks/~A/" task-fragment)
-             (configuration-data-root configuration))))
+             (config :data-root configuration))))
          (lease nil))
     (unwind-protect
          (progn

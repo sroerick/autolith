@@ -861,11 +861,11 @@
                           :agent nil
                           :ui nil))
          (pointer (merge-pathnames "crash-pointers/test-launch.path"
-                                   (configuration-state-root configuration)))
+                                   (config :state-root configuration)))
          (session-pointer
            (merge-pathnames
             "recovery-session-pointers/test-launch.sexp"
-            (configuration-state-root configuration)))
+            (config :state-root configuration)))
          (previous-pointer (uiop:getenv "AUTOLITH_CRASH_POINTER"))
          (previous-session-pointer
            (uiop:getenv "AUTOLITH_RECOVERY_SESSION_POINTER")))
@@ -891,7 +891,7 @@
                                  (namestring pointer))
                         "the launch pointer is visible in the active environment")
            (test-assert (uiop:subpathp pointer
-                                       (configuration-state-root configuration))
+                                       (config :state-root configuration))
                         "the launch pointer is contained by private Autolith state")
            (let* ((capsule
                     (application-write-crash-capsule

@@ -88,7 +88,7 @@
   "Return CONTEXT's canonical current workspace agenda directory."
   (let ((configuration (tool-context-configuration context)))
     (agenda-directory-name configuration
-                           (configuration-working-directory configuration)
+                           (config :working-directory configuration)
                            :require-existing-p t)))
 
 (defmethod resource-resolver-resolve

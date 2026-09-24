@@ -38,7 +38,7 @@
   "Test UTF-16 positions and advertised synchronization modes."
   (lsp-client-tests--assert (= 3 (json-get (lsp--position "a😀") "character")))
   (with-test-configuration (configuration)
-    (let ((client (lsp-client-tests--client (configuration-working-directory configuration))))
+    (let ((client (lsp-client-tests--client (config :working-directory configuration))))
       (setf (lsp-client-capabilities client) (json-object "textDocumentSync" 2))
       (multiple-value-bind (kind open save) (lsp-client--sync-options client)
         (lsp-client-tests--assert (and (= kind 2) open (null save))))
@@ -66,7 +66,7 @@
         (list 'lsp-transport-close
               (lambda (ignored) (declare (ignore ignored)) (setf (getf transport :live) nil))))
        (let ((client (lsp-client-start (lsp-client-tests--configuration)
-                                       (configuration-working-directory configuration))))
+                                       (config :working-directory configuration))))
          (lsp-client-tests--assert (string= (json-get (lsp-client-capabilities client) "positionEncoding") "utf-16"))
          (lsp-client-tests--assert (equal (reverse requests) '("initialize")))
          (lsp-client-tests--assert (equal (reverse notifications)
@@ -77,7 +77,7 @@
   (with-test-configuration (configuration)
     (let* ((path (lsp-client-tests--write configuration "a.txt" "hello"))
            (sent nil)
-           (client (lsp-client-tests--client (configuration-working-directory configuration)
+           (client (lsp-client-tests--client (config :working-directory configuration)
                                               :transport (list :live t))))
       (setf (lsp-client-capabilities client)
             (json-object "textDocumentSync" (json-object "change" 2 "openClose" t)))
@@ -101,7 +101,7 @@
   "Test stale diagnostic rejection and invalidation after source changes."
   (with-test-configuration (configuration)
     (let* ((path (lsp-client-tests--write configuration "a.txt" "x"))
-           (client (lsp-client-tests--client (configuration-working-directory configuration)
+           (client (lsp-client-tests--client (config :working-directory configuration)
                                               :transport (list :live t))))
       (lsp-client-sync client path)
       (let ((document (gethash (lsp-path-uri path) (lsp-client-documents client))))
@@ -121,7 +121,7 @@
   "Test document byte and open-document limits."
   (with-test-configuration (configuration)
     (let* ((path (lsp-client-tests--write configuration "large.txt" "12345"))
-           (client (lsp-client-tests--client (configuration-working-directory configuration)
+           (client (lsp-client-tests--client (config :working-directory configuration)
                                               :transport (list :live t))))
       (let ((*lsp-maximum-document-bytes* 4))
         (lsp-client-tests--assert (handler-case (progn (lsp-client-sync client path) nil)
@@ -135,7 +135,7 @@
   (with-test-configuration (configuration)
     (let* ((path (lsp-client-tests--write configuration "a.txt" "x"))
            (requests 0)
-           (client (lsp-client-tests--client (configuration-working-directory configuration)
+           (client (lsp-client-tests--client (config :working-directory configuration)
                                               :transport (list :live t))))
       (lsp-client-sync client path)
       (let ((document (gethash (lsp-path-uri path) (lsp-client-documents client))))
@@ -165,7 +165,7 @@
 "))
            (document (make-instance 'lsp-document :path path :text "a😀
 "))
-           (client (lsp-client-tests--client (configuration-working-directory configuration)
+           (client (lsp-client-tests--client (config :working-directory configuration)
                                               :capabilities (json-object "hoverProvider" t)
                                               :transport (list :live t)))
            (arguments (json-object "operation" "hover" "line" 1 "character" 4))
@@ -184,7 +184,7 @@
 (defun test-lsp-client-manager-reuse-restart-and-cleanup ()
   "Test lazy client reuse, dead-client restart, and manager cleanup."
   (with-test-configuration (configuration)
-    (let* ((root (configuration-working-directory configuration))
+    (let* ((root (config :working-directory configuration))
            (server-configuration (lsp-client-tests--configuration))
            (starts 0) (closes 0) (manager (make-instance 'lsp-manager)))
       (lsp-client-tests--with-replacements
@@ -360,7 +360,7 @@
   "Bound startup and pull waits after a real edit, sharing one deadline across servers."
   (dolist (stage '(:startup :pull :write))
     (with-test-configuration (base-configuration root)
-      (let* ((configuration (configuration--clone base-configuration :working-directory root))
+      (let* ((configuration (configuration-copy base-configuration :working-directory root))
              (path (lsp-client-tests--write configuration "deadline.txt" "before"))
              (registry (lsp-register-tools (make-default-tool-registry)))
              (context (make-instance 'tool-context :configuration configuration :worker nil

@@ -125,7 +125,7 @@
                      "creation writes the supplied source")
         (test-assert (skill-catalog-find
                       (skill-catalog-discover (list root)
-                                              :cache-root (configuration-cache-root configuration))
+                                              :cache-root (config :cache-root configuration))
                       "editable")
                      "the created skill is discoverable")
         (test-assert (tool-result-success-p (edit "editable" replacement))
@@ -174,8 +174,8 @@
            (progn
              (ensure-directories-exist
               (merge-pathnames ".git/marker" project))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               project)))
          (conversation
            (conversation-create configuration

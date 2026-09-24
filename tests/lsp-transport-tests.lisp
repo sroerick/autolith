@@ -88,7 +88,7 @@
   "Exercise real pipes, callback replies, request deadlines, EOF, and process cleanup."
   (with-test-configuration (configuration)
     (let* ((transport (lsp-transport-tests--open
-                       (configuration-working-directory configuration)
+                       (config :working-directory configuration)
                        (lsp-transport-tests--server-form)))
            (process (lsp-transport-process transport))
            (threads (copy-list (lsp-transport-threads transport))))
@@ -112,7 +112,7 @@
       (test-assert (every (lambda (thread) (not (thread-alive-p thread))) threads)
                    "all transport threads have stopped"))
     (let* ((transport (lsp-transport-tests--open
-                       (configuration-working-directory configuration) '(sleep 60)))
+                       (config :working-directory configuration) '(sleep 60)))
            (process (lsp-transport-process transport)))
       (unwind-protect
            (progn

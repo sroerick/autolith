@@ -30,7 +30,7 @@
    (format nil
            "~(~A~) ~(~A~): ~A"
            (tool-context-authorize-command
-            context "printf operation" (configuration-working-directory
+            context "printf operation" (config :working-directory
                                          (tool-context-configuration context)))
            (tool-context-authorize-tool context tool arguments)
            (or (tool-argument arguments "text") "missing"))))
@@ -46,7 +46,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root))
+           (configuration-copy base-configuration :working-directory root))
          (conversation
            (conversation-create configuration :identifier "operation-surface"))
          (registry (make-default-tool-registry))
@@ -764,7 +764,7 @@
                                     "local tools preserve exact shell authorization text")
                        (test-assert
                         (equal directory
-                               (configuration-working-directory
+                               (config :working-directory
                                 (application-configuration application)))
                         "local tools preserve the authorized working directory")
                        (incf command-authorizations)

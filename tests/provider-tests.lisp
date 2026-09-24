@@ -162,7 +162,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (disabled-configuration
-           (configuration--clone base-configuration :web-search-mode "disabled"))
+           (configuration-copy base-configuration :web-search-mode "disabled"))
          (schemas (provider-tests--search-filter-schemas)))
     (unwind-protect
          (progn
@@ -247,9 +247,9 @@
                             "Retrieve one page as Markdown."))
               "Chat Completions keeps web_extra.gist but omits web.run when search is disabled"))
            (let* ((configuration
-                    (configuration--clone
-                     (configuration-with-model
-                      disabled-configuration "claude-haiku-4-5-20251001")
+                    (configuration-copy
+                     (configuration-copy
+                      disabled-configuration :model "claude-haiku-4-5-20251001")
                      :web-search-mode "disabled"))
                   (conversation
                     (conversation-create configuration
@@ -317,7 +317,7 @@
                               "uri" (json-object "type" "string")))))))))
     (unwind-protect
          (let* ((configuration
-                  (configuration--clone base-configuration
+                  (configuration-copy base-configuration
                                         :model "gpt-5.6-terra"
                                         :working-directory root))
                 (provider (provider-create configuration))
@@ -431,7 +431,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration
+           (configuration-copy base-configuration
                                  :working-directory root)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
@@ -457,8 +457,8 @@
                         "standard Codex requests omit the service tier")
            (let* ((model (first *codex-fast-mode-models*))
                   (fast-configuration
-                    (configuration-with-codex-fast-mode
-                     (configuration--clone configuration :model model) t))
+                    (configuration-copy
+                     (configuration-copy configuration :model model) :codex-fast-mode-p t))
                   (fast-request
                     (provider-request-object
                      (provider-create fast-configuration) conversation schemas)))
@@ -476,7 +476,7 @@
                     (provider-request-object
                      unknown-provider conversation schemas)))
              (test-assert
-              (and (configuration-codex-fast-mode-p unknown-configuration)
+              (and (config :codex-fast-mode-p unknown-configuration)
                    (not (configuration-codex-fast-mode-active-p
                          unknown-configuration))
                    (null (json-get unknown-request "service_tier")))
@@ -565,7 +565,7 @@
              (setf (provider-rate-limits trace-provider)
                    '((:primary (:used-percent 42))))
              (let* ((reconfiguration
-                      (configuration-with-reasoning-effort configuration "high"))
+                      (configuration-copy configuration :reasoning-effort "high"))
                     (reconfigured
                       (provider-with-configuration
                        trace-provider reconfiguration)))
@@ -729,7 +729,7 @@
              (test-assert (null (json-get request "service_tier"))
                           "standard native compaction omits a service tier")
              (let* ((fast-configuration
-                      (configuration-with-codex-fast-mode configuration t))
+                      (configuration-copy configuration :codex-fast-mode-p t))
                     (fast-provider (provider-create fast-configuration))
                     (fast-request
                       (provider-native-compaction-request-object

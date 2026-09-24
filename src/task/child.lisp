@@ -166,7 +166,7 @@
 
 (defun task-configuration-for-definition (parent-configuration definition)
   "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, and web policy."
-  (let* ((parent-model (configuration-model parent-configuration))
+  (let* ((parent-model (config :model parent-configuration))
          (model
           (or
            (loop for candidate in (task-agent-definition-models definition)
@@ -176,18 +176,18 @@
          (effort
           (task--thinking-effort
            (task-agent-definition-reasoning-effort definition)
-           (configuration-reasoning-effort parent-configuration)))
+           (config :reasoning-effort parent-configuration)))
          (web-enabled-p
           (or (eq (task-agent-definition-tools definition) :all)
               (member "web_search" (task-agent-definition-tools definition)
                       :test #'string-equal))))
-    (configuration--clone
+    (configuration-copy
      parent-configuration
      :model model
      :reasoning-effort effort
      :web-search-mode
      (if web-enabled-p
-         (configuration-web-search-mode parent-configuration)
+         (config :web-search-mode parent-configuration)
          "disabled"))))
 
 (-> task-child-reference-history-p (agent configuration) boolean)
@@ -211,7 +211,7 @@ boundary cannot fit within that budget."
   (let ((limit
           (min *task-inherited-reference-maximum-bytes*
                (max 1
-                    (floor (configuration-context-window configuration)
+                    (floor (config :context-window configuration)
                            *task-inherited-reference-context-divisor*)))))
     (and (>= limit
              (conversation--inherited-reference-wire-byte-length nil))
@@ -236,7 +236,7 @@ boundary cannot fit within that budget."
             (1+ (task-parent-depth (task-job-parent-agent job)))
             (task-agent-definition-instructions definition) context output
             (namestring
-             (configuration-working-directory child-configuration)))))
+             (config :working-directory child-configuration)))))
 
 
 (defmethod tool-execute
@@ -412,7 +412,7 @@ the root's cache key. Siblings with matching prefixes still share one key."
                 (task-job-root-conversation-identifier job))
                "conversation")
            (task-job-execution-identifier job))
-   (configuration-data-root configuration)))
+   (config :data-root configuration)))
 
 (-> task--completed-artifact-records (pathname) list)
 (defun task--completed-artifact-records (group-root)
@@ -592,7 +592,7 @@ candidates."
                 (task-completion-label completion) :request-count
                 (task-progress-request-count progress) :usage
                 (task-progress-usage progress) :duration-ms duration :model
-                (configuration-model (agent-configuration child))
+                (config :model (agent-configuration child))
                 :conversation-file
                 (namestring (conversation-pathname conversation)) :detached
                 (task-job-detached-p job))))
@@ -605,7 +605,7 @@ candidates."
          (tail (with-lock-held ((task-progress-lock progress))
                  (copy-seq (task-progress-output-tail progress))))
          (model (and parent
-                     (configuration-model (agent-configuration parent)))))
+                     (config :model (agent-configuration parent)))))
     (list :id (job-identifier job)
           :name (task-job-display-name job)
           :agent (task-agent-definition-name (task-job-definition job))

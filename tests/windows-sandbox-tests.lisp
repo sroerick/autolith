@@ -13,8 +13,8 @@
     (pathname string &key (:timeout (option integer)) (:authorization keyword)) tool-result)
 (defun windows-sandbox-tests--command (root command &key timeout (authorization ':sandboxed))
   "Run sandboxed COMMAND in ROOT through the public shell.run tool."
-  (let* ((configuration (configuration-with-working-directory
-                         (test-configuration) root))
+  (let* ((configuration (configuration-copy
+                         (test-configuration) :working-directory root))
          (registry (make-default-tool-registry))
          (conversation (conversation-create configuration
                                              :identifier "windows-sandbox"))
@@ -115,7 +115,7 @@
            (workspace (let ((path (merge-pathnames "workspace/" root)))
                         (ensure-directories-exist path)
                         path))
-           (configuration (configuration-with-working-directory base workspace))
+           (configuration (configuration-copy base :working-directory workspace))
            (registry (task-augment-tool-registry (make-default-tool-registry)))
            (run-tool (tool-registry-find registry "task" "run"))
            (orchestrator (task-run-tool-orchestrator run-tool))

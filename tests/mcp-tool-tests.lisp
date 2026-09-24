@@ -1229,7 +1229,7 @@
                                      (conversation-last-total-tokens
                                       (application-conversation application)))
                                   (= (terminal-ui-context-window ui)
-                                     (configuration-context-window configuration))
+                                     (config :context-window configuration))
                                   (= (terminal-ui-context-compaction-limit ui)
                                      (configuration-compaction-token-limit
                                       configuration))))

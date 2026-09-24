@@ -280,7 +280,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
 (-> web--search-endpoint (configuration) string)
 (defun web--search-endpoint (configuration)
   "Return the standalone provider search endpoint for CONFIGURATION."
-  (let ((endpoint (string-right-trim '(#\/) (configuration-provider-endpoint configuration))))
+  (let ((endpoint (string-right-trim '(#\/) (config :provider-endpoint configuration))))
     (unless (uiop:string-suffix-p endpoint "/responses")
       (error 'tool-error
              :message "The configured provider has no standalone search endpoint."
@@ -330,7 +330,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
   (let* ((messages
            (loop for item in (conversation-input-items-for-family
                               conversation
-                              (model-family (configuration-model configuration)))
+                              (model-family (config :model configuration)))
                  for message = (and (json-object-p item)
                                     (web--search-message item))
                  when message
@@ -349,11 +349,11 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
 (defun web--external-web-access (configuration)
   "Return Codex's standalone endpoint access value for CONFIGURATION."
   (cond
-    ((string= (configuration-web-search-mode configuration) "cached")
+    ((string= (config :web-search-mode configuration) "cached")
      false)
-    ((string= (configuration-web-search-mode configuration) "indexed")
+    ((string= (config :web-search-mode configuration) "indexed")
      "indexed")
-    ((string= (configuration-web-search-mode configuration) "live")
+    ((string= (config :web-search-mode configuration) "live")
      t)
     (t
      false)))
@@ -387,7 +387,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
   (let ((configuration (tool-context-configuration context)))
     (json-object
      "id" (provider-session-id provider)
-     "model" (configuration-model configuration)
+     "model" (config :model configuration)
      "input" (web--search-history (tool-context-conversation context)
                                    configuration)
      "commands" commands
@@ -403,7 +403,7 @@ commit ba42e6866cef4baed7ad92c73e6be8cd42e49d8b."
   (let* ((configuration (tool-context-configuration context))
          (provider (provider-create configuration))
          (conversation (tool-context-conversation context)))
-    (when (string= (configuration-web-search-mode configuration) "disabled")
+    (when (string= (config :web-search-mode configuration) "disabled")
       (error 'tool-error
              :message "Provider web search is disabled by configuration."
              :tool-name "web.run"))

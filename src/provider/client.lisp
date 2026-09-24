@@ -258,7 +258,7 @@ This follows the filtered fork-history behavior in Codex
 
 REGISTRATION selects an explicit provider layer for callers such as /auth. When
 it is NIL, the effective registration for CONFIGURATION's model is used."
-  (let* ((model (configuration-model configuration))
+  (let* ((model (config :model configuration))
          (effective-registration
            (or registration (provider-registration-for-model model)))
          (provider
@@ -334,7 +334,7 @@ so authentication can bootstrap credentials before model discovery."
                      :message (format nil "Provider ~A has no available models."
                                       (provider-registration-name registration))))
             (provider-create
-             (configuration-with-model configuration (provider-model-name model))
+             (configuration-copy configuration :model (provider-model-name model))
              :reasoning-summaries-p reasoning-summaries-p
              :registration registration))))))
 
@@ -369,10 +369,10 @@ so authentication can bootstrap credentials before model discovery."
     ((provider subscription-provider) (configuration configuration))
   "Create a fresh provider when CONFIGURATION selects another registration."
   (let ((selected-registration
-          (provider-registration-for-model (configuration-model configuration)))
+          (provider-registration-for-model (config :model configuration)))
         (current-registration (model-provider-registration provider)))
     (if (and (eq (provider-family provider)
-                 (model-family (configuration-model configuration)))
+                 (model-family (config :model configuration)))
              (or (null current-registration)
                  (eq current-registration selected-registration)))
         (call-next-method)
@@ -499,7 +499,7 @@ stay outside it."
      #'json-object
      (append
       (list
-       "model" (configuration-model configuration)
+       "model" (config :model configuration)
        "instructions" instructions
        "input" input
        "prompt_cache_key" (provider--codex-prompt-cache-key provider conversation))
@@ -550,7 +550,7 @@ conversations, and a per-process value would route them all together."
   (let ((endpoint
           (string-right-trim
            '(#\/)
-           (configuration-provider-endpoint (provider-configuration provider)))))
+           (config :provider-endpoint (provider-configuration provider)))))
     (if (uiop:string-suffix-p "/responses/compact" endpoint)
         endpoint
         (format nil "~A/compact" endpoint))))
@@ -574,7 +574,7 @@ the requests of a turn for the same reason, at commit 6f51c65958."
      300
      (lambda ()
        (dexador:post
-        (configuration-provider-endpoint configuration)
+        (config :provider-endpoint configuration)
         :headers (provider--codex-request-headers
                   provider credentials conversation :accept "text/event-stream")
         :content (json-encode-utf8 request)

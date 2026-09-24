@@ -53,7 +53,7 @@ provider search and stay advertised."
 Independent web namespace tools, such as web_extra.gist page retrieval,
 stay available because they do not depend on provider web search."
   (if (or hosted-web-search-p
-          (string= (configuration-web-search-mode configuration) "disabled"))
+          (string= (config :web-search-mode configuration) "disabled"))
       (coerce
        (loop for entry across tool-namespaces
              for filtered = (provider-request--without-web-run entry)
@@ -106,7 +106,7 @@ stay available because they do not depend on provider web search."
     ((provider codex-subscription-provider))
   "Enable native tool search on documented GPT-5.4 and later Codex models."
   (provider-deferred-tool-model-p
-   (configuration-model (provider-configuration provider))))
+   (config :model (provider-configuration provider))))
 
 (-> provider-deferred-namespace-tool (json-object) json-object)
 (defun provider-deferred-namespace-tool (tool)
@@ -253,7 +253,7 @@ also keeps the already-consumed expansion from re-entering the prompt."
                                       :goal-context goal-context)))
          (projection
            (make-instance 'cl-llm-provider-api::wire-request :model
-                          (configuration-model configuration) :items
+                          (config :model configuration) :items
                           (conversation-input-items-for-family conversation
                                                                (provider-family
                                                                 provider)

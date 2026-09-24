@@ -93,14 +93,14 @@
               (merge-pathnames ".git/marker" project))
              (ensure-directories-exist
               (merge-pathnames "directory-marker" working-directory))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               working-directory)))
          (project-skills (merge-pathnames ".autolith/skills/" project))
          (user-skills
            (merge-pathnames
             "skills/"
-            (configuration-config-root configuration))))
+            (config :config-root configuration))))
     (unwind-protect
          (progn
            (let ((roots (skill-roots configuration)))
@@ -118,7 +118,7 @@
                (third roots)
                (merge-pathnames
                 "skills/"
-                (configuration-source-root configuration)))
+                (config :source-root configuration)))
               "the optional bundled root has lowest precedence"))
            (skill-tests--write
             project-skills
@@ -165,7 +165,7 @@
              (test-assert
               (and (eq (skill-metadata-source-format standard) ':agent-skill)
                    (equal (skill-metadata-cache-root standard)
-                          (configuration-cache-root configuration))
+                          (config :cache-root configuration))
                    (string= (skill-metadata-read standard)
                             "Standard instructions."))
               "Autolith discovers and reads standard Skills through cl-skills")
@@ -213,8 +213,8 @@
            (progn
              (ensure-directories-exist
               (merge-pathnames ".git/marker" project))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               project)))
          (conversation
            (conversation-create configuration
@@ -401,8 +401,8 @@
            (progn
              (ensure-directories-exist
               (merge-pathnames ".git/marker" project))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               project)))
          (conversation
            (conversation-create configuration
@@ -508,13 +508,13 @@
          (lower-skills
            (merge-pathnames
             "skills/"
-            (configuration-config-root base-configuration)))
+            (config :config-root base-configuration)))
          (configuration
            (progn
              (ensure-directories-exist
               (merge-pathnames ".git/marker" project))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               project)))
          (conversation
            (conversation-create configuration

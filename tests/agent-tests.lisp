@@ -802,7 +802,7 @@
          (root               (test-configuration-root base-configuration))
          (workspace          (merge-pathnames "restricted-workspace/" root))
          (configuration
-           (configuration--clone base-configuration
+           (configuration-copy base-configuration
                                  :working-directory workspace))
          (conversation
            (conversation-create configuration
@@ -2051,8 +2051,8 @@
            (progn
              (ensure-directories-exist
               (merge-pathnames ".git/marker" project))
-             (configuration-with-working-directory
-              base-configuration
+             (configuration-copy
+              base-configuration :working-directory
               project)))
          (conversation
            (conversation-create configuration
@@ -2788,7 +2788,7 @@
   (let* ((base-configuration (test-configuration))
          (root (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root))
+           (configuration-copy base-configuration :working-directory root))
          (marker (merge-pathnames "unavailable-shell-ran" root))
          (conversation
            (conversation-create configuration :identifier "shell-authorization"))

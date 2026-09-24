@@ -226,11 +226,11 @@
   (let* ((configuration (test-configuration))
          (root          (test-configuration-root configuration))
          (configuration
-           (configuration--clone configuration :working-directory root))
+           (configuration-copy configuration :working-directory root))
          (project-directory (merge-pathnames ".autolith/agents/" root))
          (user-directory
            (merge-pathnames "agents/"
-                            (configuration-config-root configuration))))
+                            (config :config-root configuration))))
     (unwind-protect
          (progn
            (task-tests--write-native-form
@@ -329,7 +329,7 @@
   (let* ((base-configuration (test-configuration))
          (root               (test-configuration-root base-configuration))
          (configuration
-           (configuration--clone base-configuration :working-directory root))
+           (configuration-copy base-configuration :working-directory root))
          (project-directory (merge-pathnames ".autolith/agents/" root))
          (hidden-broken-path
            (merge-pathnames "hidden-broken.sexp" project-directory))

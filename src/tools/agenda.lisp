@@ -27,7 +27,7 @@
            (target (or (agenda-resource--string-argument
                         arguments "target-directory" "agenda.transport")
                        (namestring
-                        (configuration-working-directory configuration)))))
+                        (config :working-directory configuration)))))
       (cond
         ((string-equal operation "workspaces")
          (tool-success (agenda-resource--render-workspaces state)))

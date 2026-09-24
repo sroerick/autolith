@@ -85,7 +85,7 @@
       (ensure-directories-exist (merge-pathnames "marker" copy-target))
       (ensure-directories-exist (merge-pathnames "marker" move-target))
       (let* ((source-configuration
-               (configuration-with-working-directory configuration source))
+               (configuration-copy configuration :working-directory source))
              (state (agenda-load source-configuration))
              (memory
                (memory-remember
@@ -174,8 +174,8 @@
                 (= (length (agenda-state-records loaded)) 2))
            "moving a missing-path agenda rekeys it without losing copies")
           (let ((copy-configuration
-                  (configuration-with-working-directory
-                   source-configuration copy-target)))
+                  (configuration-copy
+                   source-configuration :working-directory copy-target)))
             (test-assert
              (agenda-remove copy-configuration
                             loaded
@@ -193,7 +193,7 @@
   "Test that legacy agendas load and upgrade on their next successful write."
   (with-test-configuration (configuration)
     (let* ((directory
-             (namestring (configuration-working-directory configuration)))
+             (namestring (config :working-directory configuration)))
            (pathname (configuration-agenda-path configuration))
            (identifier "legacy-agenda-item"))
       (snapshot-write
@@ -306,7 +306,7 @@
             (run "operation" "copy"
                  "source-directory"
                  (namestring
-                  (configuration-working-directory configuration))
+                  (config :working-directory configuration))
                  "target-directory" (namestring target)))
            "agenda.transport copies an agenda to another workspace")
           (test-assert
@@ -317,7 +317,7 @@
            "agenda.transport views another workspace's complete agenda")
           (test-assert
            (and (search (namestring
-                         (configuration-working-directory configuration))
+                         (config :working-directory configuration))
                         (tool-result-content
                          (run "operation" "workspaces")))
                 (search (namestring target)

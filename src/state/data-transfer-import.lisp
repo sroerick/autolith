@@ -11,7 +11,7 @@
              (:pending "pending-inputs")
              (:vault "recovery-input-vault"))
            (getf state :owner))
-   (configuration-state-root configuration)))
+   (config :state-root configuration)))
 
 (-> data-transfer--merge-histories (list list t) list)
 (defun data-transfer--merge-histories (existing imported pathname)
@@ -66,7 +66,7 @@
 (defun data-transfer--check-session-identities (configuration archive)
   "Reject conversation IDs already owned by a different top-level or child session."
   (let* ((expected (make-hash-table :test #'equal))
-         (data-root (configuration-data-root configuration))
+         (data-root (config :data-root configuration))
          (conversation-root (configuration-conversation-root configuration))
          (task-root (merge-pathnames "tasks/" data-root)))
     (dolist (session (getf archive :sessions))
@@ -107,8 +107,8 @@
   "Resolve all identity conflicts and destinations before publishing any data."
   (let ((writes nil)
         (child-exclusions (nth-value 1 (data-transfer--children configuration (getf archive :sessions))))
-        (data-root (configuration-data-root configuration))
-        (state-root (configuration-state-root configuration)))
+        (data-root (config :data-root configuration))
+        (state-root (config :state-root configuration)))
     (data-transfer--check-session-identities configuration archive)
     (flet ((add (write)
              (when write (push write writes))))

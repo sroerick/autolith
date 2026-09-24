@@ -331,7 +331,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
   (agenda-find state
                (agenda-directory-name
                 configuration
-                (configuration-working-directory configuration)
+                (config :working-directory configuration)
                 :require-existing-p t)))
 
 (-> agenda--prompt-item-line (agenda-item) string)
@@ -442,7 +442,7 @@ when REQUIRE-EXISTING-P is false, but it must still name an absolute path."
   (let* ((directory
            (agenda-directory-name
             configuration
-            (configuration-working-directory configuration)
+            (config :working-directory configuration)
             :require-existing-p t))
          (record (agenda-find state directory))
          (items (and record (workspace-agenda-items record))))
