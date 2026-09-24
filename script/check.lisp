@@ -257,6 +257,18 @@ that is running this check, since the launcher is a Bash script."
               (uiop:read-file-string (check-process-output entry))
               "Worker log is missing.")))
 
+(defun check--environment-with (overrides)
+  "Return the process environment with OVERRIDES replacing same-named entries.
+
+A duplicate later in the environment list wins in child processes, so an
+inherited XDG or HOME entry would silently defeat an override placed first."
+  (let ((names (mapcar (lambda (entry) (subseq entry 0 (position #\= entry))) overrides)))
+    (append (remove-if (lambda (entry)
+                         (let ((name (subseq entry 0 (or (position #\= entry) (length entry)))))
+                           (member name names :test #'string=)))
+                       (sb-ext:posix-environ))
+            overrides)))
+
 (defun check--run-workers (cases &key source-root temporary-root
                                     (jobs (check--processor-count)) (timeout 600))
   "Run CASES in fresh SBCL processes and remove their owned fixture directories.
@@ -278,6 +290,14 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                            :label (format nil "Test worker ~D" index)
                            :names names :result-path result
                            :output (merge-pathnames "output.log" directory)
+                           ;; Cases that build configurations on default roots
+                           ;; must never read or write the developer's own
+                           ;; preferences or user init, so each worker owns
+                           ;; its config and state roots. Data stays shared
+                           ;; because the runtime launcher lives below it.
+                           :environment (check--environment-with
+                                         (list (format nil "XDG_CONFIG_HOME=~Aconfig/" directory)
+                                               (format nil "XDG_STATE_HOME=~Astate/" directory)))
                            ;; Leave TMPDIR alone: native Unix-domain sockets need short paths.
                            :command (append (check--runtime-command source-root)
                                             (list (namestring (merge-pathnames "script/test-worker.lisp" source-root))
@@ -370,12 +390,13 @@ Parent cleanup follows process-group termination, including crashes and timeouts
                   for environment in
                   (list nil
                         nil
-                        (append (list (format nil "HOME=~A" temporary-home)
-                                      (format nil "XDG_DATA_HOME=~Adata/" temporary-root)
-                                      (format nil "XDG_STATE_HOME=~Astate/" temporary-root)
-                                      (format nil "XDG_CACHE_HOME=~Acache/" temporary-root)
-                                      (format nil "AUTOLITH_PROJECT_SETUP=~A" quicklisp-setup))
-                                (sb-ext:posix-environ)))
+                        (check--environment-with
+                         (list (format nil "HOME=~A" temporary-home)
+                               (format nil "XDG_CONFIG_HOME=~Aconfig/" temporary-root)
+                               (format nil "XDG_DATA_HOME=~Adata/" temporary-root)
+                               (format nil "XDG_STATE_HOME=~Astate/" temporary-root)
+                               (format nil "XDG_CACHE_HOME=~Acache/" temporary-root)
+                               (format nil "AUTOLITH_PROJECT_SETUP=~A" quicklisp-setup))))
                   collect (make-check-process
                            :label label :command arguments
                            :environment environment
