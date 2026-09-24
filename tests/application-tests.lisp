@@ -10,8 +10,9 @@
     (&key (columns 40) reasoning-traces-p (compact-view-p t))
   "Return a minimal application presenting into a recording terminal."
   (make-instance 'application
-                 :reasoning-traces-p reasoning-traces-p
-                 :compact-view-p compact-view-p
+                 :configuration (make-configuration
+                                 :reasoning-traces-p reasoning-traces-p
+                                 :compact-view-p compact-view-p)
                  :tool-registry (make-default-tool-registry)
                  :ui (terminal-ui-create
                       :terminal (make-instance 'recording-terminal
@@ -3174,7 +3175,6 @@
                           :configuration configuration
                           :conversation conversation
                           :provider nil
-                          :reasoning-traces-p nil
                           :ui (terminal-ui-create :terminal terminal))))
     (unwind-protect
          (let ((*application-history-page-size* 3))
@@ -3416,14 +3416,15 @@
          (let* ((conversation (conversation-create configuration
                                                    :identifier "stream-test"))
                 (terminal (make-instance 'recording-terminal :columns 30))
-                (application (make-instance 'application
+                (application (progn
+                               (setf (config :reasoning-traces-p configuration) t)
+                               (make-instance 'application
                                             :configuration configuration
                                             :conversation conversation
-                                            :reasoning-traces-p t
                                             :tool-registry
                                             (make-default-tool-registry)
                                             :ui (terminal-ui-create
-                                                 :terminal terminal)))
+                                                 :terminal terminal))))
                 (observer (application-agent-observer application))
                 (send-text (callback-agent-observer-text-callback observer))
                 (send-reasoning
@@ -3653,11 +3654,12 @@
                                        :identifier "retry-presentation"))
                 (terminal (make-instance 'recording-terminal :columns 50))
                 (application
-                  (make-instance 'application
-                                 :configuration configuration
-                                 :conversation conversation
-                                 :reasoning-traces-p t
-                                 :ui (terminal-ui-create :terminal terminal)))
+                  (progn
+                    (setf (config :reasoning-traces-p configuration) t)
+                    (make-instance 'application
+                                   :configuration configuration
+                                   :conversation conversation
+                                   :ui (terminal-ui-create :terminal terminal))))
                 (observer (application-agent-observer application))
                 (send-text (callback-agent-observer-text-callback observer))
                 (send-reasoning
@@ -7251,20 +7253,7 @@
 (defun test-effort-switch ()
   "Test in-place model and reasoning-effort configuration switching."
   (let* ((base (test-configuration))
-         (configuration
-           (make-instance
-            'configuration
-            :source-root (configuration-source-root base)
-            :working-directory (configuration-working-directory base)
-            :data-root (configuration-data-root base)
-            :state-root (configuration-state-root base)
-            :cache-root (configuration-cache-root base)
-            :config-root (configuration-config-root base)
-            :codex-auth-path (configuration-codex-auth-path base)
-            :model (configuration-model base)
-            :reasoning-effort (configuration-reasoning-effort base)
-            :web-search-mode "live"
-            :provider-endpoint "https://provider.test/responses"))
+         (configuration (configuration-copy base :web-search-mode "live"))
          (root (test-configuration-root configuration)))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
@@ -7312,7 +7301,7 @@
                                  (configuration-state-root configuration))
                           "effort switching preserves private state paths")
              (test-assert (string= (configuration-provider-endpoint updated)
-                                   "https://provider.test/responses")
+                                   (configuration-provider-endpoint configuration))
                           "effort switching preserves the provider endpoint")
              (test-assert (string= (configuration-web-search-mode updated) "live")
                           "effort switching preserves hosted web search mode"))

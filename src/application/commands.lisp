@@ -436,11 +436,11 @@ notice preference is on, so enabling it mid-session takes effect immediately."
      (application--field-spans
       "STE"
       (application--toggle-state
-       (preferences-simple-technical-english-p configuration)))
+       (config :simple-technical-english-p configuration)))
      (application--field-spans
       "session titles"
       (application--toggle-state
-       (preferences-session-title-generation-p configuration)))
+       (config :session-title-generation-p configuration)))
      (application--field-spans
       "hurry-up"
       (application--toggle-state
@@ -713,32 +713,20 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 
 (-> application--persist-model-selection (application configuration) null)
 (defun application--persist-model-selection (application configuration)
-  "Persist CONFIGURATION for the active conversation and future processes."
-  (let* ((conversation (application-conversation application))
-         (previous-configuration (application-configuration application))
-         (previous-model (configuration-model previous-configuration))
-         (previous-effort
-           (configuration-reasoning-effort previous-configuration)))
-    (conversation-set-model-selection
-     conversation
-     (configuration-model configuration)
-     (configuration-reasoning-effort configuration))
-    (handler-case
-        (preferences-set-model-selection configuration)
-      (preferences-error (condition)
-        (conversation-set-model-selection conversation
-                                          previous-model
-                                          previous-effort)
-        (error condition))))
+  "Record CONFIGURATION's model and effort on the active conversation.
+
+The durable copy was written when the setting changed."
+  (conversation-set-model-selection
+   (application-conversation application)
+   (config :model configuration)
+   (config :reasoning-effort configuration))
   nil)
 
 (-> application-set-reasoning-effort (application string) null)
 (defun application-set-reasoning-effort (application effort)
   "Switch APPLICATION to reasoning EFFORT and save it as the global default."
-  (let ((configuration
-          (configuration-with-reasoning-effort
-           (application-configuration application)
-           effort)))
+  (let ((configuration (application-configuration application)))
+    (setf (config :reasoning-effort configuration) effort)
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
 
@@ -757,11 +745,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
            (format nil
                    "AUTOLITH_CODEX_FAST_MODE controls Fast mode for this ~
                     process; unset it before using /fast on or /fast off.")))
-  (let ((configuration
-          (configuration-with-codex-fast-mode
-           (application-configuration application)
-           enabled-p)))
-    (preferences-set-codex-fast-mode configuration enabled-p)
+  (let ((configuration (application-configuration application)))
+    (setf (config :codex-fast-mode-p configuration) enabled-p)
     (application--install-configuration application configuration)
     (application-publish-recovery-session application))
   nil)
@@ -816,19 +801,14 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (-> application-set-reasoning-traces (application boolean) null)
 (defun application-set-reasoning-traces (application enabled-p)
   "Persist and apply whether future reasoning summaries are visible."
-  (preferences-set-reasoning-traces
-   (application-configuration application)
-   enabled-p)
-  (let ((provider (application-provider application)))
-    (when provider
-      (provider-set-reasoning-summaries provider enabled-p)))
-  (unless (eq (application-reasoning-traces-p application) enabled-p)
-    (let ((expanding-visibility-p
-            (and enabled-p
-                 (not (application-reasoning-traces-p application)))))
-      (setf (application-reasoning-traces-p application) enabled-p)
-      (when expanding-visibility-p
-        (application-reset-history-pagination application))))
+  (let ((expanding-visibility-p
+          (and enabled-p (not (application-reasoning-traces-p application)))))
+    (setf (application-reasoning-traces-p application) enabled-p)
+    (let ((provider (application-provider application)))
+      (when provider
+        (provider-set-reasoning-summaries provider enabled-p)))
+    (when expanding-visibility-p
+      (application-reset-history-pagination application)))
   (unless enabled-p
     (terminal-ui-set-preview-rows (application-ui application) nil))
   (application-publish-recovery-session application)
@@ -862,9 +842,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (-> application-set-turn-timestamps (application boolean) null)
 (defun application-set-turn-timestamps (application enabled-p)
   "Persist and apply whether user and assistant headers show timestamps."
-  (preferences-set-turn-timestamps
-   (application-configuration application)
-   enabled-p)
   (unless (eq (application-turn-timestamps-p application) enabled-p)
     (setf (application-turn-timestamps-p application) enabled-p)
     (application-reset-history-pagination application))
@@ -896,9 +873,6 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (-> application-set-cache-miss-notices (application boolean) null)
 (defun application-set-cache-miss-notices (application enabled-p)
   "Persist and apply whether prompt-cache misses are reported after requests."
-  (preferences-set-cache-miss-notices
-   (application-configuration application)
-   enabled-p)
   (setf (application-cache-miss-notices-p application) enabled-p)
   nil)
 
@@ -940,14 +914,14 @@ notice preference is on, so enabling it mid-session takes effect immediately."
         (format nil
                 "Simple Technical English is ~:[disabled~;enabled~]. This ~
                  setting persists across restarts."
-                (preferences-simple-technical-english-p configuration))))
+                (config :simple-technical-english-p configuration))))
       ((string= mode "on")
-       (preferences-set-simple-technical-english configuration t)
+       (setf (config :simple-technical-english-p configuration) t)
        (application-present
         application
         "Simple Technical English is enabled and saved. Future replies will use it."))
       ((string= mode "off")
-       (preferences-set-simple-technical-english configuration nil)
+       (setf (config :simple-technical-english-p configuration) nil)
        (application-present
         application
         "Simple Technical English is disabled and saved."))
@@ -967,14 +941,14 @@ notice preference is on, so enabling it mid-session takes effect immediately."
         application
         (format nil
                 "Provider-generated session titles are ~:[disabled~;enabled~]. This setting persists across restarts."
-                (preferences-session-title-generation-p configuration))))
+                (config :session-title-generation-p configuration))))
       ((string= mode "on")
-       (preferences-set-session-title-generation configuration t)
+       (setf (config :session-title-generation-p configuration) t)
        (application-present
         application
         "Provider-generated session titles are enabled and saved."))
       ((string= mode "off")
-       (preferences-set-session-title-generation configuration nil)
+       (setf (config :session-title-generation-p configuration) nil)
        (application-present
         application
         "Provider-generated session titles are disabled and saved."))
@@ -989,19 +963,12 @@ notice preference is on, so enabling it mid-session takes effect immediately."
   (let ((mode (string-downcase argument)))
     (cond
       ((string= mode "on")
-       (preferences-set-compact-view
-        (application-configuration application)
-        t)
-       (unless (application-compact-view-p application)
-         (setf (application-compact-view-p application) t))
+       (setf (application-compact-view-p application) t)
        (application-publish-recovery-session application)
        (application-present
         application
         "Compact tool presentation is enabled and saved."))
       ((string= mode "off")
-       (preferences-set-compact-view
-        (application-configuration application)
-        nil)
        (when (application-compact-view-p application)
          (setf (application-compact-view-p application) nil)
          (application-reset-history-pagination application))
@@ -1108,9 +1075,8 @@ notice preference is on, so enabling it mid-session takes effect immediately."
 (-> application-set-model (application string) null)
 (defun application-set-model (application model)
   "Switch APPLICATION to MODEL and save it as the global default."
-  (let ((configuration
-          (configuration-with-model (application-configuration application)
-                                    model)))
+  (let ((configuration (application-configuration application)))
+    (setf (config :model configuration) model)
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
 
@@ -2009,9 +1975,7 @@ are forwarded to TERMINAL-UI-SELECT."
   "Set APPLICATION's session permission MODE and persist ask or auto."
   (setf (application-permission-mode application) mode)
   (when (member mode '(:ask :auto) :test #'eq)
-    (preferences-set-permission-mode
-     (application-configuration application)
-     mode))
+    (setf (config :permission-mode (application-configuration application)) mode))
   nil)
 
 (-> application-permissions-command (application (option string)) null)

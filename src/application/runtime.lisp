@@ -54,32 +54,6 @@
     :accessor application-goal
     :type list
     :documentation "The session goal plist holding objective, status, and continuations.")
-   (reasoning-traces-p
-    :initarg :reasoning-traces-p
-    :initform nil
-    :accessor application-reasoning-traces-p
-    :type boolean
-    :documentation "Whether provider-visible reasoning summaries appear in the transcript.")
-   (compact-view-p
-    :initarg :compact-view-p
-    :initform t
-    :accessor application-compact-view-p
-    :type boolean
-    :documentation
-    "Whether verbose tool calls are condensed and successful routine results hidden.")
-   (turn-timestamps-p
-    :initarg :turn-timestamps-p
-    :initform nil
-    :accessor application-turn-timestamps-p
-    :type boolean
-    :documentation "Whether user and assistant headers show local timestamps.")
-   (cache-miss-notices-p
-    :initarg :cache-miss-notices-p
-    :initform nil
-    :accessor application-cache-miss-notices-p
-    :type boolean
-    :documentation
-    "Whether provider requests that re-read uncached context are reported.")
    (prompt-cache-baseline
     :initform nil
     :accessor application-prompt-cache-baseline
@@ -100,12 +74,6 @@
     :accessor application-prompt-cache-request-model
     :type (option string)
     :documentation "The model serving the provider request in flight.")
-   (hurry-up-p
-    :initarg :hurry-up-p
-    :initform nil
-    :accessor application-hurry-up-p
-    :type boolean
-    :documentation "Whether urgent prompt and child-agent limits are active.")
    (installation-provenance
     :initarg :installation-provenance
     :initform nil
@@ -249,6 +217,38 @@
     :documentation
     "Whether command-line resume should offer project adaptation notes."))
   (:documentation "The globally rooted logical state and reconnectable resources of Autolith."))
+
+;;;; -- Setting-Backed Application State --
+
+(defmacro define-application-setting-accessor (name setting documentation)
+  "Define NAME as a reader and writer of SETTING on the application's configuration."
+  `(progn
+     (-> ,name (application) t)
+     (defun ,name (application)
+       ,documentation
+       (if (slot-boundp application 'configuration)
+           (config ,setting (application-configuration application))
+           (setting-default-value (find-setting ,setting) nil)))
+     (-> (setf ,name) (t application) t)
+     (defun (setf ,name) (value application)
+       ,(format nil "Store VALUE as the application's ~(~A~) setting." setting)
+       (setf (config ,setting (application-configuration application)) value))))
+
+(define-application-setting-accessor application-reasoning-traces-p :reasoning-traces-p
+  "Return whether provider-visible reasoning summaries appear in the transcript.")
+
+(define-application-setting-accessor application-compact-view-p :compact-view-p
+  "Return whether verbose tool calls are condensed and routine results hidden.")
+
+(define-application-setting-accessor application-turn-timestamps-p :turn-timestamps-p
+  "Return whether user and assistant headers show local timestamps.")
+
+(define-application-setting-accessor application-cache-miss-notices-p :cache-miss-notices-p
+  "Return whether provider requests that re-read uncached context are reported.")
+
+(define-application-setting-accessor application-hurry-up-p :hurry-up-p
+  "Return whether the session runs in hurry-up mode.")
+
 
 (defvar *active-application* nil
   "The live application root retained in saved generations.")
@@ -989,9 +989,6 @@ newly acquired lease."
                     (setf preferred-configuration
                           (provider-bootstrap-configuration
                            preferred-configuration))
-                    (setf preferred-configuration
-                          (preferences-apply-model-selection
-                           preferred-configuration))
                     (multiple-value-setq
                         (conversation
                          conversation-lease
@@ -1003,19 +1000,7 @@ newly acquired lease."
                            selected-conversation-id)
                           (application--conversation-create-owned
                            nil preferred-configuration)))
-                    (let* ((reasoning-traces-p
-                             (preferences-reasoning-traces-p
-                              preferred-configuration))
-                           (compact-view-p
-                             (preferences-compact-view-p
-                              preferred-configuration))
-                           (turn-timestamps-p
-                             (preferences-turn-timestamps-p
-                              preferred-configuration))
-                           (cache-miss-notices-p
-                             (preferences-cache-miss-notices-p
-                              preferred-configuration))
-                           (permission-state
+                    (let* ((permission-state
                              (permissions-load preferred-configuration))
                            (configuration
                              (application--configuration-for-conversation
@@ -1038,7 +1023,8 @@ newly acquired lease."
                            (provider
                              (provider-create
                               configuration
-                              :reasoning-summaries-p reasoning-traces-p)))
+                              :reasoning-summaries-p
+                              (config :reasoning-traces-p configuration))))
                       (setf registry
                             (application--create-tool-registry configuration)
                             worker
@@ -1065,10 +1051,6 @@ newly acquired lease."
                                :permission-state permission-state
                                :permission-mode permission-mode
                                :pristine-p pristine-p
-                               :reasoning-traces-p reasoning-traces-p
-                               :compact-view-p compact-view-p
-                               :turn-timestamps-p turn-timestamps-p
-                               :cache-miss-notices-p cache-miss-notices-p
                                :installation-provenance
                                installation-provenance
                                :update-availability update-availability
@@ -1134,12 +1116,12 @@ newly acquired lease."
   "Recreate PREVIOUS for reconnect while preserving explicit management settings."
   (apply #'configuration-create
          :working-directory (uiop:getcwd)
-         :model (configuration-model previous)
-         :reasoning-effort (configuration-reasoning-effort previous)
-         :codex-fast-mode-p (configuration-codex-fast-mode-p previous)
+         :model (config :model previous)
+         :reasoning-effort (config :reasoning-effort previous)
+         :codex-fast-mode-p (config :codex-fast-mode-p previous)
          :immutable-p immutable-p
          :defer-provider-validation-p t
-         (configuration--management-repl-initargs previous)))
+         (configuration-group-values previous ':management)))
 
 (-> application-reconnect
     (application &key (:conversation-id (option string))
@@ -1194,14 +1176,6 @@ newly acquired lease."
                                     (provider-bootstrap-configuration
                                      retained-configuration))
                               retained-configuration))
-                           (reasoning-traces-p
-                            (preferences-reasoning-traces-p prepared-configuration))
-                           (compact-view-p
-                            (preferences-compact-view-p prepared-configuration))
-                           (turn-timestamps-p
-                            (preferences-turn-timestamps-p prepared-configuration))
-                           (cache-miss-notices-p
-                            (preferences-cache-miss-notices-p prepared-configuration))
                            (permission-state (permissions-load prepared-configuration))
                            (recovery-state
                             (multiple-value-list
@@ -1248,7 +1222,8 @@ newly acquired lease."
                                  configuration))
                               (provider-create
                                configuration
-                               :reasoning-summaries-p reasoning-traces-p)))
+                               :reasoning-summaries-p
+                              (config :reasoning-traces-p configuration))))
                            (recovery-rendered-sequence (second recovery-state))
                            (recovery-history-floor-sequence (third recovery-state))
                            (recovering-conversation-p
@@ -1260,7 +1235,8 @@ newly acquired lease."
                               (conversation-identifier-migration-resolve
                                prepared-configuration
                                recovery-conversation-id)))))
-                      (setf worker (lisp-worker-pool-create configuration)
+                      (setf (config :hurry-up-p configuration) hurry-up-p
+                            worker (lisp-worker-pool-create configuration)
                             registry (application--create-tool-registry configuration))
                       (let* ((agent
                                (agent-create :configuration configuration
@@ -1284,11 +1260,6 @@ newly acquired lease."
                                :permission-state permission-state
                                :permission-mode permission-mode
                                :pristine-p (application-pristine-p application)
-                               :hurry-up-p hurry-up-p
-                               :reasoning-traces-p reasoning-traces-p
-                               :compact-view-p compact-view-p
-                               :turn-timestamps-p turn-timestamps-p
-                               :cache-miss-notices-p cache-miss-notices-p
                                :installation-provenance installation-provenance
                                :update-availability update-availability
                                :recovery-startup-p
@@ -3435,7 +3406,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
   "Best-effort replace APPLICATION's initial title after a few durable turns."
   (let* ((configuration (application-configuration application))
          (conversation (application-conversation application)))
-    (when (and (preferences-session-title-generation-p configuration)
+    (when (and (config :session-title-generation-p configuration)
                (conversation-title-refresh-reserve-p conversation))
       (unwind-protect
            (handler-case

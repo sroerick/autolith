@@ -142,7 +142,7 @@
      (:plain " under your Autolith config directory adds definition, hover, and diagnostics tools for workspace code."))
     ((:code "autolith --fullscreen")
      (:plain " uses a scrollable transcript and bottom-pinned composer. Save the choice for future launches with ")
-     (:code "(preferences-set-fullscreen (application-configuration *active-application*) t)")
+     (:code "(setf (config :fullscreen-p) t)")
      (:plain "; nil restores the inline default.")))
   "Startup advice supplementing registered command tips, as styled span specifications.")
 
@@ -701,7 +701,7 @@ dependencies."
              base))
          (permission-mode
            (or explicit-permission-mode
-               (preferences-permission-mode configuration)
+               (config :permission-mode configuration)
                ':ask))
          (handoff-record
            (localgroup-handoff-selection
@@ -737,8 +737,7 @@ dependencies."
     (when authenticate-p
       (unless pristine-p
         (user-init-load configuration))
-      (main-authenticate (preferences-apply-model-selection
-                          (provider-bootstrap-configuration configuration))
+      (main-authenticate (provider-bootstrap-configuration configuration)
                          authentication-selection
                          authentication-method))
     (when handoff-record
@@ -1070,7 +1069,7 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                  :defer-provider-validation-p t))
               (permission-mode
                 (or (getopt* command ':permissions)
-                    (preferences-permission-mode configuration)
+                    (config :permission-mode configuration)
                     ':auto))
               (status (run-job-run input output permission-mode
                                    :configuration configuration)))

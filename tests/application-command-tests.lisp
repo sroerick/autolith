@@ -655,7 +655,6 @@
                                      :configuration configuration))
          (previous-fast-mode (uiop:getenv "AUTOLITH_CODEX_FAST_MODE"))
          (presented nil)
-         (persisted nil)
          (installed nil)
          (published-count 0))
     (unwind-protect
@@ -670,13 +669,6 @@
                 (push entry presented)
                 t))
              (list
-              'preferences-set-codex-fast-mode
-              (lambda (candidate enabled-p)
-                (push (list enabled-p
-                            (configuration-codex-fast-mode-p candidate))
-                      persisted)
-                nil))
-             (list
               'application--install-configuration
               (lambda (candidate replacement &key conversation)
                 (declare (ignore conversation))
@@ -690,6 +682,13 @@
                 (incf published-count)
                 nil)))
             (lambda ()
+             (flet ((saved-fast-mode-p ()
+                      "Return the Codex Fast mode value stored in the preferences file."
+                      (getf (preferences--form->plist
+                             (snapshot-read
+                              (configuration-preferences-path
+                               (application-configuration application))))
+                            :codex-fast-mode-p)))
               (test-assert
                (eq (application--builtin-fast-command application) ':continue)
                "/fast status completes through the canonical command")
@@ -712,7 +711,8 @@
                 (setf (application-configuration application)
                       codex-configuration))
               (test-assert
-               (and (null persisted)
+               (and (not (probe-file (configuration-preferences-path
+                                      (application-configuration application))))
                     (null installed)
                     (zerop published-count))
                "/fast status has no persistence or runtime side effects")
@@ -723,7 +723,7 @@
               (test-assert
                (and (configuration-codex-fast-mode-p
                      (application-configuration application))
-                    (equal (first persisted) '(t t))
+                    (eq (saved-fast-mode-p) t)
                     (eq (first installed) t)
                     (= published-count 1)
                     (search "enabled and saved" (first presented)))
@@ -736,7 +736,7 @@
                (and (not
                      (configuration-codex-fast-mode-p
                       (application-configuration application)))
-                    (equal (first persisted) '(nil nil))
+                    (null (saved-fast-mode-p))
                     (null (first installed))
                     (= published-count 2)
                     (search "disabled and saved" (first presented)))
@@ -763,10 +763,10 @@
                    t))
                "/fast cannot supersede the process environment override")
               (test-assert
-               (and (= (length persisted) 2)
+               (and (null (saved-fast-mode-p))
                     (= (length installed) 2)
                     (= published-count 2))
-               "invalid or environment-controlled /fast input has no side effects"))))
+               "invalid or environment-controlled /fast input has no side effects")))))
       (if previous-fast-mode
           (platform-setenv "AUTOLITH_CODEX_FAST_MODE" previous-fast-mode)
           (platform-unsetenv "AUTOLITH_CODEX_FAST_MODE"))

@@ -236,7 +236,7 @@ prompt instead of the full Autolith persona.")
             *request-context-lisp-image-limit*)))
     (dict 'eq
           :simple-technical-english-p
-          (preferences-simple-technical-english-p configuration)
+          (config :simple-technical-english-p configuration)
           :hurry-up-p hurry-up-p
           :lisp-image-entries image-entries
           :agenda
