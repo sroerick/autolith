@@ -606,6 +606,21 @@
       (t
        nil))))
 
+(-> agent--note-turn-state (conversation provider-result) null)
+(defun agent--note-turn-state (conversation result)
+  "Adopt RESULT's sticky-routing token when the active turn has none yet.
+
+The Codex backend issues an x-codex-turn-state token when a turn starts and
+expects every later request in that turn to replay the same value. Later
+responses may omit it or carry another value, so an already-pinned turn keeps
+its token and the turn boundary clears it. This follows the Codex reference at
+commit 6f51c65958."
+  (let ((turn-state (provider-result-turn-state result)))
+    (when (and turn-state
+               (null (conversation-turn-state conversation)))
+      (setf (conversation-turn-state conversation) turn-state)))
+  nil)
+
 (-> agent--persist-provider-result
     (agent provider-result
      &key (:request-number integer)
@@ -1486,8 +1501,7 @@ durable summary remains a handoff for another provider family."
            :call-plans call-plans)
           (agent--note-persisted-assistant-response
            observer result request-number)
-          (setf (conversation-turn-state conversation)
-                (provider-result-turn-state result))
+          (agent--note-turn-state conversation result)
           (agent-observer-status
            observer
            :provider-request-completed

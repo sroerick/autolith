@@ -2897,3 +2897,51 @@
   (test-agent-parallel-tool-failure)
   (test-agent-parallel-fatal-propagation)
   t)
+(-> test-agent-turn-state-pinned () null)
+(defun test-agent-turn-state-pinned ()
+  "Test a turn replays its first routing token even when later responses vary."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-turn-state"))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result
+              "response-1"
+              (list (agent-test-call :call-id "pinned-1"
+                                     :arguments "{\"value\":\"one\"}"))
+              :turn-state "turn-state-1")
+             (agent-test-result
+              "response-2"
+              (list (agent-test-call :call-id "pinned-2"
+                                     :arguments "{\"value\":\"two\"}")))
+             (agent-test-result
+              "response-3"
+              (list (agent-test-call :call-id "pinned-3"
+                                     :arguments "{\"value\":\"three\"}"))
+              :turn-state "turn-state-3")
+             (agent-test-result
+              "response-4"
+              (list (agent-test-message "done")))))))
+    (unwind-protect
+         (let* ((agent
+                  (agent-create
+                   :configuration configuration
+                   :provider provider
+                   :conversation conversation
+                   :tool-registry (agent-test-registry)
+                   :worker ':unused))
+                (result (agent-run-user-turn agent "pin the turn")))
+           (test-assert (string= (provider-result-response-id result) "response-4")
+                        "the agent completes the scripted tool rounds")
+           (test-assert
+            (equal (nreverse (scripted-provider-turn-states provider))
+                   '(nil "turn-state-1" "turn-state-1" "turn-state-1"))
+            "the first routing token is replayed unchanged for the whole turn")
+           (test-assert (null (conversation-turn-state conversation))
+                        "the routing token is cleared at the turn boundary"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

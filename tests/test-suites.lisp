@@ -404,6 +404,7 @@
   test-agent-steering
   test-agent-explicit-continuation
   test-agent-provider-request-limit
+  test-agent-turn-state-pinned
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
   test-agent-tool-storm-guard
