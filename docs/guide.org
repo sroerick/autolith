@@ -699,13 +699,19 @@ Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request
 had cached costs noticeably more. =/cache-misses on= or =(cache-misses "on")=
 enables a dim notice after any request whose cache reads fell below half of the
-previous prompt. The notice gives the re-read and total prompt token counts and
-the likely cause: a model change, an idle gap past the roughly five-minute
-provider cache lifetime, rewritten earlier context, or a resumed conversation
-whose cache had expired. The first request after compaction is expected to miss
-and stays quiet. Autolith carries no price table, so the notice reports tokens
-rather than currency. The setting is off by default and persists across
-restarts.
+previous prompt, and after any request whose cache reads stopped growing while
+the prompt grew and at least a sixteenth of the previous prompt, never less
+than 4096 tokens, was re-read. The notice gives the re-read and total prompt
+token counts and the likely cause: a model change, an idle gap past the roughly
+five-minute provider cache lifetime, rewritten earlier context, a resumed
+conversation whose cache had expired, a changed prompt prefix, or a stalled
+prefix, which means the request reached a provider backend without the newest
+cached context. When the provider attributes cache reads to request fields, the
+notice adds whether the instructions and tools were re-read or still cached, so
+a changed prefix is told apart from lost routing. The first request after
+compaction is expected to miss and stays quiet. Autolith carries no price
+table, so the notice reports tokens rather than currency. The setting is off by
+default and persists across restarts.
 
 ** Providers
 

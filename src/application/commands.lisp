@@ -259,16 +259,41 @@
     (:resumed
      "the resumed conversation was no longer cached")
     (:prefix-changed
-     "the prompt prefix changed")))
+     "the prompt prefix changed")
+    (:prefix-stalled
+     "the cached prefix stopped growing, so the request likely reached a different provider backend")))
+
+(-> application--prompt-cache-attribution-text (list) (option string))
+(defun application--prompt-cache-attribution-text (miss)
+  "Return what the provider's attribution says about MISS's prefix, when known.
+
+Re-read instructions or tools mean the request prefix itself changed; a cached
+prefix with re-read history points at routing or an expired cache."
+  (let ((instructions (getf miss :instructions-re-read))
+        (tools (getf miss :tools-re-read)))
+    (when (or instructions tools)
+      (flet ((re-read-p (count)
+               "Return true when COUNT exceeds cache rounding."
+               (and count (> count *prompt-cache-block-tokens*))))
+        (cond
+          ((and (re-read-p instructions) (re-read-p tools))
+           "instructions and tools re-read")
+          ((re-read-p instructions)
+           "instructions re-read, tools cached")
+          ((re-read-p tools)
+           "tools re-read, instructions cached")
+          (t
+           "instructions and tools still cached"))))))
 
 (-> application--prompt-cache-miss-notice (list) string)
 (defun application--prompt-cache-miss-notice (miss)
   "Return the one-line transcript notice for the prompt-cache MISS."
   (format nil
-          "∙ prompt cache miss: ~A of ~A prompt tokens re-read at the uncached input price; ~A"
+          "∙ prompt cache miss: ~A of ~A prompt tokens re-read at the uncached input price; ~A~@[; ~A~]"
           (application--token-count-description (getf miss :re-read-tokens))
           (application--token-count-description (getf miss :prompt-tokens))
-          (application--prompt-cache-miss-cause-text miss)))
+          (application--prompt-cache-miss-cause-text miss)
+          (application--prompt-cache-attribution-text miss)))
 
 (-> application-note-prompt-cache-request-started (application) null)
 (defun application-note-prompt-cache-request-started (application)

@@ -79,7 +79,73 @@
        (and miss
             (eq (getf miss :cause) ':resumed)
             (null (getf miss :idle-seconds)))
-       "a persisted baseline without a time attributes the miss to resuming")))
+       "a persisted baseline without a time attributes the miss to resuming"))
+    (let ((stalled (make-instance 'prompt-cache-baseline
+                                  :prompt-tokens 72000
+                                  :cached-tokens 63872
+                                  :completed-at 1000
+                                  :model "model-a")))
+      (dolist (case '((73000 63872 t "reads that stay flat behind a growing prompt are a stall")
+                      (73000 63900 t "reads within one cache block of the previous level still stall")
+                      (73000 70000 nil "reads that grew with the prompt are healthy")
+                      (73000 60000 t "reads that fell below the previous level also stall")
+                      (71000 63872 nil "a shorter prompt is not a stall")))
+        (destructuring-bind (input cached stall-p description) case
+          (let ((miss (prompt-cache-miss-detect
+                       stalled
+                       (prompt-cache-tests--usage input cached)
+                       :started-at 1010
+                       :model "model-a")))
+            (test-assert
+             (if stall-p
+                 (and miss
+                      (eq (getf miss :cause) ':prefix-stalled)
+                      (= (getf miss :re-read-tokens) (- 72000 cached)))
+                 (or (null miss)
+                     (not (eq (getf miss :cause) ':prefix-stalled))))
+             description))))
+      (test-assert
+       (null (prompt-cache-miss-detect
+              (make-instance 'prompt-cache-baseline
+                             :prompt-tokens 72000
+                             :cached-tokens 69000
+                             :completed-at 1000
+                             :model "model-a")
+              (prompt-cache-tests--usage 73000 69000)
+              :started-at 1010
+              :model "model-a"))
+       "a small re-read behind flat reads is the request-local tail, not a stall")
+      (test-assert
+       (null (prompt-cache-miss-detect
+              (make-instance 'prompt-cache-baseline
+                             :prompt-tokens 72000
+                             :completed-at 1000
+                             :model "model-a")
+              (prompt-cache-tests--usage 73000 63872)
+              :started-at 1010
+              :model "model-a"))
+       "a baseline without cache reads cannot judge a stall"))
+    (let ((miss (prompt-cache-miss-detect
+                 baseline
+                 (append (prompt-cache-tests--usage 41000 0)
+                         (list
+                          (list "attribution"
+                                (list
+                                 (list "request_fields"
+                                       (list
+                                        (list "instructions"
+                                              (list (list "cached_tokens" 5627)
+                                                    (list "input_tokens" 5738)))
+                                        (list "tools"
+                                              (list (list "cached_tokens" 0)
+                                                    (list "input_tokens" 9221)))))))))
+                 :started-at 1010
+                 :model "model-a")))
+      (test-assert
+       (and miss
+            (= (getf miss :instructions-re-read) 111)
+            (= (getf miss :tools-re-read) 9221))
+       "server attribution reports uncached instructions and tools")))
   nil)
 
 (-> test-prompt-cache-baseline-from-conversation () null)
@@ -168,6 +234,31 @@
                      (search "32.0K of 33.0K prompt tokens" output)
                      (search "idle for 15 min" output))
                 "an idle miss reports its re-read tokens and cause"))
+             (setf (application-prompt-cache-baseline application)
+                   (make-instance 'prompt-cache-baseline
+                                  :prompt-tokens 72000
+                                  :cached-tokens 63872
+                                  :completed-at (get-universal-time)
+                                  :model (configuration-model configuration)))
+             (request (append
+                       (prompt-cache-tests--usage 73000 63872)
+                       (list
+                        (list "attribution"
+                              (list
+                               (list "request_fields"
+                                     (list
+                                      (list "instructions"
+                                            (list (list "cached_tokens" 5738)
+                                                  (list "input_tokens" 5738)))
+                                      (list "tools"
+                                            (list (list "cached_tokens" 9221)
+                                                  (list "input_tokens" 9221))))))))))
+             (let ((output (recording-terminal-output terminal)))
+               (test-assert
+                (and (search "8.1K of 73.0K prompt tokens" output)
+                     (search "stopped growing" output)
+                     (search "instructions and tools still cached" output))
+                "a stall names its cause and the attributed prefix state"))
              (funcall send-status :compaction-completed nil)
              (test-assert
               (null (application-prompt-cache-baseline application))
