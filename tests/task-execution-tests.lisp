@@ -737,3 +737,16 @@
                 (format nil "child job.~A cannot operate on its parent-owned job" operation))))
         (tool-registry-close-runtime-state registry))))
   nil)
+
+(-> test-task-child-prompt-cache-key () null)
+(defun test-task-child-prompt-cache-key ()
+  "Test task children share one cache key that differs from their root's key."
+  (let ((cases '(("root-1" "task:root-1")
+                 ("g4P5Hsc" "task:g4P5Hsc"))))
+    (loop for (root expected) in cases
+          for key = (task--child-prompt-cache-key root)
+          do (test-assert (string= key expected)
+                          "children below one root derive one shared cache key")
+             (test-assert (not (string= key root))
+                          "the child cache key never equals the root's own key")))
+  nil)

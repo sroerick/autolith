@@ -440,11 +440,13 @@ local tool protocol."
     (codex-subscription-provider conversation)
     non-empty-string)
 (defun provider--codex-prompt-cache-key (provider conversation)
-  "Return CONVERSATION's root-and-child shared prompt-cache routing key.
+  "Return CONVERSATION's prompt-cache routing key.
 
 The provider session remains broader than one resumable conversation, so the
-cache key follows the conversation lineage instead. This preserves isolation
-between roots while allowing a root and its task children to share a prefix."
+cache key follows the conversation instead. A root conversation uses its own
+identifier. Task children use one key derived from their root, so siblings
+with matching prefixes share a cache without routing their traffic onto the
+root's key, as the Codex reference does at commit 6f51c65958."
   (declare (ignore provider))
   (conversation-prompt-cache-key conversation))
 

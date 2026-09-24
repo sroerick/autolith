@@ -393,6 +393,14 @@ boundary cannot fit within that budget."
         (format nil "~A~%... [task output truncated]" bounded)
         bounded)))
 
+(-> task--child-prompt-cache-key (non-empty-string) non-empty-string)
+(defun task--child-prompt-cache-key (root-conversation-identifier)
+  "Return the prompt-cache key shared by every task child below one root.
+
+A child never extends the root's prompt, so it must not route its traffic onto
+the root's cache key. Siblings with matching prefixes still share one key."
+  (format nil "task:~A" root-conversation-identifier))
+
 (-> task--artifact-root (configuration task-job) pathname)
 (defun task--artifact-root (configuration job)
   "Return JOB's private transcript and artifact directory."
@@ -670,7 +678,8 @@ candidates."
           (conversation-create
            configuration
            :identifier (task-job-execution-identifier job)
-           :prompt-cache-key (task-job-root-conversation-identifier job)
+           :prompt-cache-key (task--child-prompt-cache-key
+                              (task-job-root-conversation-identifier job))
            :storage-root (task--artifact-root configuration job)))
          (worker (lisp-worker-pool-create configuration))
          (completion (make-instance 'task-completion))

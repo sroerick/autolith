@@ -439,6 +439,7 @@
 
 (define-test-suite task-execution
   test-task-abort-control-condition
+  test-task-child-prompt-cache-key
   test-task-orchestration
   test-task-child-execution-job-controls
   test-task-child-cancels-lisp-executions
