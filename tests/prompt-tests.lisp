@@ -80,11 +80,11 @@
                            configuration :hurry-up-p t)))
              (prompt-tests--contains context "HURRY-UP MODE IS ACTIVE"
                                      "hurry-up guidance rides in mutable context"))
-           (setf (slot-value configuration 'web-search-mode) "disabled")
+           (setf (config :web-search-mode configuration) "disabled")
            (let ((prompt (system-prompt configuration)))
              (prompt-tests--absent prompt "WEB SEARCH IS AVAILABLE"
                                    "disabled web search omits both search vehicles"))
-           (setf (slot-value configuration 'immutable-p) t)
+           (setf (config :immutable-p configuration) t)
            (let ((prompt (system-prompt configuration)))
              (prompt-tests--contains prompt "This session was started with --immutable"
                                      "an immutable session uses its prompt section")
@@ -92,7 +92,7 @@
                                      "an immutable session uses inspection-only tools")
              (prompt-tests--absent prompt "Your main power is the live image"
                                    "an immutable session omits live-image guidance"))
-           (setf (slot-value configuration 'immutable-p) nil)
+           (setf (config :immutable-p configuration) nil)
            (let ((stable-prompt (system-prompt configuration)))
              (preferences-set-simple-technical-english configuration t)
              (test-assert (string= stable-prompt (system-prompt configuration))

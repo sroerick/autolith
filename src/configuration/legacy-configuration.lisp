@@ -64,3 +64,17 @@
   (declare (ignore working-directory model reasoning-effort fullscreen-p
                    codex-fast-mode-p immutable-p web-search-mode))
   (apply #'configuration-copy configuration overrides))
+
+(define-deprecated-function configuration--management-repl-initargs (configuration)
+    "(config :management-repl-<setting> configuration)"
+  "Return CONFIGURATION's management endpoint settings as constructor initargs."
+  (loop for name in '(:management-repl-enabled-p :management-repl-transport
+                      :management-repl-unix-socket-path :management-repl-tcp-address
+                      :management-repl-tcp-port :management-repl-token-file-path
+                      :management-repl-evaluation-timeout
+                      :management-repl-maximum-frame-size
+                      :management-repl-maximum-source-size
+                      :management-repl-maximum-output-size
+                      :management-repl-queue-capacity :management-repl-maximum-clients
+                      :management-repl-authentication-timeout)
+        append (list name (config name configuration))))

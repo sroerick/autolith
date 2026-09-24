@@ -167,6 +167,7 @@
                                  (configuration-create
                                   :source-root source-root
                                   :working-directory source-root
+                                  :durable-p nil
                                   :defer-provider-validation-p t))))
                  (platform-unsetenv variable)
                  (let ((fallback (root)))
@@ -234,7 +235,8 @@
   "Test configuration defaults and basic JSON and presentation behavior."
   (let ((configuration (configuration-create
                         :source-root (asdf:system-source-directory :autolith)
-                        :working-directory (asdf:system-source-directory :autolith))))
+                        :working-directory (asdf:system-source-directory :autolith)
+                        :durable-p nil)))
     (test-assert (string= (configuration-model configuration) "gpt-5.6-sol")
                  "the default model is gpt-5.6-sol")
     (let ((*default-model* "gpt-5.6-luna"))
@@ -243,7 +245,8 @@
                  (configuration-create
                   :source-root (asdf:system-source-directory :autolith)
                   :working-directory
-                  (asdf:system-source-directory :autolith)))
+                  (asdf:system-source-directory :autolith)
+                  :durable-p nil))
                 "gpt-5.6-luna")
        "live default parameters affect newly created configurations"))
     (test-assert (string= (configuration-model

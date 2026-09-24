@@ -23,18 +23,11 @@
 (-> update-tests--packaged-configuration (configuration pathname) configuration)
 (defun update-tests--packaged-configuration (configuration packaged-source)
   "Return CONFIGURATION rehomed on the bundled PACKAGED-SOURCE tree."
-  (make-instance
-   'configuration
-   :source-root packaged-source
-   :working-directory packaged-source
-   :config-root (configuration-config-root configuration)
-   :data-root (configuration-data-root configuration)
-   :state-root (configuration-state-root configuration)
-   :cache-root (configuration-cache-root configuration)
-   :codex-auth-path (configuration-codex-auth-path configuration)
-   :model *default-model*
-   :reasoning-effort *default-reasoning-effort*
-   :provider-endpoint *codex-responses-endpoint*))
+  (configuration-copy configuration
+                      :source-root packaged-source
+                      :working-directory packaged-source
+                      :model *default-model*
+                      :reasoning-effort *default-reasoning-effort*))
 
 (-> update-tests--qualified-release-provenance
     (configuration pathname string string (option string))

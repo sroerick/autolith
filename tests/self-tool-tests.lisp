@@ -1154,21 +1154,9 @@
                                    :conversation conversation
                                    :mutation-checker checker))
                   (outside-configuration
-                    (make-instance
-                     'configuration
-                     :source-root source-root
-                     :working-directory outside-workspace
-                     :data-root (configuration-data-root configuration)
-                     :state-root (configuration-state-root configuration)
-                     :cache-root (configuration-cache-root configuration)
-                     :config-root (configuration-config-root configuration)
-                     :codex-auth-path
-                     (configuration-codex-auth-path configuration)
-                     :model (configuration-model configuration)
-                     :reasoning-effort
-                     (configuration-reasoning-effort configuration)
-                     :provider-endpoint
-                     (configuration-provider-endpoint configuration)))
+                    (configuration-copy configuration
+                                        :source-root source-root
+                                        :working-directory outside-workspace))
                   (outside-context
                     (make-instance 'tool-context
                                    :configuration outside-configuration

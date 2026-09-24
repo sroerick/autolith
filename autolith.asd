@@ -73,6 +73,7 @@
                              (:file "conversation/image-input")
                              (:file "state/records")
                              (:file "state/updates")
+                             (:file "configuration/preferences-legacy")
                              (:file "configuration/preferences")
                              (:file "configuration/permissions")
                              (:file "provider/authentication")

@@ -1286,8 +1286,7 @@
         (*print-readably* t)
         (*print-circle* nil))
     (prin1-to-string
-     `(make-instance
-       'configuration
+     `(make-configuration
        :source-root
        (pathname ,(namestring (configuration-source-root configuration)))
        :working-directory
@@ -1306,8 +1305,7 @@
        (pathname
         ,(namestring (configuration-grok-bootstrap-auth-path configuration)))
        :model ,*default-model*
-       :reasoning-effort ,*default-reasoning-effort*
-       :provider-endpoint ,*codex-responses-endpoint*))))
+       :reasoning-effort ,*default-reasoning-effort*))))
 
 (-> test-conversation--child-project-setup () pathname)
 (defun test-conversation--child-project-setup ()

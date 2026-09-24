@@ -346,14 +346,16 @@
             (eq (provider-wire-input-item provider call) call)
             "native namespaced calls replay without flattening")
            (let* ((future-configuration
-                    (configuration--clone configuration
-                                          :model "gpt-5.7-codex"))
+                    (configuration-copy configuration
+                                        :model "gpt-5.7-codex"
+                                        :provider-validation-p nil))
                   (future-provider (provider-create future-configuration)))
              (test-assert
               (provider-deferred-tool-loading-p future-provider)
               "future GPT models retain documented deferred-tool support"))
            (let* ((fallback-configuration
-                    (configuration--clone configuration :model "gpt-5.3-codex"))
+                    (configuration-copy configuration :model "gpt-5.3-codex"
+                                        :provider-validation-p nil))
                   (fallback-provider (provider-create fallback-configuration))
                   (fallback-tools (provider-wire-tools fallback-provider schemas))
                   (fallback-call
@@ -373,8 +375,8 @@
                     (length (json-encode
                              (provider-wire-tools
                               (provider-create
-                               (configuration--clone configuration
-                                                     :model "gpt-5.3-codex"))
+                               (configuration-copy configuration :model "gpt-5.3-codex"
+                                        :provider-validation-p nil))
                               schemas))))
                   (visible-characters
                     (length
@@ -465,10 +467,10 @@
                    (string= (json-get fast-request "service_tier") "priority"))
               "a supported Codex model requests the Fast service tier"))
            (let* ((unknown-configuration
-                    (configuration-with-codex-fast-mode
-                     (configuration--clone configuration
-                                           :model "gpt-future-unknown")
-                     t))
+                    (configuration-copy configuration
+                                        :model "gpt-future-unknown"
+                                        :codex-fast-mode-p t
+                                        :provider-validation-p nil))
                   (unknown-provider (provider-create unknown-configuration))
                   (unknown-request
                     (provider-request-object
@@ -629,7 +631,8 @@
             (string= (json-get (json-get request "text") "verbosity") "low")
             "the provider request asks for restrained text verbosity")
            (let* ((fallback-configuration
-                    (configuration--clone configuration :model "gpt-5.3-codex"))
+                    (configuration-copy configuration :model "gpt-5.3-codex"
+                                        :provider-validation-p nil))
                   (fallback-provider (provider-create fallback-configuration))
                   (tools (provider-wire-tools fallback-provider schemas))
                   (wire-name
@@ -649,7 +652,8 @@
                            (json-get compaction-request "instructions")))
               "portable compaction fallback is tool-free and serial"))
             (let* ((fallback-configuration
-                     (configuration--clone configuration :model "gpt-5.3-codex"))
+                     (configuration-copy configuration :model "gpt-5.3-codex"
+                                        :provider-validation-p nil))
                    (fallback-provider (provider-create fallback-configuration))
                    (local-call
                      (json-object
@@ -734,10 +738,10 @@
                 (string= (json-get fast-request "service_tier") "priority")
                 "Codex Fast mode applies to native compaction"))
              (let* ((unknown-configuration
-                      (configuration-with-codex-fast-mode
-                       (configuration--clone configuration
-                                             :model "gpt-future-unknown")
-                       t))
+                      (configuration-copy configuration
+                                          :model "gpt-future-unknown"
+                                          :codex-fast-mode-p t
+                                          :provider-validation-p nil))
                     (unknown-provider (provider-create unknown-configuration))
                     (unknown-request
                       (provider-native-compaction-request-object

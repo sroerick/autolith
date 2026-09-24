@@ -29,11 +29,8 @@
          (old-environment-effort (uiop:getenv "AUTOLITH_REASONING_EFFORT")))
     (unwind-protect
          (progn
-           (preferences--write
-            configuration
-            (make-instance 'preference-state
-                           :model model
-                           :reasoning-effort "minimal"))
+           (preferences-store configuration :model model)
+           (preferences-store configuration :reasoning-effort "minimal")
            (register-openai-compatible-provider
             :name "bootstrap-openai"
             :endpoint "https://provider.invalid/v1/chat/completions"
@@ -41,7 +38,7 @@
             '((:name "bootstrap/chat-model"
                :reasoning-efforts ("minimal")))
             :source ':runtime)
-           (let ((selected (preferences-apply-model-selection configuration)))
+           (let ((selected (preferences-tests--create configuration)))
              (test-assert
               (and (string= (configuration-model selected) model)
                    (string= (configuration-reasoning-effort selected) "minimal"))
@@ -51,7 +48,7 @@
                     (configuration-with-model configuration model)
                     :identifier "bootstrap-unserved-model")))
              (unregister-provider "bootstrap-openai" :source ':runtime)
-             (let ((selected (preferences-apply-model-selection configuration)))
+             (let ((selected (preferences-tests--create configuration)))
                (test-assert
                 (and (not (string= (configuration-model selected) model))
                      (string= (configuration-model selected)
@@ -187,20 +184,25 @@
          (progn
            (platform-unsetenv "AUTOLITH_MODEL")
            (platform-unsetenv "AUTOLITH_REASONING_EFFORT")
-           (preferences--write
-            configuration
-            (make-instance 'preference-state
-                           :model model
-                           :reasoning-effort "minimal"))
+           (preferences-store configuration :model model)
+           (preferences-store configuration :reasoning-effort "minimal")
            (let ((authentication-calls nil)
                  (live-application (make-instance 'application))
-                 (reconnect-called-p nil))
+                 (reconnect-called-p nil)
+                 (create #'configuration-create))
              (test-call-with-function-replacements
               (list
                (list 'configuration-create
                      (lambda (&rest arguments)
-                       (declare (ignore arguments))
-                       configuration))
+                       (apply create
+                              :source-root (config :source-root configuration)
+                              :working-directory (config :working-directory configuration)
+                              :config-root (config :config-root configuration)
+                              :data-root (config :data-root configuration)
+                              :state-root (config :state-root configuration)
+                              :cache-root (config :cache-root configuration)
+                              :codex-auth-path (config :codex-auth-path configuration)
+                              arguments)))
                (list 'localgroup-handoff-selection
                      (lambda (configuration arguments)
                        (declare (ignore configuration arguments))

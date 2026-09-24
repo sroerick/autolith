@@ -439,11 +439,7 @@
                                                 commands)))
              (test-assert
               (string=
-               (web--search-endpoint
-                (make-instance
-                 'configuration
-                 :provider-endpoint
-                 "https://chatgpt.com/backend-api/codex/responses"))
+               (web--search-endpoint (make-configuration :model "gpt-5.6-sol"))
                "https://chatgpt.com/backend-api/codex/alpha/search")
               "web.run derives the standalone provider search endpoint")
              (test-assert
