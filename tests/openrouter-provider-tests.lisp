@@ -14,20 +14,12 @@
        (reasoning-effort *default-reasoning-effort*)
        (provider-endpoint *openrouter-chat-completions-endpoint*))
   "Return an isolated OpenRouter test configuration."
-  (let ((base (test-configuration)))
-    (make-instance 'configuration
-                   :source-root (configuration-source-root base)
-                   :working-directory (configuration-working-directory base)
-                   :config-root (configuration-config-root base)
-                   :data-root (configuration-data-root base)
-                   :state-root (configuration-state-root base)
-                   :cache-root (configuration-cache-root base)
-                   :codex-auth-path (configuration-codex-auth-path base)
-                   :grok-bootstrap-auth-path
-                   (configuration-grok-bootstrap-auth-path base)
-                   :model model
-                   :reasoning-effort reasoning-effort
-                   :provider-endpoint provider-endpoint)))
+  (declare (ignore provider-endpoint))
+  (let ((configuration (configuration-copy (test-configuration))))
+    (setf (configuration-provider-validation-p configuration) nil
+          (config :model configuration) model
+          (config :reasoning-effort configuration) reasoning-effort)
+    configuration))
 
 (-> openrouter-provider-test--restore-environment
     (string (option string))

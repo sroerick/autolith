@@ -7,26 +7,7 @@
     configuration)
 (defun memory-tests--configuration-in-workspace (configuration workspace)
   "Return CONFIGURATION's roots with WORKSPACE selected."
-  (make-instance 'configuration
-                 :source-root (configuration-source-root configuration)
-                 :working-directory workspace
-                 :config-root (configuration-config-root configuration)
-                 :data-root (configuration-data-root configuration)
-                 :state-root (configuration-state-root configuration)
-                 :cache-root (configuration-cache-root configuration)
-                 :config-root (configuration-config-root configuration)
-                 :codex-auth-path (configuration-codex-auth-path configuration)
-                 :model (configuration-model configuration)
-                 :reasoning-effort
-                 (configuration-reasoning-effort configuration)
-                 :web-search-mode
-                 (configuration-web-search-mode configuration)
-                 :context-window
-                 (configuration-context-window configuration)
-                 :compaction-threshold-percent
-                 (configuration-compaction-threshold-percent configuration)
-                 :provider-endpoint
-                 (configuration-provider-endpoint configuration)))
+  (configuration-copy configuration :working-directory workspace))
 
 
 (-> test-memory-persistence () null)

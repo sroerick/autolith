@@ -694,10 +694,11 @@ dependencies."
          (configuration
            (let ((base (configuration-create
                         :immutable-p immutable-p :defer-provider-validation-p t)))
-             ;; Keep provider validation deferred until executable user init.
-             (reinitialize-instance
-              base :fullscreen-p (or (not (null (getopt* command ':fullscreen)))
-                                     (preferences-fullscreen-p base)))))
+             ;; The command line beats the saved preference; provider
+             ;; validation stays deferred until executable user init.
+             (when (getopt* command ':fullscreen)
+               (setf (config :fullscreen-p base) t))
+             base))
          (permission-mode
            (or explicit-permission-mode
                (preferences-permission-mode configuration)

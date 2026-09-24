@@ -134,22 +134,15 @@ process-global fixture parent on exit; parallel runs need separate processes."
     ;; truename-resolved working directory, even when the platform temporary
     ;; directory is a symlink (macOS maps /var to /private/var).
     (setf root (uiop:ensure-directory-pathname (truename root)))
-    (make-instance 'configuration
-                   :source-root source-root
-                   :working-directory source-root
-                   :config-root (merge-pathnames "config/" root)
-                   :data-root (merge-pathnames "data/" root)
-                   :state-root (merge-pathnames "state/" root)
-                   :cache-root (merge-pathnames "cache/" root)
-                   :config-root (merge-pathnames "config/" root)
-                   :codex-auth-path (merge-pathnames "missing-auth.json" root)
-                   :grok-bootstrap-auth-path
-                   (merge-pathnames "missing-grok-auth.json" root)
-                   :model *default-model*
-                   :context-window (configuration--context-window-for
-                                    *default-model*)
-                   :reasoning-effort *default-reasoning-effort*
-                   :provider-endpoint *codex-responses-endpoint*)))
+    (make-configuration
+     :source-root source-root
+     :working-directory source-root
+     :config-root (merge-pathnames "config/" root)
+     :data-root (merge-pathnames "data/" root)
+     :state-root (merge-pathnames "state/" root)
+     :cache-root (merge-pathnames "cache/" root)
+     :codex-auth-path (merge-pathnames "missing-auth.json" root)
+     :grok-bootstrap-auth-path (merge-pathnames "missing-grok-auth.json" root))))
 (-> test-configuration-root (configuration) pathname)
 (defun test-configuration-root (configuration)
   "Return the common temporary root containing CONFIGURATION's data directory."
@@ -217,20 +210,16 @@ and return all of BODY's values. Use process isolation for parallel execution."
 (defun test-configuration-for-source-root (source-root)
   "Return an isolated configuration whose tracked source is SOURCE-ROOT."
   (let ((state-root (merge-pathnames ".autolith-test-state/" source-root)))
-    (make-instance 'configuration
-                   :source-root source-root
-                   :working-directory source-root
-                   :config-root (merge-pathnames "config/" state-root)
-                   :data-root (merge-pathnames "data/" state-root)
-                   :state-root (merge-pathnames "state/" state-root)
-                   :cache-root (merge-pathnames "cache/" state-root)
-                   :config-root (merge-pathnames "config/" state-root)
-                   :codex-auth-path (merge-pathnames "missing-auth.json" state-root)
-                   :grok-bootstrap-auth-path
-                   (merge-pathnames "missing-grok-auth.json" state-root)
-                   :model *default-model*
-                   :reasoning-effort *default-reasoning-effort*
-                   :provider-endpoint *codex-responses-endpoint*)))
+    (make-configuration
+     :source-root source-root
+     :working-directory source-root
+     :config-root (merge-pathnames "config/" state-root)
+     :data-root (merge-pathnames "data/" state-root)
+     :state-root (merge-pathnames "state/" state-root)
+     :cache-root (merge-pathnames "cache/" state-root)
+     :codex-auth-path (merge-pathnames "missing-auth.json" state-root)
+     :grok-bootstrap-auth-path
+     (merge-pathnames "missing-grok-auth.json" state-root))))
 
 (-> test-run-program-with-environment (list list) (values integer string))
 (defun test-run-program-with-environment (command environment)

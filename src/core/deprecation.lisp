@@ -106,12 +106,17 @@ deletion from 0.54, where the canary test fails until the code is gone."
   "Define NAME with LAMBDA-LIST as a legacy entry point around BODY.
 
 REPLACEMENT is the supported form named in the warning. BODY may begin with a
-documentation string. The expansion is an ordinary DEFUN that notes the call
-through DEPRECATION-NOTE before evaluating BODY, so the function stays silent in
-the silent phase and warns afterwards."
-  (let ((documentation (and (stringp (first body)) (rest body) (first body)))
-        (forms (if (and (stringp (first body)) (rest body)) (rest body) body)))
+documentation string and declarations, which stay at the head of the
+definition. The expansion is an ordinary DEFUN that notes the call through
+DEPRECATION-NOTE before evaluating the remaining forms, so the function stays
+silent in the silent phase and warns afterwards."
+  (let* ((documentation (and (stringp (first body)) (rest body) (first body)))
+         (forms (if documentation (rest body) body))
+         (declarations (loop while (and (consp (first forms))
+                                        (eq (first (first forms)) 'declare))
+                             collect (pop forms))))
     `(defun ,name ,lambda-list
        ,@(when documentation (list documentation))
+       ,@declarations
        (deprecation-note ',name ,replacement)
        ,@forms)))

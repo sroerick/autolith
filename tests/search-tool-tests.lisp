@@ -5,19 +5,7 @@
 (-> search-tests--configuration (pathname) configuration)
 (defun search-tests--configuration (workspace)
   "Return an isolated search configuration rooted beside WORKSPACE."
-  (let ((base (test-configuration)))
-    (make-instance 'configuration
-                   :source-root (configuration-source-root base)
-                   :working-directory workspace
-                   :config-root (configuration-config-root base)
-                   :data-root (configuration-data-root base)
-                   :state-root (configuration-state-root base)
-                   :cache-root (configuration-cache-root base)
-                   :config-root (configuration-config-root base)
-                   :codex-auth-path (configuration-codex-auth-path base)
-                   :model (configuration-model base)
-                   :reasoning-effort (configuration-reasoning-effort base)
-                   :provider-endpoint (configuration-provider-endpoint base))))
+  (configuration-copy (test-configuration) :working-directory workspace))
 
 (-> search-tests--write-file (pathname string) null)
 (defun search-tests--write-file (pathname content)

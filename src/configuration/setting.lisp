@@ -187,10 +187,15 @@ coercion turns them into the stored representation without validating them."))
   nil)
 
 (defmethod setting-validate ((setting choice-setting) value configuration)
-  "Require VALUE to be one of SETTING's options when it declares any."
+  "Require VALUE to be one of SETTING's options when it declares any.
+
+NIL stays acceptable when SETTING's type admits it, so an optional choice
+can be unset without appearing among the options."
   (call-next-method)
   (let ((options (setting-options setting configuration)))
-    (when (and options (not (member value options :test #'equal)))
+    (when (and options
+               (not (and (null value) (typep nil (setting-type setting))))
+               (not (member value options :test #'equal)))
       (error 'configuration-error
              :message (format nil "~A must be one of ~{~A~^, ~}, not ~A."
                               (setting-label setting)

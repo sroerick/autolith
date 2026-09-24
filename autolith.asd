@@ -66,6 +66,8 @@
                              (:file "core/text-buffer")
                              (:file "configuration/setting")
                              (:file "configuration/settings")
+                             (:file "configuration/configuration")
+                             (:file "configuration/legacy-configuration")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")

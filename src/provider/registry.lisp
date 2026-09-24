@@ -620,8 +620,7 @@ The default startup path never performs remote model discovery."
   (provider-load-model-cache configuration)
   (when refresh-p
     (provider-refresh-models configuration))
-  (configuration-with-model configuration
-                            (configuration-model configuration)))
+  (configuration-validate-model configuration))
 
 (defparameter *provider-name-aliases*
   '(("codex" . "chatgpt")
