@@ -140,6 +140,7 @@
   test-built-in-application-command-policies
   test-built-in-application-command-calls
   test-application-codex-fast-mode-command
+  test-application-settings-command
   test-application-mcp-reload-capability-change
   test-terminal-authentication-streams
   test-application-authentication-command)

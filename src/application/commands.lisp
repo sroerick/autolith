@@ -2068,6 +2068,214 @@ are forwarded to TERMINAL-UI-SELECT."
               :message "Usage: /hurry-up on or /hurry-up off."))))
   nil)
 
+;;;; -- Settings Page --
+
+(-> application--setting-name (t) keyword)
+(defun application--setting-name (designator)
+  "Return the setting keyword named by DESIGNATOR, a string, symbol, or keyword."
+  (let ((name (string-downcase (string designator))))
+    (find-setting (intern (string-upcase name) '#:keyword))
+    (intern (string-upcase name) '#:keyword)))
+
+(-> application--setting-adjustable-p (setting) boolean)
+(defun application--setting-adjustable-p (setting)
+  "Return true when SETTING may change while the process runs."
+  (and (member (setting-scope setting) '(:durable :session)) t))
+
+(-> application--setting-source-text (configuration setting) string)
+(defun application--setting-source-text (configuration setting)
+  "Return how SETTING's current value in CONFIGURATION was chosen."
+  (case (setting-scope setting)
+    (:derived
+     "derived")
+    (t
+     (case (configuration-setting-source configuration (setting-name setting))
+       (:environment "environment")
+       (:override "command line")
+       (:durable "saved")
+       (:session "this session")
+       (t "default")))))
+
+(-> application-apply-setting (application keyword t) null)
+(defun application-apply-setting (application name value)
+  "Set NAME to VALUE for APPLICATION and apply the runtime side effects.
+
+Settings with runtime consequences, such as the provider's reasoning
+summaries or the transcript pagination, go through their dedicated setters so
+the settings page and the slash commands behave identically."
+  (let* ((configuration (application-configuration application))
+         (setting (configuration-setting configuration name))
+         (parsed (setting-parse setting value configuration)))
+    (unless (application--setting-adjustable-p setting)
+      (error 'configuration-error
+             :message (format nil "~A is set at startup by the command line, the environment, or a default and cannot change in a running session."
+                              (setting-label setting))))
+    (case name
+      (:model (application-set-model application parsed))
+      (:reasoning-effort (application-set-reasoning-effort application parsed))
+      (:codex-fast-mode-p (application-set-codex-fast-mode application parsed))
+      (:reasoning-traces-p (application-set-reasoning-traces application parsed))
+      (:turn-timestamps-p (application-set-turn-timestamps application parsed))
+      (:cache-miss-notices-p (application-set-cache-miss-notices application parsed))
+      (:compact-view-p
+       (unless (eq (application-compact-view-p application) parsed)
+         (setf (application-compact-view-p application) parsed)
+         (application-reset-history-pagination application))
+       (application-publish-recovery-session application))
+      (:hurry-up-p (application-set-hurry-up application parsed))
+      (:permission-mode
+       (if parsed
+           (application--set-durable-permission-mode application parsed)
+           (setf (config :permission-mode configuration) nil)))
+      (t
+       (setf (config name configuration) parsed))))
+  nil)
+
+(-> application--setting-items (application) list)
+(defun application--setting-items (application)
+  "Return picker items for every visible setting, grouped in definition order."
+  (let ((configuration (application-configuration application)))
+    (loop for setting in (configuration-setting-list configuration)
+          when (setting-visible-p setting)
+            collect (list :name (setting-label setting)
+                          :value (string-downcase (symbol-name (setting-name setting)))
+                          :argument nil
+                          :description
+                          (format nil "~(~A~) · ~A (~A)~:[ · read-only~;~]"
+                                  (setting-group setting)
+                                  (setting-render-value
+                                   setting
+                                   (configuration-setting-value configuration setting))
+                                  (application--setting-source-text configuration setting)
+                                  (application--setting-adjustable-p setting))))))
+
+(-> application--setting-option-items (application setting) list)
+(defun application--setting-option-items (application setting)
+  "Return picker items for SETTING's options, marking the current value."
+  (let* ((configuration (application-configuration application))
+         (current (configuration-setting-value configuration setting)))
+    (loop for option in (setting-options setting configuration)
+          for text = (setting-render-value setting option)
+          collect (list :name text
+                        :argument nil
+                        :description (if (equal option current) "current" "")))))
+
+(-> application-settings-listing (application) string)
+(defun application-settings-listing (application)
+  "Return every visible setting with its value, source, and meaning as text."
+  (let ((configuration (application-configuration application))
+        (group nil))
+    (with-output-to-string (out)
+      (dolist (setting (configuration-setting-list configuration))
+        (when (setting-visible-p setting)
+          (unless (eq group (setting-group setting))
+            (setf group (setting-group setting))
+            (format out "~:[~;~%~]~(~A~)~%" (plusp (file-position out)) group))
+          (format out "  ~(~A~) = ~A (~A)~%    ~A~%"
+                  (setting-name setting)
+                  (setting-render-value
+                   setting (configuration-setting-value configuration setting))
+                  (application--setting-source-text configuration setting)
+                  (setting-documentation setting)))))))
+
+(-> application--settings-page (application) null)
+(defun application--settings-page (application)
+  "Let the user browse settings and change adjustable ones until they cancel."
+  (loop
+    (let ((chosen (application--pick-identifier
+                   application
+                   :title "settings"
+                   :items (application--setting-items application)
+                   :visible-count 15
+                   :search-p t
+                   :usage "Usage: /settings [NAME [VALUE]]"
+                   :empty-notice "No settings are registered.")))
+      (unless chosen
+        (return))
+      (let* ((name (application--setting-name chosen))
+             (setting (configuration-setting (application-configuration application) name)))
+        (cond
+          ((not (application--setting-adjustable-p setting))
+           (application-present
+            application
+            (format nil "~A is ~A (~A). It is read-only in a running session."
+                    (setting-label setting)
+                    (setting-render-value
+                     setting (config name (application-configuration application)))
+                    (application--setting-source-text
+                     (application-configuration application) setting))))
+          ((setting-options setting (application-configuration application))
+           (let ((option (application--pick-identifier
+                          application
+                          :title (format nil "~A" (setting-label setting))
+                          :items (application--setting-option-items application setting)
+                          :initial-name (setting-render-value
+                                         setting
+                                         (config name (application-configuration application)))
+                          :usage "Usage: /settings NAME VALUE"
+                          :empty-notice "This setting offers no choices.")))
+             (when option
+               (application-apply-setting application name option)
+               (application-present
+                application
+                (format nil "~A is now ~A." (setting-label setting) option)))))
+          (t
+           (application-present
+            application
+            (format nil "~A is ~A. Change it with /settings ~(~A~) VALUE."
+                    (setting-label setting)
+                    (setting-render-value
+                     setting (config name (application-configuration application)))
+                    name)))))))
+  nil)
+
+(-> application-settings-command
+    (application &optional (option string) (option string))
+    null)
+(defun application-settings-command (application &optional name value)
+  "Browse settings, show one, or set one, depending on the arguments."
+  (cond
+    ((and (null name) *application-command-interactive-p*)
+     (application--settings-page application))
+    ((null name)
+     (application-present application (application-settings-listing application)))
+    ((null value)
+     (let* ((configuration (application-configuration application))
+            (key (application--setting-name name))
+            (setting (configuration-setting configuration key)))
+       (application-present
+        application
+        (format nil "~A is ~A (~A). ~A"
+                (setting-label setting)
+                (setting-render-value setting (config key configuration))
+                (application--setting-source-text configuration setting)
+                (setting-documentation setting)))))
+    (t
+     (let* ((key (application--setting-name name))
+            (setting (configuration-setting (application-configuration application) key)))
+       (application-apply-setting application key value)
+       (application-present
+        application
+        (format nil "~A is now ~A~:[~; and saved~]."
+                (setting-label setting)
+                (setting-render-value setting (config key (application-configuration application)))
+                (eq (setting-scope setting) ':durable))))))
+  nil)
+
+(define-application-command application--builtin-settings-command
+    (:name "/settings"
+     :argument "[NAME [VALUE]]"
+     :description "browse and change settings"
+     :tip "opens the settings page; (settings) lists every setting, (settings \"name\") shows one, and (settings \"name\" \"value\") changes it."
+     :busy-behavior :apply
+     :terminal-behavior :exclusive-without-arguments
+     :callable t)
+    (application &optional name value)
+  (application-settings-command application
+                                (and name (string-downcase (string name)))
+                                (and value (if (stringp value) value (string-downcase (string value)))))
+  ':continue)
+
 ;;;; -- Installed Release Update --
 
 (-> application-update (application) null)

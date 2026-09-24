@@ -1204,3 +1204,88 @@
   (test-terminal-authentication-streams)
   (test-application-authentication-command)
   t)
+
+
+(-> test-application-settings-command () null)
+(defun test-application-settings-command ()
+  "Test the settings page lists, shows, changes, and refuses settings."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (application (make-instance 'application
+                                     :configuration configuration))
+         (presented nil)
+         (picks nil))
+    (unwind-protect
+         (test-call-with-function-replacements
+          (list
+           (list 'application-present
+                 (lambda (candidate entry)
+                   (declare (ignore candidate))
+                   (push entry presented)
+                   t))
+           (list 'application--pick-identifier
+                 (lambda (candidate &rest arguments)
+                   (declare (ignore candidate arguments))
+                   (pop picks)))
+           (list 'application-publish-recovery-session
+                 (lambda (candidate)
+                   (declare (ignore candidate))
+                   nil)))
+          (lambda ()
+            (test-assert
+             (eq (application--builtin-settings-command application) ':continue)
+             "(settings) completes through the canonical command")
+            (test-assert
+             (and (search "cache-miss-notices-p = off (default)" (first presented))
+                  (search "transcript" (first presented))
+                  (not (search "provider-endpoint" (first presented))))
+             "the listing shows visible settings with values and sources")
+            (application--builtin-settings-command application "cache-miss-notices-p" "on")
+            (test-assert
+             (and (application-cache-miss-notices-p application)
+                  (search "Cache miss notices is now on and saved" (first presented)))
+             "a named setting changes through the command")
+            (test-assert
+             (eq (configuration-setting-source configuration :cache-miss-notices-p) ':session)
+             "an interactive change records the session source")
+            (application--builtin-settings-command application "cache-miss-notices-p")
+            (test-assert
+             (search "Cache miss notices is on (this session)" (first presented))
+             "a named setting without a value is described")
+            (test-assert
+             (handler-case
+                 (progn
+                   (application--builtin-settings-command application "immutable-p" "on")
+                   nil)
+               (configuration-error (condition)
+                 (not (null (search "cannot change" (format nil "~A" condition))))))
+             "process settings are refused in a running session")
+            (test-assert
+             (handler-case
+                 (progn
+                   (application--builtin-settings-command application "no-such-setting" "on")
+                   nil)
+               (configuration-error () t))
+             "unknown settings are refused")
+            (test-assert
+             (handler-case
+                 (progn
+                   (application--builtin-settings-command application "compaction-threshold-percent" "abc")
+                   nil)
+               (configuration-error () t))
+             "values are validated by the setting")
+            (let ((*application-command-interactive-p* t))
+              (setf picks (list "turn-timestamps-p" "on" "context-window" nil))
+              (application--builtin-settings-command application)
+              (test-assert
+               (application-turn-timestamps-p application)
+               "the page applies a picked option")
+              (test-assert
+               (and (search "Turn timestamps is now on" (second presented))
+                    (search "read-only" (first presented)))
+               "the page reports changes and read-only settings")
+              (test-assert
+               (null picks)
+               "the page loops until the picker is cancelled"))))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
