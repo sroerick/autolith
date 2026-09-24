@@ -610,6 +610,110 @@ reaches the backend holding the conversation's cached prefix."
       :read-timeout 300))))
 
 
+;;;; -- Usage Limit Failures --
+
+(defparameter *codex-usage-limit-error-types*
+  '("usage_limit_reached" "usage_not_included" "insufficient_quota")
+  "HTTP 429 error types reporting an exhausted ChatGPT allowance.")
+
+(defparameter *codex-usage-limit-error-codes*
+  '("insufficient_quota" "credit_balance_exhausted"
+    "organization_spend_limit_exceeded" "project_spend_limit_exceeded"
+    "organization_usage_limit_exceeded")
+  "HTTP 429 error codes reporting an exhausted ChatGPT allowance.")
+
+(-> provider--codex-usage-limit-error (t) (option json-object))
+(defun provider--codex-usage-limit-error (body)
+  "Return the error object of an HTTP 429 BODY reporting an exhausted allowance.
+
+A plain rate limit keeps its bounded retries. An exhausted plan allowance is
+terminal: retrying only delays the report by the whole retry ladder. The types
+and codes follow the Codex reference at commit 6f51c65958."
+  (let* ((text (cond
+                 ((stringp body)
+                  body)
+                 ((typep body '(vector (unsigned-byte 8)))
+                  (handler-case
+                      (sb-ext:octets-to-string body :external-format ':utf-8)
+                    (error ()
+                      nil)))
+                 (t
+                  nil)))
+         (object (and (non-empty-string-p text)
+                      (handler-case
+                          (json-decode text)
+                        (error ()
+                          nil))))
+         (error (and (json-object-p object) (json-get object "error"))))
+    (when (and (json-object-p error)
+               (or (json-string-member-p (json-get error "type")
+                                         *codex-usage-limit-error-types*)
+                   (json-string-member-p (json-get error "code")
+                                         *codex-usage-limit-error-codes*)))
+      error)))
+
+(-> provider--epoch-local-time (integer) string)
+(defun provider--epoch-local-time (seconds)
+  "Return POSIX epoch SECONDS as a compact local date and time."
+  (multiple-value-bind (second minute hour date month year)
+      (decode-universal-time (+ seconds 2208988800))
+    (declare (ignore second))
+    (format nil "~4,'0D-~2,'0D-~2,'0D ~2,'0D:~2,'0D" year month date hour minute)))
+
+(-> provider--codex-usage-limit-message (json-object) string)
+(defun provider--codex-usage-limit-message (error)
+  "Return the user-facing explanation of usage-limit ERROR."
+  (let ((type (json-get error "type"))
+        (plan (json-get error "plan_type"))
+        (resets-at (json-get error "resets_at")))
+    (format nil "~A~@[ on the ~A plan~]~@[; it resets at ~A~]. The request was not retried."
+            (if (json-string= type "usage_not_included")
+                "The ChatGPT subscription does not include usage of this model"
+                "The ChatGPT usage limit was reached")
+            (and (non-empty-string-p plan) plan)
+            (and (integerp resets-at) (provider--epoch-local-time resets-at)))))
+
+(-> provider--codex-signal-status-failure
+    (codex-subscription-provider integer &key (:headers t) (:raw-body t))
+    null)
+(defun provider--codex-signal-status-failure (provider status &key headers raw-body)
+  "Signal HTTP STATUS as terminal for an exhausted allowance, else as the shared failure."
+  (let ((error (and (= status 429) (provider--codex-usage-limit-error raw-body))))
+    (if error
+        (error 'provider-error
+               :message (provider--codex-usage-limit-message error)
+               :status status
+               :request-id (provider--response-request-id headers)
+               :response nil)
+        (provider--signal-http-status-failure
+         provider status :headers headers :raw-body raw-body))))
+
+(-> provider-signal-transport-failure (subscription-provider condition) null)
+(defgeneric provider-signal-transport-failure (provider condition)
+  (:documentation
+   "Record CONDITION's response headers and signal its typed provider failure."))
+
+(defmethod provider-signal-transport-failure
+    ((provider subscription-provider) (condition condition))
+  "Signal the shared HTTP failure classification."
+  (provider-signal-http-failure provider condition))
+
+(defmethod provider-signal-transport-failure
+    ((provider codex-subscription-provider) (condition http-request-failed))
+  "Stop immediately when the ChatGPT allowance is exhausted."
+  (let ((headers (provider--sanitize-wire-value
+                  (dexador.error:response-headers condition))))
+    (provider-note-response-headers provider headers)
+    (provider--codex-signal-status-failure
+     provider
+     (dexador.error:response-status condition)
+     :headers headers
+     :raw-body (handler-case
+                   (dexador.error:response-body condition)
+                 (error ()
+                   nil)))))
+
+
 ;;;; -- SSE Decoding --
 
 ;;; Bounded SSE decoding lives in cl-llm-provider-api. Autolith supplies the
@@ -772,7 +876,7 @@ act on instead of blocking on a dead connection indefinitely."
                                             :conversation conversation))
           :completion (lambda () (context-delivery-complete delivery))))
        (http-request-failed (condition)
-                            (provider-signal-http-failure provider condition))))))
+                            (provider-signal-transport-failure provider condition))))))
 
 (defparameter *provider-maximum-transient-retries* 6
   "Maximum retryable provider failures allowed after the initial attempt.")
@@ -948,14 +1052,14 @@ summary fallback."
               (let ((headers (provider--sanitize-wire-value raw-headers)))
                 (provider-note-response-headers provider headers)
                 (unless (= status 200)
-                  (provider--signal-http-status-failure
+                  (provider--codex-signal-status-failure
                    provider status :headers headers :raw-body body))
                 (provider--decode-native-compaction-response
                  provider body :status status :headers headers))))
         (dexador.error:http-request-unauthorized (condition)
           (provider-signal-http-failure provider condition))
         (http-request-failed (condition)
-          (provider-signal-http-failure provider condition))))))
+          (provider-signal-transport-failure provider condition))))))
 
 (-> provider--native-compaction-unavailable-p (provider-error) boolean)
 (defun provider--native-compaction-unavailable-p (condition)

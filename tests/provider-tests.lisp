@@ -2377,3 +2377,61 @@
             "a pinned turn replays its routing token"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-provider-usage-limit-terminal () null)
+(defun test-provider-usage-limit-terminal ()
+  "Test an exhausted ChatGPT allowance fails at once while rate limits still retry."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (provider (provider-create configuration)))
+    (unwind-protect
+         (flet ((failure (body)
+                  "Return the condition signaled for an HTTP 429 carrying BODY."
+                  (handler-case
+                      (progn
+                        (provider-signal-transport-failure
+                         provider
+                         (make-condition 'http-request-failed
+                                         :body body
+                                         :status 429
+                                         :headers '(("x-request-id" . "request-quota")
+                                                    ("x-codex-primary-used-percent" . "100"))
+                                         :uri nil
+                                         :method ':post))
+                        nil)
+                    (provider-error (condition)
+                      condition))))
+           (let ((cases
+                   '(("{\"error\":{\"type\":\"usage_limit_reached\",\"plan_type\":\"plus\",\"resets_at\":1790000000}}"
+                      "usage limit was reached" "plus plan" "resets at")
+                     ("{\"error\":{\"type\":\"usage_not_included\"}}"
+                      "does not include usage of this model" nil nil)
+                     ("{\"error\":{\"code\":\"credit_balance_exhausted\",\"message\":\"no credits\"}}"
+                      "usage limit was reached" nil nil))))
+             (loop for (body . fragments) in cases
+                   for condition = (failure body)
+                   do (test-assert
+                       (and condition
+                            (not (typep condition 'provider-retryable-error))
+                            (= (provider-error-status condition) 429)
+                            (string= (provider-error-request-id condition)
+                                     "request-quota")
+                            (every (lambda (fragment)
+                                     (or (null fragment)
+                                         (search fragment
+                                                 (autolith-error-message condition))))
+                                   fragments))
+                       "an exhausted allowance is a terminal, explained failure")))
+           (test-assert
+            (typep (failure "{\"error\":{\"type\":\"rate_limit_exceeded\",\"message\":\"slow down\"}}")
+                   'provider-retryable-error)
+            "an ordinary rate limit keeps its bounded retries")
+           (test-assert
+            (typep (failure "rate limited") 'provider-retryable-error)
+            "an unreadable 429 body keeps its bounded retries")
+           (test-assert
+            (= (getf (getf (provider-rate-limits provider) :primary) :used-percent)
+               100)
+            "usage-limit responses still record the rate limit snapshot"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

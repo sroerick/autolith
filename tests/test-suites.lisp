@@ -222,6 +222,7 @@
   test-provider-rate-limits
   test-provider-transport-boundary
   test-provider-codex-request-headers
+  test-provider-usage-limit-terminal
   test-provider-credential-echo-containment
   test-provider-authentication-retries
   test-provider-persistent-transient-retries
