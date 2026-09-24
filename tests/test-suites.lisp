@@ -50,6 +50,11 @@
 (define-test-suite stream
   test-bounded-character-reads)
 
+(define-test-suite deprecation
+  test-version-comparison
+  test-legacy-configuration-phases
+  test-legacy-configuration-removal-due)
+
 (define-test-suite memory
   test-memory-persistence)
 
