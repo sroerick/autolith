@@ -216,6 +216,9 @@
 (defparameter *win32-process-terminate* #x1
   "The OpenProcess access right that allows TerminateProcess.")
 
+(defparameter *win32-process-synchronize* #x100000
+  "The OpenProcess access right that allows waiting for process termination.")
+
 (defparameter *win32-still-active* 259
   "The exit code GetExitCodeProcess reports for a running process.")
 
@@ -673,12 +676,20 @@ Windows offers no cooperative termination request for another process, so
 FORCE makes no difference; cooperative shutdown belongs to the loopback
 protocol."
   (declare (ignore force))
-  (let ((handle (win32--open-process *win32-process-terminate* 0 process-id)))
+  (let ((handle (win32--open-process (logior *win32-process-terminate*
+                                             *win32-process-synchronize*)
+                                     0 process-id)))
     (when (zerop handle)
       (win32--fail ':terminate nil))
     (unwind-protect
-         (when (zerop (win32--terminate-process handle 1))
-           (win32--fail ':terminate nil))
+         (progn
+           (when (zerop (win32--terminate-process handle 1))
+             (win32--fail ':terminate nil))
+           ;; TerminateProcess returns before all file handles owned by the
+           ;; target have been released.  Wait on the process handle before
+           ;; closing it so callers can safely remove files opened by it.
+           (unless (zerop (win32--wait-for-single-object handle #xFFFFFFFF))
+             (win32--fail ':terminate nil)))
       (win32--close-handle handle)))
   nil)
 
