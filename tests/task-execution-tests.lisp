@@ -378,7 +378,10 @@
                                      "Project instructions.")
                             "agent discovery retains native role instructions")))
            (let* ((immutable
-                    (configuration-copy configuration :immutable-p t))
+                    (configuration-copy configuration
+                                        :immutable-p t
+                                        :reasoning-effort "xhigh"
+                                        :codex-fast-mode-p t))
                   (definition
                     (task-agent-definition-create
                      :name "inheritance"
@@ -388,7 +391,30 @@
                      :models '("@parent")
                      :source ':test))
                   (child-configuration
-                    (task-configuration-for-definition immutable definition)))
+                    (task-configuration-for-definition immutable definition))
+                  (explicit-definition
+                    (task-agent-definition-create
+                     :name "explicit-effort"
+                     :description "Exercise an explicit child effort."
+                     :instructions "Reason at the declared effort."
+                     :tools ':all
+                     :models '("@parent")
+                     :reasoning-effort ':high
+                     :source ':test))
+                  (explicit-configuration
+                    (task-configuration-for-definition
+                     immutable explicit-definition)))
+             (test-assert
+              (string= (config :reasoning-effort child-configuration)
+                       *task-default-reasoning-effort*)
+              "an unspecified child effort resolves to the routine default")
+             (test-assert
+              (string= (config :reasoning-effort explicit-configuration) "high")
+              "an explicit child effort is honored")
+             (test-assert
+              (and (not (config :codex-fast-mode-p child-configuration))
+                   (not (config :codex-fast-mode-p explicit-configuration)))
+              "children never inherit Codex Fast mode")
              (test-assert
               (and (config :immutable-p child-configuration)
                    (equal (config :config-root child-configuration)

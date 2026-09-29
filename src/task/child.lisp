@@ -155,17 +155,27 @@
       ((member value '("@slow" "@designer") :test #'string=) "gpt-5.6-terra")
       ((member alias *supported-models* :test #'string=) alias) (t nil))))
 
-(defun task--thinking-effort (level parent-effort)
+(defparameter *task-default-reasoning-effort* "medium"
+  "The effort of child roles that leave their reasoning effort unspecified or :auto.
+
+Routine delegated work should not inherit the parent's effort: a parent
+running at high or max effort would otherwise multiply that cost across every
+child it spawns.")
+
+(defun task--thinking-effort (level)
   "Resolve child reasoning LEVEL to a supported provider effort."
   (let ((value (and level (string-downcase (symbol-name level)))))
-    (cond
-      ((or (null value) (string= value "auto"))
-       parent-effort)
-      ((member value *supported-reasoning-efforts* :test #'string=) value)
-      (t parent-effort))))
+    (if (and value
+             (string/= value "auto")
+             (member value *supported-reasoning-efforts* :test #'string=))
+        value
+        *task-default-reasoning-effort*)))
 
 (defun task-configuration-for-definition (parent-configuration definition)
-  "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, and web policy."
+  "Copy PARENT-CONFIGURATION with DEFINITION's model, effort, and web policy.
+
+Children never inherit Codex Fast mode: the premium tier stays an explicit
+choice for the primary agent rather than a silent property of every task."
   (let* ((parent-model (config :model parent-configuration))
          (model
           (or
@@ -175,8 +185,7 @@
            parent-model))
          (effort
           (task--thinking-effort
-           (task-agent-definition-reasoning-effort definition)
-           (config :reasoning-effort parent-configuration)))
+           (task-agent-definition-reasoning-effort definition)))
          (web-enabled-p
           (or (eq (task-agent-definition-tools definition) :all)
               (member "web_search" (task-agent-definition-tools definition)
@@ -185,6 +194,7 @@
      parent-configuration
      :model model
      :reasoning-effort effort
+     :codex-fast-mode-p nil
      :web-search-mode
      (if web-enabled-p
          (config :web-search-mode parent-configuration)
