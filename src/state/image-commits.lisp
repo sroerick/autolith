@@ -313,6 +313,8 @@
        (stringp (getf entry :source))
        (or (null (getf entry :package))
            (non-empty-string-p (getf entry :package)))
+       (or (null (getf entry :tracked))
+           (stringp (getf entry :tracked)))
        t))
 
 (-> image-commit--manifest-form
@@ -456,9 +458,22 @@
 
 (-> image-commit-base-entries (configuration) list)
 (defun image-commit-base-entries (configuration)
-  "Return a copy of the current private commit entries, or NIL."
+  "Return a copy of the current private commit entries the image holds, or NIL.
+
+Entries whose stale definitions were skipped during replay are left out: the
+running image holds their tracked definitions, so the next commit drops them."
   (let ((current (image-commit-current configuration)))
-    (and current (copy-tree (image-commit-entries current)))))
+    (and current
+         (remove-if #'image-commit--entry-skipped-p
+                    (copy-tree (image-commit-entries current))))))
+
+(-> image-commit--entry-skipped-p (list) boolean)
+(defun image-commit--entry-skipped-p (entry)
+  "Return true when replay ENTRY names a definition the running image skipped."
+  (let ((target (image-commit--entry-definition-target entry)))
+    (and target
+         (member target *image-replay-skipped-targets* :test #'string=)
+         t)))
 
 (-> image-commit--entry-definition-target (list) (option string))
 (defun image-commit--entry-definition-target (entry)
@@ -656,6 +671,31 @@
         (setf (getf entry :home-package) home-package)))
     entry))
 
+(-> image-commit--tracked-source (configuration list) (option string))
+(defun image-commit--tracked-source (configuration entry)
+  "Return the tracked source that definition ENTRY shadows, or NIL for a new name."
+  (handler-case
+      (let* ((package (self-resolve-package (getf entry :package)))
+             (definition (self-read-form (getf entry :source)
+                                         :read-eval nil
+                                         :package package)))
+        (and (definition-form-p definition)
+             (let ((*package* package))
+               (self-tracked-definition-source configuration definition))))
+    (error ()
+      nil)))
+
+(-> image-commit--complete-entry (configuration list) list)
+(defun image-commit--complete-entry (configuration entry)
+  "Return ENTRY with the tracked source it shadows recorded for later replay.
+
+A definition entry that already records its tracked base keeps it."
+  (if (and (eq (getf entry :kind) :definition)
+           (not (get-properties entry '(:tracked))))
+      (append entry
+              (list :tracked (image-commit--tracked-source configuration entry)))
+      entry))
+
 (-> image-commit--merge-entries (list list) list)
 (defun image-commit--merge-entries (base additions)
   "Apply ADDITIONS in order to effective replay entries BASE."
@@ -697,6 +737,10 @@
            (get-properties entry '(:home-package))
          (when (and present (not (equal home-package package-name)))
            (format stream " :home-package ~S" home-package)))
+       (multiple-value-bind (present tracked)
+           (get-properties entry '(:tracked))
+         (when present
+           (format stream "~% :tracked ~S" tracked)))
        (write-line ")" stream)))
     (:set
      (format stream
@@ -929,9 +973,11 @@ the failure stays diagnosable after the tool call ends."
          (manifest-pathname (merge-pathnames "manifest.sexp" directory))
          (record-entries (mapcar #'image-commit--record->entry
                                  mutation-records))
-         (entries (image-commit--merge-entries
-                   (image-commit-base-entries configuration)
-                   (append record-entries additional-entries)))
+         (entries (mapcar (lambda (entry)
+                            (image-commit--complete-entry configuration entry))
+                          (image-commit--merge-entries
+                           (image-commit-base-entries configuration)
+                           (append record-entries additional-entries))))
          (mutation-identifiers
            (append (and parent
                         (copy-list
@@ -993,7 +1039,8 @@ the failure stays diagnosable after the tool call ends."
                    :manifest (namestring manifest-pathname)
                    :history-commit history-commit))
             (setf *active-image-commit-identifier* identifier
-                  *active-image-history-commit* history-commit)
+                  *active-image-history-commit* history-commit
+                  *image-replay-skipped-targets* nil)
             (dolist (mutation-record mutation-records)
               (remhash (getf (rest mutation-record) :id)
                        *exploratory-undo-actions*))
@@ -1038,6 +1085,7 @@ the failure stays diagnosable after the tool call ends."
 (defun image-state-load (configuration &key pristine-p)
   "Load selected private state unless PRISTINE-P, then begin a fresh lineage."
   (clrhash *exploratory-undo-actions*)
+  (setf *image-replay-skipped-targets* nil)
   (when pristine-p
     (setf *image-replay-skipped-definitions* nil))
   (multiple-value-bind (identifier history-commit)
@@ -1056,7 +1104,14 @@ the failure stays diagnosable after the tool call ends."
                (pathname (image-commit-script-pathname commit)))
           (setf *image-replay-skipped-definitions* nil)
           (handler-case
-              (let ((*package* (find-package '#:autolith)))
+              (let ((*package* (find-package '#:autolith))
+                    (*image-replay-context*
+                      (make-instance
+                       'image-replay-context
+                       :configuration configuration
+                       :lineage-source-commit (image-commit-source-commit commit)
+                       :image-source-commit
+                       (image-commit--base-source-commit nil))))
                 (load pathname))
             (error (condition)
               (push (cons pathname (format nil "~A" condition)) failures)))

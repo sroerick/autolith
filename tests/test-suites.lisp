@@ -367,7 +367,8 @@
   test-self-tuning-experiments
   test-standard-mutation-checker
   test-durable-self-mutation
-  test-durable-definition-publication-boundary)
+  test-durable-definition-publication-boundary
+  test-image-replay-stale-definitions)
 
 (define-test-suite generation
   test-generation-manifest

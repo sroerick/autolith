@@ -1620,6 +1620,201 @@
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-image-replay-stale-definitions () null)
+(defun test-image-replay-stale-definitions ()
+  "Test private replay skips definitions whose tracked base moved and keeps the rest."
+  (let* ((source-root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-replay-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (configuration (test-configuration-for-source-root source-root))
+         (source-pathname (merge-pathnames "src/definitions.lisp" source-root))
+         (package (find-package '#:autolith))
+         (previous-function (symbol-function 'test-self-target))
+         (previous-state-initialized-p *image-state-initialized-p*)
+         (previous-commit-identifier *active-image-commit-identifier*)
+         (previous-history-commit *active-image-history-commit*)
+         (previous-lineage-identifier *active-image-lineage-identifier*)
+         (previous-skipped-targets *image-replay-skipped-targets*)
+         (tracked-source
+           (format nil
+                   "(defun test-self-target ()~%  \"Return the tracked baseline.\"~%  0)"))
+         (reformatted-tracked-source
+           "(defun test-self-target ()   \"Return the tracked baseline.\"   0)")
+         (moved-source
+           "(defun test-self-target () \"Return the moved baseline.\" 0)")
+         (override-source
+           "(defun test-self-target () \"Return the private override.\" 7)")
+         (fresh-source
+           "(defun test-self-replay-fresh () \"Return the private addition.\" 11)")
+         (override-key
+           (let ((*package* package))
+             (definition-key (self-read-form override-source
+                                             :read-eval nil
+                                             :package package))))
+         (*image-commit-replay-probe-function*
+           (lambda (checked-configuration script identifier)
+             (declare (ignore checked-configuration script identifier))
+             nil)))
+    (labels ((write-tracked (source)
+               "Write SOURCE as the only tracked definition file."
+               (ensure-directories-exist source-pathname)
+               (with-open-file (stream source-pathname
+                                       :direction ':output
+                                       :if-exists ':supersede
+                                       :if-does-not-exist ':create
+                                       :external-format ':utf-8)
+                 (format stream "(in-package #:autolith)~2%~A~%" source)))
+
+             (reset ()
+               "Restore the baseline function and forget exploratory sources."
+               (setf (symbol-function 'test-self-target) previous-function)
+               (when (fboundp 'test-self-replay-fresh)
+                 (fmakunbound 'test-self-replay-fresh))
+               (let ((*package* package))
+                 (dolist (source (list override-source fresh-source))
+                   (remhash (definition-key
+                             (self-read-form source
+                                             :read-eval nil
+                                             :package package))
+                            *exploratory-definitions*))))
+
+             (replay (context source &rest arguments)
+               "Replay SOURCE under CONTEXT, returning skip messages and targets."
+               (let ((*image-replay-context* context)
+                     (*image-replay-skipped-definitions* nil)
+                     (*image-replay-skipped-targets* nil)
+                     (*package* package))
+                 (apply #'self-replay-definition "AUTOLITH" source arguments)
+                 (values *image-replay-skipped-definitions*
+                         *image-replay-skipped-targets*)))
+
+             (context (lineage image)
+               "Return a replay context for LINEAGE and IMAGE source revisions."
+               (make-instance 'image-replay-context
+                              :configuration configuration
+                              :lineage-source-commit lineage
+                              :image-source-commit image))
+
+             (installed-value (source)
+               "Return the live value of the function SOURCE defines, or NIL."
+               (if (search "fresh" source)
+                   (and (fboundp 'test-self-replay-fresh)
+                        (funcall 'test-self-replay-fresh))
+                   (funcall 'test-self-target)))
+
+             (manifest-entry (commit)
+               "Return COMMIT's replay entry for the override target."
+               (find-if (lambda (entry)
+                          (image-commit--entry-matches-p
+                           entry :definition override-key))
+                        (image-commit-entries commit))))
+      (unwind-protect
+           (progn
+             (write-tracked tracked-source)
+             (dolist (case
+                      (list
+                       (list "a matching recorded base replays"
+                             (context "a" "a") override-source
+                             (list :tracked reformatted-tracked-source) 7 nil)
+                       (list "a changed tracked definition is skipped"
+                             (context "a" "a") override-source
+                             (list :tracked moved-source) 0 "changed since")
+                       (list "a removed tracked definition is skipped"
+                             (context "a" "a") fresh-source
+                             (list :tracked "(defun test-self-replay-fresh () 0)")
+                             nil "was removed")
+                       (list "a newly tracked definition is skipped"
+                             (context "a" "a") override-source
+                             (list :tracked nil) 0 "now exists")
+                       (list "a new name with no recorded base replays"
+                             (context "a" "a") fresh-source
+                             (list :tracked nil) 11 nil)
+                       (list "a legacy entry replays on its lineage revision"
+                             (context "a" "a") override-source nil 7 nil)
+                       (list "a legacy entry is skipped on a moved revision"
+                             (context "a" "b") override-source nil 0
+                             "published against source a and this image runs b")
+                       (list "a legacy new name replays on a moved revision"
+                             (context "a" "b") fresh-source nil 11 nil)
+                       (list "a legacy entry replays under an unknown image revision"
+                             (context "a" nil) override-source nil 7 nil)
+                       (list "a replay without context installs as before"
+                             nil override-source
+                             (list :tracked moved-source) 7 nil)))
+               (destructuring-bind (label context source arguments expected fragment)
+                   case
+                 (reset)
+                 (multiple-value-bind (messages targets)
+                     (apply #'replay context source arguments)
+                   (test-assert (eql (installed-value source) expected)
+                                (format nil "~A: live definition" label))
+                   (test-assert
+                    (if fragment
+                        (and (= (length messages) 1)
+                             (search fragment (first messages))
+                             (= (length targets) 1))
+                        (and (null messages) (null targets)))
+                    (format nil "~A: skip report" label)))))
+             (reset)
+             (setf *image-state-initialized-p* nil
+                   *active-image-commit-identifier* nil
+                   *active-image-history-commit* nil)
+             (test-assert (null (image-state-load configuration :pristine-p t))
+                          "a fresh lineage starts without private state")
+             (self-install-definition configuration override-source)
+             (let* ((commit
+                      (image-commit-publish
+                       configuration
+                       :title "Override the tracked baseline"
+                       :mutation-records
+                       (image-commit-effective-pending-records configuration)))
+                    (entry (manifest-entry commit))
+                    (script (uiop:read-file-string
+                             (image-commit-script-pathname commit))))
+               (test-assert
+                (and entry
+                     (get-properties entry '(:tracked))
+                     (self--definition-sources-equal-p
+                      (getf entry :tracked) tracked-source package))
+                "publication records the tracked source the override shadows")
+               (test-assert (search ":tracked" script)
+                            "the replay script carries the recorded tracked base")
+               (write-tracked moved-source)
+               (reset)
+               (let ((failures (image-state-load configuration)))
+                 (test-assert
+                  (and (= (length failures) 1)
+                       (search "changed since" (rest (first failures)))
+                       (= (funcall 'test-self-target) 0)
+                       (equal *image-replay-skipped-targets*
+                              (list override-key))
+                       (string= *active-image-commit-identifier*
+                                (image-commit-identifier commit)))
+                  "startup skips and reports the override once tracked source moved")
+                 (test-assert (null (image-commit-base-entries configuration))
+                              "a skipped override leaves the next commit's base entries"))
+               (write-tracked tracked-source)
+               (reset)
+               (let ((failures (image-state-load configuration)))
+                 (test-assert
+                  (and (null failures)
+                       (= (funcall 'test-self-target) 7)
+                       (null *image-replay-skipped-targets*)
+                       (= (length (image-commit-base-entries configuration)) 1))
+                  "startup replays the override while tracked source matches"))))
+        (reset)
+        (setf *image-state-initialized-p* previous-state-initialized-p
+              *active-image-commit-identifier* previous-commit-identifier
+              *active-image-history-commit* previous-history-commit
+              *active-image-lineage-identifier* previous-lineage-identifier
+              *image-replay-skipped-targets* previous-skipped-targets)
+        (platform-delete-directory-tree *platform* source-root
+                                        :validate t
+                                        :if-does-not-exist ':ignore))))
+  nil)
+
 (-> test-durable-definition-publication-boundary () null)
 (defun test-durable-definition-publication-boundary ()
   "Test a post-publication failure does not undo selected live definition state."
