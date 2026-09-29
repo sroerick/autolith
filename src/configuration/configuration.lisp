@@ -474,7 +474,7 @@ exist yet, and is only put in directory form."
 (define-setting :codex-fast-mode-p (boolean-setting)
   :label "Codex Fast mode"
   :group :model
-  :documentation "Whether Codex requests opt in to Fast mode at double plan usage."
+  :documentation "Whether Codex requests opt in to the Fast service tier, which is faster and counts more heavily against plan usage."
   :scope :durable
   :environment "AUTOLITH_CODEX_FAST_MODE")
 

@@ -265,11 +265,13 @@
     "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
 
-;; Fast capability metadata from https://github.com/openai/codex at
-;; 27969c0ae9c1ec23e359ff5133b4c36a8dd5b1ac for GPT-6 Sol and Luna, and
-;; 287587c32c9cbc1e78edbf2aaae6a6d84f5b0c56 for GPT-5.6.
+;; Fast capability metadata from https://github.com/openai/codex
+;; codex-rs/models-manager/models.json at
+;; 18194bfd3534ca567d886eac454028dafaa68b6c: every GPT-6 and GPT-5.6 entry
+;; lists the priority service tier named Fast.
 (defparameter *codex-fast-mode-models*
-  '("gpt-6-sol" "gpt-6-luna" "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
+  '("gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
+    "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
   "Codex model identifiers verified to support the Fast service tier.")
 
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and

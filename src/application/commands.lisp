@@ -790,7 +790,7 @@ the effort with the same model even when the model was never chosen."
        (application-present
         application
         (if available-p
-            "Codex Fast mode is enabled and saved. It uses 2x plan usage."
+            "Codex Fast mode is enabled and saved. Fast responses count more heavily against plan usage."
             (format nil
                     "Codex Fast mode preference is enabled and saved. ~
                      The current model uses the standard path."))))
@@ -2511,7 +2511,7 @@ the settings page and the slash commands behave identically."
 (define-application-command application--builtin-fast-command
     (:name "/fast"
      :description "show or change Codex Fast mode"
-     :tip "sets Codex Fast mode: (fast \"on\") requests priority service at 2x plan usage; (fast \"off\") requests normal service."
+     :tip "sets Codex Fast mode: (fast \"on\") requests priority service, which counts more heavily against plan usage; (fast \"off\") requests normal service."
      :busy-behavior :apply
      :terminal-behavior :shared
      :callable t
