@@ -463,7 +463,8 @@
          (root (test-configuration-root base-configuration))
          (configuration
            (configuration-copy base-configuration
-                                 :working-directory root)))
+                                 :working-directory root
+                                 :reasoning-effort "ultra")))
     (unwind-protect
          (let* ((conversation (conversation-create configuration
                                                    :identifier "request-shape"))

@@ -237,8 +237,8 @@
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith)
                         :durable-p nil)))
-    (test-assert (string= (config :model configuration) "gpt-5.6-sol")
-                 "the default model is gpt-5.6-sol")
+    (test-assert (string= (config :model configuration) "gpt-6-sol")
+                 "the default model is gpt-6-sol")
     (let ((*default-model* "gpt-5.6-luna"))
       (test-assert
        (string= (config :model
@@ -294,8 +294,8 @@
        (working-directory-error (condition)
          (eq (working-directory-error-stage condition) ':validation)))
      "working-directory copies reject files with a structured condition")
-    (test-assert (string= (config :reasoning-effort configuration) "ultra")
-                 "the default reasoning effort is ultra")
+    (test-assert (string= (config :reasoning-effort configuration) "high")
+                 "the default reasoning effort is high")
     (test-assert (not (config :immutable-p configuration))
                  "ordinary configuration enables active-image mutation tools")
     (test-assert
@@ -304,11 +304,18 @@
        (configuration-copy configuration :immutable-p t) :model
        "gpt-5.6-luna"))
      "configuration clones preserve immutable mode")
-    (test-assert (string= (configuration-wire-effort configuration) "max")
-                 "ultra maps to the provider max effort")
+    (test-assert (string= (configuration-wire-effort configuration) "high")
+                 "the default effort reaches the provider unchanged")
     (test-assert
      (string= (configuration-wire-effort
-               (configuration-copy configuration :reasoning-effort "none"))
+               (configuration-copy configuration :reasoning-effort "ultra"))
+              "max")
+     "ultra maps to the provider max effort")
+    (test-assert
+     (string= (configuration-wire-effort
+               (configuration-copy configuration
+                                   :model "gpt-5.6-terra"
+                                   :reasoning-effort "none"))
               "none")
      "none is passed through as a provider reasoning effort")
     (test-assert (= (json-get (json-object "answer" 42) "answer") 42)

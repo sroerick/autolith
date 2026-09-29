@@ -938,10 +938,11 @@
          (let ((conversation (conversation-create configuration
                                                   :identifier "model-choice")))
            (test-assert
-            (string= (conversation-model conversation) "gpt-5.6-sol")
+            (string= (conversation-model conversation) *default-model*)
             "new conversations inherit the configured model")
            (test-assert
-            (string= (conversation-reasoning-effort conversation) "ultra")
+            (string= (conversation-reasoning-effort conversation)
+                     *default-reasoning-effort*)
             "new conversations inherit the configured effort")
            (conversation-set-model-selection conversation "gpt-5.6-luna" "high")
            (test-assert

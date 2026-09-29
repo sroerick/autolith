@@ -5,10 +5,10 @@
 (defparameter *autolith-version* "0.52.0"
   "The user-visible Autolith version.")
 
-(defparameter *default-model* "gpt-5.6-sol"
+(defparameter *default-model* "gpt-6-sol"
   "The default model requested from the subscription provider.")
 
-(defparameter *default-reasoning-effort* "ultra"
+(defparameter *default-reasoning-effort* "high"
   "The user-visible default reasoning effort.")
 
 (defparameter *codex-responses-endpoint*
@@ -261,7 +261,8 @@
 ;; ql:quickload must not reset it to the built-in list and invalidate
 ;; the very model the image is running on.
 (defvar *supported-models*
-  '("gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5"
+  '("gpt-6-sol" "gpt-6-luna" "gpt-6-astra"
+    "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5"
     "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
 
@@ -275,13 +276,16 @@
   "Codex model identifiers verified to support the Fast service tier.")
 
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
-;; confirmed in Codex reference commit 0fb559f0f6e231a88ac02ea002d3ecd248e2b515.
+;; confirmed in Codex reference commit 18194bfd3534ca567d886eac454028dafaa68b6c.
 ;; The Grok window comes from default_models.json in grok-build reference
 ;; commit 47348d13.
 ;; DEFVAR for the same reason as *SUPPORTED-MODELS*: the provider
 ;; registry rewrites this table at runtime.
 (defvar *model-context-windows*
-  '(("gpt-5.6-sol"   . 272000)
+  '(("gpt-6-sol"     . 272000)
+    ("gpt-6-luna"    . 272000)
+    ("gpt-6-astra"   . 272000)
+    ("gpt-5.6-sol"   . 272000)
     ("gpt-5.6-luna"  . 272000)
     ("gpt-5.6-terra" . 272000)
     ("grok-4.5"      . 500000)

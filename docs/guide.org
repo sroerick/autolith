@@ -741,8 +741,8 @@ and do not get attached to your messages.
 
 The status line keeps a context meter visible while idle. It shows used tokens
 and the full model window. =|= marks the automatic compaction point. The
-ChatGPT subscription catalog currently reports a 272K-token window for GPT-5.6
-Sol, Luna, and Terra, which compact at about 218K tokens by default:
+ChatGPT subscription catalog currently reports a 272K-token window for the
+GPT-6 and GPT-5.6 models, which compact at about 218K tokens by default:
 
 #+BEGIN_EXAMPLE
 ctx [==========|..] 218K / 272K used

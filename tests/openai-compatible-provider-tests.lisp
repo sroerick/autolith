@@ -791,7 +791,12 @@
            (test-assert (test-fixture-permissions-p *platform* pathname ':private-file)
             "the provider-key store is private to the user"))
          (let* ((model "test/chat-model")
-                (provider-configuration (configuration-copy configuration :model model))
+                ;; Select the model from an effort it does not offer so the
+                ;; selection has to fall back to the registered efforts.
+                (provider-configuration
+                  (configuration-copy
+                   (configuration-copy configuration :reasoning-effort "ultra")
+                   :model model))
                 (provider (provider-create provider-configuration))
                 (registration (provider-registration-find "test-openai"))
                 (metadata (provider-model-for model))

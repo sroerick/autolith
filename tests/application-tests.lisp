@@ -7292,7 +7292,7 @@
               (string= (getf preferences :reasoning-effort) "low")
               "switching effort saves the global effort default")
              (test-assert
-              (string= (getf preferences :model) "gpt-5.6-sol")
+              (string= (getf preferences :model) *default-model*)
               "switching effort saves the accompanying model default"))
            (let ((updated (application-configuration application)))
              (test-assert (equal (config :source-root updated)
@@ -7324,7 +7324,7 @@
                                                       (getf item :description))
                                                :test #'string=)
                                          :name)
-                                   "gpt-5.6-sol")
+                                   *default-model*)
                           "the active model is marked current"))
            (application-set-model application "gpt-5.6-terra")
            (test-assert (string= (config :model
