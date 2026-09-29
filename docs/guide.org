@@ -827,6 +827,15 @@ models keep the preference but use the standard path. Set
 =AUTOLITH_CODEX_FAST_MODE=on= or =off= to override the saved choice for one
 process; while it is set, =/fast on= and =/fast off= are unavailable.
 
+A request that fails before the model has produced anything is retried up to
+six times with jittered delays, since the failed attempt cost only the wait.
+Once reasoning or output has started streaming, every reconnect bills a fresh
+generation of the same prompt, so at most two such retries are made before the
+request fails with a stream-abandoned error. Every failed attempt is recorded
+in the conversation next to its request number with the attempt count, the
+elapsed seconds, whether output had been received, and the provider's
+identifiers, so retry storms can be audited after the fact.
+
 ChatGPT Codex uses standard Responses requests and native Responses compaction.
 Normal requests enable provider parallel tool calls. Autolith executes independent
 calls concurrently, then records their results in provider wire order. Calls

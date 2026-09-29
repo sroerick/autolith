@@ -1783,6 +1783,171 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> provider-tests--stream-failure () condition)
+(defun provider-tests--stream-failure ()
+  "Return a retryable stream failure carrying identifiers for the audit trail."
+  (make-condition 'response-stream-error
+                  :message "Injected stream interruption."
+                  :status nil
+                  :code nil
+                  :request-id "req-stream"
+                  :response-id "resp-stream"
+                  :response nil))
+
+(-> test-provider-streaming-retry-budget () null)
+(defun test-provider-streaming-retry-budget ()
+  "Test failures after streamed output stop early while cold failures keep the full ladder."
+  (let ((*provider-maximum-transient-retries* 6)
+        (*provider-maximum-streaming-retries* 2))
+    ;; Every attempt streams a delta, then dies: two streaming retries are
+    ;; permitted, and the third such failure abandons the request.
+    (let ((attempts 0)
+          (events nil)
+          (outcome nil))
+      (handler-case
+          (provider--call-with-transient-retries
+           (lambda (event-callback)
+             (incf attempts)
+             (funcall event-callback
+                      (make-instance 'assistant-delta-event :text "partial"))
+             (error (provider-tests--stream-failure)))
+           (lambda (event)
+             (push event events))
+           :sleep-function (lambda (delay) (declare (ignore delay)) nil)
+           :random-state (make-random-state t))
+        (provider-stream-abandoned (condition)
+          (setf outcome condition)))
+      (setf events (nreverse events))
+      (test-assert (and outcome (= attempts 3))
+                   "the third failure after streamed output abandons the request")
+      (test-assert
+       (and (= (provider-stream-abandoned-attempts outcome) 3)
+            (string= (provider-error-request-id outcome) "req-stream")
+            (string= (provider-error-response-id outcome) "resp-stream")
+            (not (typep outcome 'provider-retryable-error)))
+       "the abandoned stream keeps the last failure's identifiers and is terminal")
+      (let ((failures (remove-if-not
+                       (lambda (event)
+                         (typep event 'provider-attempt-failed-event))
+                       events)))
+        (test-assert
+         (and (= (length failures) 3)
+              (equal (mapcar #'provider-attempt-failed-event-attempt failures)
+                     '(1 2 3))
+              (every #'provider-attempt-failed-event-output-received-p failures)
+              (every #'provider-attempt-failed-event-retryable-p failures)
+              (every (lambda (event)
+                       (eq (type-of
+                            (provider-attempt-failed-event-condition event))
+                           'response-stream-error))
+                     failures))
+         "every streamed attempt reports its failure with output received")
+        (test-assert
+         (= (count-if (lambda (event) (typep event 'provider-retry-event))
+                      events)
+            4)
+         "only the two permitted streaming retries produce reconnect events")))
+    ;; Cold failures never touch the streaming budget.
+    (let ((attempts 0)
+          (events nil))
+      (test-assert
+       (eq ':ok
+           (provider--call-with-transient-retries
+            (lambda (event-callback)
+              (declare (ignore event-callback))
+              (incf attempts)
+              (if (<= attempts 5)
+                  (error (provider-tests--stream-failure))
+                  ':ok))
+            (lambda (event)
+              (push event events))
+            :sleep-function (lambda (delay) (declare (ignore delay)) nil)
+            :random-state (make-random-state t)))
+       "failures before any output use the full transient ladder")
+      (test-assert
+       (and (= attempts 6)
+            (notany #'provider-attempt-failed-event-output-received-p
+                    (remove-if-not
+                     (lambda (event)
+                       (typep event 'provider-attempt-failed-event))
+                     events)))
+       "cold attempt failures report no streamed output"))
+    ;; Output tracking resets per attempt: one streamed failure followed by
+    ;; cold failures counts one streaming failure only.
+    (let ((attempts 0))
+      (test-assert
+       (eq ':ok
+           (provider--call-with-transient-retries
+            (lambda (event-callback)
+              (incf attempts)
+              (cond
+                ((= attempts 1)
+                 (funcall event-callback
+                          (make-instance 'reasoning-delta-event :text "think"))
+                 (error (provider-tests--stream-failure)))
+                ((<= attempts 4)
+                 (error (provider-tests--stream-failure)))
+                (t
+                 ':ok)))
+            (lambda (event) (declare (ignore event)) nil)
+            :sleep-function (lambda (delay) (declare (ignore delay)) nil)
+            :random-state (make-random-state t)))
+       "output received on one attempt does not taint later cold attempts")))
+  nil)
+
+(-> test-agent-attempt-failure-metadata () null)
+(defun test-agent-attempt-failure-metadata ()
+  "Test failed provider attempts persist an audit record under their request."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create configuration :identifier "attempt-audit"))
+                (statuses nil)
+                (observer (make-instance 'callback-agent-observer
+                                         :status-callback
+                                         (lambda (status details)
+                                           (push (list status details) statuses)
+                                           nil)))
+                (callback (agent--provider-event-callback
+                           observer
+                           :conversation conversation
+                           :request-number 4)))
+           (funcall callback
+                    (make-instance 'provider-attempt-failed-event
+                                   :attempt 2
+                                   :elapsed-seconds 17
+                                   :output-received-p t
+                                   :retryable-p t
+                                   :condition (provider-tests--stream-failure)))
+           (let ((records nil))
+             (conversation-map-records
+              conversation
+              (lambda (record)
+                (when (eq (first record) ':provider)
+                  (push (getf (rest record) :metadata) records))))
+             (let ((metadata (first records)))
+               (test-assert
+                (and (= (length records) 1)
+                     (= (getf metadata :request-number) 4)
+                     (= (getf metadata :attempt) 2)
+                     (= (getf metadata :elapsed-seconds) 17)
+                     (eq (getf metadata :output-received-p) t)
+                     (eq (getf metadata :retryable-p) t)
+                     (string= (getf (getf metadata :failure) :request-id)
+                              "req-stream")
+                     (string= (getf (getf metadata :failure) :response-id)
+                              "resp-stream"))
+                "a failed attempt persists its audit record under the request number")))
+           (test-assert
+            (and (= (length statuses) 1)
+                 (eq (first (first statuses)) ':provider-attempt-failed)
+                 (= (getf (second (first statuses)) :attempt) 2))
+            "a failed attempt is reported to the observer"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-provider-persistent-transient-retries () null)
 (defun test-provider-persistent-transient-retries ()
   "Test bounded jittered retries and complete-attempt DNS normalization."
@@ -1793,7 +1958,8 @@
     (test-assert
      (eq ':ok
          (provider--call-with-transient-retries
-          (lambda ()
+          (lambda (event-callback)
+            (declare (ignore event-callback))
             (incf attempts)
             (when (<= attempts 3)
               (error 'provider-retryable-error
@@ -1814,6 +1980,9 @@
     (test-assert (and (= (length sleeps) 3)
                       (every (lambda (delay) (<= 1 delay 60)) sleeps))
                  "provider recovery uses bounded jitter delays")
+    (setf events (remove-if-not (lambda (event)
+                                  (typep event 'provider-retry-event))
+                                events))
     (test-assert
      (equal (mapcar #'provider-retry-event-attempt events)
             '(1 1 2 2 3 3))
@@ -1837,7 +2006,8 @@
          (observed-condition nil))
     (handler-case
         (provider--call-with-transient-retries
-         (lambda ()
+         (lambda (event-callback)
+           (declare (ignore event-callback))
            (incf attempts)
            (error injected-condition))
          (lambda (event)
@@ -1846,7 +2016,9 @@
          :random-state (make-random-state t))
       (provider-retryable-error (condition)
         (setf observed-condition condition)))
-    (setf events (nreverse events)
+    (setf events (remove-if-not (lambda (event)
+                                  (typep event 'provider-retry-event))
+                                (nreverse events))
           sleeps (nreverse sleeps))
     (test-assert (eq observed-condition injected-condition)
                  "retry exhaustion preserves the final provider condition")
@@ -1868,7 +2040,8 @@
      (handler-case
          (progn
            (provider--call-with-transient-retries
-            (lambda ()
+            (lambda (event-callback)
+              (declare (ignore event-callback))
               (incf attempts)
               (error 'provider-incomplete-response
                      :message "Injected incomplete response."
@@ -1887,8 +2060,12 @@
      "incomplete provider responses fail without entering the retry ladder")
     (test-assert (= attempts 1)
                  "incomplete provider responses make exactly one attempt")
-    (test-assert (and (null events) (null sleeps))
-                 "incomplete provider responses emit no retry activity"))
+    (test-assert (and (= (length events) 1)
+                      (typep (first events) 'provider-attempt-failed-event)
+                      (not (provider-attempt-failed-event-retryable-p
+                            (first events)))
+                      (null sleeps))
+                 "incomplete provider responses report one terminal attempt without retry activity"))
   nil)
 
 (-> provider-tests--connected-stream-pair () (values stream t t t))

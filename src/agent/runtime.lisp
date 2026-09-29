@@ -589,11 +589,35 @@ needs the few most recent calls to recognize an oscillation."
     (t
      value)))
 
-(-> agent--provider-event-callback (agent-observer) function)
-(defun agent--provider-event-callback (observer)
-  "Return a provider callback that forwards streaming presentation events to OBSERVER."
+(-> agent--provider-event-callback
+    (agent-observer &key (:conversation (option conversation))
+                         (:request-number (option integer)))
+    function)
+(defun agent--provider-event-callback
+    (observer &key conversation request-number)
+  "Return a provider callback that forwards streaming presentation events to OBSERVER.
+
+Failed attempts are reported as :PROVIDER-ATTEMPT-FAILED and, when
+CONVERSATION is given, persisted as provider metadata under REQUEST-NUMBER so
+retries stay auditable next to the request they belong to."
   (lambda (event)
     (typecase event
+      (provider-attempt-failed-event
+       (let ((details
+               (list :request-number request-number
+                     :attempt (provider-attempt-failed-event-attempt event)
+                     :elapsed-seconds
+                     (provider-attempt-failed-event-elapsed-seconds event)
+                     :output-received-p
+                     (provider-attempt-failed-event-output-received-p event)
+                     :retryable-p
+                     (provider-attempt-failed-event-retryable-p event)
+                     :failure
+                     (agent--provider-error-metadata
+                      (provider-attempt-failed-event-condition event)))))
+         (when conversation
+           (conversation-append-provider-metadata conversation details))
+         (agent-observer-status observer :provider-attempt-failed details)))
       (provider-retry-event
        (agent-observer-status
         observer
@@ -1526,7 +1550,11 @@ loop, so compaction ahead of the user message shares the turn's budget."
                               (tool-registry-provider-schemas
                                (agent-tool-registry agent)))
                           #())
-                      :event-callback (agent--provider-event-callback observer)
+                      :event-callback
+                      (agent--provider-event-callback
+                       observer
+                       :conversation conversation
+                       :request-number request-number)
                       :goal-context goal-context))
                  (provider-error (condition)
                    (conversation-append-provider-metadata
