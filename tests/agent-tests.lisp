@@ -2284,6 +2284,21 @@
                                       :if-does-not-exist ':ignore)))
   nil)
 
+(-> agent-tests--request-numbers (conversation) list)
+(defun agent-tests--request-numbers (conversation)
+  "Return CONVERSATION's persisted provider request numbers with their compaction kinds."
+  (let ((numbers nil))
+    (conversation-map-records
+     conversation
+     (lambda (record)
+       (let ((metadata (and (eq (first record) ':provider)
+                            (getf (rest record) :metadata))))
+         (when (and metadata (getf metadata :request-number))
+           (push (list (getf metadata :request-number)
+                       (getf metadata :compaction))
+                 numbers)))))
+    (nreverse numbers)))
+
 (-> test-agent-compaction-missing-summary () null)
 (defun test-agent-compaction-missing-summary ()
   "Test empty compaction output is a recoverable provider protocol failure."
@@ -2392,6 +2407,10 @@
                                      (conversation-pathname conversation)))
                               :key #'first)
                         "compaction persists one durable summary record")
+           (test-assert
+            (equal (agent-tests--request-numbers conversation)
+                   '((1 nil) (1 :summary) (2 nil)))
+            "the summary request is metered ahead of the user request")
            (test-assert (search "A previous segment"
                                 (json-get
                                  (aref (json-get
@@ -2483,7 +2502,11 @@
              "the active provider omits the redundant portable handoff")
            (test-assert
             (= (length (conversation-input-items-for-family conversation ':grok)) 3)
-            "another provider receives the portable handoff and new messages"))
+            "another provider receives the portable handoff and new messages")
+           (test-assert
+            (equal (agent-tests--request-numbers conversation)
+                   '((1 nil) (1 :native) (2 :summary) (3 nil)))
+            "both compaction requests are metered ahead of the user request"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 

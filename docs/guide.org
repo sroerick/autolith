@@ -755,6 +755,9 @@ regardless of the meter. It uses the same provider-native checkpoint and portabl
 summary path as automatic compaction. During an active turn, the command waits
 in the idle queue. An empty conversation needs no provider request. Compaction
 adds a durable checkpoint without adding a user message or starting a model turn.
+The native checkpoint and the portable summary are two provider requests. Each
+is recorded with its usage as a numbered request of the turn, so the request
+count and the persisted usage cover compaction work instead of hiding it.
 
 Providers bill context served from their prompt cache at a fraction of the
 uncached input price, so a request that re-reads context the previous request

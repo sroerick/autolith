@@ -985,7 +985,7 @@ act on instead of blocking on a dead connection indefinitely."
 
 (-> provider--decode-native-compaction-response
     (codex-subscription-provider t &key (:status integer) (:headers t))
-    (option json-object))
+    (values (option json-object) (option json-object)))
 (defun provider--decode-native-compaction-response
     (provider body &key status headers)
   "Decode BODY and return its newest normalized opaque compaction output item.
@@ -993,7 +993,8 @@ act on instead of blocking on a dead connection indefinitely."
 The endpoint can return a compacted transcript containing ordinary output,
 multiple checkpoint encodings, or no opaque checkpoint. The newest usable
 checkpoint carries native state; an opaque-free transcript uses the portable
-summary fallback."
+summary fallback. The second value is the response usage object, when the
+endpoint reported one, so the compaction request can be metered."
   (let ((source (provider--error-body-text body)))
     (unless (non-empty-string-p source)
       (provider--signal-invalid-native-compaction provider status headers))
@@ -1015,17 +1016,22 @@ summary fallback."
                       (lambda (item)
                         (native-compaction-item-canonicalize
                          (provider-normalize-output-item provider item)))
-                      output))))
-          (first (last items)))))))
+                      output)))
+              (usage (json-get response "usage")))
+          (values (first (last items))
+                  (and (json-object-p usage) usage)))))))
 
 (-> provider-attempt-native-compaction
     (codex-subscription-provider conversation
      &key (:tool-namespaces vector) (:force-refresh boolean))
-    (option json-object))
+    (values (option json-object) (option json-object)))
 (defgeneric provider-attempt-native-compaction
     (provider conversation &key tool-namespaces force-refresh)
   (:documentation
-   "Perform one authenticated Codex native compaction request."))
+   "Perform one authenticated Codex native compaction request.
+
+Return the newest opaque checkpoint item and the response usage as two
+values."))
 
 (defmethod provider-attempt-native-compaction
     ((provider codex-subscription-provider)
@@ -1072,7 +1078,10 @@ summary fallback."
     ((provider codex-subscription-provider)
      (conversation conversation)
      &key tool-namespaces event-callback)
-  "Compact CONVERSATION through the standard Responses compact endpoint."
+  "Compact CONVERSATION through the standard Responses compact endpoint.
+
+Return the checkpoint item and the request's usage as two values, or NIL when
+this endpoint is unavailable."
   (declare (type vector tool-namespaces)
            (type function event-callback))
   (handler-case

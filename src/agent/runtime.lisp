@@ -532,35 +532,38 @@ needs the few most recent calls to recognize an oscillation."
          (conversation-flush-async-lisp-events conversation)
          ;; Compact before appending CONTENT so the fresh question survives
          ;; verbatim instead of being folded into the summary.
-         (when (agent-should-compact-p agent)
-           (agent-compact-conversation
-            agent observer
-            :tool-allowlist tool-allowlist
-            :tool-restriction-p tool-restriction-p))
-         (multiple-value-bind (item record)
-             (conversation-append-user-message
-              conversation
-              content
-              :pending-input-identifier pending-input-identifier
-              :automatic-p automatic-p)
-           (declare (ignore item))
-           (agent-observer-status
-            observer
-            :user-message-persisted
-            (append
-             (list :sequence (getf (rest record) :seq)
-                   :time (getf (rest record) :time))
-             (when pending-input-identifier
-               (list :pending-input-identifier pending-input-identifier)))))
-         (unwind-protect
-              (agent--run-provider-loop
-               agent observer
-               :goal-context goal-context
-               :tools-p tools-p
-               :tool-allowlist tool-allowlist
-               :tool-restriction-p tool-restriction-p)
-           (conversation-clear-ephemeral-input-items conversation)
-           (setf (conversation-turn-state conversation) nil)))))))
+         (let ((compaction-requests
+                 (if (agent-should-compact-p agent)
+                     (agent-compact-conversation
+                      agent observer
+                      :tool-allowlist tool-allowlist
+                      :tool-restriction-p tool-restriction-p)
+                     0)))
+           (multiple-value-bind (item record)
+               (conversation-append-user-message
+                conversation
+                content
+                :pending-input-identifier pending-input-identifier
+                :automatic-p automatic-p)
+             (declare (ignore item))
+             (agent-observer-status
+              observer
+              :user-message-persisted
+              (append
+               (list :sequence (getf (rest record) :seq)
+                     :time (getf (rest record) :time))
+               (when pending-input-identifier
+                 (list :pending-input-identifier pending-input-identifier)))))
+           (unwind-protect
+                (agent--run-provider-loop
+                 agent observer
+                 :goal-context goal-context
+                 :tools-p tools-p
+                 :tool-allowlist tool-allowlist
+                 :tool-restriction-p tool-restriction-p
+                 :request-number compaction-requests)
+             (conversation-clear-ephemeral-input-items conversation)
+             (setf (conversation-turn-state conversation) nil))))))))
 
 
 ;;;; -- Provider and Persistence Flow --
@@ -1319,19 +1322,51 @@ tool registry reaches the very next provider request."
   (>= (conversation-last-total-tokens (agent-conversation agent))
       (configuration-compaction-token-limit (agent-configuration agent))))
 
+(-> agent--note-compaction-request
+    (agent agent-observer &key (:request-number (integer 1))
+                               (:kind (member :native :summary))
+                               (:usage t)
+                               (:response-id (option string)))
+    null)
+(defun agent--note-compaction-request
+    (agent observer &key request-number kind usage response-id)
+  "Persist and report one compaction request's USAGE under REQUEST-NUMBER.
+
+The native checkpoint request re-reads the whole prompt and the summary
+request generates output under the configured effort, so both stay visible
+to usage accounting instead of hiding behind the compaction record."
+  (let ((details
+          (list :request-number request-number
+                :compaction kind
+                :response-id response-id
+                :usage (agent--portable-value
+                        (provider-usage-normalize usage)))))
+    (conversation-append-provider-metadata (agent-conversation agent) details)
+    (agent-observer-status observer :compaction-request-completed details))
+  nil)
+
 (-> agent-compact-conversation
     (agent agent-observer &key (:tool-allowlist (option list))
-                               (:tool-restriction-p boolean))
-    null)
+                               (:tool-restriction-p boolean)
+                               (:request-number (integer 0)))
+    (integer 0))
 (defun agent-compact-conversation
-    (agent observer &key tool-allowlist (tool-restriction-p nil))
+    (agent observer
+     &key tool-allowlist (tool-restriction-p nil) (request-number 0))
   "Compact AGENT's conversation with native state when the provider supports it.
 
 A supported native checkpoint becomes the input to the portable summarization
 side channel, avoiding a second upload of the full pre-compaction history. The
-durable summary remains a handoff for another provider family."
+durable summary remains a handoff for another provider family.
+
+Each provider request is metered under the next number after REQUEST-NUMBER
+once the summary is known to be usable, so a failed compaction leaves no
+trace. Return the number of requests issued so the turn's request count
+covers them."
   (let ((conversation (agent-conversation agent))
-        (*request-context-hurry-up-p* (agent-hurry-up-p agent)))
+        (*request-context-hurry-up-p* (agent-hurry-up-p agent))
+        (issued 0)
+        (native-usage nil))
     (agent-observer-status
      observer
      :compaction-started
@@ -1339,20 +1374,24 @@ durable summary remains a handoff for another provider family."
     (let* ((*provider-hosted-tools-enabled-p* (not tool-restriction-p))
            (provider (agent-provider agent))
            (native-item
-             (provider-native-compact-conversation
-              provider
-              conversation
-              :tool-namespaces
-              (if tool-restriction-p
-                  (tool-registry-provider-schemas
-                   (agent-tool-registry agent)
-                   :canonical-names tool-allowlist)
-                  (tool-registry-provider-schemas
-                   (agent-tool-registry agent)))
-              :event-callback
-              (lambda (event)
-                (declare (ignore event))
-                (agent-observer-status observer :provider-progress nil))))
+             (multiple-value-bind (item usage)
+                 (provider-native-compact-conversation
+                  provider
+                  conversation
+                  :tool-namespaces
+                  (if tool-restriction-p
+                      (tool-registry-provider-schemas
+                       (agent-tool-registry agent)
+                       :canonical-names tool-allowlist)
+                      (tool-registry-provider-schemas
+                       (agent-tool-registry agent)))
+                  :event-callback
+                  (lambda (event)
+                    (declare (ignore event))
+                    (agent-observer-status observer :provider-progress nil)))
+               (when item
+                 (setf native-usage usage))
+               item))
             (summary-conversation
               (if native-item
                   (conversation-native-compaction-summary-view
@@ -1376,6 +1415,20 @@ durable summary remains a handoff for another provider family."
                :request-id nil
                :response-id (provider-result-response-id result)
                :response nil))
+      (when native-item
+        (incf issued)
+        (agent--note-compaction-request
+         agent observer
+         :request-number (+ request-number issued)
+         :kind ':native
+         :usage native-usage))
+      (incf issued)
+      (agent--note-compaction-request
+       agent observer
+       :request-number (+ request-number issued)
+       :kind ':summary
+       :usage (provider-result-usage result)
+       :response-id (provider-result-response-id result))
       (if native-item
           (conversation-append-native-compaction
            conversation native-item
@@ -1386,22 +1439,27 @@ durable summary remains a handoff for another provider family."
        observer
        :compaction-completed
        (list :summary-characters (length summary)
-             :native-p (not (null native-item))))))
-  nil)
+             :native-p (not (null native-item))
+             :provider-requests issued)))
+    issued))
 
 (-> agent--run-provider-loop
     (agent agent-observer &key (:goal-context (option string))
                           (:tools-p boolean)
                           (:tool-allowlist (option list))
-                          (:tool-restriction-p boolean))
+                          (:tool-restriction-p boolean)
+                          (:request-number (integer 0)))
     provider-result)
 (defun agent--run-provider-loop
     (agent observer
-     &key goal-context (tools-p t) tool-allowlist (tool-restriction-p nil))
-  "Run provider and optional tool rounds until AGENT's turn completes."
+     &key goal-context (tools-p t) tool-allowlist (tool-restriction-p nil)
+          (request-number 0))
+  "Run provider and optional tool rounds until AGENT's turn completes.
+
+REQUEST-NUMBER counts provider requests the turn already issued before the
+loop, so compaction ahead of the user message shares the turn's budget."
   (let ((seen-call-identifiers (make-hash-table :test #'equal))
         (storm-state (agent-tool-storm-state-create))
-        (request-number 0)
         (tool-rounds 0)
         (tool-calls 0)
         (maximum-output-tokens nil))
@@ -1416,10 +1474,12 @@ durable summary remains a handoff for another provider family."
                (conversation-identifier (agent-conversation agent))
                :request-number request-number))
       (when (agent-should-compact-p agent)
-        (agent-compact-conversation
-         agent observer
-         :tool-allowlist tool-allowlist
-         :tool-restriction-p tool-restriction-p))
+        (incf request-number
+              (agent-compact-conversation
+               agent observer
+               :tool-allowlist tool-allowlist
+               :tool-restriction-p tool-restriction-p
+               :request-number request-number)))
       (when (and tools-p (not tool-restriction-p))
         (mcp-tool-registry-refresh
          (agent-tool-registry agent)

@@ -966,8 +966,9 @@
                    (equal (scripted-provider-tool-schema-counts provider) '(0)))
               "manual compaction makes one tool-free summary request")
              (test-assert
-              (= (conversation-next-sequence conversation) (1+ sequence-before))
-              "manual compaction appends one checkpoint without starting a user turn")
+              (= (conversation-next-sequence conversation)
+                 (+ sequence-before (if native-p 3 2)))
+              "manual compaction appends its metered requests and one checkpoint without starting a user turn")
              (test-assert
               (eq (first (first (last records-after)))
                   (if native-p ':native-compaction ':summary))
