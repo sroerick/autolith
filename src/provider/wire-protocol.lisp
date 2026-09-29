@@ -77,24 +77,42 @@ stay available because they do not depend on provider web search."
 
 (-> provider-deferred-tool-model-p (string) boolean)
 (defun provider-deferred-tool-model-p (model)
-  "Return true when MODEL names documented GPT-5.4 or later."
+  "Return true when MODEL names documented GPT-5.4 or later.
+
+The name carries a major version and an optional dotted minor version, so
+gpt-5.6-terra and gpt-6-sol both qualify while gpt-5.3-codex does not. The
+Codex model catalog at https://github.com/openai/codex commit
+18194bfd3534ca567d886eac454028dafaa68b6c marks every GPT-5.6 and GPT-6 entry
+with supports_search_tool."
   (handler-case
       (let* ((major-start 4)
              (major-end (and (uiop:string-prefix-p "gpt-" model)
-                             (position #\. model :start major-start)))
-             (minor-start (and major-end (1+ major-end)))
-             (minor-end (and minor-start
-                             (position-if-not #'digit-char-p model
-                                              :start minor-start)))
+                             (or (position-if-not #'digit-char-p model
+                                                  :start major-start)
+                                 (length model))))
              (major (and major-end
+                         (> major-end major-start)
                          (parse-integer model
                                         :start major-start
                                         :end major-end)))
-             (minor (and minor-start
-                         (> (or minor-end (length model)) minor-start)
-                         (parse-integer model
-                                        :start minor-start
-                                        :end minor-end))))
+             (minor-start (and major
+                               (< major-end (length model))
+                               (char= (char model major-end) #\.)
+                               (1+ major-end)))
+             (minor-end (and minor-start
+                             (position-if-not #'digit-char-p model
+                                              :start minor-start)))
+             (minor (cond
+                      ((null major)
+                       nil)
+                      ((null minor-start)
+                       0)
+                      ((> (or minor-end (length model)) minor-start)
+                       (parse-integer model
+                                      :start minor-start
+                                      :end minor-end))
+                      (t
+                       nil))))
         (and major minor
              (or (> major 5)
                  (and (= major 5) (>= minor 4)))

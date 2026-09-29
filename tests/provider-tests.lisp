@@ -294,6 +294,37 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-provider-deferred-tool-models () null)
+(defun test-provider-deferred-tool-models ()
+  "Test the deferred-tool capability gate over registered and hypothetical names."
+  (dolist (registered-model
+           (provider-registration-models (provider-registration-find "chatgpt")))
+    (test-assert
+     (provider-deferred-tool-model-p (provider-model-name registered-model))
+     (format nil "registered Codex model ~A defers tool loading"
+             (provider-model-name registered-model))))
+  (dolist (entry '(("gpt-6-astra" . t)
+                   ("gpt-6-sol" . t)
+                   ("gpt-6-luna" . t)
+                   ("gpt-6" . t)
+                   ("gpt-7.2-nova" . t)
+                   ("gpt-5.6-terra" . t)
+                   ("gpt-5.4-codex" . t)
+                   ("gpt-5.7-codex" . t)
+                   ("gpt-5.3-codex" . nil)
+                   ("gpt-5-codex" . nil)
+                   ("gpt-5." . nil)
+                   ("gpt-" . nil)
+                   ("gpt-x-sol" . nil)
+                   ("grok-4.5" . nil)
+                   ("accounts/fireworks/models/kimi-k3" . nil)))
+    (test-assert
+     (eq (provider-deferred-tool-model-p (first entry)) (rest entry))
+     (format nil "model ~A ~:[keeps eager tools~;defers tool loading~]"
+             (first entry) (rest entry))))
+  nil)
+
+
 (-> test-provider-deferred-tool-loading () null)
 (defun test-provider-deferred-tool-loading ()
   "Test Codex native namespace discovery and exact eager fallback."
