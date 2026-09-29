@@ -140,8 +140,12 @@
 
 (defstruct (agent-tool-storm-state
             (:constructor agent-tool-storm-state-create ()))
-  "Per-user-turn state for tool storm and retry diagnosis."
+  "Per-user-turn state for tool storm and retry diagnosis.
+
+Repetition counts cover the whole turn, while the signature window only
+needs the few most recent calls to recognize an oscillation."
   (signatures nil :type list)
+  (repetitions (make-hash-table :test #'equalp) :type hash-table)
   (consecutive-withholds 0 :type (integer 0))
   (failures (make-hash-table :test #'equalp) :type hash-table))
 
@@ -723,8 +727,9 @@ commit 6f51c65958."
 (defun agent--tool-storm-note-call (state signature tool-name)
   "Record SIGNATURE in STATE and return a mechanics message when it storms."
   (let* ((history (agent-tool-storm-state-signatures state))
+         (repetitions (agent-tool-storm-state-repetitions state))
          (identical-p
-           (>= (count signature history :test #'equalp)
+           (>= (gethash signature repetitions 0)
                (1- *agent-tool-storm-identical-call-limit*)))
          (history-length (length history))
          (oscillation-p
@@ -746,6 +751,7 @@ commit 6f51c65958."
               (format nil
                       "Autolith withheld call ~A because the recent mutating calls formed an A-B-A-B oscillation. Reassess the approach before retrying."
                       tool-name)))))
+    (incf (gethash signature repetitions 0))
     (setf history (append history (list signature)))
     (when (> (length history) *agent-tool-storm-signature-window-size*)
       (setf history

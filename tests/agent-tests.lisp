@@ -1502,6 +1502,56 @@
   nil)
 
 
+(-> test-agent-tool-storm-guard-defaults () null)
+(defun test-agent-tool-storm-guard-defaults ()
+  "Test the repetition guard fires under the unmodified production limits."
+  (let* ((configuration (test-configuration))
+         (root          (test-configuration-root configuration))
+         (limit         *agent-tool-storm-identical-call-limit*))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create
+                   configuration :identifier "tool-storm-defaults"))
+                (provider
+                  (make-instance
+                   'scripted-provider
+                   :results
+                   (append
+                    (loop for index from 1 to limit
+                          collect
+                          (agent-test-result
+                           (format nil "default-repeat-~D" index)
+                           (list (agent-test-call
+                                  :call-id (format nil "default-repeat-~D" index)
+                                  :arguments "{\"value\":\"same\"}"))))
+                    (list
+                     (agent-test-result
+                      "default-repeat-done"
+                      (list (agent-test-message "repetition handled")))))))
+                (agent
+                  (agent-create
+                   :configuration configuration
+                   :provider provider
+                   :conversation conversation
+                   :tool-registry (agent-test-registry)
+                   :worker ':unused)))
+           (test-assert
+            (> limit *agent-tool-storm-signature-window-size*)
+            "the production repetition limit exceeds the oscillation window")
+           (agent-run-user-turn agent "repeat a mutating call many times")
+           (let ((outputs (agent-test-tool-outputs conversation)))
+             (test-assert
+              (and (= (length outputs) limit)
+                   (every (lambda (output) (string= output "echo: same"))
+                          (subseq outputs 0 (1- limit))))
+              "every identical call below the production limit executes")
+             (test-assert
+              (search "withheld repeated call" (first (last outputs)))
+              "the call reaching the production limit is withheld")))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
+
 (-> test-agent-tool-retry-guidance () null)
 (defun test-agent-tool-retry-guidance ()
   "Test missing-argument skeletons and inherited diagnoses for changed failures."

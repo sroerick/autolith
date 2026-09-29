@@ -423,6 +423,7 @@
   test-agent-invalid-call-history
   test-agent-malformed-tool-arguments
   test-agent-tool-storm-guard
+  test-agent-tool-storm-guard-defaults
   test-agent-tool-retry-guidance
   test-agent-tool-failures
   test-agent-provider-failure-persistence
