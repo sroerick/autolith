@@ -2218,7 +2218,7 @@
          (*active-image-lineage-identifier* nil)
          (*exploratory-definitions* (make-hash-table :test #'equal))
          (*exploratory-undo-actions* (make-hash-table :test #'equal))
-         (*image-replay-skipped-definitions* nil))
+         (*image-replay-skips* nil))
     (unwind-protect
          (progn
            (image-state-load configuration)
@@ -2264,17 +2264,17 @@
                         (load script)
                         (test-assert (eq (observe) ':replacement)
                                      "the rendered script reinstalls the intentional foreign definition")
-                        (test-assert (null *image-replay-skipped-definitions*)
+                        (test-assert (null *image-replay-skips*)
                                      "intentional foreign replacements are not skipped")
                         (test-assert (sb-ext:package-locked-p package)
                                      "discard and replay restore the foreign package lock")
                         (unless (eq kind ':method)
-                          (let ((*image-replay-skipped-definitions* nil))
+                          (let ((*image-replay-skips* nil))
                             (self-replay-definition
                              "AUTOLITH"
                              (write-to-string (test-self--foreign-definition kind symbol ':wrong))
                              :home-package "AUTOLITH")
-                            (test-assert (and *image-replay-skipped-definitions*
+                            (test-assert (and *image-replay-skips*
                                               (eq (observe) ':replacement))
                                          "recorded ownership changes skip stale replacements")))
                         (when (eq kind ':method)
