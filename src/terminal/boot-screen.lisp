@@ -48,6 +48,9 @@
     :brand-gradient-4 :brand-gradient-5 :brand-gradient-6)
   "Row styles cycling top-to-bottom across the boot mark art.")
 
+(defparameter *terminal-ui-boot-linger-p* nil
+  "Whether the boot panel currently advertises Space to start the session.")
+
 (-> terminal-ui--boot-art () (values list string string))
 (defun terminal-ui--boot-art ()
   "Return the installed theme's boot mark rows, panel title, and tagline."
@@ -122,7 +125,10 @@ MARK-ROWS are the already height-limited rows of the theme's boot mark."
              (boxed ':brand (format nil ";; ~A" (string-upcase (string phase))))
              (boxed ':plain (or detail "Awaiting operator input."))
              (boxed ':plain "")
-             (boxed ':hint "[ SYSTEM CONSOLE ]                         Ctrl-C: halt")
+             (boxed ':hint
+                    (if *terminal-ui-boot-linger-p*
+                        "[ SYSTEM CONSOLE ]          Space: start   Ctrl-C: halt"
+                        "[ SYSTEM CONSOLE ]                         Ctrl-C: halt"))
              (row ':brand bottom-border)))))))
 
 (-> terminal-ui--boot-tip-rows (terminal-ui integer) list)
@@ -221,36 +227,106 @@ Reads AUTOLITH_BOOT_DURATION when set, else
   (environment-positive-real "AUTOLITH_BOOT_DURATION"
                              *terminal-ui-boot-sequence-default-duration*))
 
+(defparameter *terminal-ui-boot-linger-poll-seconds* 0.05
+  "Seconds between input polls while the boot screen waits for Space.")
+
+(defparameter *terminal-ui-boot-tip-default-seconds* 10
+  "Default seconds between startup tips while the boot screen waits.")
+
+(defparameter *terminal-ui-boot-linger-detail* "Press Space to start."
+  "The phase detail shown while the boot screen waits for the operator.")
+
+(-> terminal-ui--boot-start-event-p (t) boolean)
+(defun terminal-ui--boot-start-event-p (event)
+  "Return true when EVENT is Space or Enter, the keys that start the session."
+  (or (eq event ':submit)
+      (and (consp event)
+           (eq (first event) ':insert)
+           (equal (second event) " "))))
+
+(-> terminal-ui--boot-rotate-tip (terminal-ui) null)
+(defun terminal-ui--boot-rotate-tip (ui)
+  "Replace the cached startup tip with a different one, when another exists."
+  (let ((current (fullscreen-terminal-ui-welcome-tip ui)))
+    (loop repeat 8
+          for candidate = (application--startup-tip-spans)
+          unless (equal candidate current)
+            do (setf (fullscreen-terminal-ui-welcome-tip ui) candidate)
+               (return)))
+  nil)
+
+(-> terminal-ui--boot-linger (terminal-ui function real) keyword)
+(defun terminal-ui--boot-linger (ui wait-function tip-seconds)
+  "Hold the boot screen until the operator starts the session.
+
+Space, Enter, and end of input return :START; Ctrl-C returns :INTERRUPT.
+Other events are ignored. The startup tip rotates every TIP-SECONDS, counted
+in WAIT-FUNCTION calls so scripted waits stay deterministic."
+  (let ((terminal (terminal-ui-terminal ui))
+        (*terminal-ui-boot-linger-p* t)
+        (elapsed 0))
+    (terminal-ui-boot-screen ui ':listener-ready *terminal-ui-boot-linger-detail*)
+    (loop
+      (cond
+        ((terminal-input-ready-p terminal)
+         (let ((event (terminal-read-event terminal)))
+           (cond
+             ((terminal-ui--boot-start-event-p event)
+              (return ':start))
+             ((eq event ':interrupt)
+              (return ':interrupt))
+             ((member event '(:end-of-input :stream-end))
+              (return ':start)))))
+        (t
+         (funcall wait-function *terminal-ui-boot-linger-poll-seconds*)
+         (incf elapsed *terminal-ui-boot-linger-poll-seconds*)
+         (when (>= elapsed tip-seconds)
+           (setf elapsed 0)
+           (terminal-ui--boot-rotate-tip ui)
+           (terminal-ui-boot-screen ui ':listener-ready
+                                    *terminal-ui-boot-linger-detail*)))))))
+
 (-> terminal-ui-boot-sequence
-    (terminal-ui &key (:wait-function function) (:duration real))
-    null)
+    (terminal-ui &key (:wait-function function) (:duration real)
+                      (:linger-p boolean) (:tip-seconds real))
+    keyword)
 (defun terminal-ui-boot-sequence
-    (ui &key (wait-function #'sleep) (duration (terminal-ui-boot-sequence-duration)))
+    (ui &key (wait-function #'sleep)
+             (duration (terminal-ui-boot-sequence-duration))
+             linger-p
+             (tip-seconds *terminal-ui-boot-tip-default-seconds*))
   "Present a brief Lisp-machine boot sequence before opening the listener.
 
 Keep ordinary output deferred throughout the presentation. WAIT-FUNCTION accepts
 seconds; DURATION is the total seconds spent across all boot phases, split
-evenly, and defaults to TERMINAL-UI-BOOT-SEQUENCE-DURATION."
-  (when (and (terminal-ui-fullscreen-p ui)
-             (terminal-ui--await-interactive
-              (terminal-ui-terminal ui) wait-function 1.0))
-    ;; TERMINAL-UI-START ran before the detached terminal's client attached,
-    ;; so its own fullscreen-enter attempt was skipped; retry now that the
-    ;; terminal reports interactive.
-    (unless (fullscreen-terminal-ui-active-p ui)
-      (terminal-ui-fullscreen-enter ui))
-    (let ((suspended-p nil)
-          (phase-duration
-            (/ (max 0 duration) (length *terminal-ui-boot-sequence-phases*))))
-      (with-terminal-ui-locked (ui)
-        (setf suspended-p (terminal-ui-live-output-suspended-p ui)
-              (terminal-ui-live-output-suspended-p ui) t))
-      (unwind-protect
-           (dolist (phase *terminal-ui-boot-sequence-phases*)
-             (terminal-ui-boot-screen ui (first phase) (second phase))
-             (funcall wait-function phase-duration))
+evenly, and defaults to TERMINAL-UI-BOOT-SEQUENCE-DURATION. With LINGER-P the
+screen then waits for Space, rotating the tip every TIP-SECONDS. Returns
+:START, or :INTERRUPT when Ctrl-C ended the wait."
+  (let ((result ':start))
+    (when (and (terminal-ui-fullscreen-p ui)
+               (terminal-ui--await-interactive
+                (terminal-ui-terminal ui) wait-function 1.0))
+      ;; TERMINAL-UI-START ran before the detached terminal's client attached,
+      ;; so its own fullscreen-enter attempt was skipped; retry now that the
+      ;; terminal reports interactive.
+      (unless (fullscreen-terminal-ui-active-p ui)
+        (terminal-ui-fullscreen-enter ui))
+      (let ((suspended-p nil)
+            (phase-duration
+              (/ (max 0 duration) (length *terminal-ui-boot-sequence-phases*))))
         (with-terminal-ui-locked (ui)
-          (setf (terminal-ui-live-output-suspended-p ui) suspended-p)
-          (unless suspended-p
-            (terminal-ui--paint-live ui))))))
-  nil)
+          (setf suspended-p (terminal-ui-live-output-suspended-p ui)
+                (terminal-ui-live-output-suspended-p ui) t))
+        (unwind-protect
+             (progn
+               (dolist (phase *terminal-ui-boot-sequence-phases*)
+                 (terminal-ui-boot-screen ui (first phase) (second phase))
+                 (funcall wait-function phase-duration))
+               (when linger-p
+                 (setf result
+                       (terminal-ui--boot-linger ui wait-function tip-seconds))))
+          (with-terminal-ui-locked (ui)
+            (setf (terminal-ui-live-output-suspended-p ui) suspended-p)
+            (unless suspended-p
+              (terminal-ui--paint-live ui))))))
+    result))

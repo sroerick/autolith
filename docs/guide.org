@@ -56,6 +56,12 @@ in the application rather than the terminal emulator's native scrollback.
   transcript above the composer. Mouse wheel scrolling also works through a
   controlling local-session attachment.
 
+The boot screen then waits for =Space= or =Enter= before opening the listener,
+rotating the startup tip every ten seconds while it waits. =Ctrl-C= on the
+waiting boot screen halts the session. Turn the wait off for future launches
+with =(setf (config :boot-screen-linger-p) nil)= or for one launch with
+=AUTOLITH_BOOT_LINGER=off=, and change the rotation with
+=(setf (config :boot-screen-tip-seconds) 30)= or =AUTOLITH_BOOT_TIP_SECONDS=.
 
 ** Almighty theme
 

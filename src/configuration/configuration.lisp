@@ -576,6 +576,24 @@ exist yet, and is only put in directory form."
   :options '(:autolith :almighty)
   :default ':autolith)
 
+(define-setting :boot-screen-linger-p (boolean-setting)
+  :label "Boot screen waits for Space"
+  :group :terminal
+  :documentation "Whether the fullscreen boot screen waits for Space before opening the listener."
+  :scope :durable
+  :environment "AUTOLITH_BOOT_LINGER"
+  :default t)
+
+(define-setting :boot-screen-tip-seconds (integer-setting)
+  :label "Boot tip rotation"
+  :group :terminal
+  :documentation "Seconds between startup tips while the boot screen waits."
+  :scope :durable
+  :minimum 1
+  :maximum 3600
+  :environment "AUTOLITH_BOOT_TIP_SECONDS"
+  :default 10)
+
 (define-setting :permission-mode (choice-setting)
   :label "Saved permission mode"
   :group :behavior

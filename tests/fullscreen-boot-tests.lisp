@@ -103,3 +103,65 @@
          (simple-error () t)) "boot interruption propagates")
       (test-assert (not (terminal-ui-live-output-suspended-p ui)) "interrupted boot restores output ownership")))
   nil)
+
+
+(-> test-fullscreen-boot-linger () null)
+(defun test-fullscreen-boot-linger ()
+  "Hold the boot screen for Space, rotate tips on schedule, and report interrupts."
+  (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24))
+        (tips 0))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (test-call-with-function-replacements
+       (list (list 'application--startup-tip-spans
+                   (lambda ()
+                     (list (terminal-span ':hint (format nil "advice ~D" (incf tips)))))))
+       (lambda ()
+         (let* ((seconds 0)
+                (waiting-frame nil)
+                (result
+                  (terminal-ui-boot-sequence
+                   ui :duration 0 :linger-p t :tip-seconds 1
+                   :wait-function
+                   (lambda (duration)
+                     (incf seconds duration)
+                     (when (> seconds 2.5)
+                       ;; The last frame painted while still waiting.
+                       (setf waiting-frame (copy-seq (fullscreen-terminal-ui-frame ui)))
+                       (queued-recording-terminal-enqueue terminal '(:insert " ")))))))
+           (test-assert (eq result ':start) "Space starts the session")
+           (test-assert (= tips 3) "the tip rotates on the configured interval while waiting")
+           (test-assert (find-if (lambda (row) (search "advice 3" row)) waiting-frame)
+                        "the rotated tip is painted")
+           (test-assert (find-if (lambda (row) (search "Space: start" row)) waiting-frame)
+                        "the lingering panel advertises Space")
+           (test-assert (find-if (lambda (row) (search "Press Space to start." row))
+                                 waiting-frame)
+                        "the lingering panel explains what it waits for")
+           (test-assert (not (terminal-ui-live-output-suspended-p ui))
+                        "ordinary output resumes after the wait"))
+         (flet ((boot ()
+                  (terminal-ui-boot-sequence ui :duration 0 :linger-p t
+                                                :wait-function (lambda (seconds)
+                                                                 (declare (ignore seconds))))))
+           (queued-recording-terminal-enqueue terminal ':interrupt)
+           (test-assert (eq (boot) ':interrupt) "Ctrl-C while waiting reports an interrupt")
+           (queued-recording-terminal-enqueue terminal '(:insert "x"))
+           (queued-recording-terminal-enqueue terminal '(:resize 80 24))
+           (queued-recording-terminal-enqueue terminal ':submit)
+           (test-assert (eq (boot) ':start) "other events are ignored and Enter starts"))
+         (test-assert (eq (terminal-ui-boot-sequence
+                           ui :duration 0 :linger-p nil
+                              :wait-function (lambda (seconds) (declare (ignore seconds))))
+                          ':start)
+                      "without lingering the boot screen opens the listener at once")
+         (let ((frames nil))
+           (terminal-ui-boot-sequence
+            ui :duration 0 :linger-p nil
+               :wait-function (lambda (seconds)
+                                (declare (ignore seconds))
+                                (push (copy-seq (fullscreen-terminal-ui-frame ui)) frames)))
+           (test-assert (notany (lambda (frame)
+                                  (find-if (lambda (row) (search "Space: start" row)) frame))
+                                frames)
+                        "a boot without waiting never advertises Space"))))))
+  nil)

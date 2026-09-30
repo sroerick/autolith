@@ -443,7 +443,18 @@
                     (application-recovery-input-vault-present-startup-warning
                      application)
                     (localgroup-start application)
-                    (terminal-ui-boot-sequence ui)
+                    (when (eq (terminal-ui-boot-sequence
+                               ui
+                               :linger-p (config :boot-screen-linger-p
+                                                 (application-configuration application))
+                               :tip-seconds (config :boot-screen-tip-seconds
+                                                    (application-configuration application)))
+                              ':interrupt)
+                      ;; Ctrl-C on the lingering boot screen halts like Ctrl-C
+                      ;; at an empty prompt: the controller stops before its
+                      ;; reader starts and the session exits with resume advice.
+                      (application-input-controller--request-exit
+                       input-controller ':interrupt))
                     (management-repl-start application)
                     (application-input-controller--open-prompt-if-ready
                      input-controller)
