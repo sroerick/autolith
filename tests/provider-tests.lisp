@@ -421,32 +421,56 @@
              (test-assert
               (< visible-characters eager-characters)
               "deferred discovery reduces model-visible schema characters"))
-           ;; The server's tool_search_output embeds deferred functions with
-           ;; null parameters, which its own input validator refuses.
+           ;; Expansions replay intact in the deferred wire shape; the null
+           ;; output_schema of server-produced records is dropped and a child
+           ;; without an object parameter schema cannot be declared.
            (let* ((search-output
                     (json-object
                      "type" "tool_search_output"
                      "status" "completed"
-                     "call_id" nil
-                     "execution" "server"
+                     "call_id" "search-1"
+                     "execution" "client"
                      "tools" (json-array
                               (json-object
                                "type" "namespace"
                                "name" "plan"
+                               "description" "Plans."
                                "tools" (json-array
                                         (json-object
                                          "type" "function"
                                          "name" "update"
+                                         "description" "Update the plan."
+                                         "defer_loading" t
+                                         "parameters"
+                                         (json-object "type" "object"
+                                                      "properties" (json-object))
+                                         "output_schema" nil)
+                                        (json-object
+                                         "type" "function"
+                                         "name" "broken"
                                          "defer_loading" t
                                          "parameters" nil
                                          "output_schema" nil))))))
-                  (replayed (provider-wire-input-item provider search-output)))
+                  (replayed (provider-wire-input-item provider search-output))
+                  (replayed-namespace (aref (json-get replayed "tools") 0))
+                  (replayed-child (aref (json-get replayed-namespace "tools") 0))
+                  (trimmed (let ((*provider-history-trimming-p* t))
+                             (provider-wire-input-item provider search-output))))
              (test-assert
-              (and (json-string= (json-get replayed "type")
-                                 "tool_search_output")
-                   (zerop (length (json-get replayed "tools")))
-                   (plusp (length (json-get search-output "tools"))))
-              "tool search results replay without their invalid expansions")
+              (and (json-string= (json-get replayed "type") "tool_search_output")
+                   (= (length (json-get replayed "tools")) 1)
+                   (= (length (json-get replayed-namespace "tools")) 1)
+                   (json-string= (json-get replayed-child "name") "update")
+                   (eq (json-get replayed-child "defer_loading") t)
+                   (not (nth-value 1 (json-get-present replayed-child "output_schema")))
+                   (nth-value 1 (json-get-present replayed-child "strict"))
+                   (json-object-p (json-get replayed-child "parameters")))
+              "tool search expansions replay intact in the deferred wire shape")
+             (test-assert
+              (and (json-string= (json-get trimmed "type") "tool_search_output")
+                   (zerop (length (json-get trimmed "tools")))
+                   (= (length (json-get search-output "tools")) 1))
+              "history trimming replays tool search expansions empty")
              (test-assert
               (and (family-private-item-p search-output)
                    (family-private-item-p
@@ -2648,3 +2672,4 @@
             "usage-limit responses still record the rate limit snapshot"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+

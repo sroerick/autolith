@@ -146,6 +146,61 @@ with supports_search_tool."
    "description" (json-get namespace "description")
    "tools" (map 'vector #'provider-deferred-namespace-tool
                 (json-get namespace "tools"))))
+;;; Tool search replay
+
+(defparameter *provider-history-trimming-p* nil
+  "True while history is projected for a compaction request.
+
+Consumed tool search expansions are replayed empty there, as the Codex
+reference does when trimming, and intact everywhere else so the server keeps
+the expanded tools loaded without another search.")
+
+(-> provider-tool-search--replay-namespace (t) (option json-object))
+(defun provider-tool-search--replay-namespace (entry)
+  "Return namespace ENTRY rebuilt in the deferred wire shape, or NIL to drop it.
+
+Children keep only the fields a deferred function declares. Expansions the
+server produced before Autolith answered searches itself carried a null
+output_schema that the request validator rejects, so every child is rebuilt
+rather than copied, and a child without an object parameter schema is dropped."
+  (when (and (json-object-p entry)
+             (json-string= (json-get entry "type") "namespace")
+             (non-empty-string-p (json-get entry "name")))
+    (let ((tools (json-get entry "tools")))
+      (json-object
+       "type" "namespace"
+       "name" (json-get entry "name")
+       "description" (or (json-get entry "description") "")
+       "tools" (if (and (vectorp tools) (not (stringp tools)))
+                   (coerce
+                    (loop for tool across tools
+                          when (and (json-object-p tool)
+                                    (non-empty-string-p (json-get tool "name"))
+                                    (json-object-p (json-get tool "parameters")))
+                            collect (provider-deferred-namespace-tool tool))
+                    'vector)
+                   (json-array))))))
+
+(-> provider-tool-search-output-replay (json-object) json-object)
+(defun provider-tool-search-output-replay (item)
+  "Return the tool_search_output ITEM as the next request should replay it.
+
+History trimming replays the expansion empty. Otherwise every namespace is
+rebuilt in the deferred wire shape so the server keeps those tools loaded."
+  (let ((copy (json-object-copy item))
+        (tools (json-get item "tools")))
+    (setf (gethash "tools" copy)
+          (if (or *provider-history-trimming-p*
+                  (not (vectorp tools))
+                  (stringp tools))
+              (json-array)
+              (coerce (loop for entry across tools
+                            for replay = (provider-tool-search--replay-namespace entry)
+                            when replay
+                              collect replay)
+                      'vector)))
+    copy))
+
 (defmethod provider-wire-tool-name
     ((provider codex-subscription-provider) (namespace string) (name string))
   "Encode one Codex tool name with the shared grammar-safe wire codec."
@@ -175,20 +230,19 @@ with supports_search_tool."
 
 (defmethod provider-wire-input-item
     ((provider codex-subscription-provider) item)
-  "Preserve namespace calls and strip invalid tool search expansions.
+  "Preserve namespace calls and replay tool search expansions intact.
 
-The server emits tool_search_output items whose deferred functions carry
-null parameters and output_schema fields, and its own input validator
-rejects that shape verbatim (invalid_function_parameters on the first
-child). The Codex reference replays these items with an empty tools
-vector when trimming, which the server accepts; doing so on every replay
-also keeps the already-consumed expansion from re-entering the prompt."
+The server remembers which deferred tools are loaded only through the
+tool_search_output items in the request history, so an expansion must
+replay with its tools on every later request of the conversation; replaying
+it empty made the model search the same namespace again on every round. The
+Codex reference at commit 18194bfd3534ca567d886eac454028dafaa68b6c empties the
+tools only when trimming history for compaction, which
+*provider-history-trimming-p* marks here."
   (cond
     ((and (json-object-p item)
           (json-string= (json-get item "type") "tool_search_output"))
-     (let ((copy (json-object-copy item)))
-       (setf (gethash "tools" copy) (json-array))
-       copy))
+     (provider-tool-search-output-replay item))
     ((and (provider-deferred-tool-loading-p provider)
           (json-object-p item)
           (function-call-item-p item)

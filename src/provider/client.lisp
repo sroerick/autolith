@@ -479,7 +479,8 @@ root's key, as the Codex reference does at commit 6f51c65958."
 
 Durable family-compatible history and top-level instructions participate in the
 native checkpoint. Request-local contributions and pending one-response items
-stay outside it."
+stay outside it, and consumed tool search expansions replay empty because the
+checkpoint summarizes history rather than continuing it."
   (declare (ignore tool-namespaces))
   (let* ((configuration (provider-configuration provider))
          (instructions
@@ -488,13 +489,14 @@ stay outside it."
              (let ((*system-prompt-hosted-web-search-p* nil))
                (system-prompt configuration)))))
           (input
-            (map 'vector
-                 (lambda (item)
-                   (provider-wire-input-item provider item))
-                 (conversation-input-items-for-family
-                  conversation
-                  (provider-family provider)
-                  :include-ephemeral-p nil))))
+            (let ((*provider-history-trimming-p* t))
+              (map 'vector
+                   (lambda (item)
+                     (provider-wire-input-item provider item))
+                   (conversation-input-items-for-family
+                    conversation
+                    (provider-family provider)
+                    :include-ephemeral-p nil)))))
     (apply
      #'json-object
      (append
