@@ -368,7 +368,8 @@
   test-standard-mutation-checker
   test-durable-self-mutation
   test-durable-definition-publication-boundary
-  test-image-replay-stale-definitions)
+  test-image-replay-stale-definitions
+  test-lisp-source-undefined-name)
 
 (define-test-suite generation
   test-generation-manifest

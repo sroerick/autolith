@@ -63,6 +63,15 @@
       (error "~S does not name a symbol." name))
     value))
 
+(-> self-symbol-defined-p (symbol) boolean)
+(defun self-symbol-defined-p (symbol)
+  "Return true when SYMBOL names a function, macro, variable, class, or type in the active image."
+  (and (or (fboundp symbol)
+           (boundp symbol)
+           (find-class symbol nil)
+           (sb-ext:valid-type-specifier-p symbol))
+       t))
+
 (-> self-symbol-lambda-list (symbol) t)
 (defun self-symbol-lambda-list (symbol)
   "Return SYMBOL's function lambda list when introspection can recover it."
@@ -1336,10 +1345,23 @@ Files the system withholds from this image through :IF-FEATURE are left out."
       ((non-empty-string-p (tool-argument arguments "system"))
        (tool-success
         (self-render-tracked-definitions dependency-definitions symbol)))
+      ((not (self-symbol-defined-p symbol))
+       (error 'tool-error
+              :message
+              (format nil "~S has no function, variable, class, or type definition in the active image. Check the spelling and package, or locate the definition in tracked source with search.content."
+                      symbol)
+              :tool-name "lisp.source"))
       (t
        (multiple-value-bind (values output)
-           (worker-source (write-to-string symbol :readably t)
-                          (tool-argument arguments "kind"))
+           (handler-case
+               (worker-source (write-to-string symbol :readably t)
+                              (tool-argument arguments "kind"))
+             (worker-error (condition)
+               (error 'tool-error
+                      :message (format nil "~S: ~A"
+                                       symbol
+                                       (autolith-error-message condition))
+                      :tool-name "lisp.source")))
          (declare (ignore values))
          (tool-success output))))))
 

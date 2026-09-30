@@ -2342,3 +2342,34 @@
                                       :validate t
                                       :if-does-not-exist ':ignore)))
   nil)
+
+(-> test-lisp-source-undefined-name () null)
+(defun test-lisp-source-undefined-name ()
+  "Name the requested symbol when lisp.source finds nothing in the active image."
+  (with-test-configuration (configuration)
+    (let* ((conversation
+             (conversation-create configuration
+                                  :identifier "lisp-source-undefined"))
+           (context
+             (make-instance 'tool-context
+                            :configuration configuration
+                            :worker nil
+                            :conversation conversation))
+           (registry (make-default-tool-registry))
+           (message
+             (handler-case
+                 (progn
+                   (tool-execute
+                    (tool-registry-find registry "lisp" "source")
+                    context
+                    (json-object "name" "NO-SUCH-DEFINITION-FOR-LISP-SOURCE-TEST"
+                                 "target" "self"))
+                   nil)
+               (tool-error (condition)
+                 (autolith-error-message condition)))))
+      (test-assert (and message
+                        (search "NO-SUCH-DEFINITION-FOR-LISP-SOURCE-TEST" message))
+                   "an undefined name fails with the requested symbol in the message")
+      (test-assert (and message (search "search.content" message))
+                   "the failure points at tracked-source search as the next step")))
+  nil)
