@@ -376,8 +376,36 @@ row that still overruns instead of scrolling."
    (prefix :initform 0 :accessor fullscreen-output-stream-prefix
            :documentation "Matched characters of the alternate-buffer control prefix.")
    (active-p :initform nil :accessor fullscreen-output-stream-active-p
-             :documentation "Whether remote output entered the client's alternate buffer."))
-  (:documentation "Forward remote output while tracking alternate-buffer ownership across packets."))
+             :documentation "Whether remote output entered the client's alternate buffer.")
+   (command :initform nil :accessor fullscreen-output-stream-command
+            :documentation "Digits of the operating-system command being collected, :ESCAPE after ESC, or NIL.")
+   (theme-colors-p :initform nil :accessor fullscreen-output-stream-theme-colors-p
+                   :documentation "Whether remote output imposed terminal default colors."))
+  (:documentation "Forward remote output while tracking alternate-buffer and default-color ownership across packets."))
+
+(-> fullscreen-output-stream--track-colors (fullscreen-output-stream character) null)
+(defun fullscreen-output-stream--track-colors (stream character)
+  "Recognize OSC 10 and 11 default-color settings and their 110 and 111 resets."
+  (let ((state (fullscreen-output-stream-command stream)))
+    (cond
+      ((stringp state)
+       (if (and (digit-char-p character) (< (length state) 3))
+           (setf (fullscreen-output-stream-command stream)
+                 (concatenate 'string state (string character)))
+           (progn
+             (cond
+               ((and (char= character #\;) (member state '("10" "11") :test #'string=))
+                (setf (fullscreen-output-stream-theme-colors-p stream) t))
+               ((member state '("110" "111") :test #'string=)
+                (setf (fullscreen-output-stream-theme-colors-p stream) nil)))
+             (setf (fullscreen-output-stream-command stream)
+                   (if (char= character #\Escape) ':escape nil)))))
+      ((char= character #\Escape)
+       (setf (fullscreen-output-stream-command stream) ':escape))
+      ((eq state ':escape)
+       (setf (fullscreen-output-stream-command stream)
+             (if (char= character #\]) "" nil)))))
+  nil)
 
 (-> fullscreen-output-stream--track (fullscreen-output-stream character) null)
 (defun fullscreen-output-stream--track (stream character)
@@ -399,12 +427,14 @@ row that still overruns instead of scrolling."
 (defmethod sb-gray:stream-write-char ((stream fullscreen-output-stream) character)
   "Track control state before forwarding CHARACTER to the client."
   (fullscreen-output-stream--track stream character)
+  (fullscreen-output-stream--track-colors stream character)
   (write-char character (fullscreen-output-stream-output stream)))
 
 (defmethod sb-gray:stream-write-string ((stream fullscreen-output-stream) string &optional (start 0) end)
   "Track controls even when transport packets split an escape sequence."
   (loop for index from start below (or end (length string))
-        do (fullscreen-output-stream--track stream (char string index)))
+        do (fullscreen-output-stream--track stream (char string index))
+           (fullscreen-output-stream--track-colors stream (char string index)))
   (write-string string (fullscreen-output-stream-output stream) :start start :end end))
 
 (defmethod sb-gray:stream-finish-output ((stream fullscreen-output-stream))
@@ -417,11 +447,18 @@ row that still overruns instead of scrolling."
 
 (-> fullscreen-output-stream-restore (fullscreen-output-stream) null)
 (defun fullscreen-output-stream-restore (stream)
-  "Restore an owned client buffer after detach, revocation or connection loss."
-  (when (fullscreen-output-stream-active-p stream)
-    (setf (fullscreen-output-stream-active-p stream) nil)
-    (write-string (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
-                          #\Escape #\Escape #\Escape #\Escape #\Escape #\Escape)
-                  (fullscreen-output-stream-output stream))
-    (finish-output (fullscreen-output-stream-output stream)))
+  "Restore an owned client buffer and default colors after detach, revocation or connection loss."
+  (let ((active-p (fullscreen-output-stream-active-p stream))
+        (colors-p (fullscreen-output-stream-theme-colors-p stream))
+        (output (fullscreen-output-stream-output stream)))
+    (when colors-p
+      (setf (fullscreen-output-stream-theme-colors-p stream) nil)
+      (write-string (format nil "~C]110~C~C]111~C" #\Escape #\Bel #\Escape #\Bel) output))
+    (when active-p
+      (setf (fullscreen-output-stream-active-p stream) nil)
+      (write-string (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
+                            #\Escape #\Escape #\Escape #\Escape #\Escape #\Escape)
+                    output))
+    (when (or active-p colors-p)
+      (finish-output output)))
   nil)
