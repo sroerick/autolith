@@ -1272,7 +1272,7 @@ Only the current primary conversation's artifact root is searched."
                             (make-instance 'task-job-tool :orchestrator
                                            orchestrator :namespace "job" :name
                                            "send" :description
-                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment."
+                                           "Send one bounded steering message to a running child-agent job; the child reads it at its next safe boundary and continues its assignment. Only a child that is still running accepts steering: a job that has already finished, failed, or been cancelled rejects the message, so check job.get first when its state is uncertain, and reply to a finished child's result with a new task.run instead."
                                            :parameters
                                            (tool-object-schema
                                             (json-object
