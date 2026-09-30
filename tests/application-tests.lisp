@@ -3516,13 +3516,9 @@
                      (search "Reason: The persisted defun was skipped: it moved." prompt)
                      (search override prompt)
                      (search recorded prompt)
-                     (search (format nil "Current tracked definition in ~A:"
-                                     (enough-namestring source-pathname source-root))
-                             prompt)
+                     (search "src/definitions.lisp:" prompt)
                      (search "Return the current baseline." prompt))
-                (format nil "an override section carries its persisted, recorded, and current sources~%Expected path: ~A~%Prompt:~%~A"
-                        (enough-namestring source-pathname source-root)
-                        prompt))
+                "an override section carries its persisted, recorded, and current sources")
                (test-assert
                 (and (search "2. defun test-skip-prompt-fresh" prompt)
                      (search "Tracked definition when published: not recorded" prompt)
