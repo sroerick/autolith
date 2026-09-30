@@ -611,6 +611,7 @@
   test-application-command-tips
   test-application-banner-policy
   test-replay-skips-notice
+  test-fix-skipped-definitions-prompt
   test-application-git-branch
   test-startup-update-choice
   test-explicit-update-operation
@@ -711,6 +712,7 @@
   run-application-operation-tests
   test-compact-operation
   test-compact-operation-empty
+  test-fix-skipped-definitions-operation
   test-compact-operation-failures)
 
 (define-test-suite recovery-input-vault

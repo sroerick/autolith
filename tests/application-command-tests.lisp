@@ -471,6 +471,7 @@
          ;; Detaching exists to leave while work runs; it must never wait
          ;; for the idle queue.
          ("/detach" :execute)
+         ("/fix-skipped-definitions" :hold)
          ;; Vault commands manage the follow-up queue itself, so they act
          ;; immediately rather than waiting behind that queue.
          ("/vault-restore" :execute)

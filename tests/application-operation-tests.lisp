@@ -983,6 +983,42 @@
               "manual compaction clears its progress indicators")))))))
   nil)
 
+(-> test-fix-skipped-definitions-operation () null)
+(defun test-fix-skipped-definitions-operation ()
+  "Test the repair command reports an empty skip list and needs a live session otherwise."
+  (let ((provider (make-instance 'scripted-provider :results nil)))
+    (application-operation-tests--call-with-compaction-provider
+     provider
+     (lambda (application)
+       (let ((*image-replay-skips* nil))
+         (test-assert
+          (eq (application-lisp-evaluation-status
+               (application-lisp-evaluate "(fix-skipped-definitions)"
+                                          :application application))
+              ':ok)
+          "the command succeeds when nothing was skipped"))
+       (let ((*image-replay-skips*
+               (list (let ((definition '(defun test-self-target () 7)))
+                       (make-instance 'image-replay-skip
+                                      :definition definition
+                                      :key (definition-key definition)
+                                      :source "(defun test-self-target () 7)"
+                                      :tracked nil
+                                      :tracked-recorded-p nil
+                                      :reason ':revision-moved
+                                      :message "skipped")))))
+         (test-assert
+          (handler-case
+              (progn (application-command application "/fix-skipped-definitions")
+                     nil)
+            (configuration-error ()
+              t))
+          "queueing the repair turn without an interactive controller is a configuration failure")
+         (test-assert
+          (null (scripted-provider-input-snapshots provider))
+          "no provider request is made without a controller")))))
+  nil)
+
 (-> test-compact-operation-empty () null)
 (defun test-compact-operation-empty ()
   "Test empty conversations need no connected agent or durable checkpoint."

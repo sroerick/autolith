@@ -945,7 +945,13 @@ removed, or appeared since publication, lists every skip in one startup notice
 grouped by reason, and leaves it out of the next =self.commit=. Commits published before
 this record replay their tracked overrides only while the image runs the source
 revision the lineage was published against. Reapply a skipped definition
-against the current source to restore it.
+against the current source to restore it, or use =(fix-skipped-definitions)=
+or =/fix-skipped-definitions= to hand every skipped definition to the model
+with its persisted source, the tracked source it was written against, and the
+current tracked source. The model rebuilds each override on the current source
+with =self.redefine=, drops any the tracked source already covers, and
+publishes the result with =self.commit=. During an active turn, the command
+waits in the idle queue.
 
 ** Child roles
 

@@ -3458,6 +3458,77 @@
        "the notice styles its header, group titles, and definition names")))
   nil)
 
+(-> test-fix-skipped-definitions-prompt () null)
+(defun test-fix-skipped-definitions-prompt ()
+  "Test the repair request carries each skipped override with its tracked sources."
+  (let* ((source-root
+           (uiop:ensure-directory-pathname
+            (merge-pathnames
+             (format nil "autolith-skip-prompt-tests-~A/" (make-identifier))
+             (uiop:temporary-directory))))
+         (configuration (test-configuration-for-source-root source-root))
+         (source-pathname (merge-pathnames "src/definitions.lisp" source-root))
+         (override "(defun test-self-target () \"Return the private override.\" 7)")
+         (recorded "(defun test-self-target () \"Return the old baseline.\" 0)")
+         (current "(defun test-self-target ()~%  \"Return the current baseline.\"~%  1)"))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist source-pathname)
+           (with-open-file (stream source-pathname
+                                   :direction ':output
+                                   :if-exists ':supersede
+                                   :if-does-not-exist ':create
+                                   :external-format ':utf-8)
+             (format stream "(in-package #:autolith)~2%")
+             (format stream current)
+             (terpri stream))
+           (flet ((skip (source reason &rest arguments)
+                    "Return a replay skip for SOURCE under REASON with ARGUMENTS."
+                    (let ((definition (self-read-form source :read-eval nil)))
+                      (apply #'make-instance 'image-replay-skip
+                             :definition definition
+                             :key (definition-key definition)
+                             :source source
+                             :reason reason
+                             :message "The persisted defun was skipped: it moved."
+                             arguments))))
+             (let ((prompt
+                     (application--skipped-definitions-prompt
+                      (list (skip override ':tracked-changed
+                                  :tracked recorded :tracked-recorded-p t)
+                            (skip "(defun test-skip-prompt-fresh () 2)"
+                                  ':revision-moved
+                                  :tracked nil :tracked-recorded-p nil))
+                      :configuration configuration
+                      :commit-identifier "c3ec5281-3622-4c30-9bc9-a223fecccd47"
+                      :lineage-source-commit "07f0e1b86da2be055f1e836a4e62e57fbf9e4b7b"
+                      :image-source-commit "8631cedec9e7a704ad03e6200b4d09f64f079531")))
+               (test-assert
+                (and (search "skipped 2 private definitions" prompt)
+                     (search "commit c3ec5281, published against 07f0e1b8; this image runs 8631cede"
+                             prompt)
+                     (search "self.redefine" prompt)
+                     (search "self.commit" prompt)
+                     (search "Do not edit tracked source files." prompt))
+                "the request states the situation and the expected tools")
+               (test-assert
+                (and (search "1. defun test-self-target" prompt)
+                     (search "Reason: The persisted defun was skipped: it moved." prompt)
+                     (search override prompt)
+                     (search recorded prompt)
+                     (search "Current tracked definition in src/definitions.lisp:" prompt)
+                     (search "Return the current baseline." prompt))
+                "an override section carries its persisted, recorded, and current sources")
+               (test-assert
+                (and (search "2. defun test-skip-prompt-fresh" prompt)
+                     (search "Tracked definition when published: not recorded" prompt)
+                     (search "none: the current source has no definition" prompt))
+                "a legacy override without tracked counterparts says so"))))
+      (platform-delete-directory-tree *platform* source-root
+                                      :validate t
+                                      :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-streaming-presentation () null)
 (defun test-streaming-presentation ()
   "Test safe streaming, exact record reconciliation, and live tool entries."

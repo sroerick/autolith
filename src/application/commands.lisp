@@ -1170,20 +1170,147 @@ skipped definition grouped by reason."
             ':hint
             (format nil "~%  reapply a definition against the current source to keep it · the next self.commit drops the rest~%"))))))
 
+(-> application--replay-lineage-source-commit (application) (option string))
+(defun application--replay-lineage-source-commit (application)
+  "Return the revision the selected private commit lineage was published against."
+  (let ((commit (handler-case
+                    (image-commit-current
+                     (application-configuration application))
+                  (error ()
+                    nil))))
+    (and commit (image-commit-source-commit commit))))
+
 (-> application-replay-skips-entry (application) list)
 (defun application-replay-skips-entry (application)
   "Return the startup notice for the running image's private replay skips, or NIL."
-  (let ((commit (and *image-replay-skips*
-                     (handler-case
-                         (image-commit-current
-                          (application-configuration application))
-                       (error ()
-                         nil)))))
+  (when *image-replay-skips*
     (application--replay-skips-entry
      *image-replay-skips*
      :commit-identifier *active-image-commit-identifier*
-     :lineage-source-commit (and commit (image-commit-source-commit commit))
+     :lineage-source-commit
+     (application--replay-lineage-source-commit application)
      :image-source-commit (image-commit--base-source-commit nil))))
+
+(-> application--skipped-definition-section
+    (stream image-replay-skip integer (option configuration))
+    null)
+(defun application--skipped-definition-section (stream skip index configuration)
+  "Write the numbered repair section for SKIP to STREAM.
+
+The section carries the persisted override, the tracked source recorded when
+it was published, and the tracked definition CONFIGURATION's source holds now."
+  (let* ((definition (image-replay-skip-definition skip))
+         (current
+           (and configuration
+                (handler-case
+                    (self-tracked-definition configuration definition)
+                  (error ()
+                    nil))))
+         (recorded
+           (cond
+             ((not (image-replay-skip-tracked-recorded-p skip))
+              "not recorded")
+             ((null (image-replay-skip-tracked skip))
+              "a new name without a tracked definition")
+             (t
+              (format nil "~%~A" (image-replay-skip-tracked skip))))))
+    (format stream
+            "~%~D. ~(~A~) ~A~%~
+             Reason: ~A~%~
+             Persisted override:~%~A~%~
+             Tracked definition when published: ~A~%~
+             Current tracked definition~@[ in ~A~]:~%~A~%"
+            index
+            (first definition)
+            (application--replay-skip-name skip)
+            (image-replay-skip-message skip)
+            (image-replay-skip-source skip)
+            recorded
+            (and current (tracked-definition-relative-pathname current))
+            (if current
+                (tracked-definition-source current)
+                "none: the current source has no definition with this name and signature."))
+    nil))
+
+(-> application--skipped-definitions-prompt
+    (list &key (:configuration (option configuration))
+               (:commit-identifier (option string))
+               (:lineage-source-commit (option string))
+               (:image-source-commit (option string)))
+    string)
+(defun application--skipped-definitions-prompt
+    (skips &key configuration commit-identifier lineage-source-commit
+                image-source-commit)
+  "Return the model request that rebuilds SKIPS on the current tracked source."
+  (with-output-to-string (stream)
+    (format stream
+            "Autolith skipped ~D private definition~:[s~;~] at startup because ~
+             the tracked source they override moved on since they were ~
+             published (private commit ~A, published against ~A; this image ~
+             runs ~A). Bring every one of them up to date with the current ~
+             tracked source.~2%~
+             For each definition below, compare the persisted override with ~
+             the tracked definition it was written against and with the ~
+             current tracked definition. If the current tracked source already ~
+             provides the override's behavior, drop the override and say so. ~
+             Otherwise rewrite the override on top of the current tracked ~
+             definition, keeping its intent while following the current ~
+             calling conventions, install it with self.redefine, and check ~
+             that it works. When every definition is handled, publish the ~
+             result with self.commit so the next start replays the rebuilt ~
+             overrides. Do not edit tracked source files.~%"
+            (length skips)
+            (= (length skips) 1)
+            (application--short-revision commit-identifier)
+            (application--short-revision lineage-source-commit)
+            (application--short-revision image-source-commit))
+    (loop for skip in skips
+          for index from 1
+          do (application--skipped-definition-section
+              stream skip index configuration))))
+
+(-> application-fix-skipped-definitions (application) null)
+(defun application-fix-skipped-definitions (application)
+  "Queue one model turn that rebuilds every skipped private definition."
+  (let ((skips *image-replay-skips*))
+    (cond
+      ((null skips)
+       (application-present
+        application
+        (list (terminal-span
+               ':hint
+               "No private definitions were skipped at startup."))))
+      (t
+       (let ((controller (application-input-controller application)))
+         (unless controller
+           (error 'configuration-error
+                  :message "Only an interactive session can queue the repair turn."))
+         (multiple-value-bind (accepted-p delivery)
+             (application-input-controller-submit-primary-prompt
+              controller
+              (user-message-input-create
+               :text (application--skipped-definitions-prompt
+                      skips
+                      :configuration (application-configuration application)
+                      :commit-identifier *active-image-commit-identifier*
+                      :lineage-source-commit
+                      (application--replay-lineage-source-commit application)
+                      :image-source-commit
+                      (image-commit--base-source-commit nil)))
+              :prefer-steering-p nil)
+           (unless accepted-p
+             (error 'configuration-error
+                    :message
+                    (format nil "The repair turn was not accepted: ~(~A~)."
+                            delivery)))
+           (application-present
+            application
+            (list (terminal-span
+                   ':hint
+                   (format nil "Queued ~D skipped definition~:[s~;~] for the model to rebuild on the current source."
+                           (length skips)
+                           (= (length skips) 1))))))))))
+  nil)
 
 
 ;;;; -- Manual Compaction --
@@ -2968,6 +3095,18 @@ the settings page and the slash commands behave identically."
      :callable t)
     (application)
   (application-compact application)
+  ':continue)
+
+(define-application-command application--builtin-fix-skipped-definitions-command
+    (:name "/fix-skipped-definitions"
+     :argument nil
+     :description "ask the model to rebuild skipped private definitions"
+     :tip "hands every private definition the startup replay skipped to the model, with its persisted, recorded, and current tracked source, to rebuild and commit."
+     :busy-behavior :hold
+     :terminal-behavior :shared
+     :callable t)
+    (application)
+  (application-fix-skipped-definitions application)
   ':continue)
 
 (define-application-command application--builtin-compact-tool-command

@@ -324,6 +324,21 @@ protocol."
     :reader image-replay-skip-key
     :type string
     :documentation "The definition key computed in the replay's reader package.")
+   (source
+    :initarg :source
+    :reader image-replay-skip-source
+    :type string
+    :documentation "The complete persisted source of the skipped definition.")
+   (tracked
+    :initarg :tracked
+    :reader image-replay-skip-tracked
+    :type (option string)
+    :documentation "The tracked source recorded at publication, when the entry recorded one.")
+   (tracked-recorded-p
+    :initarg :tracked-recorded-p
+    :reader image-replay-skip-tracked-recorded-p
+    :type boolean
+    :documentation "Whether the replay entry recorded its tracked base at all.")
    (reason
     :initarg :reason
     :reader image-replay-skip-reason
@@ -796,6 +811,9 @@ authoritative; entries without the record are judged by source revision."
                    :definition definition
                    :key (let ((*package* package))
                           (definition-key definition))
+                   :source source
+                   :tracked tracked
+                   :tracked-recorded-p tracked-p
                    :reason reason
                    :message
                    (format nil
@@ -1255,16 +1273,22 @@ Files the system withholds from this image through :IF-FEATURE are left out."
      :package (find-package '#:autolith)
      :symbol symbol)))
 
-(-> self-tracked-definition-source (configuration list) (option string))
-(defun self-tracked-definition-source (configuration definition)
-  "Return the tracked source of the definition sharing DEFINITION's key, if any."
+(-> self-tracked-definition (configuration list) (option tracked-definition))
+(defun self-tracked-definition (configuration definition)
+  "Return the tracked definition sharing DEFINITION's key, if any."
   (let ((key (definition-key definition)))
     (loop for tracked in (self-tracked-definitions
                           configuration
                           (definition-name-symbol (second definition)))
           for form = (source-form-form (tracked-definition-source-form tracked))
           when (string= (definition-key form) key)
-            return (tracked-definition-source tracked))))
+            return tracked)))
+
+(-> self-tracked-definition-source (configuration list) (option string))
+(defun self-tracked-definition-source (configuration definition)
+  "Return the tracked source of the definition sharing DEFINITION's key, if any."
+  (let ((tracked (self-tracked-definition configuration definition)))
+    (and tracked (tracked-definition-source tracked))))
 
 (-> self-render-tracked-definitions (list symbol) string)
 (defun self-render-tracked-definitions (definitions symbol)
