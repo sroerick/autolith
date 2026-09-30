@@ -360,7 +360,7 @@
    (list
     'web-gist-tool
     "web_extra" "gist"
-    "Retrieve one HTML or Markdown page over HTTP or HTTPS as Markdown, following redirects. Supply a known URL from the user or search results. Only HTML and Markdown responses are accepted: raw source files, plain text, and JSON, such as raw.githubusercontent.com files or REST API replies, are refused, so fetch those with shell.run instead."
+    "Retrieve one HTML, Markdown, or plain-text page over HTTP or HTTPS, following redirects. HTML is converted to Markdown; Markdown and plain text are returned as text. Supply a known URL from the user or search results. JSON responses, such as REST API replies, are refused, so fetch those with shell.run instead."
     (web-gist-parameters)))
   registry)
 
