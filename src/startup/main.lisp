@@ -1139,6 +1139,26 @@ update through their flake or Nix profile."
      (error 'configuration-error
             :message "Run update through the installed autolith launcher."))))
 
+(defun main--uninstall-command ()
+  "Describe the launcher-owned uninstall operation without starting a session."
+  (make-command
+   :name "uninstall"
+   :description "remove the installation and keep user data"
+   :long-description
+   "Removes the packaged installation, managed runtimes, built images, and
+caches. Conversations, memories, agendas, image commits, settings, credentials,
+and configuration stay. The stable launcher performs the removal before any
+Lisp starts; on Windows it prints the folders to delete."
+   :options (list (make-option ':flag
+                               :long-name "yes"
+                               :key ':yes
+                               :description "skip the confirmation prompt"))
+   :handler
+   (lambda (command)
+     (declare (ignore command))
+     (error 'configuration-error
+            :message "Run uninstall through the installed autolith launcher."))))
+
 (-> main--normalize-update-arguments (list) list)
 (defun main--normalize-update-arguments (arguments)
   "Validate standalone update syntax and normalize its legacy launcher alias."
@@ -1162,7 +1182,8 @@ update through their flake or Nix profile."
    "The stable launcher also accepts --recovery and --from-source, which
 select how Autolith starts before this command line is parsed.
 Use -- to end option parsing. autolith --update is an alias for autolith update;
-both update the packaged installation and exit without starting a session."
+both update the packaged installation and exit without starting a session.
+autolith uninstall removes the installation and keeps user data."
    :version *autolith-version*
    :options (main--session-options)
    :sub-commands (list (main--resume-command)
@@ -1171,6 +1192,7 @@ both update the packaged installation and exit without starting a session."
                        (main--auth-command)
                          (main--models-command)
                        (main--update-command)
+                       (main--uninstall-command)
                        (main--data-command)
                        (main--run-job-command)
                        (main-localgroup-command))

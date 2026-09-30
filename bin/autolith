@@ -41,6 +41,10 @@ case $source_root in
   /nix/store/*) autolith_launcher_parse nix "$@" ;;
   *) autolith_launcher_parse source "$@" ;;
 esac
+if [[ $uninstall_requested == true ]]; then
+  autolith_uninstall "$autolith_installation_kind" "" "$source_root"
+  exit $?
+fi
 source_checksums_path=$source_root/sbcl-source-releases.sha256
 terminal_state=
 state_home=$(xdg_base_directory "${XDG_STATE_HOME:-}" "$HOME/.local/state")

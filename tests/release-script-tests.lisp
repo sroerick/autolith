@@ -689,6 +689,92 @@ printf '(:ACTIVE-IMAGE :VERSION 1\\n)\\n' > \"$active/manifest.sexp\"
         (declare (ignore error-output))
         (test-assert (and (= status 1) (not (search "/recovery/launcher.lisp" output)))
                      "a noninteractive data failure returns without starting recovery"))
+      (let* ((cache-home (merge-pathnames "cache/" fixture-root))
+             (config-home (merge-pathnames "config/" fixture-root))
+             (artifacts
+               (list (merge-pathnames "autolith/generations/g1/autolith.core" data-home)
+                     (merge-pathnames "autolith/runtimes/2.6.6/installation/bin/sbcl" data-home)
+                     (merge-pathnames "autolith/lisp-images/worker.core" data-home)
+                     (merge-pathnames "autolith/release-images" data-home)
+                     (merge-pathnames "autolith/crashes/capsule.sexp" state-home)
+                     (merge-pathnames "autolith/current-generation.sexp" state-home)
+                     (merge-pathnames "autolith/provider-models.sexp" state-home)
+                     (merge-pathnames "autolith/fff/index" cache-home)))
+             (kept
+               (list (merge-pathnames "autolith/conversations/c1/00000000000000000001.sexp"
+                                      data-home)
+                     (merge-pathnames "autolith/memories.sexp" data-home)
+                     (merge-pathnames "autolith/image-commits/i1/reconstruct.lisp" data-home)
+                     (merge-pathnames "autolith/auth.sexp" state-home)
+                     (merge-pathnames "autolith/mutation-history/HEAD" state-home)
+                     (merge-pathnames "autolith/mutations.sexp" state-home)
+                     (merge-pathnames "autolith/preferences.sexp" state-home)
+                     (merge-pathnames "autolith/init.lisp" config-home)))
+             (uninstall-environment
+               (append environment
+                       (list (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+                             (format nil "XDG_CONFIG_HOME=~A" (namestring config-home))))))
+        (flet ((populate ()
+                 (dolist (pathname (append artifacts kept))
+                   (release-script-tests--write-file pathname "x"))
+                 (release-script-tests--write-file log "")))
+          (populate)
+          (multiple-value-bind (output error-output status)
+              (release-script-tests--run
+               (list (namestring launcher) "uninstall")
+               :environment uninstall-environment :ignore-error-status t)
+            (declare (ignore output))
+            (test-assert
+             (and (= status 64)
+                  (search "--yes" error-output)
+                  (every #'probe-file artifacts)
+                  (zerop (length (uiop:read-file-string log))))
+             "an unconfirmed uninstall without a terminal removes nothing"))
+          (multiple-value-bind (output error-output status)
+              (release-script-tests--run
+               (list (namestring launcher) "uninstall" "--yes")
+               :environment uninstall-environment :ignore-error-status t)
+            (declare (ignore output))
+            (test-assert
+             (and (zerop status)
+                  (notany #'probe-file artifacts)
+                  (not (uiop:directory-exists-p (merge-pathnames "autolith/" cache-home)))
+                  (every #'probe-file kept)
+                  (search "source checkout" error-output)
+                  (search (string-right-trim "/" (namestring (truename fixture-root)))
+                          error-output)
+                  (zerop (length (uiop:read-file-string log))))
+             (format nil "a confirmed source uninstall removes artifacts and keeps user data: ~A"
+                     error-output)))
+          (multiple-value-bind (output error-output status)
+              (release-script-tests--run
+               (list (namestring launcher) "uninstall" "--yes")
+               :environment uninstall-environment :ignore-error-status t)
+            (declare (ignore output))
+            (test-assert
+             (and (zerop status) (search "Nothing to remove" error-output))
+             "a second uninstall reports nothing to remove"))
+          (populate)
+          (let* ((command
+                   (format nil "env ~{~A~^ ~} ~A uninstall"
+                           (mapcar #'uiop:escape-shell-token uninstall-environment)
+                           (uiop:escape-shell-token (namestring launcher))))
+                 (output
+                   (with-input-from-string (input (format nil "n~%"))
+                     (uiop:run-program
+                      (release-script-tests--pty-command command "n")
+                      :input input
+                      :output ':string
+                      :error-output ':output
+                      :ignore-error-status t))))
+            (test-assert
+             (and (search "Continue?" output)
+                  (search "not removed" output)
+                  (every #'probe-file artifacts))
+             (format nil "declining the uninstall prompt removes nothing: ~A" output)))
+          (dolist (pathname artifacts)
+            (when (probe-file pathname)
+              (delete-file pathname)))))
       (dolist (arguments '(("update") ("--update") ("update" "extra")))
         (release-script-tests--write-file log "")
         (multiple-value-bind (output error-output status)
@@ -1636,6 +1722,94 @@ printf 'RUNTIME=%s\\n' \"$*\" >> \"$AUTOLITH_TEST_LOG\"
                (merge-pathnames "current" install-root))
               (format nil "releases/~A" next-tag))
      "the verified updater atomically selects the new release"))
+  nil)
+
+(-> release-script-tests--uninstall (pathname pathname) null)
+(defun release-script-tests--uninstall (source-root root)
+  "Exercise packaged-release removal through the command link with user data kept."
+  (let* ((tag (format nil "v~A" *release-script-tests-version*))
+         (fixture-root (merge-pathnames "uninstall/" root))
+         (install-root (merge-pathnames "installation/" fixture-root))
+         (release-root (merge-pathnames (format nil "releases/~A/" tag) install-root))
+         (bin-directory (merge-pathnames "bin/" fixture-root))
+         (command-link (merge-pathnames "autolith" bin-directory))
+         (data-home (merge-pathnames "data/" fixture-root))
+         (state-home (merge-pathnames "state/" fixture-root))
+         (cache-home (merge-pathnames "cache/" fixture-root))
+         (config-home (merge-pathnames "config/" fixture-root))
+         (fixture-bin (merge-pathnames "fixture-bin/" fixture-root))
+         (log (merge-pathnames "uninstall.log" fixture-root))
+         (artifacts
+           (list (merge-pathnames "autolith/active/autolith-active.core" data-home)
+                 (merge-pathnames "autolith/recovery/autolith-recovery.core" data-home)
+                 (merge-pathnames "autolith/release-images" data-home)
+                 (merge-pathnames "autolith/crash-pointers/launcher-1.path" state-home)
+                 (merge-pathnames "autolith/fff/index" cache-home)))
+         (kept
+           (list (merge-pathnames "autolith/conversations/c1/00000000000000000001.sexp"
+                                  data-home)
+                 (merge-pathnames "autolith/agendas.sexp" data-home)
+                 (merge-pathnames "autolith/api-keys.sexp" state-home)
+                 (merge-pathnames "autolith/permissions.sexp" state-home)
+                 (merge-pathnames "autolith/init.lisp" config-home)))
+         (environment
+           (list (format nil "PATH=~A:~A"
+                         (string-right-trim "/" (namestring fixture-bin))
+                         (or (uiop:getenv "PATH") ""))
+                 (format nil "HOME=~A" (namestring fixture-root))
+                 (format nil "XDG_DATA_HOME=~A" (namestring data-home))
+                 (format nil "XDG_STATE_HOME=~A" (namestring state-home))
+                 (format nil "XDG_CACHE_HOME=~A" (namestring cache-home))
+                 (format nil "XDG_CONFIG_HOME=~A" (namestring config-home))
+                 (format nil "AUTOLITH_BIN_DIR=~A" (string-right-trim "/" (namestring bin-directory)))
+                 (format nil "AUTOLITH_TEST_LOG=~A" (namestring log)))))
+    (release-script-tests--make-release source-root release-root)
+    (uiop:ensure-all-directories-exist (list bin-directory fixture-bin))
+    (release-script-tests--install-linux-host-tools fixture-bin)
+    (uiop:run-program
+     (list "ln" "-s" (format nil "releases/~A" tag)
+           (namestring (merge-pathnames "current" install-root))))
+    (uiop:run-program
+     (list "ln" "-s" (namestring (merge-pathnames "current/bin/autolith" install-root))
+           (namestring command-link)))
+    (release-script-tests--write-file
+     (merge-pathnames "libexec/autolith/bin/autolith" release-root)
+     "#!/bin/sh
+printf 'INNER\\n' >> \"$AUTOLITH_TEST_LOG\"
+")
+    (release-script-tests--chmod
+     "755" (merge-pathnames "libexec/autolith/bin/autolith" release-root))
+    (dolist (pathname (append artifacts kept))
+      (release-script-tests--write-file pathname "x"))
+    (release-script-tests--write-file log "")
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring command-link) "uninstall")
+         :environment environment :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert
+       (and (= status 64)
+            (search "--yes" error-output)
+            (probe-file command-link)
+            (every #'probe-file artifacts))
+       "an unconfirmed release uninstall without a terminal removes nothing"))
+    (multiple-value-bind (output error-output status)
+        (release-script-tests--run
+         (list (namestring command-link) "uninstall" "--yes")
+         :environment environment :ignore-error-status t)
+      (declare (ignore output))
+      (test-assert
+       (and (zerop status)
+            (not (uiop:directory-exists-p install-root))
+            (not (probe-file command-link))
+            (notany #'probe-file artifacts)
+            (not (uiop:directory-exists-p (merge-pathnames "autolith/" cache-home)))
+            (every #'probe-file kept)
+            (search (string-right-trim "/" (namestring (truename fixture-root)))
+                    error-output)
+            (zerop (length (uiop:read-file-string log))))
+       (format nil "a confirmed release uninstall removes the installation and keeps user data: ~A"
+               error-output))))
   nil)
 
 (-> release-script-tests--musl-update-handoff (pathname pathname) null)
@@ -3038,7 +3212,7 @@ esac
                                            (format nil "-~A"
                                                    (clingon:option-short-name option))))))
                      (dolist (value '("--recovery" "--from-source" "--update"
-                                      "update" "--"))
+                                      "update" "uninstall" "--"))
                        (let ((arguments (list name value)))
                          (check-forwarding arguments :forwarded arguments))))))
                (dolist (child (clingon:command-sub-commands command))
@@ -3047,6 +3221,8 @@ esac
       (check-forwarding nil)
       (dolist (arguments '(("--" "--recovery" "--from-source" "--update")
                            ("resume" "update")
+                           ("resume" "uninstall")
+                           ("--" "uninstall")
                            ("--image=--recovery" "resume" "two words")
                            ("-i--from-source" "resume")
                            ("--" "update")))
@@ -3082,7 +3258,31 @@ esac
              (and (equal (first results) (second results))
                   (zerop (third (first results)))
                   (plusp (length (first (first results)))))
-             "update aliases provide the same successful help without startup"))))))
+             "update aliases provide the same successful help without startup")))
+        (dolist (tail '(("extra") ("--yes" "extra") ("--" "--yes") ("--recovery")
+                        ("--from-source") ("resume")))
+          (multiple-value-bind (output error-output status)
+              (run-preflight (cons "uninstall" tail) kind)
+            (test-assert
+             (and (= status 64) (zerop (length output))
+                  (plusp (length error-output)))
+             "malformed uninstall arguments exit before startup")))
+        (dolist (tail '(("--help") ("-h") ("--yes" "--help") ("--help" "--")))
+          (multiple-value-bind (output error-output status)
+              (run-preflight (cons "uninstall" tail) kind)
+            (declare (ignore error-output))
+            (test-assert
+             (and (zerop status) (search "Usage: autolith uninstall" output))
+             "uninstall help exits successfully without startup")))
+        (dolist (tail '(nil ("--yes") ("--yes" "--")))
+          (multiple-value-bind (output error-output status)
+              (run-preflight (cons "uninstall" tail) kind)
+            (declare (ignore error-output))
+            (test-assert
+             (and (zerop status)
+                  (string= output (format nil "false~%false~%false~%uninstall~%~{~A~%~}"
+                                          tail)))
+             "well-formed uninstall requests parse without acting"))))))
   nil)
 
 (-> release-script-tests--update-dispatch () null)
@@ -3120,7 +3320,34 @@ esac
               (zerop (catch 'update-dispatch-exit
                        (main-dispatch (cons alias tail))))
               "direct dispatch supports help for both update spellings"))))))
-    (test-assert (not started-p) "update never falls through to a session"))
+    (test-assert
+     (find "uninstall" (clingon:command-sub-commands (main--top-level-command))
+           :test #'string= :key #'command-name)
+     "uninstall is a discoverable Clingon command")
+    (test-call-with-function-replacements
+     (list
+      (list 'uiop:quit (lambda (status &key urgent)
+                         (declare (ignore urgent))
+                         (throw 'update-dispatch-exit status)))
+      (list 'worker-main (lambda () (setf started-p t)))
+      (list 'main--start-session (lambda (&rest arguments)
+                                  (declare (ignore arguments))
+                                  (setf started-p t))))
+     (lambda ()
+       (dolist (tail '(nil ("--yes") ("extra") ("--unknown")))
+         (let ((*standard-output* (make-string-output-stream))
+               (*error-output* (make-string-output-stream)))
+           (test-assert
+            (= 64 (catch 'update-dispatch-exit
+                    (main (cons "uninstall" tail))))
+            "bypassing a launcher cannot uninstall or start a session")))
+       (let ((*standard-output* (make-string-output-stream))
+             (*error-output* (make-string-output-stream)))
+         (test-assert
+          (zerop (catch 'update-dispatch-exit
+                   (main-dispatch '("uninstall" "--help"))))
+          "direct dispatch supports uninstall help"))))
+    (test-assert (not started-p) "update and uninstall never fall through to a session"))
   nil)
 
 (-> release-script-tests--models-command () null)
@@ -3181,6 +3408,7 @@ esac
               (release-script-tests--launcher-bsd source-root root)
               (release-script-tests--update-handoff source-root root)
               (release-script-tests--musl-update-handoff source-root root)
+              (release-script-tests--uninstall source-root root)
               (release-script-tests--image-marker-platform source-root root)
               (release-script-tests--installer source-root root)
               (release-script-tests--installer-platform-identity source-root root)

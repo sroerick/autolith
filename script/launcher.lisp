@@ -38,7 +38,7 @@
 
 (defstruct launcher-request
   "The launcher options separated from the application arguments."
-  recovery-p from-source-p update-p data-p arguments)
+  recovery-p from-source-p update-p uninstall-p data-p arguments)
 
 (defun launcher-bootstrap-command-name (source-root)
   "Return the bootstrap command to show the user for SOURCE-ROOT."
@@ -54,8 +54,25 @@
   "Print the update sub-command help to standard output."
   (format t "Usage: autolith update [--help]~%       autolith --update [--help]~%~%Install the latest packaged release and exit without starting a session.~%Source checkouts: update the checkout, then run script/bootstrap.ps1.~%"))
 
+(defun launcher-uninstall-usage ()
+  "Print the uninstall sub-command usage to standard error."
+  (format *error-output* "Usage: autolith uninstall [--yes] [--help]~%"))
+
+(defun launcher-uninstall-help ()
+  "Print the uninstall sub-command help to standard output."
+  (format t "Usage: autolith uninstall [--yes] [--help]~%~%Remove the Autolith installation, managed runtimes, built images, and caches~%without starting a session. User data stays: conversations, memories, agendas,~%image commits, settings, credentials, and configuration.~%"))
+
+(defun launcher-uninstall-instructions ()
+  "Print the manual Windows removal steps to standard error.
+
+The running runtime lives inside the trees to remove, and Windows refuses to
+delete an executable in use, so the launcher names the exact folders instead
+of deleting them, as the Windows update path also hands off to the user."
+  (format *error-output*
+          "Uninstall is manual on Windows. Close every Autolith session, then delete:~%  %LOCALAPPDATA%\\autolith\\installation~%  %LOCALAPPDATA%\\autolith\\bin (and remove it from your user Path)~%  %LOCALAPPDATA%\\autolith\\data\\runtimes, active, recovery, generations, lisp-images, release-images~%  %LOCALAPPDATA%\\autolith\\cache~%  .autolith-images beside an extracted release~%Keep %LOCALAPPDATA%\\autolith\\data (conversations, memories, agendas, image commits),~%%LOCALAPPDATA%\\autolith\\state (settings, credentials, mutation history), and %APPDATA%\\autolith.~%"))
+
 (defun launcher-parse (arguments)
-  "Return the LAUNCHER-REQUEST for ARGUMENTS, exiting on a malformed update."
+  "Return the LAUNCHER-REQUEST for ARGUMENTS, exiting on a malformed update or uninstall."
   (let ((request (make-launcher-request))
         (command-seen-p nil)
         (take-value-p nil)
@@ -91,11 +108,33 @@
          (unless command-seen-p
            (when (string= argument "update")
              (setf (launcher-request-update-p request) t))
+           (when (string= argument "uninstall")
+             (setf (launcher-request-uninstall-p request) t))
            (when (string= argument "data")
              (setf (launcher-request-data-p request) t)))
          (setf command-seen-p t)
          (push argument remaining))))
     (setf (launcher-request-arguments request) (nreverse remaining))
+    (when (launcher-request-uninstall-p request)
+      ;; An uninstall is a standalone operation with one optional flag.
+      (let ((operands (if (and (> (length arguments) 1)
+                               (string= (car (last arguments)) "--"))
+                          (butlast arguments)
+                          arguments)))
+        (unless (string= (first operands) "uninstall")
+          (launcher-uninstall-usage)
+          (uiop:quit 64))
+        (dolist (operand (rest operands))
+          (cond
+            ((string= operand "--yes"))
+            ((member operand '("--help" "-h") :test #'string=)
+             (launcher-uninstall-help)
+             (uiop:quit 0))
+            (t
+             (launcher-uninstall-usage)
+             (uiop:quit 64))))
+        (launcher-uninstall-instructions)
+        (uiop:quit 64)))
     (when (launcher-request-update-p request)
       ;; An update is a standalone operation, never a session option.
       (let ((operands (if (and (> (length arguments) 1)

@@ -56,7 +56,7 @@ in the application rather than the terminal emulator's native scrollback.
   transcript above the composer. Mouse wheel scrolling also works through a
   controlling local-session attachment.
 
-* Install and update
+* Install, update, and uninstall
 
 ** Nix
 
@@ -208,6 +208,29 @@ is protected. Bootstrap builds the helper with Clang; release archives include i
 Windows supports supervised detached sessions, client-first starts, and exact-heap
 restart checkpoints. It withholds fork-based checkpoint saving and the =unix=
 management REPL transport.
+
+** Uninstall
+
+To remove Autolith and keep your data:
+
+#+BEGIN_SRC sh
+autolith uninstall
+#+END_SRC
+
+The launcher lists what it will remove, asks for confirmation, and exits without
+starting a session; =--yes= skips the prompt, which is required when no terminal
+is attached. It removes the packaged installation and its command link, managed
+SBCL runtimes, the active and recovery images, retained generation cores, saved
+worker images, Nix image trees, release markers, crash capsules, launcher
+pointers, session sockets and leases, provider caches, and the cache root.
+
+User data stays in place: conversations, inference traces, memories, papercuts,
+agendas, plans, pending input, private image commits, the mutation journal and
+mutation history, permissions, preferences, credentials, and the configuration
+root. Stop running sessions first. A source checkout stays as well; delete it
+yourself. Nix installations also need the package removed from the flake or
+profile. On Windows the launcher prints the folders to delete, because the
+runtime in use lives inside them.
 
 * Talk to Autolith
 

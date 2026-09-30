@@ -40,6 +40,14 @@ source_root=$release_root/libexec/autolith
 # shellcheck source=../script/launcher-cli.sh
 source "$source_root/script/launcher-cli.sh"
 autolith_launcher_parse release "$@"
+if [[ $uninstall_requested == true ]]; then
+  uninstall_root=
+  if [[ $(basename -- "$(dirname -- "$release_root")") == releases ]]; then
+    uninstall_root=$(CDPATH= cd -P -- "$release_root/../.." && pwd)
+  fi
+  autolith_uninstall release "$uninstall_root" "$release_root"
+  exit $?
+fi
 runtime_root=$release_root/runtime
 runtime_source_root=$release_root/libexec/sbcl-source
 sbcl_command=$runtime_root/bin/sbcl
