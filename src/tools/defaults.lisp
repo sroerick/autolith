@@ -724,6 +724,19 @@
              "restart-value" (tool-restart-value-property))
             '("definition")))
           (list
+           'self-redefine-tool
+           "self" "define"
+           "The same tool as self.redefine under a second name. The definition's name does not need to exist yet."
+           (tool-object-schema
+            (json-object
+             "definition" (tool-string-property
+                           "A complete defining Common Lisp form.")
+             "package" (tool-string-property
+                        "The active package in which to read and install the definition; defaults to AUTOLITH.")
+             "restart" (tool-restart-property)
+             "restart-value" (tool-restart-value-property))
+            '("definition")))
+          (list
            'self-set-tool
            "self" "set"
            "Set one active global binding to the value of a Common Lisp form."

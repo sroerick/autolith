@@ -2478,3 +2478,16 @@
                           (search "self-symbol-defined-p" message))
                      "an undefined name fails and names the closest defined symbols"))))
   nil)
+
+(-> test-self-define-alias () null)
+(defun test-self-define-alias ()
+  "Register self.define as the same tool class and schema as self.redefine."
+  (let* ((registry (make-default-tool-registry))
+         (redefine (tool-registry-find registry "self" "redefine"))
+         (define (tool-registry-find registry "self" "define")))
+    (test-assert (and (typep redefine 'self-redefine-tool)
+                      (typep define 'self-redefine-tool))
+                 "self.define is a second self-redefine-tool")
+    (test-assert (equalp (tool-parameters redefine) (tool-parameters define))
+                 "self.define accepts the same arguments as self.redefine")
+    nil))

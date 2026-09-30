@@ -371,7 +371,8 @@
   test-image-replay-stale-definitions
   test-lisp-source-undefined-name
   test-lisp-apropos
-  test-lisp-describe-designators)
+  test-lisp-describe-designators
+  test-self-define-alias)
 
 (define-test-suite generation
   test-generation-manifest

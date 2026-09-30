@@ -335,7 +335,7 @@ from. Never guess a definition name: find it with =lisp.apropos= or
 | =lisp.describe= / =lisp.source= with =target self= | Active bindings and exact tracked Autolith, dependency, or matching SBCL source.                                    |
 | =self.eval=                                    | Questions and instrumentation.                                                                                      |
 | =lisp.*= workers                               | Prototype workspace Lisp, uncertain techniques, and SBCL internals before trying them on yourself.                  |
-| =self.redefine=                                | Trial a complete definition. Accepts an explicit package, restores package locks, journals that package for replay. |
+| =self.redefine= / =self.define=                | Trial a complete definition, new or replacing. Accepts an explicit package, restores package locks, journals it.    |
 | =self.set=                                     | Journaled global value change.                                                                                      |
 | =self.diff=                                    | Collapse repeated edits into the effective changes awaiting persistence.                                            |
 | =self.exercise=                                | Narrow assertion-style check against one change.                                                                    |

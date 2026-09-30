@@ -927,8 +927,9 @@ independently.
 
 ** Live definitions
 
-Use =self.redefine= to replace loaded Lisp definitions, including functions and
-methods outside the Autolith package. Qualify the target symbol in the source,
+Use =self.redefine= to install loaded Lisp definitions, new or replacing,
+including functions and methods outside the Autolith package. =self.define=
+names the same tool. Qualify the target symbol in the source,
 or supply the =package= argument to select its reader package. Use qualified
 symbols with =self.set= for foreign global bindings.
 
