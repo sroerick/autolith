@@ -3018,3 +3018,87 @@
                         "the routing token is cleared at the turn boundary"))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
+
+
+(-> test-agent-tool-search-round () null)
+(defun test-agent-tool-search-round ()
+  "Test that a client tool search is answered locally and replayed on the follow-up."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration))
+         (conversation
+           (conversation-create configuration :identifier "agent-tool-search"))
+         (search
+           (json-object
+            "type" "tool_search_call"
+            "call_id" "search-1"
+            "status" "completed"
+            "execution" "client"
+            "arguments" (json-object "query" "echo")))
+         (provider
+           (make-instance
+            'scripted-provider
+            :results
+            (list
+             (agent-test-result "response-1" (list search))
+             (agent-test-result "response-2" (list (agent-test-message "done"))))))
+         (statuses nil))
+    (unwind-protect
+         (let* ((agent
+                  (agent-create
+                   :configuration configuration
+                   :provider provider
+                   :conversation conversation
+                   :tool-registry (agent-test-registry)
+                   :worker ':unused))
+                (result
+                  (agent-run-user-turn
+                   agent "find the echo tool"
+                   :observer (callback-agent-observer-create
+                              :status-callback
+                              (lambda (status details)
+                                (declare (ignore details))
+                                (push status statuses)))))
+                (snapshots (reverse (scripted-provider-input-snapshots provider)))
+                (follow-up (second snapshots))
+                (output (find-if (lambda (item)
+                                   (and (json-object-p item)
+                                        (json-string= (json-get item "type")
+                                                      "tool_search_output")))
+                                 follow-up))
+                (namespace (and output
+                                (plusp (length (json-get output "tools")))
+                                (aref (json-get output "tools") 0)))
+                (child (and namespace (aref (json-get namespace "tools") 0))))
+           (test-assert
+            (string= (provider-result-response-id result) "response-2")
+            "the search round is followed by one more provider request")
+           (test-assert
+            (and output
+                 (json-string= (json-get output "call_id") "search-1")
+                 (json-string= (json-get output "execution") "client")
+                 (json-string= (json-get namespace "name") "test")
+                 (json-string= (json-get child "name") "echo")
+                 (eq (json-get child "defer_loading") t)
+                 (json-object-p (json-get child "parameters")))
+            "the follow-up request replays the locally answered expansion")
+           (test-assert
+            (let ((position (position output follow-up)))
+              (and position
+                   (eq (nth (1- position) follow-up) search)))
+            "the expansion directly follows its search call in history")
+           (test-assert
+            (and (member :provider-follow-up statuses)
+                 (not (member :tool-call-completed statuses)))
+            "a tool search is neither a tool call nor a completed turn")
+           (test-assert
+            (let ((records (conversation--read-records
+                            (conversation-pathname conversation))))
+              (= (count-if (lambda (record)
+                             (and (eq (first record) :provider-item)
+                                  (search "tool_search_output"
+                                          (getf (rest record) :wire-json))))
+                           records)
+                 1))
+            "the expansion is journaled once as a durable provider item"))
+      (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)

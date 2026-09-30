@@ -230,6 +230,7 @@
 (define-test-suite provider
   test-provider-deferred-tool-models
   test-provider-deferred-tool-loading
+  test-provider-tool-search
   test-provider-request
   test-provider-request-tool-filtering
   test-provider-native-compaction
@@ -448,7 +449,8 @@
   test-agent-tool-concurrency-key
   test-agent-exclusive-tool-waves
   test-agent-parallel-tool-failure
-  test-agent-parallel-fatal-propagation)
+  test-agent-parallel-fatal-propagation
+  test-agent-tool-search-round)
 
 (define-test-suite task-agent
   test-task-agent-native-reader

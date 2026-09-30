@@ -845,8 +845,13 @@ runtime execute in separate ordered waves.
 
 GPT-5.4 and later Codex models use native Responses tool search. Autolith sends
 stable namespace names and descriptions up front, marks each function
-=defer_loading=true=, and lets the provider expose matching schemas only when
-needed. Other models and providers receive the complete eager tool array.
+=defer_loading=true=, and declares a client-executed =tool_search=. When the
+model searches, Autolith answers from its own registry over the namespaces
+that request advertised, scoring namespace names, tool names, and description
+words, and appends the =tool_search_output= as a durable provider item. The
+expansion replays intact in every later request, which keeps those tools
+loaded and the prompt prefix cacheable; only native compaction requests replay
+it empty. Other models and providers receive the complete eager tool array.
 
 Authenticate Gemini with =autolith auth gemini=, =/auth gemini=, or
 =(auth "gemini")=. Autolith stores its Google OAuth credentials separately at

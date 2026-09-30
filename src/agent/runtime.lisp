@@ -482,9 +482,13 @@ needs the few most recent calls to recognize an oscillation."
    "Return true when RESULT completes AGENT's active user turn."))
 
 (defmethod agent-turn-complete-p ((agent agent) (result provider-result))
-  "Return true when RESULT needs neither tool execution nor a provider follow-up."
+  "Return true when RESULT needs neither tool execution nor a provider follow-up.
+
+A client-executed tool search is answered locally and needs the follow-up
+request that carries its expansion."
   (declare (ignore agent))
   (and (null (provider-result-tool-calls result))
+       (null (provider-result-tool-search-calls result))
        (not (eq (provider-result-turn-completion result) ':continue))))
 
 (-> agent-turn-completion-details (agent) list)
@@ -691,6 +695,29 @@ commit 6f51c65958."
            :usage (agent--portable-value
                    (provider-usage-normalize
                     (provider-result-usage result))))))
+  nil)
+
+(-> agent--answer-tool-searches
+    (agent provider-result vector &key (:request-number integer))
+    null)
+(defun agent--answer-tool-searches (agent result tool-namespaces &key request-number)
+  "Answer RESULT's client tool searches from the TOOL-NAMESPACES this request offered.
+
+Each answer is appended as a durable provider item, so the expansion replays in
+every later request and the server keeps those tools loaded without another
+search. The search covers exactly the namespaces the request advertised, so a
+restricted turn cannot discover tools outside its allowlist."
+  (let ((conversation (agent-conversation agent))
+        (provider (agent-provider agent)))
+    (dolist (call (provider-result-tool-search-calls result))
+      (unless (non-empty-string-p (json-get call "call_id"))
+        (error 'agent-loop-error
+               :message "The provider returned a tool search without a call_id."
+               :conversation-id (conversation-identifier conversation)
+               :request-number request-number))
+      (conversation-append-provider-item
+       conversation
+       (provider-answer-tool-search provider call tool-namespaces))))
   nil)
 
 (-> agent--note-persisted-assistant-response
@@ -1525,6 +1552,15 @@ loop, so compaction ahead of the user message shares the turn's budget."
                     (or (not tool-restriction-p)
                         (< tool-rounds
                            *agent-restricted-maximum-tool-rounds*))))
+             (tool-namespaces
+               (if tool-schemas-p
+                   (if tool-restriction-p
+                       (tool-registry-provider-schemas
+                        (agent-tool-registry agent)
+                        :canonical-names tool-allowlist)
+                       (tool-registry-provider-schemas
+                        (agent-tool-registry agent)))
+                   #()))
              (result
                (handler-case
                    (let ((*provider-hosted-tools-enabled-p*
@@ -1541,15 +1577,7 @@ loop, so compaction ahead of the user message shares the turn's budget."
                      (provider-stream-turn
                       (agent-provider agent)
                       conversation
-                      :tool-namespaces
-                      (if tool-schemas-p
-                          (if tool-restriction-p
-                              (tool-registry-provider-schemas
-                               (agent-tool-registry agent)
-                               :canonical-names tool-allowlist)
-                              (tool-registry-provider-schemas
-                               (agent-tool-registry agent)))
-                          #())
+                      :tool-namespaces tool-namespaces
                       :event-callback
                       (agent--provider-event-callback
                        observer
@@ -1593,6 +1621,8 @@ loop, so compaction ahead of the user message shares the turn's budget."
            result
            :request-number request-number
            :call-plans call-plans)
+          (agent--answer-tool-searches
+           agent result tool-namespaces :request-number request-number)
           (agent--note-persisted-assistant-response
            observer result request-number)
           (agent--note-turn-state conversation result)

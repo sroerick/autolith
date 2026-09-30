@@ -421,6 +421,16 @@
              (test-assert
               (< visible-characters eager-characters)
               "deferred discovery reduces model-visible schema characters"))
+           (let ((search-tool (aref tools 1)))
+             (test-assert
+              (and (json-string= (json-get search-tool "execution") "client")
+                   (json-object-p (json-get (json-get search-tool "parameters")
+                                            "properties"))
+                   (json-object-p
+                    (json-get (json-get (json-get search-tool "parameters")
+                                        "properties")
+                              "query")))
+              "tool search is declared client-executed with a query parameter"))
            ;; Expansions replay intact in the deferred wire shape; the null
            ;; output_schema of server-produced records is dropped and a child
            ;; without an object parameter schema cannot be declared.
@@ -2673,3 +2683,95 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+
+(-> test-provider-tool-search () null)
+(defun test-provider-tool-search ()
+  "Test local tool search scoring, namespace expansion, limits, and output shape."
+  (let* ((namespaces
+           (json-array
+            (json-object
+             "type" "namespace"
+             "name" "resource"
+             "description" "Revision-gated observation of resources."
+             "tools" (json-array
+                      (json-object "type" "function" "name" "read"
+                                   "description" "Read one resource window."
+                                   "strict" false
+                                   "parameters" (json-object "type" "object"))
+                      (json-object "type" "function" "name" "edit"
+                                   "description" "Apply structured edits."
+                                   "strict" false
+                                   "parameters" (json-object "type" "object"))))
+            (json-object
+             "type" "namespace"
+             "name" "shell"
+             "description" "External commands."
+             "tools" (json-array
+                      (json-object "type" "function" "name" "run"
+                                   "description" "Run one shell command in the workspace."
+                                   "strict" false
+                                   "parameters" (json-object "type" "object"))))))
+         (cases
+           ;; query, limit, expected (namespace (tool ...)) alist
+           (list
+            (list "resource" nil '(("resource" "read" "edit")))
+            (list "read" nil '(("resource" "read")))
+            (list "run the command" nil '(("shell" "run")))
+            (list "edit" nil '(("resource" "edit")))
+            (list "workspace" nil '(("shell" "run")))
+            (list "read edit run" 1 '(("resource" "read")))
+            (list "resource run" 1 '(("resource" "read" "edit") ("shell" "run")))
+            (list "nothing here" nil '())
+            (list "" nil '()))))
+    (flet ((shape (tools)
+             (loop for namespace across tools
+                   collect (cons (json-get namespace "name")
+                                 (loop for tool across (json-get namespace "tools")
+                                       collect (json-get tool "name"))))))
+      (dolist (case cases)
+        (destructuring-bind (query limit expected) case
+          (let* ((arguments (if limit
+                                (json-object "query" query "limit" limit)
+                                (json-object "query" query)))
+                 (tools (provider-tool-search
+                         namespaces
+                         (provider-tool-search--terms arguments)
+                         :limit (provider-tool-search--limit arguments))))
+            (test-assert (equal (shape tools) expected)
+                         (format nil "query ~S limit ~S exposes ~S" query limit expected)))))
+      (let* ((call (json-object "type" "tool_search_call"
+                                "call_id" "search-7"
+                                "execution" "client"
+                                "arguments" "{\"query\":\"shell\"}"))
+             (output (provider-tool-search-output call namespaces))
+             (child (aref (json-get (aref (json-get output "tools") 0) "tools") 0)))
+        (test-assert
+         (and (json-string= (json-get output "type") "tool_search_output")
+              (json-string= (json-get output "call_id") "search-7")
+              (json-string= (json-get output "status") "completed")
+              (json-string= (json-get output "execution") "client")
+              (equal (shape (json-get output "tools")) '(("shell" "run")))
+              (eq (json-get child "defer_loading") t)
+              (nth-value 1 (json-get-present child "strict")))
+         "a JSON-string query answers with a client tool_search_output"))
+      (test-assert
+       (equal (shape (json-get (provider-tool-search-output
+                                (json-object "type" "tool_search_call"
+                                             "call_id" "search-8"
+                                             "execution" "client"
+                                             "arguments" (json-object
+                                                          "paths" (json-array "shell")))
+                                namespaces)
+                               "tools"))
+              '(("shell" "run")))
+       "the legacy paths argument names namespaces")
+      (test-assert
+       (zerop (length (json-get (provider-tool-search-output
+                                 (json-object "type" "tool_search_call"
+                                              "call_id" "search-9"
+                                              "execution" "client"
+                                              "arguments" "not json")
+                                 namespaces)
+                                "tools")))
+       "unreadable search arguments expose nothing")))
+  nil)
