@@ -74,18 +74,30 @@
 
 (-> self-symbol-lambda-list (symbol) t)
 (defun self-symbol-lambda-list (symbol)
-  "Return SYMBOL's function lambda list when introspection can recover it."
-  (when (fboundp symbol)
+  "Return SYMBOL's function lambda list when introspection can recover it.
+
+Compiled definitions keep no lambda expression, so SBCL's recorded lambda
+list is consulted before falling back to the expression."
+  (when (and (fboundp symbol)
+             (not (special-operator-p symbol)))
     (handler-case
         (let ((function (symbol-function symbol)))
-          (if (typep function 'generic-function)
-              (closer-mop:generic-function-lambda-list function)
-              (multiple-value-bind (expression closure-p lexical-name)
-                  (function-lambda-expression function)
-                (declare (ignore closure-p lexical-name))
-                (and (consp expression)
-                     (eq (first expression) 'lambda)
-                     (second expression)))))
+          (cond
+            ((typep function 'generic-function)
+             (closer-mop:generic-function-lambda-list function))
+            (t
+             (require :sb-introspect)
+             (let ((recorded (uiop:symbol-call '#:sb-introspect
+                                               '#:function-lambda-list
+                                               function)))
+               (if (listp recorded)
+                   recorded
+                   (multiple-value-bind (expression closure-p lexical-name)
+                       (function-lambda-expression function)
+                     (declare (ignore closure-p lexical-name))
+                     (and (consp expression)
+                          (eq (first expression) 'lambda)
+                          (second expression))))))))
       (error ()
         nil))))
 
