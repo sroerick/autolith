@@ -567,6 +567,15 @@ exist yet, and is only put in directory form."
   :documentation "Whether interactive sessions use the fullscreen terminal UI."
   :scope :durable)
 
+(define-setting :terminal-theme (choice-setting)
+  :label "Theme"
+  :group :terminal
+  :documentation "The presentation theme: autolith, or almighty for yellow on blue."
+  :scope :durable
+  :type '(member :autolith :almighty)
+  :options '(:autolith :almighty)
+  :default ':autolith)
+
 (define-setting :permission-mode (choice-setting)
   :label "Saved permission mode"
   :group :behavior

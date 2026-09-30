@@ -58,8 +58,11 @@
          (progn
            (terminal--write
             (terminal-ui-terminal ui)
-            (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
-                    #\Escape #\Escape #\Escape #\Escape #\Escape #\Escape))
+            (concatenate
+             'string
+             (terminal-theme-leave-sequence *terminal-theme*)
+             (format nil "~C[0m~C[?7h~C[?25h~C[?1006l~C[?1000l~C[?1049l"
+                     #\Escape #\Escape #\Escape #\Escape #\Escape #\Escape)))
            (terminal-flush (terminal-ui-terminal ui)))
       (let ((token (fullscreen-terminal-ui-platform-token ui)))
         (setf (fullscreen-terminal-ui-active-p ui) nil
@@ -81,8 +84,11 @@
                    (fullscreen-terminal-ui-active-p ui) t)
              (terminal--write
               (terminal-ui-terminal ui)
-              (format nil "~C[?1049h~C[2J~C[H~C[?1000h~C[?1006h"
-                      #\Escape #\Escape #\Escape #\Escape #\Escape))
+              (concatenate
+               'string
+               (format nil "~C[?1049h~C[2J~C[H~C[?1000h~C[?1006h"
+                       #\Escape #\Escape #\Escape #\Escape #\Escape)
+               (terminal-theme-enter-sequence *terminal-theme*)))
              (terminal-flush (terminal-ui-terminal ui))
              (terminal-ui-fullscreen-invalidate ui)
              (setf completed-p t))

@@ -711,6 +711,12 @@ dependencies."
               (when (getopt* command ':fullscreen)
                 (configuration-set base (configuration-setting base :fullscreen-p) t
                                    :source ':override))
+              (when (getopt* command ':almighty)
+                (configuration-set base (configuration-setting base :terminal-theme)
+                                   ':almighty :source ':override)
+                (configuration-set base (configuration-setting base :fullscreen-p) t
+                                   :source ':override))
+              (terminal-theme-install (config :terminal-theme base))
               base))
          (permission-mode
            (or explicit-permission-mode
@@ -907,6 +913,11 @@ AUTOLITH_SESSION_STYLE=direct keep the direct path."
                 :key ':fullscreen
                 :persistent t
                 :description "use a scrollable alternate-screen UI with a pinned composer")
+   (make-option ':flag
+                :long-name "almighty"
+                :key ':almighty
+                :persistent t
+                :description "force fullscreen with the Almighty Lisp yellow-on-blue theme")
    (make-option ':flag
                 :long-name "immutable"
                 :key ':immutable

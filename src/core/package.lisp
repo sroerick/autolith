@@ -10,7 +10,11 @@
                 #:cl+ssl-error
                 #:ssl-error-syscall)
   (:import-from #:cl-colorist
+                #:color
+                #:color-kind
+                #:color-value
                 #:effective-color-level
+                #:hex-color
                 #:indexed-color
                 #:make-style
                 #:reset-sequence

@@ -29,21 +29,52 @@
     )
   "A dithered braille rendering of the Autolith rock mascot, for the boot panel.")
 
+(defparameter *terminal-ui-boot-almighty-rows*
+  '("    ___    __    __  _______________  __________  __"
+    "   /   |  / /   /  |/  /  _/ ____/ / / /_  __/\\ \\/ /"
+    "  / /| | / /   / /|_/ // // / __/ /_/ / / /    \\  /"
+    " / ___ |/ /___/ /  / // // /_/ / __  / / /     / /"
+    "/_/  |_/_____/_/  /_/___/\\____/_/ /_/ /_/     /_/"
+    ""
+    "    __    _________ ____"
+    "   / /   /  _/ ___// __ \\"
+    "  / /    / / \\__ \\/ /_/ /"
+    " / /____/ / ___/ / ____/"
+    "/_____/___//____/_/")
+  "The ALMIGHTY LISP mark in FIGlet's Slant font, for Micah's theme.")
+
 (defparameter *terminal-ui-boot-mascot-styles*
   #(:brand-gradient-1 :brand-gradient-2 :brand-gradient-3
     :brand-gradient-4 :brand-gradient-5 :brand-gradient-6)
-  "Row styles cycling top-to-bottom across the boot mascot art.")
+  "Row styles cycling top-to-bottom across the boot mark art.")
+
+(-> terminal-ui--boot-art () (values list string string))
+(defun terminal-ui--boot-art ()
+  "Return the installed theme's boot mark rows, panel title, and tagline."
+  (ecase (terminal-theme-name *terminal-theme*)
+    (:autolith
+     (values *terminal-ui-boot-mascot-rows*
+             "A U T O L I T H  /  LISP MACHINE"
+             "READ . EVAL . PRINT . LOOP"))
+    (:almighty
+     (values *terminal-ui-boot-almighty-rows*
+             "A L M I G H T Y  L I S P  /  LISP MACHINE"
+             "ALMIGHTY TOOLS FOR ALMIGHTY PROGRAMMERS"))))
 
 (-> terminal-ui--boot-mascot-row-style (integer integer) terminal-style)
 (defun terminal-ui--boot-mascot-row-style (row total)
-  "Return ROW's gradient style out of TOTAL rows of boot mascot art."
+  "Return ROW's gradient style out of TOTAL rows of boot mark art."
   (let ((styles *terminal-ui-boot-mascot-styles*))
     (aref styles (min (1- (length styles))
                       (floor (* row (length styles)) (max 1 total))))))
 
-(-> terminal-ui--boot-screen-panel ((or string symbol) (option string) integer) list)
-(defun terminal-ui--boot-screen-panel (phase detail columns)
-  "Return horizontally centered styled rows for the actual PHASE and DETAIL."
+(-> terminal-ui--boot-screen-panel
+    ((or string symbol) (option string) integer &key (:mark-rows list))
+    list)
+(defun terminal-ui--boot-screen-panel (phase detail columns &key mark-rows)
+  "Return horizontally centered styled rows for the actual PHASE and DETAIL.
+
+MARK-ROWS are the already height-limited rows of the theme's boot mark."
   (let* ((width (min 64 (max 1 (- columns 4))))
          (inside (max 0 (- width 4)))
          (left (make-string (max 0 (floor (- columns width) 2))
@@ -57,7 +88,9 @@
          (bottom-border
            (concatenate 'string "└" (make-string (max 0 (- width 2))
                                                  :initial-element #\─) "┘"))
-         (mascot-count (length *terminal-ui-boot-mascot-rows*)))
+         (mascot-count (length mark-rows)))
+    (multiple-value-bind (art title tagline) (terminal-ui--boot-art)
+      (declare (ignore art))
     (labels ((row (style text)
                (list (terminal-span ':plain left)
                      (terminal-span style (layout-fit-text text width))))
@@ -77,11 +110,11 @@
       (append
        (list (row ':brand top-border))
        (loop for index from 0
-             for mascot-line in *terminal-ui-boot-mascot-rows*
+             for mascot-line in mark-rows
              collect (mascot-row index mascot-line))
        (list (row ':brand mid-border)
-             (boxed ':brand "A U T O L I T H  /  LISP MACHINE")
-             (boxed ':hint "READ . EVAL . PRINT . LOOP")
+             (boxed ':brand title)
+             (boxed ':hint tagline)
              (boxed ':plain "")
              (boxed ':plain (format nil "(boot :image ~S)"
                                     (format nil "~A ~A" (lisp-implementation-type)
@@ -90,7 +123,7 @@
              (boxed ':plain (or detail "Awaiting operator input."))
              (boxed ':plain "")
              (boxed ':hint "[ SYSTEM CONSOLE ]                         Ctrl-C: halt")
-             (row ':brand bottom-border))))))
+             (row ':brand bottom-border)))))))
 
 (-> terminal-ui--boot-tip-rows (terminal-ui integer) list)
 (defun terminal-ui--boot-tip-rows (ui columns)
@@ -118,11 +151,11 @@
          (available (max 0 (1- height)))
          ;; Keep status and advice visible before allocating rows to the mascot.
          (mascot-limit (max 0 (- available 11 (if tip (1+ (length tip)) 0))))
-         (*terminal-ui-boot-mascot-rows*
-           (subseq *terminal-ui-boot-mascot-rows* 0
-                   (min mascot-limit (length *terminal-ui-boot-mascot-rows*))))
+         (art (terminal-ui--boot-art))
+         (mark-rows (subseq art 0 (min mascot-limit (length art))))
          (panel (mapcar (lambda (row) (terminal--render-spans terminal row))
-                        (terminal-ui--boot-screen-panel phase detail columns)))
+                        (terminal-ui--boot-screen-panel phase detail columns
+                                                        :mark-rows mark-rows)))
          (rows (append panel (when tip (cons "" tip))))
          (visible (subseq rows 0 (min (length rows) available)))
          (top (max 0 (floor (- height (length visible)) 2))))
