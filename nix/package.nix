@@ -338,8 +338,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "sbcl-workers";
-      rev = "0d952fde19494349f1bd9b7d6b167aaf83262c35";
-      hash = "sha256-i4RvHrv0t/K3qJzWrwRNFz29VxGx3RTA+iXIntNvU6s=";
+      rev = "da94b8c55a4225a7a1f5e2c2758adb5d200689bc";
+      hash = "sha256-siy16UD3pAE5Q3JWULvSfkT7yk5ULHmf7SRhrdkg2bk=";
     };
     lispLibs = [ lsCompat sexpStore ] ++ (with pkgs.sbclPackages; [
       bordeaux-threads
