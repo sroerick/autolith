@@ -52,6 +52,7 @@ runtime_root=$release_root/runtime
 runtime_source_root=$release_root/libexec/sbcl-source
 sbcl_command=$runtime_root/bin/sbcl
 sandbox_helper=$release_root/libexec/cl-exec-sandbox-helper
+process_group_helper=$release_root/libexec/cl-exec-sandbox-process-group
 home=${HOME:-}
 data_home=$(xdg_base_directory "${XDG_DATA_HOME:-}" "$home/.local/share")
 active_core=$data_home/autolith/active/autolith-active.core
@@ -290,6 +291,8 @@ fi
 if [[ $release_platform == *-linux* ]]; then
   [[ -x $sandbox_helper ]] || fail "the private sandbox helper is missing."
 fi
+[[ -x $process_group_helper ]] ||
+  fail "the private process-group helper is missing."
 if [[ $release_platform != *-linux-musl ]]; then
   [[ -f $fff_library ]] || fail "the private search library is missing."
   [[ -f $colorlisp_library ]] || fail "the private syntax library is missing."
@@ -323,6 +326,9 @@ export AUTOLITH_FFF_LIBRARY=$fff_library
 export COLORLISP_NATIVE_LIBRARY=$colorlisp_library
 export AUTOLITH_ACTIVE_CORE=$active_core
 export AUTOLITH_RECOVERY_CORE=$recovery_core
+# The image build compiles the sandbox helpers into the source tree unless
+# packaged copies are named here. The release tree is read-only.
+export CL_EXEC_SANDBOX_PROCESS_GROUP_HELPER=$process_group_helper
 if [[ $release_platform == *-linux* ]]; then
   export CL_EXEC_SANDBOX_BWRAP
   CL_EXEC_SANDBOX_BWRAP=$(command -v bwrap)

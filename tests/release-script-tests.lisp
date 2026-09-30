@@ -232,7 +232,8 @@ fi
                  (format nil "lib/libcolorlisp-tree-sitter.~A"
                          library-extension)
                  "runtime/bin/sbcl"
-                 "libexec/cl-exec-sandbox-helper"))
+                 "libexec/cl-exec-sandbox-helper"
+                 "libexec/cl-exec-sandbox-process-group"))
     (release-script-tests--write-file
      (merge-pathnames relative release-root)
      ""))
@@ -253,6 +254,8 @@ fi
    "755" (merge-pathnames "runtime/bin/sbcl" release-root))
   (release-script-tests--chmod
    "755" (merge-pathnames "libexec/cl-exec-sandbox-helper" release-root))
+  (release-script-tests--chmod
+   "755" (merge-pathnames "libexec/cl-exec-sandbox-process-group" release-root))
   (release-script-tests--record
    (merge-pathnames "RELEASE" release-root)
    (format nil "v~A" *release-script-tests-version*)
@@ -2580,7 +2583,26 @@ esac
                          (format nil
                                  "the ~A release launcher requires its private syntax library"
                                  os)))
-          (release-script-tests--write-file library "")))))
+          (release-script-tests--write-file library ""))
+        (let ((helper
+                (merge-pathnames "libexec/cl-exec-sandbox-process-group"
+                                 release-root)))
+          (delete-file helper)
+          (multiple-value-bind (output error-output status)
+              (release-script-tests--run
+               (list (namestring launcher) "--autolith-release-probe")
+               :environment environment
+               :ignore-error-status t)
+            (declare (ignore output))
+            (test-assert
+             (and (not (eql status 0))
+                  (search "the private process-group helper is missing."
+                          error-output))
+             (format nil
+                     "the ~A release launcher requires its packaged process-group helper"
+                     os)))
+          (release-script-tests--write-file helper "")
+          (release-script-tests--chmod "755" helper)))))
   nil)
 
 (-> release-script-tests--installer-bsd (pathname pathname) null)
@@ -2895,7 +2917,25 @@ esac
          (merge-pathnames
           "build/cl-exec-sandbox-helper"
           (asdf:system-source-directory :cl-exec-sandbox))))
-       "sandbox helper lookup uses the locked ASDF dependency"))
+       "sandbox helper lookup uses the locked ASDF dependency")
+      (test-assert (null (release-archive--process-group-helper missing))
+                   "process-group helper lookup is silent for an unrelated source root")
+      (test-assert
+       (equal
+        (truename (release-archive--process-group-helper
+                   (asdf:system-source-directory :autolith)))
+        (truename
+         (merge-pathnames
+          "build/cl-exec-sandbox-process-group"
+          (asdf:system-source-directory :cl-exec-sandbox))))
+       "process-group helper lookup uses the locked ASDF dependency")
+      (with-test-environment
+          (("AUTOLITH_RELEASE_PROCESS_GROUP_HELPER"
+            (namestring (merge-pathnames "release-record" root))))
+        (test-assert
+         (equal (truename (release-archive--process-group-helper missing))
+                (truename (merge-pathnames "release-record" root)))
+         "process-group helper lookup honours its environment override")))
   (let* ((bin (merge-pathnames "sha256-only/" root))
          (empty (merge-pathnames "no-digest/" root))
          (sha256 (merge-pathnames "sha256" bin))

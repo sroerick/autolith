@@ -106,10 +106,13 @@
               value)
        t))
 
-(-> release-archive--sandbox-helper (pathname) (option pathname))
-(defun release-archive--sandbox-helper (source-root)
-  "Locate the private sandbox helper for SOURCE-ROOT's locked dependency."
-  (let ((configured (uiop:getenv "AUTOLITH_RELEASE_SANDBOX_HELPER")))
+(-> release-archive--locked-sandbox-binary (pathname string string)
+    (option pathname))
+(defun release-archive--locked-sandbox-binary (source-root variable name)
+  "Locate the built cl-exec-sandbox binary NAME for SOURCE-ROOT's locked dependency.
+
+Environment VARIABLE overrides the lookup when it names an existing file."
+  (let ((configured (uiop:getenv variable)))
     (or (and configured
              (plusp (length configured))
              (probe-file configured))
@@ -118,10 +121,34 @@
                          (truename (asdf:system-source-directory :autolith)))
               (let ((candidate
                       (merge-pathnames
-                       "build/cl-exec-sandbox-helper"
+                       (format nil "build/~A" name)
                        (asdf:system-source-directory :cl-exec-sandbox))))
                 (and (probe-file candidate) candidate)))
           (error () nil)))))
+
+(-> release-archive--sandbox-helper (pathname) (option pathname))
+(defun release-archive--sandbox-helper (source-root)
+  "Locate the private Linux sandbox helper for SOURCE-ROOT's locked dependency."
+  (release-archive--locked-sandbox-binary
+   source-root "AUTOLITH_RELEASE_SANDBOX_HELPER" "cl-exec-sandbox-helper"))
+
+(-> release-archive--process-group-helper (pathname) (option pathname))
+(defun release-archive--process-group-helper (source-root)
+  "Locate the private process-group helper for SOURCE-ROOT's locked dependency.
+
+Every POSIX release ships it so the packaged launcher never compiles into its
+read-only source tree."
+  (release-archive--locked-sandbox-binary
+   source-root "AUTOLITH_RELEASE_PROCESS_GROUP_HELPER"
+   "cl-exec-sandbox-process-group"))
+
+(-> release-archive--stage-executable (pathname pathname string) null)
+(defun release-archive--stage-executable (source release-root relative)
+  "Copy SOURCE to RELATIVE below RELEASE-ROOT and mark it executable."
+  (let ((target (merge-pathnames relative release-root)))
+    (release-archive--copy source target)
+    (release-archive--run (list "chmod" "755" (namestring target))))
+  nil)
 
 
 (-> release-archive--colorlisp-library () pathname)
@@ -594,6 +621,8 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                 (unless static-musl-p
                   (release-archive--colorlisp-library)))
               (sandbox-helper (release-archive--sandbox-helper source-root))
+              (process-group-helper
+                (release-archive--process-group-helper source-root))
              (version (release-builder--source-version source-root))
              (tag (format nil "v~A" version))
              (commit (release-archive--git-output source-root '("rev-parse" "HEAD")))
@@ -643,10 +672,15 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
             (error 'release-archive-error
                    :stage ':prerequisites
                    :cause "The private sandbox helper is absent; run ./script/check.")))
+        (unless process-group-helper
+          (error 'release-archive-error
+                 :stage ':prerequisites
+                 :cause "The private process-group helper is absent; run ./script/bootstrap."))
          (when static-musl-p
            (release-archive--validate-static-elf
             (merge-pathnames "bin/sbcl" runtime-installation))
-           (release-archive--validate-static-elf sandbox-helper))
+           (release-archive--validate-static-elf sandbox-helper)
+           (release-archive--validate-static-elf process-group-helper))
         (unless (release-archive--semantic-version-p version)
           (error 'release-archive-error
                  :stage ':source-validation
@@ -728,20 +762,14 @@ the managed runtime, matching SBCL source, native libraries, and sandbox helper.
                      (merge-pathnames (format nil "lib/~A" colorlisp-library-name)
                                       release-root)))
                  (when sandbox-helper
-                   (release-archive--copy
-                    sandbox-helper
-                    (merge-pathnames "libexec/cl-exec-sandbox-helper" release-root))
-                   (release-archive--run
-                    (list "chmod" "755"
-                          (namestring
-                           (merge-pathnames "libexec/cl-exec-sandbox-helper"
-                                            release-root)))))
-                 (release-archive--copy
+                   (release-archive--stage-executable
+                    sandbox-helper release-root "libexec/cl-exec-sandbox-helper"))
+                 (release-archive--stage-executable
+                  process-group-helper release-root
+                  "libexec/cl-exec-sandbox-process-group")
+                 (release-archive--stage-executable
                   (merge-pathnames "bin/autolith-release" source-root)
-                  (merge-pathnames "bin/autolith" release-root))
-                 (release-archive--run
-                  (list "chmod" "755"
-                        (namestring (merge-pathnames "bin/autolith" release-root))))
+                  release-root "bin/autolith")
                   (unless static-musl-p
                     (release-archive--run
                      (list "chmod" "644"
