@@ -419,6 +419,9 @@
                         :body (format nil "~A~%~A"
                                       (namestring (first failure))
                                       (rest failure)))))
+                    (let ((skips (application-replay-skips-entry application)))
+                      (when skips
+                        (application-present application skips)))
                     (application-render-records application)
                     (setf (application-recovery-startup-p application) nil)
                     (when initial-input

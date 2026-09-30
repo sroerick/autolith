@@ -610,6 +610,7 @@
 (define-test-suite application
   test-application-command-tips
   test-application-banner-policy
+  test-replay-skips-notice
   test-application-git-branch
   test-startup-update-choice
   test-explicit-update-operation

@@ -3407,6 +3407,57 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-replay-skips-notice () null)
+(defun test-replay-skips-notice ()
+  "Test the startup notice groups skipped private replays by reason."
+  (flet ((skip (source reason)
+           "Return a replay skip for SOURCE under REASON."
+           (let ((definition (self-read-form source :read-eval nil)))
+             (make-instance 'image-replay-skip
+                            :definition definition
+                            :key (definition-key definition)
+                            :reason reason
+                            :message "skipped"))))
+    (test-assert (null (application--replay-skips-entry nil))
+                 "an image without skips presents no notice")
+    (let* ((skips
+             (list (skip "(defun zeta-wrapper () 0)" ':tracked-changed)
+                   (skip "(defmethod tool-execute :around ((tool shell-run-tool) context arguments) nil)"
+                         ':revision-moved)
+                   (skip "(defun alpha-wrapper () 0)" ':tracked-changed)))
+           (entry (application--replay-skips-entry
+                   skips
+                   :commit-identifier "c3ec5281-3622-4c30-9bc9-a223fecccd47"
+                   :lineage-source-commit "07f0e1b86da2be055f1e836a4e62e57fbf9e4b7b"
+                   :image-source-commit nil))
+           (text (terminal--spans-text entry))
+           (changed-title (position-if
+                           (lambda (span)
+                             (search "changed since" (terminal-span-text span)))
+                           entry))
+           (moved-title (position-if
+                         (lambda (span)
+                           (search "moved on" (terminal-span-text span)))
+                         entry)))
+      (test-assert
+       (and (search "SKIPPED 3 DEFINITIONS" text)
+            (search "commit c3ec5281 · published against 07f0e1b8 · this image runs unknown"
+                    text)
+            (search "defun      alpha-wrapper" text)
+            (search "defmethod  tool-execute :around (shell-run-tool t t)" text)
+            (search "self.commit drops the rest" text))
+       "the notice names the commit, revisions, and every skipped definition")
+      (test-assert
+       (and changed-title moved-title (< changed-title moved-title)
+            (< (search "alpha-wrapper" text) (search "zeta-wrapper" text)))
+       "groups follow the reason order and sort their definitions by name")
+      (test-assert
+       (and (eq (terminal-span-style (first entry)) ':failure)
+            (eq (terminal-span-style (nth changed-title entry)) ':notice)
+            (find ':code entry :key #'terminal-span-style))
+       "the notice styles its header, group titles, and definition names")))
+  nil)
+
 (-> test-streaming-presentation () null)
 (defun test-streaming-presentation ()
   "Test safe streaming, exact record reconciliation, and live tool entries."

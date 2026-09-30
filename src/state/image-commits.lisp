@@ -472,7 +472,9 @@ running image holds their tracked definitions, so the next commit drops them."
   "Return true when replay ENTRY names a definition the running image skipped."
   (let ((target (image-commit--entry-definition-target entry)))
     (and target
-         (member target *image-replay-skipped-targets* :test #'string=)
+         (member target *image-replay-skips*
+                 :key #'image-replay-skip-key
+                 :test #'string=)
          t)))
 
 (-> image-commit--entry-definition-target (list) (option string))
@@ -1040,7 +1042,7 @@ the failure stays diagnosable after the tool call ends."
                    :history-commit history-commit))
             (setf *active-image-commit-identifier* identifier
                   *active-image-history-commit* history-commit
-                  *image-replay-skipped-targets* nil)
+                  *image-replay-skips* nil)
             (dolist (mutation-record mutation-records)
               (remhash (getf (rest mutation-record) :id)
                        *exploratory-undo-actions*))
@@ -1083,11 +1085,12 @@ the failure stays diagnosable after the tool call ends."
 
 (-> image-state-load (configuration &key (:pristine-p boolean)) list)
 (defun image-state-load (configuration &key pristine-p)
-  "Load selected private state unless PRISTINE-P, then begin a fresh lineage."
+  "Load selected private state unless PRISTINE-P, then begin a fresh lineage.
+
+Return the replay scripts that failed to load with their reasons. Stale
+definitions the replay skipped are kept in *IMAGE-REPLAY-SKIPS* instead."
   (clrhash *exploratory-undo-actions*)
-  (setf *image-replay-skipped-targets* nil)
-  (when pristine-p
-    (setf *image-replay-skipped-definitions* nil))
+  (setf *image-replay-skips* nil)
   (multiple-value-bind (identifier history-commit)
       (if pristine-p
           (values nil nil)
@@ -1102,7 +1105,6 @@ the failure stays diagnosable after the tool call ends."
                         configuration identifier
                         :history-commit history-commit))
                (pathname (image-commit-script-pathname commit)))
-          (setf *image-replay-skipped-definitions* nil)
           (handler-case
               (let ((*package* (find-package '#:autolith))
                     (*image-replay-context*
@@ -1115,9 +1117,7 @@ the failure stays diagnosable after the tool call ends."
                 (load pathname))
             (error (condition)
               (push (cons pathname (format nil "~A" condition)) failures)))
-          (dolist (skip (reverse (shiftf *image-replay-skipped-definitions*
-                                         nil)))
-            (push (cons pathname skip) failures))))
+          (setf *image-replay-skips* (nreverse *image-replay-skips*))))
       (nreverse failures))))
 
 (-> image-state-reconnect () null)

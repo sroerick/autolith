@@ -941,8 +941,8 @@ record an intentional replacement under its current owner.
 Tracked source stays authoritative over private replay. Each published
 definition records the tracked source it shadowed, or that it introduced a new
 name. Startup replay skips a definition whose tracked definition changed, was
-removed, or appeared since publication, reports the skip with the other replay
-failures, and leaves it out of the next =self.commit=. Commits published before
+removed, or appeared since publication, lists every skip in one startup notice
+grouped by reason, and leaves it out of the next =self.commit=. Commits published before
 this record replay their tracked overrides only while the image runs the source
 revision the lineage was published against. Reapply a skipped definition
 against the current source to restore it.

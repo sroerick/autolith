@@ -1084,6 +1084,108 @@ the effort with the same model even when the model was never chosen."
     (application--persist-model-selection application configuration)
     (application--install-configuration application configuration)))
 
+;;;; -- Private Replay Skips --
+
+(defparameter *application-replay-skip-groups*
+  '((:tracked-changed
+     "tracked definition changed since the commit was published")
+    (:tracked-removed
+     "tracked definition removed since the commit was published")
+    (:tracked-appeared
+     "tracked definition appeared since the commit was published")
+    (:revision-moved
+     "tracked source moved on; these overrode definitions of the older revision")
+    (:owner-moved
+     "owning package changed")
+    (:uninterned-target
+     "uninterned target without a replay identity"))
+  "Presentation order and titles of private replay skip reasons.")
+
+(-> application--replay-skip-name (image-replay-skip) string)
+(defun application--replay-skip-name (skip)
+  "Return SKIP's definition name with method qualifiers and specializers."
+  (let ((*package* (find-package '#:autolith))
+        (signature (definition-signature (image-replay-skip-definition skip))))
+    (format nil "~(~A~)~{ ~(~S~)~}~@[ ~(~A~)~]"
+            (second signature)
+            (third signature)
+            (fourth signature))))
+
+(-> application--replay-skip-row (image-replay-skip) list)
+(defun application--replay-skip-row (skip)
+  "Return one styled row naming SKIP's definition."
+  (list
+   (terminal-span
+    ':dim
+    (format nil "    ~(~10A~) "
+            (first (image-replay-skip-definition skip))))
+   (terminal-span ':code (application--replay-skip-name skip))
+   (terminal-span ':plain (string #\Newline))))
+
+(-> application--short-revision ((option string)) string)
+(defun application--short-revision (revision)
+  "Return REVISION abbreviated for display, or a marker for an unknown one."
+  (if (non-empty-string-p revision)
+      (subseq revision 0 (min 8 (length revision)))
+      "unknown"))
+
+(-> application--replay-skips-entry
+    (list &key (:commit-identifier (option string))
+               (:lineage-source-commit (option string))
+               (:image-source-commit (option string)))
+    list)
+(defun application--replay-skips-entry
+    (skips &key commit-identifier lineage-source-commit image-source-commit)
+  "Return the styled startup notice for private replay SKIPS, or NIL for none.
+
+The notice names the selected COMMIT-IDENTIFIER with the revision its lineage
+was published against and the revision this image runs, then lists every
+skipped definition grouped by reason."
+  (when skips
+    (append
+     (list (terminal-span
+            ':failure
+            (format nil "✗ PRIVATE REPLAY SKIPPED ~D DEFINITION~:[S~;~]~%"
+                    (length skips)
+                    (= (length skips) 1)))
+           (terminal-span
+            ':dim
+            (format nil "  commit ~A · published against ~A · this image runs ~A~%"
+                    (application--short-revision commit-identifier)
+                    (application--short-revision lineage-source-commit)
+                    (application--short-revision image-source-commit))))
+     (loop for (reason title) in *application-replay-skip-groups*
+           for group = (sort (remove-if-not
+                              (lambda (skip)
+                                (eq (image-replay-skip-reason skip) reason))
+                              skips)
+                             #'string<
+                             :key #'application--replay-skip-name)
+           when group
+             append (cons (terminal-span ':notice
+                                         (format nil "~%  ~A~%" title))
+                          (loop for skip in group
+                                append (application--replay-skip-row skip))))
+     (list (terminal-span
+            ':hint
+            (format nil "~%  reapply a definition against the current source to keep it · the next self.commit drops the rest~%"))))))
+
+(-> application-replay-skips-entry (application) list)
+(defun application-replay-skips-entry (application)
+  "Return the startup notice for the running image's private replay skips, or NIL."
+  (let ((commit (and *image-replay-skips*
+                     (handler-case
+                         (image-commit-current
+                          (application-configuration application))
+                       (error ()
+                         nil)))))
+    (application--replay-skips-entry
+     *image-replay-skips*
+     :commit-identifier *active-image-commit-identifier*
+     :lineage-source-commit (and commit (image-commit-source-commit commit))
+     :image-source-commit (image-commit--base-source-commit nil))))
+
+
 ;;;; -- Manual Compaction --
 
 (-> application-compact (application) null)

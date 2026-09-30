@@ -313,11 +313,32 @@ protocol."
        (member (first form) *definition-operators* :test #'eq)
        (definition-name-p (second form))))
 
-(defvar *image-replay-skipped-definitions* nil
-  "Messages for stale replayed definitions skipped during the current load.")
+(defclass image-replay-skip ()
+  ((definition
+    :initarg :definition
+    :reader image-replay-skip-definition
+    :type list
+    :documentation "The parsed persisted definition that was not installed.")
+   (key
+    :initarg :key
+    :reader image-replay-skip-key
+    :type string
+    :documentation "The definition key computed in the replay's reader package.")
+   (reason
+    :initarg :reason
+    :reader image-replay-skip-reason
+    :type (member :owner-moved :uninterned-target :tracked-changed
+                  :tracked-removed :tracked-appeared :revision-moved)
+    :documentation "Why the definition was skipped.")
+   (message
+    :initarg :message
+    :reader image-replay-skip-message
+    :type string
+    :documentation "The complete sentence explaining the skip."))
+  (:documentation "One stale persisted definition a private replay left uninstalled."))
 
-(defvar *image-replay-skipped-targets* nil
-  "Definition keys of stale replayed definitions the running image skipped.")
+(defvar *image-replay-skips* nil
+  "The IMAGE-REPLAY-SKIP records of the running image's private replay.")
 
 (-> definition-name-symbol (t) symbol)
 (defun definition-name-symbol (name)
@@ -690,16 +711,17 @@ Two absent sources are equal; formatting and comments do not matter."
 
 (-> self--replay-stale-reason
     (list package (option string) boolean)
-    (option string))
+    (values (option keyword) (option string)))
 (defun self--replay-stale-reason (definition package tracked tracked-p)
-  "Return why replaying DEFINITION would shadow a moved tracked definition, or NIL.
+  "Return why replaying DEFINITION would shadow a moved tracked definition.
 
-TRACKED is the tracked source recorded when the definition was published and
-TRACKED-P whether its entry recorded one at all. An entry without a record is
-judged by revision: it is stale when the lineage was published against another
-tracked revision than the running image and a tracked definition exists now.
-Outside a replay context, or when the tracked source cannot be read, nothing
-can be checked and the definition replays as before."
+The values are the reason keyword and its explanation, or NIL twice when the
+definition may replay. TRACKED is the tracked source recorded when the
+definition was published and TRACKED-P whether its entry recorded one at all.
+An entry without a record is judged by revision: it is stale when the lineage
+was published against another tracked revision than the running image and a
+tracked definition exists now. Outside a replay context, or when the tracked
+source cannot be read, nothing can be checked and the definition replays."
   (let ((context *image-replay-context*))
     (when context
       (multiple-value-bind (current known-p)
@@ -715,18 +737,22 @@ can be checked and the definition replays as before."
               (unless (self--definition-sources-equal-p tracked current package)
                 (cond
                   ((null current)
-                   "its tracked definition was removed since the private commit was published. Reapply the definition to keep it.")
+                   (values ':tracked-removed
+                           "its tracked definition was removed since the private commit was published. Reapply the definition to keep it."))
                   ((null tracked)
-                   "a tracked definition now exists where the private commit recorded none. Reapply the definition to replace the tracked one.")
+                   (values ':tracked-appeared
+                           "a tracked definition now exists where the private commit recorded none. Reapply the definition to replace the tracked one."))
                   (t
-                   "its tracked definition changed since the private commit was published. Reapply the definition against the current source.")))
+                   (values ':tracked-changed
+                           "its tracked definition changed since the private commit was published. Reapply the definition against the current source."))))
               (let ((lineage (image-replay-context-lineage-source-commit context))
                     (image (image-replay-context-image-source-commit context)))
                 (when (and lineage image current (string/= lineage image))
-                  (format nil
-                          "its tracked definition may have changed: the private commit lineage was published against source ~A and this image runs ~A. Reapply the definition against the current source."
-                          lineage
-                          image)))))))))
+                  (values ':revision-moved
+                          (format nil
+                                  "its tracked definition may have changed: the private commit lineage was published against source ~A and this image runs ~A. Reapply the definition against the current source."
+                                  lineage
+                                  image))))))))))
 
 (-> self-replay-definition
     (string string &key (:home-package (option string))
@@ -750,28 +776,34 @@ authoritative; entries without the record are judged by source revision."
              :message "A private image commit contains an invalid definition."
              :tool-name "self.commit"
              :pathname nil))
-    (let ((reason
-            (if (definition-foreign-home-p definition package
-                                           :home-package home-package)
-                (let ((home (symbol-package (definition-name-symbol
-                                             (second definition)))))
-                  (if home
-                      (format nil "its owner changed from ~A to ~A. Reapply the definition to authorize its new owner."
-                              (or home-package "an uninterned symbol")
-                              (package-name home))
-                      "an uninterned target has no stable replay identity."))
-                (self--replay-stale-reason definition package tracked tracked-p))))
+    (multiple-value-bind (reason explanation)
+        (if (definition-foreign-home-p definition package
+                                       :home-package home-package)
+            (let ((home (symbol-package (definition-name-symbol
+                                         (second definition)))))
+              (if home
+                  (values ':owner-moved
+                          (format nil "its owner changed from ~A to ~A. Reapply the definition to authorize its new owner."
+                                  (or home-package "an uninterned symbol")
+                                  (package-name home)))
+                  (values ':uninterned-target
+                          "an uninterned target has no stable replay identity.")))
+            (self--replay-stale-reason definition package tracked tracked-p))
       (if reason
           (progn
-            (push (format nil
-                          "The persisted ~(~A~) of ~(~A~) was skipped: ~A"
-                          (first definition)
-                          (definition-name-symbol (second definition))
-                          reason)
-                  *image-replay-skipped-definitions*)
-            (push (let ((*package* package))
-                    (definition-key definition))
-                  *image-replay-skipped-targets*)
+            (push (make-instance
+                   'image-replay-skip
+                   :definition definition
+                   :key (let ((*package* package))
+                          (definition-key definition))
+                   :reason reason
+                   :message
+                   (format nil
+                           "The persisted ~(~A~) of ~(~A~) was skipped: ~A"
+                           (first definition)
+                           (definition-name-symbol (second definition))
+                           explanation))
+                  *image-replay-skips*)
             nil)
           (self--install-definition definition source :package package)))))
 

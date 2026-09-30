@@ -1636,7 +1636,7 @@
          (previous-commit-identifier *active-image-commit-identifier*)
          (previous-history-commit *active-image-history-commit*)
          (previous-lineage-identifier *active-image-lineage-identifier*)
-         (previous-skipped-targets *image-replay-skipped-targets*)
+         (previous-skips *image-replay-skips*)
          (tracked-source
            (format nil
                    "(defun test-self-target ()~%  \"Return the tracked baseline.\"~%  0)"))
@@ -1681,14 +1681,12 @@
                             *exploratory-definitions*))))
 
              (replay (context source &rest arguments)
-               "Replay SOURCE under CONTEXT, returning skip messages and targets."
+               "Replay SOURCE under CONTEXT, returning the recorded skips."
                (let ((*image-replay-context* context)
-                     (*image-replay-skipped-definitions* nil)
-                     (*image-replay-skipped-targets* nil)
+                     (*image-replay-skips* nil)
                      (*package* package))
                  (apply #'self-replay-definition "AUTOLITH" source arguments)
-                 (values *image-replay-skipped-definitions*
-                         *image-replay-skipped-targets*)))
+                 *image-replay-skips*))
 
              (context (lineage image)
                "Return a replay context for LINEAGE and IMAGE source revisions."
@@ -1720,14 +1718,14 @@
                              (list :tracked reformatted-tracked-source) 7 nil)
                        (list "a changed tracked definition is skipped"
                              (context "a" "a") override-source
-                             (list :tracked moved-source) 0 "changed since")
+                             (list :tracked moved-source) 0 ':tracked-changed)
                        (list "a removed tracked definition is skipped"
                              (context "a" "a") fresh-source
                              (list :tracked "(defun test-self-replay-fresh () 0)")
-                             nil "was removed")
+                             nil ':tracked-removed)
                        (list "a newly tracked definition is skipped"
                              (context "a" "a") override-source
-                             (list :tracked nil) 0 "now exists")
+                             (list :tracked nil) 0 ':tracked-appeared)
                        (list "a new name with no recorded base replays"
                              (context "a" "a") fresh-source
                              (list :tracked nil) 11 nil)
@@ -1735,7 +1733,7 @@
                              (context "a" "a") override-source nil 7 nil)
                        (list "a legacy entry is skipped on a moved revision"
                              (context "a" "b") override-source nil 0
-                             "published against source a and this image runs b")
+                             ':revision-moved)
                        (list "a legacy new name replays on a moved revision"
                              (context "a" "b") fresh-source nil 11 nil)
                        (list "a legacy entry replays under an unknown image revision"
@@ -1743,20 +1741,26 @@
                        (list "a replay without context installs as before"
                              nil override-source
                              (list :tracked moved-source) 7 nil)))
-               (destructuring-bind (label context source arguments expected fragment)
+               (destructuring-bind (label context source arguments expected reason)
                    case
                  (reset)
-                 (multiple-value-bind (messages targets)
-                     (apply #'replay context source arguments)
+                 (let ((skips (apply #'replay context source arguments)))
                    (test-assert (eql (installed-value source) expected)
                                 (format nil "~A: live definition" label))
                    (test-assert
-                    (if fragment
-                        (and (= (length messages) 1)
-                             (search fragment (first messages))
-                             (= (length targets) 1))
-                        (and (null messages) (null targets)))
-                    (format nil "~A: skip report" label)))))
+                    (if reason
+                        (and (= (length skips) 1)
+                             (eq (image-replay-skip-reason (first skips)) reason)
+                             (search "was skipped" (image-replay-skip-message
+                                                    (first skips)))
+                             (string= (image-replay-skip-key (first skips))
+                                      (let ((*package* package))
+                                        (definition-key
+                                         (self-read-form source
+                                                         :read-eval nil
+                                                         :package package)))))
+                        (null skips))
+                    (format nil "~A: skip record" label)))))
              (reset)
              (setf *image-state-initialized-p* nil
                    *active-image-commit-identifier* nil
@@ -1785,14 +1789,16 @@
                (reset)
                (let ((failures (image-state-load configuration)))
                  (test-assert
-                  (and (= (length failures) 1)
-                       (search "changed since" (rest (first failures)))
+                  (and (null failures)
                        (= (funcall 'test-self-target) 0)
-                       (equal *image-replay-skipped-targets*
-                              (list override-key))
+                       (= (length *image-replay-skips*) 1)
+                       (eq (image-replay-skip-reason (first *image-replay-skips*))
+                           ':tracked-changed)
+                       (string= (image-replay-skip-key (first *image-replay-skips*))
+                                override-key)
                        (string= *active-image-commit-identifier*
                                 (image-commit-identifier commit)))
-                  "startup skips and reports the override once tracked source moved")
+                  "startup skips and records the override once tracked source moved")
                  (test-assert (null (image-commit-base-entries configuration))
                               "a skipped override leaves the next commit's base entries"))
                (write-tracked tracked-source)
@@ -1801,7 +1807,7 @@
                  (test-assert
                   (and (null failures)
                        (= (funcall 'test-self-target) 7)
-                       (null *image-replay-skipped-targets*)
+                       (null *image-replay-skips*)
                        (= (length (image-commit-base-entries configuration)) 1))
                   "startup replays the override while tracked source matches"))))
         (reset)
@@ -1809,7 +1815,7 @@
               *active-image-commit-identifier* previous-commit-identifier
               *active-image-history-commit* previous-history-commit
               *active-image-lineage-identifier* previous-lineage-identifier
-              *image-replay-skipped-targets* previous-skipped-targets)
+              *image-replay-skips* previous-skips)
         (platform-delete-directory-tree *platform* source-root
                                         :validate t
                                         :if-does-not-exist ':ignore))))
@@ -2127,7 +2133,7 @@
 (-> test-self-replay-foreign-home () null)
 (defun test-self-replay-foreign-home ()
   "Test replay skips stale definitions whose names moved to a library."
-  (let ((*image-replay-skipped-definitions* nil)
+  (let ((*image-replay-skips* nil)
         (original (symbol-function
                    'provider--call-with-transport-normalization)))
     (test-assert
@@ -2140,12 +2146,14 @@
                    'provider--call-with-transport-normalization))
      "the library definition survives the stale replay")
     (test-assert
-     (let ((message (first *image-replay-skipped-definitions*)))
-       (and message
-            (search "provider--call-with-transport-normalization" message)
-            (search "CL-LLM-PROVIDER-API" message)))
+     (let ((skip (first *image-replay-skips*)))
+       (and skip
+            (eq (image-replay-skip-reason skip) ':owner-moved)
+            (search "provider--call-with-transport-normalization"
+                    (image-replay-skip-message skip))
+            (search "CL-LLM-PROVIDER-API" (image-replay-skip-message skip))))
      "the skip names the definition and its owning package"))
-  (let ((*image-replay-skipped-definitions* nil))
+  (let ((*image-replay-skips* nil))
     (unwind-protect
          (progn
            (self-replay-definition
@@ -2157,22 +2165,25 @@
                                        '#:autolith)))
                 ':installed)
             "definitions home in the target package still replay")
-           (test-assert (null *image-replay-skipped-definitions*)
+           (test-assert (null *image-replay-skips*)
                         "home definitions are not reported as skipped"))
       (let ((symbol (find-symbol "SELF-REPLAY-HOME-TEST-FUNCTION"
                                  '#:autolith)))
         (when symbol
           (fmakunbound symbol)
           (unintern symbol '#:autolith)))))
-  (let ((*image-replay-skipped-definitions* nil))
+  (let ((*image-replay-skips* nil))
     (test-assert
      (null (self-replay-definition
             "AUTOLITH"
             "(defparameter #:uninterned-replay-target (error \"must not install\"))"
             :home-package nil))
      "an uninterned target is skipped even with explicit ownership metadata")
-    (test-assert *image-replay-skipped-definitions*
-                 "an uninterned target reports its missing replay identity"))
+    (test-assert
+     (and *image-replay-skips*
+          (eq (image-replay-skip-reason (first *image-replay-skips*))
+              ':uninterned-target))
+     "an uninterned target reports its missing replay identity"))
   (test-assert
    (not (definition-foreign-home-p
          (list 'defmethod 'print-object nil)
