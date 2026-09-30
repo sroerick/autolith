@@ -398,7 +398,7 @@ jobs:
         shell: pwsh
         run: |
           script\bootstrap.ps1
-          script\check.ps1 --jobs 4
+          script\check.ps1 --jobs 1 --timeout 1800
 
       - name: Package Windows release
         shell: pwsh
