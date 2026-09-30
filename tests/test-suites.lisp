@@ -46,6 +46,7 @@
   test-fullscreen-boot-geometry
   test-fullscreen-boot-sequence
   test-fullscreen-boot-linger
+  test-fullscreen-boot-reader-diversion
   test-terminal-fullscreen-relayed-wheel
   test-fullscreen-authentication-lifecycle)
 (define-test-suite terminal-theme

@@ -448,7 +448,17 @@
                                :linger-p (config :boot-screen-linger-p
                                                  (application-configuration application))
                                :tip-seconds (config :boot-screen-tip-seconds
-                                                    (application-configuration application)))
+                                                    (application-configuration application))
+                               ;; A client attaching during boot starts the
+                               ;; reader, which then owns the terminal.
+                               :halted-function
+                               (lambda ()
+                                 (application-input-controller-exit-requested-p
+                                  input-controller))
+                               :direct-input-p-function
+                               (lambda ()
+                                 (not (application-input-controller-reader-live-p
+                                       input-controller))))
                               ':interrupt)
                       ;; Ctrl-C on the lingering boot screen halts like Ctrl-C
                       ;; at an empty prompt: the controller stops before its

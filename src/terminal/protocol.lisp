@@ -91,6 +91,16 @@ mutation passes through TERMINAL-SET-DIMENSIONS.")
     :accessor terminal-ui-live-output-suspended-p
     :type boolean
     :documentation "Whether transient live-region repaint is suspended for direct I/O.")
+   (boot-waiting-p
+    :initform nil
+    :accessor terminal-ui-boot-waiting-p
+    :type boolean
+    :documentation "Whether the boot screen owns keystrokes until the operator starts the session.")
+   (boot-start-requested-p
+    :initform nil
+    :accessor terminal-ui-boot-start-requested-p
+    :type boolean
+    :documentation "Whether a start key reached the waiting boot screen through the reader.")
    (deferred-live-appended-text
     :initform ""
     :accessor terminal-ui-deferred-live-appended-text

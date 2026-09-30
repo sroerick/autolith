@@ -2651,6 +2651,8 @@ may execute immediately; other Lisp waits for the idle boundary."
              (application-input-controller-application controller)))
         (follow-up-editing-p
           (application-input-controller--follow-up-editing-p controller)))
+    (when (terminal-ui-boot-divert-event ui event)
+      (return-from application-input-controller--process-event nil))
     (when (and (eq event ':interrupt) follow-up-editing-p)
       (terminal-ui-process-event
        ui event :queue-editing-p follow-up-editing-p)
@@ -2817,6 +2819,19 @@ may execute immediately; other Lisp waits for the idle boundary."
 (-> application-input-controller--start-reader
     (application-input-controller)
     null)
+(-> application-input-controller-reader-live-p (application-input-controller) boolean)
+(defun application-input-controller-reader-live-p (controller)
+  "Return true while CONTROLLER's reader thread is running."
+  (with-lock-held ((application-input-controller-lock controller))
+    (let ((thread (application-input-controller-reader-thread controller)))
+      (and thread (thread-alive-p thread) t))))
+
+(-> application-input-controller-exit-requested-p (application-input-controller) boolean)
+(defun application-input-controller-exit-requested-p (controller)
+  "Return true once CONTROLLER has been asked to stop."
+  (with-lock-held ((application-input-controller-lock controller))
+    (not (null (application-input-controller-stopping-p controller)))))
+
 (defun application-input-controller--start-reader (controller)
   "Start CONTROLLER's reader unless it is paused, stopping, or already live."
   (with-lock-held ((application-input-controller-lock controller))

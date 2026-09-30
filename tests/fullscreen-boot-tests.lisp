@@ -171,3 +171,56 @@
                                 frames)
                         "a boot without waiting never advertises Space"))))))
   nil)
+
+(-> test-fullscreen-boot-reader-diversion () null)
+(defun test-fullscreen-boot-reader-diversion ()
+  "Route keys through the reader while the boot screen waits, and honour exit requests."
+  (let ((terminal (make-instance 'queued-recording-terminal :columns 80 :rows 24)))
+    (with-terminal-ui (ui (fullscreen-test--ui terminal))
+      (test-assert (not (terminal-ui-boot-divert-event ui '(:insert " ")))
+                   "keys pass to the reader when no boot screen waits")
+      (setf (terminal-ui-boot-waiting-p ui) t)
+      (test-assert (and (terminal-ui-boot-divert-event ui '(:insert "x"))
+                        (not (terminal-ui-boot-start-requested-p ui)))
+                   "other keys are swallowed while waiting")
+      (test-assert (not (terminal-ui-boot-divert-event ui ':interrupt))
+                   "interrupts still reach the reader while waiting")
+      (test-assert (and (terminal-ui-boot-divert-event ui ':submit)
+                        (terminal-ui-boot-start-requested-p ui))
+                   "Enter through the reader requests the start")
+      (setf (terminal-ui-boot-waiting-p ui) nil
+            (terminal-ui-boot-start-requested-p ui) nil)
+      (let ((polls 0))
+        (queued-recording-terminal-enqueue terminal '(:insert " "))
+        (test-assert
+         (eq (terminal-ui-boot-sequence
+              ui :duration 0 :linger-p t
+                 :direct-input-p-function (constantly nil)
+                 :wait-function (lambda (seconds)
+                                  (declare (ignore seconds))
+                                  (when (= (incf polls) 5)
+                                    (terminal-ui-boot-divert-event ui '(:insert " ")))))
+             ':start)
+         "a start key diverted by the reader ends the wait")
+        (test-assert (terminal-input-ready-p terminal)
+                     "the wait leaves direct input alone while the reader is live")
+        (test-assert (not (terminal-ui-boot-waiting-p ui))
+                     "the boot screen releases keystrokes after starting"))
+      (let ((polls 0))
+        (test-assert
+         (eq (terminal-ui-boot-sequence
+              ui :duration 0 :linger-p t
+                 :direct-input-p-function (constantly nil)
+                 :halted-function (lambda () (> polls 3))
+                 :wait-function (lambda (seconds)
+                                  (declare (ignore seconds))
+                                  (incf polls)))
+             ':interrupt)
+         "an exit requested through the reader ends the wait as an interrupt"))
+      (test-assert
+       (eq (terminal-ui-boot-sequence
+            ui :duration 0 :linger-p t
+               :wait-function (lambda (seconds) (declare (ignore seconds))))
+           ':start)
+       "the queued direct key still starts once direct input is allowed")))
+  nil)
