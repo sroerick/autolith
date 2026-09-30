@@ -862,7 +862,7 @@
 
 LSP tools register only when CONFIGURATION enables a language server."
   (let ((registry (make-instance 'tool-registry))
-        (search-worker (search-worker-create)))
+        (search-worker (search-worker-create :configuration configuration)))
     (default-tools--register-workspace registry)
     (default-tools--register-web registry)
     (default-tools--register-search registry search-worker)

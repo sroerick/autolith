@@ -300,3 +300,22 @@
          :validate t
          :if-does-not-exist ':ignore))))
   nil)
+
+(-> test-search-worker-source-root () null)
+(defun test-search-worker-source-root ()
+  "Locate the helper script through the configured source root, not the build tree."
+  (with-test-configuration (configuration root)
+    (let ((source-root (asdf:system-source-directory :autolith))
+          (setting (configuration-setting configuration :source-root)))
+      (configuration-set configuration setting source-root :source ':override)
+      (test-assert (typep (search-worker-create :configuration configuration) 'worker)
+                   "the helper script resolves below the configured source root")
+      (configuration-set configuration setting root :source ':override)
+      (test-assert
+       (handler-case
+           (progn (search-worker-create :configuration configuration) nil)
+         (search-error (condition)
+           (equal (search-error-pathname condition)
+                  (merge-pathnames "bin/autolith-search-worker" root))))
+       "a source root without the helper script signals a search error naming it")))
+  nil)

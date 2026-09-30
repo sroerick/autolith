@@ -2,10 +2,21 @@
 
 ;;;; -- clifff Worker Adapter --
 
-(-> search-worker-create () worker)
-(defun search-worker-create ()
-  "Create Autolith's lazy supervised clifff helper."
-  (let* ((source-root (asdf:system-source-directory :autolith))
+(-> search-worker--source-root ((option configuration)) pathname)
+(defun search-worker--source-root (configuration)
+  "Return the tracked source root that holds the helper script.
+
+CONFIGURATION carries the root the launcher supplied. Without one, the ASDF
+source directory serves, which inside a saved image names the tree the image
+was built from and may no longer exist."
+  (if configuration
+      (config :source-root configuration)
+      (asdf:system-source-directory :autolith)))
+
+(-> search-worker-create (&key (:configuration (option configuration))) worker)
+(defun search-worker-create (&key configuration)
+  "Create Autolith's lazy supervised clifff helper below CONFIGURATION's source root."
+  (let* ((source-root (search-worker--source-root configuration))
          (script (merge-pathnames "bin/autolith-search-worker" source-root))
          (sbcl-command (or (uiop:getenv "AUTOLITH_SBCL") "sbcl")))
     (unless (probe-file script)

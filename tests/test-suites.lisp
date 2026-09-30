@@ -336,7 +336,8 @@
   test-workspace-tools)
 
 (define-test-suite search-tool
-  test-search-tools)
+  test-search-tools
+  test-search-worker-source-root)
 
 (define-test-suite web-tool
   test-web-gist-tool
