@@ -230,3 +230,64 @@ sorted by name."
                             :package package
                             :limit limit
                             :configuration (tool-context-configuration context))))))
+
+
+;;;; -- Near-Miss Suggestions --
+
+(-> lisp-apropos--name-tokens (string) list)
+(defun lisp-apropos--name-tokens (name)
+  "Return the lowercase hyphen-separated tokens of NAME long enough to be telling."
+  (let ((tokens '())
+        (start 0))
+    (loop for index from 0 to (length name)
+          when (or (= index (length name))
+                   (member (char name index) '(#\- #\: #\. #\/ #\Space)))
+            do (when (>= (- index start) *lisp-apropos-token-minimum*)
+                 (push (string-downcase (subseq name start index)) tokens))
+               (setf start (1+ index)))
+    (remove-duplicates (nreverse tokens) :test #'string=)))
+
+(-> lisp-apropos--suggestion-score (string list string) integer)
+(defun lisp-apropos--suggestion-score (candidate tokens guess)
+  "Return how strongly lowercase CANDIDATE resembles GUESS through its TOKENS."
+  (+ (count-if (lambda (token) (search token candidate)) tokens)
+     (if (or (search guess candidate) (search candidate guess))
+         1
+         0)))
+
+(-> self-symbol-suggestions (string &key (:package package) (:limit (integer 1))) list)
+(defun self-symbol-suggestions
+    (name &key (package (find-package '#:autolith)) (limit *lisp-apropos-suggestion-limit*))
+  "Return up to LIMIT defined symbols of PACKAGE whose names resemble the guessed NAME.
+
+Candidates share at least one hyphen-separated token with NAME or contain
+it; stronger overlaps rank first and shorter names break ties."
+  (let* ((guess (string-downcase (string-trim "'#:" name)))
+         (tokens (lisp-apropos--name-tokens guess))
+         (scored '()))
+    (dolist (symbol (lisp-apropos--present-symbols package))
+      (let* ((candidate (string-downcase (symbol-name symbol)))
+             (score (lisp-apropos--suggestion-score candidate tokens guess)))
+        (when (and (plusp score)
+                   (string/= candidate guess)
+                   (self-symbol-kinds symbol))
+          (push (cons score symbol) scored))))
+    (setf scored (sort scored
+                       (lambda (left right)
+                         (or (> (first left) (first right))
+                             (and (= (first left) (first right))
+                                  (< (length (symbol-name (rest left)))
+                                     (length (symbol-name (rest right)))))))))
+    (loop for (nil . symbol) in scored
+          repeat limit
+          collect symbol)))
+
+(-> self-symbol-suggestion-text (string &key (:package package)) string)
+(defun self-symbol-suggestion-text (name &key (package (find-package '#:autolith)))
+  "Return a sentence naming the closest defined names to NAME, or an empty string."
+  (let ((suggestions (self-symbol-suggestions name :package package)))
+    (if suggestions
+        (format nil " Closest defined names: ~{~A~^, ~}."
+                (mapcar (lambda (symbol) (lisp-apropos--symbol-label symbol package))
+                        suggestions))
+        "")))

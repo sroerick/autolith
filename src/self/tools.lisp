@@ -10,9 +10,12 @@
 
 (-> self-resolve-package ((option string)) package)
 (defun self-resolve-package (name)
-  "Return existing package NAME, defaulting to the AUTOLITH package."
+  "Return existing package NAME, defaulting to the AUTOLITH package.
+
+NAME is accepted as written or upcased, so lowercase names resolve too."
   (let ((package (if (non-empty-string-p name)
-                     (find-package name)
+                     (or (find-package name)
+                         (find-package (string-upcase name)))
                      (find-package '#:autolith))))
     (unless package
       (error 'source-mutation-error
@@ -57,8 +60,18 @@
 
 (-> self-resolve-symbol (string &key (:package package)) symbol)
 (defun self-resolve-symbol (name &key (package (find-package '#:autolith)))
-  "Resolve readable symbol NAME relative to PACKAGE."
-  (let ((value (self-read-form name :read-eval nil :package package)))
+  "Resolve readable symbol NAME relative to PACKAGE.
+
+A quoted or function-quoted symbol, as in 'name or #'name, resolves to the
+symbol itself."
+  (let* ((form (self-read-form name :read-eval nil :package package))
+         (value (if (and (consp form)
+                         (member (first form) '(quote function))
+                         (consp (rest form))
+                         (null (rest (rest form)))
+                         (symbolp (second form)))
+                    (second form)
+                    form)))
     (unless (symbolp value)
       (error "~S does not name a symbol." name))
     value))
@@ -66,11 +79,7 @@
 (-> self-symbol-defined-p (symbol) boolean)
 (defun self-symbol-defined-p (symbol)
   "Return true when SYMBOL names a function, macro, variable, class, or type in the active image."
-  (and (or (fboundp symbol)
-           (boundp symbol)
-           (find-class symbol nil)
-           (sb-ext:valid-type-specifier-p symbol))
-       t))
+  (not (null (self-symbol-kinds symbol))))
 
 (-> self-symbol-lambda-list (symbol) t)
 (defun self-symbol-lambda-list (symbol)
@@ -134,10 +143,20 @@ list is consulted before falling back to the expression."
     ((context tool-context) (arguments hash-table))
   "Inspect one required symbol in CONTEXT's active image."
   (declare (ignore context))
-  (tool-success
-   (self-inspect-symbol
-    (self-resolve-symbol
-     (tool-argument arguments "designator" :required t)))))
+  (let* ((package (self-resolve-package (tool-argument arguments "package")))
+         (symbol (self-resolve-symbol
+                  (tool-argument arguments "designator" :required t)
+                  :package package)))
+    (unless (or (self-symbol-defined-p symbol)
+                (keywordp symbol))
+      (error 'tool-error
+             :message
+             (format nil "~S has no function, variable, class, or type definition in the active image.~A Find the exact name with lisp.apropos or search.content instead of guessing."
+                     symbol
+                     (self-symbol-suggestion-text (symbol-name symbol)
+                                                  :package package))
+             :tool-name "lisp.describe"))
+    (tool-success (self-inspect-symbol symbol))))
 
 
 ;;;; -- Mutation Journal --
@@ -1360,8 +1379,10 @@ Files the system withholds from this image through :IF-FEATURE are left out."
       ((not (self-symbol-defined-p symbol))
        (error 'tool-error
               :message
-              (format nil "~S has no function, variable, class, or type definition in the active image. Check the spelling and package, or locate the definition in tracked source with search.content."
-                      symbol)
+              (format nil "~S has no function, variable, class, or type definition in the active image.~A Find the exact name with lisp.apropos or search.content instead of guessing."
+                      symbol
+                      (self-symbol-suggestion-text (symbol-name symbol)
+                                                   :package package))
               :tool-name "lisp.source"))
       (t
        (multiple-value-bind (values output)

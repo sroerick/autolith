@@ -2366,12 +2366,28 @@
                                  "target" "self"))
                    nil)
                (tool-error (condition)
+                 (autolith-error-message condition))))
+           (near-miss
+             (handler-case
+                 (progn
+                   (tool-execute
+                    (tool-registry-find registry "lisp" "source")
+                    context
+                    (json-object "name" "self-symbol-defined-predicate"
+                                 "target" "self"
+                                 "package" "autolith"))
+                   nil)
+               (tool-error (condition)
                  (autolith-error-message condition)))))
       (test-assert (and message
                         (search "NO-SUCH-DEFINITION-FOR-LISP-SOURCE-TEST" message))
                    "an undefined name fails with the requested symbol in the message")
-      (test-assert (and message (search "search.content" message))
-                   "the failure points at tracked-source search as the next step")))
+      (test-assert (and message (search "lisp.apropos" message))
+                   "the failure points at name search as the next step")
+      (test-assert (and near-miss
+                        (search "Closest defined names:" near-miss)
+                        (search "self-symbol-defined-p" near-miss))
+                   "a near miss proposes the closest defined names and accepts a lowercase package")))
   nil)
 
 (-> test-lisp-apropos () null)
@@ -2427,3 +2443,38 @@
                    "an unknown kind filter is rejected with the accepted kinds")))
   nil)
 
+(-> test-lisp-describe-designators () null)
+(defun test-lisp-describe-designators ()
+  "Accept quoted designators and reject undefined names with near misses in lisp.describe."
+  (with-test-configuration (configuration)
+    (let* ((conversation
+             (conversation-create configuration :identifier "lisp-describe-names"))
+           (context
+             (make-instance 'tool-context
+                            :configuration configuration
+                            :worker nil
+                            :conversation conversation))
+           (tool (tool-registry-find (make-default-tool-registry) "lisp" "describe")))
+      (dolist (designator '("'self-symbol-defined-p"
+                            "#'self-symbol-defined-p"
+                            " 'autolith::self-symbol-defined-p"))
+        (test-assert (search "Function binding: yes"
+                             (tool-result-content
+                              (tool-execute tool context
+                                            (json-object "designator" designator
+                                                         "target" "self"))))
+                     "a quoted or function-quoted designator describes the symbol itself"))
+      (let ((message
+              (handler-case
+                  (progn
+                    (tool-execute tool context
+                                  (json-object "designator" "self-symbol-defined-predicate"
+                                               "target" "self"))
+                    nil)
+                (tool-error (condition)
+                  (autolith-error-message condition)))))
+        (test-assert (and message
+                          (search "SELF-SYMBOL-DEFINED-PREDICATE" message)
+                          (search "self-symbol-defined-p" message))
+                     "an undefined name fails and names the closest defined symbols"))))
+  nil)

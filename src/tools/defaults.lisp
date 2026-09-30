@@ -587,11 +587,13 @@
            (tool-object-schema
             (json-object
              "designator" (tool-string-property
-                           "A readable Lisp form naming the object or active symbol.")
+                           "A readable Lisp form naming the object or active symbol; a bare or quoted symbol name works.")
              "target" (json-object
                        "type" "string"
                        "enum" #("worker" "self")
                        "description" "Inspect a worker by default, or the active image with self.")
+             "package" (tool-string-property
+                        "The active-image reader package for an unqualified name; defaults to AUTOLITH.")
              "repl" (tool-string-property
                      "The persistent REPL name; defaults to default."))
             '("designator")))

@@ -370,7 +370,8 @@
   test-durable-definition-publication-boundary
   test-image-replay-stale-definitions
   test-lisp-source-undefined-name
-  test-lisp-apropos)
+  test-lisp-apropos
+  test-lisp-describe-designators)
 
 (define-test-suite generation
   test-generation-manifest
