@@ -64,8 +64,8 @@
   :version "git-0adb33b6801d1218ce6249d2a751b05f88b98c40"))
 ("cl-colorist" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/luciusmagn/cl-colorist.git" :ref "a4b65e63f40248c091d8ccf6023ad6fef5de7f0d")
-  :version "git-a4b65e63f40248c091d8ccf6023ad6fef5de7f0d"))
+  :initargs (:remote-url "https://github.com/luciusmagn/cl-colorist.git" :ref "a70749493fbdbe79d6766f254a664119042102b9")
+  :version "git-a70749493fbdbe79d6766f254a664119042102b9"))
 ("clinedi" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "51a4a6933298014a0b8296885f56c002fee91587")
