@@ -273,11 +273,11 @@
            (tool-object-schema
             (json-object
              "uri" (tool-string-property
-                    "The resource URI, for example workspace:src/main.lisp, workspace:src/, scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, papercut:current, or a canonical memory:id/<percent-encoded-stable-id> or papercut:id/<percent-encoded-stable-id> URI.")
+                    "The resource URI; a bare path without a scheme is rejected. workspace: identifiers are workspace-relative or absolute paths inside the workspace roots, for example workspace:src/main.lisp, workspace:src/ for a directory listing, and workspace:. for the workspace root; spaces may stay literal or be percent-encoded. Other examples: scratchpad:., scratchpad:program.lisp, agenda:current, memory:relevant, memory:all, papercut:current, or a canonical memory:id/<percent-encoded-stable-id> or papercut:id/<percent-encoded-stable-id> URI.")
              "start-line" (tool-integer-property
-                           "The first line to return, starting at 1.")
+                           "The first line to return, starting at 1. Line windows apply only to workspace:, scratchpad:, inference:, and context: resources; agenda:, memory:, and papercut: resources are always returned in full and reject start-line and line-count.")
              "line-count" (tool-integer-property
-                           "How many lines to return; default 400, maximum 1000.")
+                           "How many lines to return; default 400, maximum 1000. Accepted only where start-line is.")
              "query" (tool-string-property
                       "Optional lexical query for memory collection resources.")
              "max-results" (tool-integer-property
