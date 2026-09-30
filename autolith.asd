@@ -146,6 +146,7 @@
                              (:file "workers/lisp")
                              (:file "workers/scratchpad")
                              (:file "self/tools")
+                             (:file "self/apropos")
                              (:file "state/durable-mutations")
                              (:file "state/image-commits")
                              (:file "self/tuning-experiments")

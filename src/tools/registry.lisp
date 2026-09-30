@@ -74,6 +74,10 @@
   ()
   (:documentation "Read exact matching source for one worker definition."))
 
+(defclass lisp-apropos-tool (lisp-tool)
+  ()
+  (:documentation "List defined active-image names matching a query."))
+
 (defclass lisp-run-tests-tool (lisp-tool)
   ()
   (:documentation "Run an ASDF system's tests in the worker."))
@@ -536,6 +540,10 @@ spilling is unavailable, in which case the tail is discarded as before.")
 
 (defmethod tool-storm-guard-exempt-p ((tool lisp-source-tool))
   "Exempt source inspection from the mutating-call storm guard."
+  t)
+
+(defmethod tool-storm-guard-exempt-p ((tool lisp-apropos-tool))
+  "Exempt active-image name search from the mutating-call storm guard."
   t)
 
 (defmethod tool-storm-guard-exempt-p ((tool lisp-repls-tool))

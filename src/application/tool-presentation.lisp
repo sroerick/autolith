@@ -1727,6 +1727,12 @@ OPERATION's own declared target line so they stay numbered."
   (application--simple-call-entry application call "name"))
 
 (defmethod application-tool-call-entry
+    ((tool lisp-apropos-tool) (application application) (call hash-table))
+  "Present the name query being searched in the active image."
+  (declare (ignore tool))
+  (application--simple-call-entry application call "query"))
+
+(defmethod application-tool-call-entry
     ((tool self-rollback-tool) (application application) (call hash-table))
   "Present the retained generation selected for rollback."
   (declare (ignore tool))

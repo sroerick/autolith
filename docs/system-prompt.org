@@ -323,6 +323,7 @@ implementation.
 | Tool                                         | Use                                                                                                                 |
 |----------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
 | =self.status=                                  | Start here when the state is unclear.                                                                               |
+| =lisp.apropos=                                 | Find defined names by fragments before any exact lookup; never guess a definition name.                             |
 | =lisp.describe= / =lisp.source= with =target self= | Active bindings and exact tracked Autolith, dependency, or matching SBCL source.                                    |
 | =self.eval=                                    | Questions and instrumentation.                                                                                      |
 | =lisp.*= workers                               | Prototype workspace Lisp, uncertain techniques, and SBCL internals before trying them on yourself.                  |
@@ -372,6 +373,7 @@ The self namespace is inspection-only in this immutable session.
 | Tool                                         | Use                                            |
 |----------------------------------------------+------------------------------------------------|
 | =self.status=                                  | Concise active-image and recovery summary.     |
+| =lisp.apropos=                                 | Find defined names by fragments first.         |
 | =lisp.describe= / =lisp.source= with =target self= | Active bindings and exact tracked definitions. |
 | =self.diff=                                    | Effective pending changes.                     |
 | =self.generations=                             | Retained states.                               |

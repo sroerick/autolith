@@ -617,6 +617,23 @@
                       "The persistent REPL name; defaults to default."))
              '("name")))
           (list
+           'lisp-apropos-tool
+           "lisp" "apropos"
+           "Find defined names in the active image before asking lisp.describe or lisp.source for an exact one. Lists every function, macro, generic function, class, condition, variable, or type whose name contains all the query terms, with its kinds, lambda list, first documentation line, and tracked source file. Never guess a definition name: search for it here or with search.content first."
+           (tool-object-schema
+            (json-object
+             "query" (tool-string-property
+                      "One or more whitespace-separated name fragments that must all occur in the symbol name, matched without regard to case, for example \"retry provider\".")
+             "package" (tool-string-property
+                        "The package to search; defaults to AUTOLITH. Dependency packages such as CL-LLM-PROVIDER-API are searched by name.")
+             "kind" (json-object
+                     "type" "string"
+                     "enum" #("function" "macro" "generic-function" "class" "condition" "variable" "type")
+                     "description" "Optional definition kind that every listed name must carry.")
+             "limit" (tool-integer-property
+                      "How many matches to list; default 40, maximum 200."))
+            '("query")))
+          (list
            'lisp-run-tests-tool
            "lisp" "run-tests"
            "Run ASDF tests for one system in a named persistent REPL, optionally as an inspectable job."

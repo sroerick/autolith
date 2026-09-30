@@ -369,7 +369,8 @@
   test-durable-self-mutation
   test-durable-definition-publication-boundary
   test-image-replay-stale-definitions
-  test-lisp-source-undefined-name)
+  test-lisp-source-undefined-name
+  test-lisp-apropos)
 
 (define-test-suite generation
   test-generation-manifest

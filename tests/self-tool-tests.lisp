@@ -2373,3 +2373,57 @@
       (test-assert (and message (search "search.content" message))
                    "the failure points at tracked-source search as the next step")))
   nil)
+
+(-> test-lisp-apropos () null)
+(defun test-lisp-apropos ()
+  "Find defined active-image names by fragments, hiding undefined interned names."
+  (with-test-configuration (configuration)
+    (let* ((conversation
+             (conversation-create configuration :identifier "lisp-apropos"))
+           (context
+             (make-instance 'tool-context
+                            :configuration configuration
+                            :worker nil
+                            :conversation conversation))
+           (tool (tool-registry-find (make-default-tool-registry)
+                                     "lisp" "apropos")))
+      (intern "APROPOS-TEST-UNDEFINED-INTERNED-NAME" (find-package '#:autolith))
+      (let ((content
+              (tool-result-content
+               (tool-execute tool context
+                             (json-object "query" "apropos search")))))
+        (test-assert (search "lisp-apropos-search  function  src/self/apropos.lisp"
+                             content)
+                     "a matching function lists its kind and tracked source file")
+        (test-assert (search "(query &key (package (find-package" content)
+                     "a matching function shows its lambda list")
+        (test-assert (not (search "apropos-test-undefined-interned-name" content))
+                     "an interned name without a definition is never listed"))
+      (let ((content
+              (tool-result-content
+               (tool-execute tool context
+                             (json-object "query" "apropos" "kind" "variable")))))
+        (test-assert (and (search "*lisp-apropos-default-limit*  variable" content)
+                          (not (search "lisp-apropos-search" content)))
+                     "a kind filter keeps only names carrying that definition kind"))
+      (let ((content
+              (tool-result-content
+               (tool-execute tool context
+                             (json-object "query" "apropos" "limit" 1)))))
+        (test-assert (search "(showing the first 1)" content)
+                     "a limit below the match count is reported"))
+      (test-assert (search "No defined name in AUTOLITH matches"
+                           (tool-result-content
+                            (tool-execute tool context
+                                          (json-object "query" "zqxj-no-such-fragment"))))
+                   "a query without matches says so and suggests alternatives")
+      (test-assert (handler-case
+                       (progn
+                         (tool-execute tool context
+                                       (json-object "query" "apropos" "kind" "widget"))
+                         nil)
+                     (tool-error (condition)
+                       (search "Unknown definition kind" (autolith-error-message condition))))
+                   "an unknown kind filter is rejected with the accepted kinds")))
+  nil)
+
