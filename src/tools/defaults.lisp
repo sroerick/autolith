@@ -172,7 +172,9 @@
       (operation-schema
        "agenda-add"
        (json-object
-        "text" (tool-string-property "Complete bounded agenda item text.")
+        "text" (tool-string-property
+                (format nil "Complete agenda item text, 1 to ~D characters."
+                        *agenda-item-text-limit*))
         "status" (status-property)
         "memory-ids" (memory-identifiers-property))
        '("text"))
@@ -180,7 +182,9 @@
        "agenda-update"
        (json-object
         "id" (tool-string-property "The stable agenda item identifier.")
-        "text" (tool-string-property "Replacement bounded agenda item text.")
+        "text" (tool-string-property
+                (format nil "Replacement agenda item text, 1 to ~D characters."
+                        *agenda-item-text-limit*))
         "status" (status-property)
         "memory-ids" (memory-identifiers-property))
        '("id")
