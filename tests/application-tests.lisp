@@ -3520,7 +3520,9 @@
                                      (enough-namestring source-pathname source-root))
                              prompt)
                      (search "Return the current baseline." prompt))
-                "an override section carries its persisted, recorded, and current sources")
+                (format nil "an override section carries its persisted, recorded, and current sources~%Expected path: ~A~%Prompt:~%~A"
+                        (enough-namestring source-pathname source-root)
+                        prompt))
                (test-assert
                 (and (search "2. defun test-skip-prompt-fresh" prompt)
                      (search "Tracked definition when published: not recorded" prompt)

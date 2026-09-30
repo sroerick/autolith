@@ -78,6 +78,12 @@ jobs:
             exit $status
           }
 
+      - name: Diagnose skipped-definition prompt on Windows
+        shell: pwsh
+        run: |
+          & script\check.ps1 --test test-fix-skipped-definitions-prompt --jobs 1
+          if ($LASTEXITCODE -ne 0) { throw 'Focused Windows prompt check failed.' }
+
       - name: Package Windows release
         shell: pwsh
         run: |
