@@ -466,6 +466,7 @@
 
 (define-test-suite inference
   test-rlm-frame-budget-activity
+  test-rlm-budget-exhaustion-guidance
   test-rlm-context-designators
   test-rlm-value-preview
   test-rlm-budget-cache-discount

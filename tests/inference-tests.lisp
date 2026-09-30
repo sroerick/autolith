@@ -2129,6 +2129,26 @@ CACHED-TOKENS, when supplied, reports that share as prompt-cache reads."
                      "completed tool evidence is retained alongside assistant output"))))
   nil)
 
+(-> test-rlm-budget-exhaustion-guidance () null)
+(defun test-rlm-budget-exhaustion-guidance ()
+  "Tell the model how to recover when a frame subtree exhausts its budget."
+  (let* ((result
+           (rlm--guarded-tool-result
+            (lambda ()
+              (error 'rlm-budget-exhausted
+                     :dimension ':tokens
+                     :task "audit the whole repository"))))
+         (content (tool-result-content result)))
+    (test-assert (not (tool-result-success-p result))
+                 "an exhausted budget without partial evidence stays a failure")
+    (test-assert (search "audit the whole repository" content)
+                 "the failure names the exhausted task")
+    (test-assert (and (search "task.run" content)
+                      (search (princ-to-string *rlm-tool-maximum-token-budget*)
+                              content))
+                 "the failure explains delegation and the explicit allowance ceiling"))
+  nil)
+
 (-> test-rlm-incomplete-environment-reuse () null)
 (defun test-rlm-incomplete-environment-reuse ()
   "Continue an exhausted root with its actual intermediate Lisp state."
