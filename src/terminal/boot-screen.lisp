@@ -30,18 +30,24 @@
   "A dithered braille rendering of the Autolith rock mascot, for the boot panel.")
 
 (defparameter *terminal-ui-boot-almighty-rows*
-  '("    ___    __    __  _______________  __________  __"
-    "   /   |  / /   /  |/  /  _/ ____/ / / /_  __/\\ \\/ /"
-    "  / /| | / /   / /|_/ // // / __/ /_/ / / /    \\  /"
-    " / ___ |/ /___/ /  / // // /_/ / __  / / /     / /"
-    "/_/  |_/_____/_/  /_/___/\\____/_/ /_/ /_/     /_/"
+  '(" █████  ██      ███    ███ ██  ██████  ██   ██ ████████ ██    ██"
+    "██   ██ ██      ████  ████ ██ ██       ██   ██    ██     ██  ██ "
+    "███████ ██      ██ ████ ██ ██ ██   ███ ███████    ██      ████  "
+    "██   ██ ██      ██  ██  ██ ██ ██    ██ ██   ██    ██       ██   "
+    "██   ██ ███████ ██      ██ ██  ██████  ██   ██    ██       ██   "
     ""
-    "    __    _________ ____"
-    "   / /   /  _/ ___// __ \\"
-    "  / /    / / \\__ \\/ /_/ /"
-    " / /____/ / ___/ / ____/"
-    "/_____/___//____/_/")
-  "The ALMIGHTY LISP mark in FIGlet's Slant font, for Micah's theme.")
+    "██      ██ ███████ ██████ "
+    "██      ██ ██      ██   ██"
+    "██      ██ ███████ ██████ "
+    "██      ██      ██ ██     "
+    "███████ ██ ███████ ██     ")
+  "The ALMIGHTY LISP mark in FIGlet's ANSI Regular font, for Micah's theme.")
+
+(defparameter *terminal-ui-boot-almighty-panel-width* 72
+  "The Almighty boot panel's width; its block mark needs more room than the rock.")
+
+(defparameter *terminal-ui-boot-panel-width* 64
+  "The default boot panel's width.")
 
 (defparameter *terminal-ui-boot-mascot-styles*
   #(:brand-gradient-1 :brand-gradient-2 :brand-gradient-3
@@ -49,7 +55,18 @@
   "Row styles cycling top-to-bottom across the boot mark art.")
 
 (defparameter *terminal-ui-boot-linger-p* nil
-  "Whether the boot panel currently advertises Space to start the session.")
+  "Whether the boot screen currently advertises Space to start the session.")
+
+(defparameter *terminal-ui-boot-linger-prompt* "PRESS SPACE TO START"
+  "The call to action shown below the tip while the boot screen waits.")
+
+(-> terminal-ui--boot-panel-width (integer) integer)
+(defun terminal-ui--boot-panel-width (columns)
+  "Return the boot panel width for the installed theme within COLUMNS."
+  (min (if (eq (terminal-theme-name *terminal-theme*) ':almighty)
+           *terminal-ui-boot-almighty-panel-width*
+           *terminal-ui-boot-panel-width*)
+       (max 1 (- columns 4))))
 
 (-> terminal-ui--boot-art () (values list string string))
 (defun terminal-ui--boot-art ()
@@ -77,9 +94,12 @@
 (defun terminal-ui--boot-screen-panel (phase detail columns &key mark-rows)
   "Return horizontally centered styled rows for the actual PHASE and DETAIL.
 
-MARK-ROWS are the already height-limited rows of the theme's boot mark."
-  (let* ((width (min 64 (max 1 (- columns 4))))
+MARK-ROWS are the already height-limited rows of the theme's boot mark. They
+are centered as one block, so rows of unequal width stay aligned."
+  (let* ((width (terminal-ui--boot-panel-width columns))
          (inside (max 0 (- width 4)))
+         (mark-width (loop for text in mark-rows maximize (text-cell-width text)))
+         (mark-indent (max 0 (floor (- inside mark-width) 2)))
          (left (make-string (max 0 (floor (- columns width) 2))
                             :initial-element #\Space))
          (top-border
@@ -105,11 +125,10 @@ MARK-ROWS are the already height-limited rows of the theme's boot mark."
                  (row style (format nil "│ ~A~A │" safe padding))))
 
              (mascot-row (index text)
-               (let ((indent (max 0 (floor (- inside (text-cell-width text)) 2))))
-                 (boxed (terminal-ui--boot-mascot-row-style index mascot-count)
-                        (format nil "~A~A"
-                                (make-string indent :initial-element #\Space)
-                                text)))))
+               (boxed (terminal-ui--boot-mascot-row-style index mascot-count)
+                      (format nil "~A~A"
+                              (make-string mark-indent :initial-element #\Space)
+                              text))))
       (append
        (list (row ':brand top-border))
        (loop for index from 0
@@ -135,7 +154,7 @@ MARK-ROWS are the already height-limited rows of the theme's boot mark."
 (defun terminal-ui--boot-tip-rows (ui columns)
   "Wrap and center one cached startup tip, preserving its display styles."
   (when (terminal-ui-fullscreen-p ui)
-    (let* ((width (min 64 (max 1 (- columns 4))))
+    (let* ((width (terminal-ui--boot-panel-width columns))
            (tip (or (fullscreen-terminal-ui-welcome-tip ui)
                     (setf (fullscreen-terminal-ui-welcome-tip ui)
                           (application--startup-tip-spans)))))
@@ -150,19 +169,36 @@ MARK-ROWS are the already height-limited rows of the theme's boot mark."
     (terminal-ui &key (:phase (or string symbol)) (:detail (option string)) (:height integer))
     (values list integer))
 (defun terminal-ui--boot-screen-frame (ui &key phase detail height)
-  "Return a centered boot panel and tip, reserving a row for direct input."
+  "Return a centered boot panel and tip, reserving a row for direct input.
+
+While the boot screen waits for the operator, a bold call to action follows
+the tip."
   (let* ((terminal (terminal-ui-terminal ui))
          (columns (max 1 (terminal-columns terminal)))
          (tip (terminal-ui--boot-tip-rows ui columns))
+         (prompt (when *terminal-ui-boot-linger-p*
+                   (list ""
+                         (terminal--render-spans
+                          terminal
+                          (list (terminal-span
+                                 ':plain
+                                 (make-string
+                                  (max 0 (floor (- columns
+                                                   (length *terminal-ui-boot-linger-prompt*))
+                                                2))
+                                  :initial-element #\Space))
+                                (terminal-span ':strong *terminal-ui-boot-linger-prompt*))))))
          (available (max 0 (1- height)))
          ;; Keep status and advice visible before allocating rows to the mascot.
-         (mascot-limit (max 0 (- available 11 (if tip (1+ (length tip)) 0))))
+         (mascot-limit (max 0 (- available 11
+                                 (if tip (1+ (length tip)) 0)
+                                 (length prompt))))
          (art (terminal-ui--boot-art))
          (mark-rows (subseq art 0 (min mascot-limit (length art))))
          (panel (mapcar (lambda (row) (terminal--render-spans terminal row))
                         (terminal-ui--boot-screen-panel phase detail columns
                                                         :mark-rows mark-rows)))
-         (rows (append panel (when tip (cons "" tip))))
+         (rows (append panel (when tip (cons "" tip)) prompt))
          (visible (subseq rows 0 (min (length rows) available)))
          (top (max 0 (floor (- height (length visible)) 2))))
     (values (append (make-list top :initial-element "") visible)
@@ -233,9 +269,6 @@ Reads AUTOLITH_BOOT_DURATION when set, else
 (defparameter *terminal-ui-boot-tip-default-seconds* 10
   "Default seconds between startup tips while the boot screen waits.")
 
-(defparameter *terminal-ui-boot-linger-detail* "Press Space to start."
-  "The phase detail shown while the boot screen waits for the operator.")
-
 (-> terminal-ui--boot-start-event-p (t) boolean)
 (defun terminal-ui--boot-start-event-p (event)
   "Return true when EVENT is Space or Enter, the keys that start the session."
@@ -262,10 +295,11 @@ Reads AUTOLITH_BOOT_DURATION when set, else
 Space, Enter, and end of input return :START; Ctrl-C returns :INTERRUPT.
 Other events are ignored. The startup tip rotates every TIP-SECONDS, counted
 in WAIT-FUNCTION calls so scripted waits stay deterministic."
-  (let ((terminal (terminal-ui-terminal ui))
-        (*terminal-ui-boot-linger-p* t)
-        (elapsed 0))
-    (terminal-ui-boot-screen ui ':listener-ready *terminal-ui-boot-linger-detail*)
+  (let* ((terminal (terminal-ui-terminal ui))
+         (*terminal-ui-boot-linger-p* t)
+         (detail (second (first (last *terminal-ui-boot-sequence-phases*))))
+         (elapsed 0))
+    (terminal-ui-boot-screen ui ':listener-ready detail)
     (loop
       (cond
         ((terminal-input-ready-p terminal)
@@ -283,8 +317,7 @@ in WAIT-FUNCTION calls so scripted waits stay deterministic."
          (when (>= elapsed tip-seconds)
            (setf elapsed 0)
            (terminal-ui--boot-rotate-tip ui)
-           (terminal-ui-boot-screen ui ':listener-ready
-                                    *terminal-ui-boot-linger-detail*)))))))
+           (terminal-ui-boot-screen ui ':listener-ready detail)))))))
 
 (-> terminal-ui-boot-sequence
     (terminal-ui &key (:wait-function function) (:duration real)
