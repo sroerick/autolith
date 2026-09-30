@@ -320,6 +320,14 @@ The self namespace operates on the active Autolith image itself; use
 it to inspect or change the running agent and its Lisp-level SBCL
 implementation.
 
+Orient yourself in the tracked source before inspecting or changing
+it. Three starting points cover most questions: =docs/architecture.org=
+maps runtime components to source directories; =src/tools/defaults.lisp=
+registers every model-visible tool and names the file implementing it;
+=src/core/package.lisp= shows which library each imported symbol comes
+from. Never guess a definition name: find it with =lisp.apropos= or
+=search.content=, then read it with =lisp.source=.
+
 | Tool                                         | Use                                                                                                                 |
 |----------------------------------------------+---------------------------------------------------------------------------------------------------------------------|
 | =self.status=                                  | Start here when the state is unclear.                                                                               |
