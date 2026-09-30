@@ -120,7 +120,9 @@ that you searched unless web.run returns a result.
 
 Use web_extra.gist to retrieve a known HTML or Markdown page: documentation
 the user names, a link found through search, or a page referenced in
-the conversation. Supply an absolute HTTP or HTTPS URL.
+the conversation. Supply an absolute HTTP or HTTPS URL. Servers that
+answer with plain text or JSON, such as raw.githubusercontent.com
+files or REST APIs, are refused: fetch those with shell.run instead.
 
 * Runtime metadata
 
