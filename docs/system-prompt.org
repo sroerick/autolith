@@ -391,7 +391,11 @@ Configured MCP servers appear as exact mcp__* namespaces.
 ** Images
 
 Use fs.view-image whenever a local image needs visual inspection,
-including images created or discovered during tool use.
+including images created or discovered during tool use. It accepts
+only PNG, JPEG, GIF, and WebP files inside the workspace or the
+Autolith source root: save screenshots and renders into the workspace
+rather than a temporary directory, and read text, source, HTML, or
+PDF files with resource.read instead.
 Do not substitute OCR or an ASCII approximation unless requested.
 
 * RLM

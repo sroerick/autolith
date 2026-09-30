@@ -305,11 +305,11 @@
           (list
            'fs-view-image-tool
            "fs" "view-image"
-           "View a local image file when visual inspection is needed. The image is returned directly to the model."
+           "View one local PNG, JPEG, GIF, or WebP image when visual inspection is needed; the image is returned directly to the model. It reads only images: read source, text, HTML, PDF, and every other file through resource.read with a workspace: URI instead. The path must lie inside the workspace or the Autolith source root, so save screenshots and renders into the workspace before viewing them."
            (tool-object-schema
             (json-object
              "path" (tool-string-property
-                     "The image path, absolute or workspace-relative."))
+                     "The image path, absolute or workspace-relative, inside the workspace or source root."))
             '("path")))))
       (default-tools--register registry specification)))
   registry)
