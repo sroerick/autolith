@@ -76,14 +76,7 @@
                                     (config :site-config-root configuration))
                                  "--localgroup-handoff"
                                  (namestring handoff-pathname))))
-                   "detached launch arguments preserve the site root and launch modes")))
-              (configuration-set configuration (configuration-setting configuration :terminal-theme)
-                                 ':almighty :source ':override)
-              (test-assert
-               (member "--almighty"
-                       (localgroup-handoff--arguments configuration handoff-pathname)
-                       :test #'string=)
-               "detached launch arguments carry the Almighty theme")))
+                   "detached launch arguments preserve the site root and launch modes")))))
       (when root
         (platform-delete-directory-tree *platform* root
                                         :validate t

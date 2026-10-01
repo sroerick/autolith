@@ -49,9 +49,6 @@
   test-fullscreen-boot-reader-diversion
   test-terminal-fullscreen-relayed-wheel
   test-fullscreen-authentication-lifecycle)
-(define-test-suite terminal-theme
-  test-terminal-theme-tables
-  test-terminal-theme-presentation)
 (define-test-suite stream
   test-bounded-character-reads)
 

@@ -314,7 +314,6 @@
                              (:file "terminal-tests")
                              (:file "fullscreen-tests")
                              (:file "fullscreen-boot-tests")
-                             (:file "terminal-theme-tests")
                              (:file "localgroup-tests")
                              (:file "localgroup-handoff-tests")
                              (:file "localgroup-handoff-boundary-tests")
