@@ -117,8 +117,8 @@
          (progn
            (let ((roots (skill-roots configuration)))
              (test-assert
-              (= (length roots) 4)
-              "skill discovery has project, user, site, and bundled roots")
+              (= (length roots) 5)
+              "skill discovery has project, user, shared, site, and bundled roots")
              (test-assert
               (equal (first roots) project-skills)
               "only the effective Git root supplies project-local skills")
@@ -126,13 +126,17 @@
               (equal (second roots) user-skills)
               "the XDG Autolith skill root follows the project root")
              (test-assert
-              (equal
-               (third roots)
-               site-skills)
-              "the site skill root follows the user root")
+              (equal (third roots)
+                     (merge-pathnames ".agents/skills/" (user-homedir-pathname)))
+              "the shared ~/.agents/skills root follows the Autolith user root")
              (test-assert
               (equal
                (fourth roots)
+               site-skills)
+              "the site skill root follows the shared user root")
+             (test-assert
+              (equal
+               (fifth roots)
                (merge-pathnames
                 "skills/"
                 (config :source-root configuration)))

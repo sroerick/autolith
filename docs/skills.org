@@ -80,8 +80,9 @@ Autolith scans these roots recursively, with earlier roots taking precedence:
 
 1. =.autolith/skills/= at the project root
 2. =${XDG_CONFIG_HOME:-~/.config}/autolith/skills/=
-3. =<site-config-root>/skills/=
-4. bundled Skill roots
+3. =~/.agents/skills/=, the cross-agent user root shared with other agents
+4. =<site-config-root>/skills/=
+5. bundled Skill roots
 
 Outside Git, the workspace directory is the project root. Only the exact,
 case-sensitive filenames =SKILL.sexp= and =SKILL.md= count. Within one

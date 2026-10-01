@@ -172,9 +172,19 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
 
 ;;;; -- Autolith Skill Roots --
 
+(-> skill-shared-user-root () pathname)
+(defun skill-shared-user-root ()
+  "Return the cross-agent user skill root ~/.agents/skills/."
+  (merge-pathnames ".agents/skills/" (user-homedir-pathname)))
+
 (-> skill-roots (configuration) list)
 (defun skill-roots (configuration)
-  "Return project, user, optional site, and bundled skill roots by precedence."
+  "Return skill roots by precedence: project, Autolith user, shared user,
+optional site, and bundled.
+
+The shared user root ~/.agents/skills/ is the cross-agent convention for
+SKILL.md directories, so skills installed there for other agents are
+discovered without copying."
   (remove-duplicates
     (remove
      nil
@@ -185,6 +195,7 @@ SKILL.LOAD selects a skill; catalog text and durable conversation text do not."
         (config :working-directory configuration)))
       (merge-pathnames "skills/"
                        (config :config-root configuration))
+      (skill-shared-user-root)
       (let ((site-root (config :site-config-root configuration)))
         (when site-root
           (merge-pathnames "skills/" site-root)))
