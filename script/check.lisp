@@ -425,6 +425,13 @@ Parent cleanup follows process-group termination, including crashes and timeouts
     (format t "~&Recovery checks passed.~%")
     t))
 
+(defun check--load-test-system (source-root)
+  "Load the test system while holding this checkout's shared FASL-cache lock."
+  (asdf:load-system :ls-flock)
+  (uiop:symbol-call '#:ls-flock '#:call-with-file-lock
+                    (merge-pathnames ".qlot/test-load.lock" source-root)
+                    (lambda () (asdf:load-system :autolith/tests))))
+
 (defun check--load-tests (source-root &key build-sandbox)
   "Load the locked test system and runtime libraries; return the setup pathname."
   (let ((setup (merge-pathnames ".qlot/setup.lisp" source-root)))
@@ -441,7 +448,7 @@ Parent cleanup follows process-group termination, including crashes and timeouts
       (when (probe-file directory)
         (pushnew directory (symbol-value directories) :test #'equal)))
     (asdf:load-asd (merge-pathnames "autolith.asd" source-root))
-    (asdf:load-system :autolith/tests)
+    (check--load-test-system source-root)
     setup))
 
 (defun check--delete-temporary-root (pathname)
