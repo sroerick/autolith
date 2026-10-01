@@ -537,6 +537,7 @@
 
 (when (find-class 'win32-platform nil)
   (define-test-suite windows-sandbox
+      test-windows-sandbox-profile-cleanup-helper
     test-windows-shell-sandbox-integration
     test-windows-shell-sandbox-async
     test-windows-shell-sandbox-network

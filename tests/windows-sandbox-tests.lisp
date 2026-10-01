@@ -9,6 +9,65 @@
                "native Windows network-isolated sandbox is available")
   t)
 
+
+(-> windows-sandbox-tests--profile-helper-script (pathname) string)
+(defun windows-sandbox-tests--profile-helper-script (source-path)
+  "Return a PowerShell AST fixture for Remove-SandboxUserProfile."
+  (format nil
+          (concatenate 'string
+          "$ErrorActionPreference = 'Stop'~%~%"
+          "$source = Get-Content -LiteralPath '~A' -Raw~%"
+          "$tokens = $null; $errors = $null~%"
+          "$ast = [System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)~%"
+           "if ($errors.Count) { throw ($errors | Out-String) }~%"
+          "$function = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Remove-SandboxUserProfile' }, $true)~%"
+          "if (-not $function) { throw 'Remove-SandboxUserProfile was not found in the script AST.' }~%"
+          ". ([scriptblock]::Create($function.Extent.Text))~%~%"
+          "function Assert([bool]$condition, [string]$message) { if (-not $condition) { throw $message } }~%"
+          "function Start-Sleep { param([int]$Milliseconds) }~%~%"
+          "$sid = 'S-1-5-21-100-200-300-400'~%"
+          "$otherSid = 'S-1-5-21-100-200-300-401'~%"
+          "$script:processes = @()~%"
+          "$script:profiles = @()~%"
+          "$script:stopped = @()~%"
+          "$script:removeCalls = 0~%"
+          "$script:removeFailures = 0~%~%"
+          "function Get-CimInstance {~%"
+          "  param([string]$ClassName, [string]$Filter)~%"
+          "  if ($ClassName -eq 'Win32_Process') { return $script:processes }~%"
+          "  if ($ClassName -eq 'Win32_UserProfile') { return $script:profiles }~%"
+          "  throw \"Unexpected CIM class: $ClassName\"~%"
+          "}~%"
+          "function Invoke-CimMethod {~%"
+          "  param($InputObject, [string]$MethodName)~%"
+          "  [pscustomobject]@{ ReturnValue = $InputObject.ReturnValue; Sid = $InputObject.Sid }~%"
+          "}~%"
+          "function Stop-Process { param([int]$Id, [switch]$Force) $script:stopped += $Id }~%"
+          "function Remove-CimInstance {~%"
+          "  param([Parameter(ValueFromPipeline = $true)]$InputObject)~%"
+          "  process { $script:removeCalls++; if ($script:removeFailures -gt 0) { $script:removeFailures--; throw 'profile is busy' } }~%"
+          "}~%~%"
+          "$script:processes = @([pscustomobject]@{ ProcessId = 11; ReturnValue = 0; Sid = $sid }, [pscustomobject]@{ ProcessId = 12; ReturnValue = 0; Sid = $otherSid }, [pscustomobject]@{ ProcessId = 13; ReturnValue = 5; Sid = $sid })~%"
+          "$script:profiles = @()~%"
+          "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 1~%"
+          "Assert ($script:stopped.Count -eq 1 -and $script:stopped[0] -eq 11) 'only a process with the exact owner SID is stopped'~%~%"
+          "$script:stopped = @(); $script:processes = @(); $script:profiles = @()~%"
+          "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 1~%"
+          "Assert ($script:stopped.Count -eq 0 -and $script:removeCalls -eq 0) 'disappeared process and profile are harmless'~%~%"
+          "$script:removeCalls = 0; $script:removeFailures = 1; $script:profiles = @([pscustomobject]@{ SID = $sid })~%"
+          "Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 1~%"
+          "Assert ($script:removeCalls -eq 2) 'transient profile removal failure is retried'~%~%"
+          "$script:removeCalls = 0; $script:removeFailures = 100; $failure = $null~%"
+          "try { Remove-SandboxUserProfile -Sid $sid -TimeoutSeconds 0 } catch { $failure = $_.Exception.Message }~%"
+          "Assert ($failure -match 'profile is busy') 'permanent profile removal failure is bounded and reported'~%"
+          "'PASS'~%"
+          "")
+           (with-output-to-string (stream)
+             (loop for character across (namestring source-path)
+                   do (write-char character stream)
+                   when (char= character #\')
+                     do (write-char character stream)))))
+
 (-> windows-sandbox-tests--command
     (pathname string &key (:timeout (option integer)) (:authorization keyword)) tool-result)
 (defun windows-sandbox-tests--command (root command &key timeout (authorization ':sandboxed))
@@ -44,6 +103,28 @@
   (and (tool-result-success-p result)
        (search "exit 0" (tool-result-content result))
        t))
+
+(defun test-windows-sandbox-profile-cleanup-helper ()
+  "Exercise the packaged sandbox profile cleanup helper with mocked CIM calls."
+  (when (typep *platform* 'win32-platform)
+    (with-test-configuration (configuration root)
+      (declare (ignore configuration))
+      (let* ((source (merge-pathnames "script/check-windows-sandbox.ps1"
+                                      (asdf:system-source-directory :autolith)))
+             (fixture (merge-pathnames "profile-helper-tests.ps1" root))
+             (powershell (or (uiop:getenv "AUTOLITH_PWSH") "pwsh")))
+        (with-open-file (stream fixture :direction ':output :if-exists ':supersede)
+          (write-string (windows-sandbox-tests--profile-helper-script source) stream))
+          (multiple-value-bind (output diagnostics status)
+              (uiop:run-program
+               (list powershell "-NoProfile" "-NonInteractive" "-File"
+                     (namestring fixture))
+               :output ':string
+               :error-output ':string
+               :ignore-error-status t)
+            (test-assert (and (eql status 0) (search "PASS" output))
+                         (format nil "profile cleanup fixture failed: ~A~%~A"
+                                 output diagnostics)))))))
 
 (defun test-windows-shell-sandbox-integration ()
   "Exercise native Windows shell containment through shell.run."
