@@ -143,7 +143,12 @@
     ((:code "autolith --fullscreen")
      (:plain " uses a scrollable transcript and bottom-pinned composer. Save the choice for future launches with ")
      (:code "(setf (config :fullscreen-p) t)")
-     (:plain "; nil restores the inline default.")))
+     (:plain "; nil restores the inline default."))
+    ((:plain "Visit ")
+     (:code "https://almightylisp.com/")
+     (:plain " for almighty tools for almighty programmers, and try ")
+     (:code "autolith --almighty")
+     (:plain " to wear its colors.")))
   "Startup advice supplementing registered command tips, as styled span specifications.")
 
 (-> application--command-tip-spans
