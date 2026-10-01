@@ -22,7 +22,6 @@ runs:
         "colorlisp=$env:USERPROFILE\.cache\colorlisp" | Add-Content $env:GITHUB_OUTPUT
         $asdf = (Join-Path $env:LOCALAPPDATA 'autolith\cache\ci-asdf').Replace('\', '/')
         "asdf=$asdf" | Add-Content $env:GITHUB_OUTPUT
-        "ASDF_OUTPUT_TRANSLATIONS=(:output-translations (t (`"$asdf/`" :implementation)) :ignore-inherited-configuration)" | Add-Content $env:GITHUB_ENV
 
     - name: Restore Lisp dependencies, runtime and compiled files
       id: lisp
@@ -51,6 +50,9 @@ runs:
 
     - name: Bootstrap
       shell: pwsh
+      # Keep packaged first-run and standard-account probes in their own caches.
+      env:
+        ASDF_OUTPUT_TRANSLATIONS: '(:output-translations (t ("${{ steps.environment.outputs.asdf }}/" :implementation)) :ignore-inherited-configuration)'
       run: |
         $log = Join-Path $env:RUNNER_TEMP 'bootstrap.log'
         $status = 0
