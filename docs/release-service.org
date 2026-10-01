@@ -36,6 +36,16 @@ The complete Windows test suite runs in package CI after validated artifacts
 are uploaded, with failures reported separately from release builds.
 The host updater bootstraps and checks a selected deployment before activating it.
 
+Windows package CI and tagged releases use the same cached-bootstrap action.
+The default-branch caches contain locked Lisp dependencies, the pinned runtime,
+ASDF compiled files, and the FFF and ColorLisp native libraries. Dependency and
+runtime pins determine the Lisp cache key; native source pins and compiler
+versions determine the native cache keys. Each run rebuilds the Autolith images
+from the checked-out source. Caches are saved after bootstrap, before package
+validation or the full test suite. Tagged releases can reuse the default-branch
+caches. For a manual package-only verification, dispatch =Windows package= with
+=run-tests=false=; package validation and launcher/sandbox probes still run.
+
 The installer, service entrypoints, and initial bootstrap remain shell because
 they must run before a Lisp image is available or replace the current Unix
 process.

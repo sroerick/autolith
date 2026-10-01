@@ -1,0 +1,93 @@
+name: Cached Windows bootstrap
+description: Restore pinned dependencies and native libraries, bootstrap, and save caches before tests.
+runs:
+  using: composite
+  steps:
+    - name: Identify cache paths and native toolchain
+      id: environment
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $versions = @()
+        foreach ($tool in 'rustc', 'clang', 'cmake') {
+          $versions += & $tool --version
+          if ($LASTEXITCODE -ne 0) { throw "$tool version probe failed." }
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes(($versions -join "`n"))
+        $toolchain = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+        "toolchain=$toolchain" | Add-Content $env:GITHUB_OUTPUT
+        "quicklisp=$env:USERPROFILE\quicklisp" | Add-Content $env:GITHUB_OUTPUT
+        "runtimes=$env:LOCALAPPDATA\autolith\data\runtimes" | Add-Content $env:GITHUB_OUTPUT
+        "fff=$env:LOCALAPPDATA\autolith\data\native\fff" | Add-Content $env:GITHUB_OUTPUT
+        "colorlisp=$env:USERPROFILE\.cache\colorlisp" | Add-Content $env:GITHUB_OUTPUT
+        $asdf = (Join-Path $env:LOCALAPPDATA 'autolith\cache\ci-asdf').Replace('\', '/')
+        "asdf=$asdf" | Add-Content $env:GITHUB_OUTPUT
+        "ASDF_OUTPUT_TRANSLATIONS=(:output-translations (t (`"$asdf/`" :implementation)) :ignore-inherited-configuration)" | Add-Content $env:GITHUB_ENV
+
+    - name: Restore Lisp dependencies, runtime and compiled files
+      id: lisp
+      uses: actions/cache/restore@v5
+      with:
+        path: |
+          .qlot
+          ${{ steps.environment.outputs.quicklisp }}
+          ${{ steps.environment.outputs.runtimes }}
+          ${{ steps.environment.outputs.asdf }}
+        key: windows-2025-${{ runner.arch }}-lisp-v1-${{ hashFiles('qlfile', 'qlfile.lock', 'sbcl.version', 'sbcl-*-releases.sha256', 'script/bootstrap.ps1', 'script/qlot-install.lisp', 'script/runtime-requirement.lisp') }}
+
+    - name: Restore pinned FFF library
+      id: fff
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.environment.outputs.fff }}
+        key: windows-2025-${{ runner.arch }}-fff-v1-${{ steps.environment.outputs.toolchain }}-${{ hashFiles('native/fff/**', 'script/build-fff.lisp', 'script/roots.lisp') }}
+
+    - name: Restore ColorLisp library
+      id: colorlisp
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.environment.outputs.colorlisp }}
+        key: windows-2025-${{ runner.arch }}-colorlisp-v1-${{ steps.environment.outputs.toolchain }}-${{ hashFiles('qlfile.lock') }}
+
+    - name: Bootstrap
+      shell: pwsh
+      run: |
+        $log = Join-Path $env:RUNNER_TEMP 'bootstrap.log'
+        $status = 0
+        try {
+          & script\bootstrap.ps1 2>&1 | Tee-Object -FilePath $log
+          if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
+        } catch {
+          $_ | Out-String | Tee-Object -FilePath $log -Append
+          $status = 1
+        }
+        if ($status -ne 0) {
+          script\ci-report-failure.ps1 -Title 'Windows bootstrap failed' -Log $log -Status $status
+          exit $status
+        }
+
+    # Save after a successful bootstrap, independently of later test results.
+    - name: Save Lisp dependencies, runtime and compiled files
+      if: steps.lisp.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          .qlot
+          ${{ steps.environment.outputs.quicklisp }}
+          ${{ steps.environment.outputs.runtimes }}
+          ${{ steps.environment.outputs.asdf }}
+        key: ${{ steps.lisp.outputs.cache-primary-key }}
+
+    - name: Save pinned FFF library
+      if: steps.fff.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ steps.environment.outputs.fff }}
+        key: ${{ steps.fff.outputs.cache-primary-key }}
+
+    - name: Save ColorLisp library
+      if: steps.colorlisp.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v5
+      with:
+        path: ${{ steps.environment.outputs.colorlisp }}
+        key: ${{ steps.colorlisp.outputs.cache-primary-key }}

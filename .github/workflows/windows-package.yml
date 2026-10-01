@@ -2,6 +2,11 @@ name: Windows package
 
 on:
   workflow_dispatch:
+    inputs:
+      run-tests:
+        description: Run the full test suite after uploading validated packages
+        type: boolean
+        default: true
   push:
     branches: [master]
     paths:
@@ -15,6 +20,7 @@ on:
       - "sbcl.version"
       - "sbcl-*-releases.sha256"
       - ".github/workflows/windows-package.yml"
+      - ".github/actions/windows-bootstrap/**"
 
 permissions:
   contents: read
@@ -58,25 +64,8 @@ jobs:
             "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
-      # Failing steps publish their output through check annotations, which the
-      # public API serves while job logs need authentication.
-      - name: Bootstrap
-        id: bootstrap
-        shell: pwsh
-        run: |
-          $log = Join-Path $env:RUNNER_TEMP 'bootstrap.log'
-          $status = 0
-          try {
-            & script\bootstrap.ps1 2>&1 | Tee-Object -FilePath $log
-            if ($null -ne $LASTEXITCODE) { $status = $LASTEXITCODE }
-          } catch {
-            $_ | Out-String | Tee-Object -FilePath $log -Append
-            $status = 1
-          }
-          if ($status -ne 0) {
-            script\ci-report-failure.ps1 -Title 'Windows bootstrap failed' -Log $log -Status $status
-            exit $status
-          }
+      - name: Bootstrap with shared caches
+        uses: ./.github/actions/windows-bootstrap
 
       - name: Package Windows release
         shell: pwsh
@@ -138,6 +127,7 @@ jobs:
 
       # Full test results are independent of the validated package artifacts.
       - name: Check
+        if: github.event_name != 'workflow_dispatch' || inputs.run-tests
         shell: pwsh
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'check.log'
