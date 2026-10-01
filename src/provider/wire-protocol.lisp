@@ -80,10 +80,10 @@ stay available because they do not depend on provider web search."
   "Return true when MODEL names documented GPT-5.4 or later.
 
 The name carries a major version and an optional dotted minor version, so
-gpt-5.6-terra and gpt-6-sol both qualify while gpt-5.3-codex does not. The
+gpt-5.6-terra and gpt-6.1-sol both qualify while gpt-5.3-codex does not. The
 Codex model catalog at https://github.com/openai/codex commit
-18194bfd3534ca567d886eac454028dafaa68b6c marks every GPT-5.6 and GPT-6 entry
-with supports_search_tool."
+444da310e108da16aaeb18fd790b0ac464f08aca marks every GPT-5.6, GPT-6, and GPT-6.1
+entry with supports_search_tool."
   (handler-case
       (let* ((major-start 4)
              (major-end (and (uiop:string-prefix-p "gpt-" model)

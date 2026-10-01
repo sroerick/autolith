@@ -261,28 +261,29 @@
 ;; ql:quickload must not reset it to the built-in list and invalidate
 ;; the very model the image is running on.
 (defvar *supported-models*
-  '("gpt-6-sol" "gpt-6-luna" "gpt-6-astra"
+  '("gpt-6.1-sol" "gpt-6-sol" "gpt-6-luna" "gpt-6-astra"
     "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra" "grok-4.5"
     "accounts/fireworks/models/kimi-k3")
   "The model identifiers offered by the interactive model picker.")
 
 ;; Fast capability metadata from https://github.com/openai/codex
 ;; codex-rs/models-manager/models.json at
-;; 18194bfd3534ca567d886eac454028dafaa68b6c: every GPT-6 and GPT-5.6 entry
-;; lists the priority service tier named Fast.
+;; 444da310e108da16aaeb18fd790b0ac464f08aca: every GPT-6.1, GPT-6, and GPT-5.6
+;; entry lists the priority service tier named Fast.
 (defparameter *codex-fast-mode-models*
-  '("gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
+  '("gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
     "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
   "Codex model identifiers verified to support the Fast service tier.")
 
 ;; GPT window sizes read from the live Codex model catalog on 2026-07-19 and
-;; confirmed in Codex reference commit 18194bfd3534ca567d886eac454028dafaa68b6c.
+;; confirmed in Codex reference commit 444da310e108da16aaeb18fd790b0ac464f08aca.
 ;; The Grok window comes from default_models.json in grok-build reference
 ;; commit 47348d13.
 ;; DEFVAR for the same reason as *SUPPORTED-MODELS*: the provider
 ;; registry rewrites this table at runtime.
 (defvar *model-context-windows*
-  '(("gpt-6-sol"     . 272000)
+  '(("gpt-6.1-sol"   . 272000)
+    ("gpt-6-sol"     . 272000)
     ("gpt-6-luna"    . 272000)
     ("gpt-6-astra"   . 272000)
     ("gpt-5.6-sol"   . 272000)

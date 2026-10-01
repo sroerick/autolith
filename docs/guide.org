@@ -788,7 +788,7 @@ and do not get attached to your messages.
 The status line keeps a context meter visible while idle. It shows used tokens
 and the full model window. =|= marks the automatic compaction point. The
 ChatGPT subscription catalog currently reports a 272K-token window for the
-GPT-6 and GPT-5.6 models, which compact at about 218K tokens by default:
+GPT-6.1, GPT-6, and GPT-5.6 models, which compact at about 218K tokens by default:
 
 #+BEGIN_EXAMPLE
 ctx [==========|..] 218K / 272K used
@@ -867,7 +867,7 @@ OpenAI-compatible providers use API keys.
 ChatGPT Codex Fast mode sends =service_tier=priority= when the active Codex model
 advertises Fast support. Fast responses count more heavily against plan usage;
 the exact rate is set by OpenAI per model and is not tracked here. The built-in
-GPT-6 and GPT-5.6 models support it. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
+GPT-6.1, GPT-6, and GPT-5.6 models support it. Use =/fast= or =/fast status= to inspect it, and =/fast on= or
 =/fast off= to change the saved preference. The activity status line displays
 =FAST= while the active model uses Fast mode. Other providers and unknown Codex
 models keep the preference but use the standard path. Set

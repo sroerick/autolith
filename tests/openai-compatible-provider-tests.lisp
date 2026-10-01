@@ -803,7 +803,7 @@
                 (astra-model (provider-model-for "gpt-6-astra"))
                 (built-in-models
                  (append
-                  (list "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
+                  (list "gpt-6.1-sol" "gpt-6-astra" "gpt-6-sol" "gpt-6-luna"
                         "gpt-5.6-sol" "gpt-5.6-luna" "gpt-5.6-terra")
                   (mapcar (lambda (entry) (getf entry ':name))
                           *gemini-code-assist-models*)
@@ -823,7 +823,8 @@
                  (equal (provider-model-reasoning-efforts astra-model)
                         '("low" "medium" "high" "xhigh" "max" "ultra")))
             "ChatGPT exposes gpt-6-astra with current Codex metadata")
-            (dolist (entry '(("gpt-6-sol" "low" "medium" "high" "xhigh" "max" "ultra")
+            (dolist (entry '(("gpt-6.1-sol" "low" "medium" "high" "xhigh" "max" "ultra")
+                             ("gpt-6-sol" "low" "medium" "high" "xhigh" "max" "ultra")
                              ("gpt-6-luna" "low" "medium" "high" "xhigh" "max")))
               (let* ((name (first entry))
                      (model-metadata (provider-model-for name))

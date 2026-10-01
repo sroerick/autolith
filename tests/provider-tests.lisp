@@ -303,7 +303,8 @@
      (provider-deferred-tool-model-p (provider-model-name registered-model))
      (format nil "registered Codex model ~A defers tool loading"
              (provider-model-name registered-model))))
-  (dolist (entry '(("gpt-6-astra" . t)
+  (dolist (entry '(("gpt-6.1-sol" . t)
+                   ("gpt-6-astra" . t)
                    ("gpt-6-sol" . t)
                    ("gpt-6-luna" . t)
                    ("gpt-6" . t)
