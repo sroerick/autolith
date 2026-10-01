@@ -92,15 +92,19 @@
                      (json-object
                       "data"
                       (json-array
-                       (json-object "id" "anthropic/claude-test")
-                       (json-object "id" "Nous-Hermes-4")
-                       (json-object "id" "open-model")
-                       (json-object "id" "open-model"))))
-                    200
-                    nil)))
-           (let ((models (nous--fetch-models configuration)))
-             (test-assert
-              (equal models '("anthropic/claude-test" "open-model"))
+                         (json-object "id" "anthropic/claude-test"
+                                      "context_length" 200000)
+                         (json-object "id" "Nous-Hermes-4")
+                         (json-object "id" "open-model"
+                                      "max_model_len" 8192)
+                         (json-object "id" "open-model"))))
+                      200
+                      nil)))
+             (let ((models (nous--fetch-models configuration)))
+               (test-assert
+                (equal models
+                       '((:name "anthropic/claude-test" :context-window 200000)
+                         (:name "open-model" :context-window 8192)))
               "Nous discovery filters Hermes identifiers and removes duplicates"))
            (let* ((request (first captured-requests))
                   (authorization

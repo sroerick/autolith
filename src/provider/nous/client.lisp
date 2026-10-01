@@ -134,20 +134,21 @@
 (defun nous--fetch-models (configuration)
   "Fetch Nous model identifiers, excluding Hermes models unsuitable for tools."
   (let ((seen nil))
-    (loop for identifier
+    (loop for spec
             in (openai-compatible--fetch-models
                 configuration
                 :provider-name "Nous Research"
                 :endpoint (nous-models-endpoint)
                 :credential-manager
                 (nous-credential-manager-create configuration))
+          for identifier = (or (openai-compatible--model-spec-name spec) "")
           for trimmed = (string-trim '(#\Space #\Tab #\Newline #\Return)
                                      identifier)
           when (and (non-empty-string-p trimmed)
                     (nous-provider--model-identifier-usable-p trimmed)
                     (not (member trimmed seen :test #'string=)))
             do (push trimmed seen)
-            and collect trimmed)))
+            and collect (openai-compatible--rename-model-spec spec trimmed))))
 
 
 ;;;; -- Nous Messages Transport --

@@ -166,11 +166,63 @@
         (member (string-downcase (first header)) reserved :test #'string=))
       (copy-tree custom)))))
 
+(defparameter *openai-compatible-context-window-fields*
+  '("context_length" "contextLength" "max_model_len"
+    "max_context_length" "context_window" "n_ctx")
+  "JSON field names that may carry a model context window.")
+
+(-> openai-compatible--positive-token-count (t) (option integer))
+(defun openai-compatible--positive-token-count (value)
+  "Return VALUE as a positive integer token count, or NIL."
+  (cond
+    ((and (integerp value) (plusp value))
+     value)
+    ((and (realp value) (plusp value) (= value (truncate value)))
+     (truncate value))
+    ((stringp value)
+     (let ((parsed (ignore-errors (parse-integer value :junk-allowed nil))))
+       (and parsed (plusp parsed) parsed)))
+    (t
+     nil)))
+
+(-> openai-compatible--context-window-from-entry (json-object) (option integer))
+(defun openai-compatible--context-window-from-entry (entry)
+  "Return the context window advertised by model ENTRY, or NIL."
+  (or (loop for field in *openai-compatible-context-window-fields*
+            for window = (openai-compatible--positive-token-count
+                          (json-get entry field))
+            when window
+              return window)
+      (let ((top-provider (json-get entry "top_provider")))
+        (and (json-object-p top-provider)
+             (openai-compatible--positive-token-count
+              (json-get top-provider "context_length"))))))
+
+(-> openai-compatible--model-spec-name (t) (option string))
+(defun openai-compatible--model-spec-name (spec)
+  "Return the model identifier encoded by SPEC."
+  (etypecase spec
+    (string spec)
+    (cons (getf spec ':name))))
+
+(-> openai-compatible--rename-model-spec (t non-empty-string) t)
+(defun openai-compatible--rename-model-spec (spec new-name)
+  "Return SPEC with its model identifier replaced by NEW-NAME."
+  (etypecase spec
+    (string new-name)
+    (cons
+     (let ((copy (copy-list spec)))
+       (setf (getf copy ':name) new-name)
+       copy))))
+
 (-> openai-compatible--decode-model-list
     (string &key (:entry-predicate (option function)))
     list)
 (defun openai-compatible--decode-model-list (body &key entry-predicate)
-  "Decode and optionally filter an OpenAI-compatible model-list response."
+  "Decode and optionally filter an OpenAI-compatible model-list response.
+
+Each kept entry becomes a property list with :NAME and, when the catalog
+advertises one, :CONTEXT-WINDOW."
   (let* ((decoded
            (handler-case
                (json-decode body)
@@ -192,7 +244,11 @@
                         "The model discovery response contained an invalid model entry."))
                (when (or (null entry-predicate)
                          (funcall entry-predicate entry))
-                 (push identifier models)))
+                 (let ((window (openai-compatible--context-window-from-entry entry)))
+                   (push (if window
+                             (list :name identifier :context-window window)
+                             (list :name identifier))
+                         models))))
       (nreverse models))))
 
 (-> openai-compatible--signal-model-discovery-status
@@ -304,8 +360,9 @@ manager from PROVIDER-NAME."
 
 The provider resolves its bearer key from Autolith's private API-key store using
 NAME. MODELS contains optional static strings or model property lists accepted by
-REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers.
-STREAM-USAGE-P controls whether streaming requests ask for a final usage chunk."
+REGISTER-PROVIDER. MODELS-ENDPOINT discovers additional model identifiers and
+advertised context windows. STREAM-USAGE-P controls whether streaming requests
+ask for a final usage chunk."
   (unless (or models models-endpoint)
     (error 'configuration-error
            :message

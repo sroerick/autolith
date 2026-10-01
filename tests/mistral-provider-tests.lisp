@@ -65,18 +65,19 @@
             "data"
             (json-array
              (json-object
-              "id" "mistral-large-latest"
-              "capabilities" (json-object "completion_chat" t))
-             (json-object
-              "id" "codestral-embed"
-              "capabilities" (json-object "completion_chat" false)))))))
-    (test-assert
-     (equal (openai-compatible--decode-model-list
-             body
-             :entry-predicate #'mistral--chat-model-p)
-            '("mistral-large-latest"))
-     "Mistral discovery exposes only chat-capable models"))
-  nil)
+                "id" "mistral-large-latest"
+                "max_context_length" 128000
+                "capabilities" (json-object "completion_chat" t))
+               (json-object
+                "id" "codestral-embed"
+                "capabilities" (json-object "completion_chat" false)))))))
+      (test-assert
+       (equal (openai-compatible--decode-model-list
+               body
+               :entry-predicate #'mistral--chat-model-p)
+              '((:name "mistral-large-latest" :context-window 128000)))
+       "Mistral discovery exposes only chat-capable models"))
+    nil)
 
 (-> mistral-provider-test--provider () null)
 (defun mistral-provider-test--provider ()
@@ -140,15 +141,16 @@
                         "data"
                         (json-array
                          (json-object
-                          "id" "mistral-small-latest"
-                          "capabilities" (json-object "completion_chat" t)))))
-                      200
-                      nil))))
-            (lambda ()
-              (test-assert
-               (equal (mistral--fetch-models configuration)
-                      '("mistral-small-latest"))
-               "Mistral fetches chat-capable models")
+                            "id" "mistral-small-latest"
+                            "max_context_length" 32000
+                            "capabilities" (json-object "completion_chat" t)))))
+                        200
+                        nil))))
+              (lambda ()
+                  (test-assert
+                   (equal (mistral--fetch-models configuration)
+                          '((:name "mistral-small-latest" :context-window 32000)))
+                   "Mistral fetches chat-capable models")
               (mistral-validate-api-key "mistral-validation-key")))
            (test-assert
             (and (= (length observed) 2)

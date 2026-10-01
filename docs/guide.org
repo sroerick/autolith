@@ -575,7 +575,8 @@ directory. Session settings, such as hurry-up mode, last until exit. Process
 settings, such as the immutable flag, the management endpoint, and the roots,
 come from the command line, the environment, or defaults at startup and stay
 fixed. Derived settings, such as the context window and provider endpoint,
-follow the model.
+follow the model. The window uses a declared model value, else the catalog
+value, else the default.
 
 A durable value is chosen at startup from the first source that supplies it:
 an explicit command-line choice, the setting's environment variable, then the

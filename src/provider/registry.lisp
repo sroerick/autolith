@@ -20,6 +20,13 @@
     :reader provider-model-context-window
     :type (integer 1)
     :documentation "The model context window in tokens.")
+   (context-window-specified-p
+    :initarg :context-window-specified-p
+    :initform nil
+    :reader provider-model-context-window-specified-p
+    :type boolean
+    :documentation
+    "True when CONTEXT-WINDOW was declared or discovered, not filled from the default.")
    (reasoning-efforts
     :initarg :reasoning-efforts
     :initform *supported-reasoning-efforts*
@@ -27,6 +34,15 @@
     :type list
     :documentation "The reasoning efforts offered for this model."))
   (:documentation "Metadata describing one model exposed by a registered provider."))
+
+(defmethod initialize-instance :after
+    ((model provider-model)
+     &key (context-window nil context-window-p)
+          (context-window-specified-p nil specified-p))
+  "Track an explicit context window when callers construct model instances."
+  (declare (ignore context-window context-window-specified-p))
+  (unless specified-p
+    (setf (slot-value model 'context-window-specified-p) context-window-p)))
 
 (defclass provider-registration ()
   ((name
@@ -133,7 +149,7 @@
   '(:builtin :site :user :runtime)
   "The provider registration sources ordered from lowest to highest precedence.")
 
-(defparameter *provider-model-cache-version* 2
+(defparameter *provider-model-cache-version* 3
   "The portable version of the successful provider model cache.")
 
 (defvar *provider-model-cache-lock*
@@ -172,12 +188,21 @@
             do (write-char (if (alphanumericp character) character #\-) stream))))
    '#:keyword))
 
+(-> provider--spec-context-window (list) (values t boolean))
+(defun provider--spec-context-window (spec)
+  "Return SPEC's :context-window and whether the key is present."
+  (loop for (key value) on spec by #'cddr
+        when (eq key ':context-window)
+          return (values value t)
+        finally (return (values nil nil))))
+
 (-> provider-model-create (t) provider-model)
 (defun provider-model-create (spec)
   "Normalize one model SPEC into provider metadata.
 
 SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
-:NAME, :DESCRIPTION, :CONTEXT-WINDOW, and :REASONING-EFFORTS keys."
+:NAME, :DESCRIPTION, :CONTEXT-WINDOW, and :REASONING-EFFORTS keys. An omitted
+:CONTEXT-WINDOW is filled from the default and is not a custom window."
   (etypecase spec
     (provider-model
      spec)
@@ -192,27 +217,31 @@ SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
          (error 'configuration-error
                 :message (format nil "Provider model metadata needs a nonempty :name: ~S."
                                  spec)))
-       (let ((context-window (getf spec ':context-window
-                                   *default-context-window*))
-             (reasoning-efforts (getf spec ':reasoning-efforts
-                                      *supported-reasoning-efforts*)))
-         (unless (and (integerp context-window) (plusp context-window))
+       (multiple-value-bind (context-window specified-p)
+           (provider--spec-context-window spec)
+         (unless (or (not specified-p)
+                     (and (integerp context-window) (plusp context-window)))
            (error 'configuration-error
                   :message (format nil
                                    "Provider model ~A needs a positive :context-window."
                                    name)))
-         (unless (and (listp reasoning-efforts)
-                      reasoning-efforts
-                      (every #'non-empty-string-p reasoning-efforts))
-           (error 'configuration-error
-                  :message (format nil
-                                   "Provider model ~A has invalid :reasoning-efforts."
-                                   name)))
-         (make-instance 'provider-model
-                        :name name
-                        :description (or (getf spec ':description) "")
-                        :context-window context-window
-                        :reasoning-efforts (copy-list reasoning-efforts)))))))
+         (let ((reasoning-efforts (getf spec ':reasoning-efforts
+                                        *supported-reasoning-efforts*)))
+           (unless (and (listp reasoning-efforts)
+                        reasoning-efforts
+                        (every #'non-empty-string-p reasoning-efforts))
+             (error 'configuration-error
+                    :message (format nil
+                                     "Provider model ~A has invalid :reasoning-efforts."
+                                     name)))
+           (make-instance 'provider-model
+                          :name name
+                          :description (or (getf spec ':description) "")
+                          :context-window (if specified-p
+                                              context-window
+                                              *default-context-window*)
+                          :context-window-specified-p specified-p
+                          :reasoning-efforts (copy-list reasoning-efforts))))))))
 
 (-> provider--normalize-models (list &key (:allow-empty-p boolean)) list)
 (defun provider--normalize-models (models &key allow-empty-p)
@@ -236,10 +265,13 @@ SPEC may be a model string, an existing PROVIDER-MODEL, or a property list with
 (-> provider--model-cache-form (provider-model) list)
 (defun provider--model-cache-form (model)
   "Serialize MODEL into the private provider model cache form."
-  (list :name (provider-model-name model)
-        :description (provider-model-description model)
-        :context-window (provider-model-context-window model)
-        :reasoning-efforts (copy-list (provider-model-reasoning-efforts model))))
+  (append
+   (list :name (provider-model-name model)
+         :description (provider-model-description model))
+   (when (provider-model-context-window-specified-p model)
+     (list :context-window (provider-model-context-window model)))
+   (list :reasoning-efforts
+         (copy-list (provider-model-reasoning-efforts model)))))
 
 (-> provider--cache-entry-form (list) list)
 (defun provider--cache-entry-form (entry)
@@ -505,18 +537,56 @@ same source and shadow lower-precedence registrations with the same name."
       (< (length *provider-registrations*) before))))
 
 
+(-> provider--with-context-window (provider-model integer boolean) provider-model)
+(defun provider--with-context-window (model window specified-p)
+  "Return a copy of MODEL with WINDOW and SPECIFIED-P."
+  (make-instance 'provider-model
+                 :name (provider-model-name model)
+                 :description (provider-model-description model)
+                 :context-window window
+                 :context-window-specified-p specified-p
+                 :reasoning-efforts
+                 (copy-list (provider-model-reasoning-efforts model))))
+
+(-> provider--merge-model-metadata
+    (provider-model (option provider-model))
+    provider-model)
+(defun provider--merge-model-metadata (declared discovered)
+  "Return DECLARED, overlaying DISCOVERED's context window when DECLARED has none."
+  (cond
+    ((null discovered)
+     declared)
+    ((provider-model-context-window-specified-p declared)
+     declared)
+    ((provider-model-context-window-specified-p discovered)
+     (provider--with-context-window
+      declared
+      (provider-model-context-window discovered)
+      t))
+    (t
+     declared)))
+
 (-> provider--merge-models (list list) list)
 (defun provider--merge-models (declared-models discovered-models)
-  "Merge discovered models behind declared metadata overrides."
+  "Merge discovered models behind declared metadata overrides.
+
+Declared names keep description and reasoning. A declared :context-window
+wins. Otherwise the discovered context window is used."
   (let ((seen (make-hash-table :test #'equal))
-        (merged nil))
-    (dolist (model declared-models)
-      (let ((name (provider-model-name model)))
+        (merged nil)
+        (normalized-discovered
+         (provider--normalize-models discovered-models :allow-empty-p t))
+        (discovered-by-name (make-hash-table :test #'equal)))
+    (dolist (model normalized-discovered)
+      (setf (gethash (provider-model-name model) discovered-by-name) model))
+    (dolist (declared declared-models)
+      (let ((name (provider-model-name declared)))
         (setf (gethash name seen) t)
-        (push model merged)))
-    (dolist (model (provider--normalize-models
-                    discovered-models
-                    :allow-empty-p t))
+        (push (provider--merge-model-metadata
+               declared
+               (gethash name discovered-by-name))
+              merged)))
+    (dolist (model normalized-discovered)
       (let ((name (provider-model-name model)))
         (unless (gethash name seen)
           (setf (gethash name seen) t)

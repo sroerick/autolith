@@ -166,22 +166,24 @@
                         "data"
                         (json-array
                          (json-object
-                          "id" "google/gemini-3.5-flash"
-                          "architecture"
-                          (json-object "output_modalities" (json-array "text"))
-                          "supported_parameters"
-                          (json-array "tools" "tool_choice" "reasoning"))
-                         (json-object
-                          "id" "vendor/text-only"
-                          "architecture"
-                          (json-object "output_modalities" (json-array "text"))
-                          "supported_parameters" (json-array "temperature")))))
-                      200
-                      nil))))
-            (lambda ()
-              (test-assert
-               (equal (openrouter--fetch-models configuration)
-                      '("openrouter/google/gemini-3.5-flash"))
+                            "id" "google/gemini-3.5-flash"
+                            "context_length" 1048576
+                            "architecture"
+                            (json-object "output_modalities" (json-array "text"))
+                            "supported_parameters"
+                            (json-array "tools" "tool_choice" "reasoning"))
+                           (json-object
+                            "id" "vendor/text-only"
+                            "architecture"
+                            (json-object "output_modalities" (json-array "text"))
+                            "supported_parameters" (json-array "temperature")))))
+                        200
+                        nil))))
+              (lambda ()
+                (test-assert
+                 (equal (openrouter--fetch-models configuration)
+                        '((:name "openrouter/google/gemini-3.5-flash"
+                           :context-window 1048576)))
                "OpenRouter fetches and namespaces compatible models")
               (openrouter-validate-api-key "openrouter-validation-key")))
             (test-assert

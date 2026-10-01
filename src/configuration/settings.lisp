@@ -475,7 +475,10 @@ and AUTOLITH_MISTRAL_PROVIDER_ENDPOINT overrides the Mistral family endpoint."
 
 (-> configuration--context-window-for (string) integer)
 (defun configuration--context-window-for (model)
-  "Return MODEL's context window from the environment, registry, or fallback."
+  "Return MODEL's context window from the environment, registry, or fallback.
+
+AUTOLITH_CONTEXT_WINDOW wins when set. Otherwise the registered window is used:
+a declared model :context-window, else the catalog window, else the default."
   (environment-positive-integer
    "AUTOLITH_CONTEXT_WINDOW"
    (or (and (fboundp 'provider-model-context-window-for)
