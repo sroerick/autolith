@@ -56,10 +56,8 @@
   test-setting-kinds
   test-setting-registry)
 
-(define-test-suite deprecation
-  test-version-comparison
-  test-legacy-configuration-phases
-  test-legacy-configuration-removal-due)
+(define-test-suite version
+  test-version-comparison)
 
 (define-test-suite memory
   test-memory-persistence)

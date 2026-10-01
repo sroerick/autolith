@@ -580,14 +580,12 @@ From Lisp, user initialization and replay scripts read a setting with
 =(config :model)=, which uses the current configuration, or
 =(config :model configuration)= for an explicit one, and change it with
 =(setf (config :reasoning-traces-p) t)=. Unknown setting names signal a
-configuration error. The former =configuration-<name>= readers,
-=configuration-with-<name>= copiers, and =preferences-<name>= functions keep
-working through 0.51, warn on every call from 0.52, and are deleted in 0.54.
+configuration error. Create an independent configuration with
+=configuration-copy=.
 
-The preferences file is version 8 from this release: one flat record of
-setting names and values that keeps keys it does not understand. Earlier
-versions are read once and rewritten. Autolith releases before 0.51 do not
-read a version 8 file and fall back to defaults with a warning.
+The preferences file uses version 8: one flat record of setting names and
+values that keeps unknown keys. Before upgrading a preferences file from
+versions 1 through 7 to 0.54 or later, run a 0.53 release once to write version 8.
 
 ** Language servers
 

@@ -144,13 +144,10 @@ change), =:session= (forgotten at exit), and =:derived= (computed on read).
 =configuration-copy= produces an independent instance for children and
 inference frames; listeners stay with the original.
 
-The preferences file is a version 8 record of durable settings that keeps
-unknown keys across rewrites. =preferences-legacy.lisp= reads versions 1 to
-7 for migration and hosts the deprecated =preferences-<name>= entry points;
-=legacy-configuration.lisp= hosts the deprecated =configuration-<name>=
-readers and copiers. Both files and =define-deprecated-function= are deleted
-in 0.54.0, which the canary case =test-legacy-configuration-removal-due=
-enforces by failing from that release on.
+=preferences.lisp= reads and atomically writes version 8 records of durable
+settings, preserving unknown keys across rewrites. Unsupported or malformed
+records are reported through =preferences-load-warning= during configuration
+creation.
 
 * Provider and tools
 

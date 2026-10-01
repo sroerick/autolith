@@ -45,7 +45,7 @@
 
 (-> test-preferences () null)
 (defun test-preferences ()
-  "Test durable settings persist, merge, migrate, and recover from damage."
+  "Test durable settings persist, merge, reject unsupported versions, and recover from damage."
   (preferences-tests--without-model-environment
    (lambda ()
      (with-test-configuration (configuration)
@@ -141,53 +141,20 @@
                                (eq (getf plist :fullscreen-p) t)
                                (null (member :turn-timestamps-p plist)))
                           "storing merges into the file as another process left it")))
-         (snapshot-write pathname
-                         '(:preferences :version 3
-                           :model "gpt-5.6-luna" :reasoning-effort "high"
-                           :reasoning-traces-p t :compact-view-p nil
-                           :turn-timestamps-p t))
-         (let ((created (preferences-tests--create configuration)))
-           (test-assert (and (string= (config :model created) "gpt-5.6-luna")
-                             (string= (config :reasoning-effort created) "high")
-                             (config :reasoning-traces-p created)
-                             (not (config :compact-view-p created))
-                             (config :turn-timestamps-p created)
-                             (not (config :codex-fast-mode-p created))
-                             (config :session-title-generation-p created))
-                        "version three preferences remain readable with their defaults")
-           (multiple-value-bind (plist version-8-p)
-               (preferences-tests--file-plist configuration)
-             (test-assert (and version-8-p
-                               (not (getf plist :compact-view-p))
-                               (getf plist :turn-timestamps-p)
-                               (member :cache-miss-notices-p plist)
-                               (getf plist :session-title-generation-p))
-                          "version three preferences migrate to version eight")))
-         (with-open-file (stream pathname :direction ':output :if-exists ':supersede
-                                          :external-format ':utf-8)
-           (prin1 '(:preferences :version 1 :reasoning-traces-p t) stream)
-           (terpri stream))
-         (let ((created (preferences-tests--create configuration)))
-           (test-assert (and (config :reasoning-traces-p created)
-                             (string= (config :model created) *default-model*)
-                             (config :compact-view-p created))
-                        "version one preferences remain readable")
-           (test-assert (nth-value 1 (preferences-tests--file-plist configuration))
-                        "version one preferences migrate to version eight"))
-         (snapshot-write pathname
-                         '(:preferences :version 7
-                           :model "gpt-5.6-sol" :reasoning-effort "ultra"
-                           :codex-fast-mode-p nil :reasoning-traces-p nil
-                           :compact-view-p t :turn-timestamps-p nil
-                           :cache-miss-notices-p nil :simple-technical-english-p nil
-                           :session-title-generation-p t :permission-mode nil))
-         (let ((created nil))
-           (test-assert
-            (preferences-tests--warned-p
-             (lambda () (setf created (preferences-tests--create configuration))))
-            "a version seven record missing fullscreen is rejected with a warning")
-           (test-assert (not (config :fullscreen-p created))
-                        "a rejected file leaves defaults in place"))
+          (dolist (version '(1 2 3 4 5 6 7 9))
+            (let ((form (list ':preferences ':version version
+                              ':model "gpt-5.6-luna"
+                              ':reasoning-effort "high"))
+                  (created nil))
+              (snapshot-write pathname form)
+              (test-assert
+               (preferences-tests--warned-p
+                (lambda () (setf created (preferences-tests--create configuration))))
+               "an unsupported preference version is reported and ignored")
+              (test-assert (string= (config :model created) *default-model*)
+                           "an unsupported file leaves the default model in place")
+              (test-assert (equal (snapshot-read pathname) form)
+                           "loading an unsupported file preserves its stored data")))
          (with-open-file (stream pathname :direction ':output :if-exists ':supersede
                                           :external-format ':utf-8)
            (write-string "(:preferences :version 8 :model" stream))
@@ -200,14 +167,4 @@
            (test-assert (equal (preferences-tests--file-plist configuration)
                                '(:compact-view-p nil))
                         "the next store replaces a damaged file"))
-         (let ((created (preferences-tests--create configuration)))
-           (preferences-set-fullscreen created t)
-           (test-assert (and (config :fullscreen-p created)
-                             (preference-state-fullscreen-p (preferences-load created))
-                             (preferences-fullscreen-p created))
-                        "legacy preference entry points still read and write settings")
-           (preferences-set-model-selection created)
-           (test-assert (string= (getf (preferences-tests--file-plist configuration) :model)
-                                 (config :model created))
-                        "the legacy model selection writer persists the current model"))))))
-  nil)
+    nil)))))

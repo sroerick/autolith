@@ -117,10 +117,10 @@
       (ensure-directories-exist site-root)
       (ensure-directories-exist environment-root)
       (with-test-environment
-          (("XDG_CONFIG_HOME" (namestring (configuration-config-root fixture)))
-           ("XDG_DATA_HOME" (namestring (configuration-data-root fixture)))
-           ("XDG_STATE_HOME" (namestring (configuration-state-root fixture)))
-           ("XDG_CACHE_HOME" (namestring (configuration-cache-root fixture))))
+          (("XDG_CONFIG_HOME" (namestring (config :config-root fixture)))
+           ("XDG_DATA_HOME" (namestring (config :data-root fixture)))
+           ("XDG_STATE_HOME" (namestring (config :state-root fixture)))
+           ("XDG_CACHE_HOME" (namestring (config :cache-root fixture))))
         (dolist (arguments '(("models")
                              ("run-job" "--input" "input.sexp"
                                         "--output" "output.sexp")))
@@ -425,8 +425,8 @@
                (push (list :directory *user-init-layer*
                            *extension-registration-source*
                            *user-init-pathname*
-                           (configuration-working-directory
-                            *user-init-configuration*))
+                            (config :working-directory
+                                    *user-init-configuration*))
                      *directory-user-init-test-log*)
                (defun directory-user-init-tests--definition () :loaded)
                (register-context-contributor

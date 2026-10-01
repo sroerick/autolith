@@ -2,7 +2,7 @@
   :description "A live, self-modifying Common Lisp agent."
   :author "Lukáš Hozda"
   :license "ISC"
-  :version "0.53.2"
+  :version "0.54.0"
   :serial t
   :depends-on (#:cl-base64
                #:cl+ssl
@@ -54,7 +54,7 @@
                 :components ((:file "core/package")
                              (:file "core/types")
                              (:file "core/conditions")
-                             (:file "core/deprecation")
+                             (:file "core/version")
                              (:file "localgroup/protocol")
                              (:file "core/json")
                              (:file "core/time")
@@ -67,13 +67,11 @@
                              (:file "configuration/setting")
                              (:file "configuration/settings")
                              (:file "configuration/configuration")
-                             (:file "configuration/legacy-configuration")
                              (:file "provider/registry")
                              (:file "configuration/workspace")
                              (:file "conversation/image-input")
                              (:file "state/records")
                              (:file "state/updates")
-                             (:file "configuration/preferences-legacy")
                              (:file "configuration/preferences")
                              (:file "configuration/permissions")
                              (:file "provider/authentication")
@@ -246,7 +244,7 @@
                              (:file "win32-fixtures" :if-feature :win32)
                              (:file "device-authentication-test-support")
                              (:file "stream-tests")
-                             (:file "deprecation-tests")
+                             (:file "version-tests")
                              (:file "setting-tests")
                              (:file "memory-tests")
                              (:file "papercut-tests")

@@ -31,32 +31,24 @@ name; unknown keys survive rewrites so releases can share one file.")
   "Return the version 8 record holding PLIST."
   (list* ':preferences ':version *preferences-version* plist))
 
-(-> preferences--read (configuration) (values list integer))
+(-> preferences--read (configuration) list)
 (defun preferences--read (configuration)
-  "Read CONFIGURATION's durable values and the format version they were stored in.
-
-Versions 1 to 7 are read through the legacy reader and reported with their
-own version so the caller can rewrite them."
+  "Read CONFIGURATION's durable values from its version 8 preferences file."
   (block nil
     (let ((pathname (configuration-preferences-path configuration)))
       (unless (probe-file pathname)
-        (return (values nil *preferences-version*)))
+        (return nil))
       (handler-case
           (multiple-value-bind (form sole-form-p)
               (snapshot-read pathname)
-            (cond
-              ((and sole-form-p (preferences--form-p form))
-               (values (preferences--form->plist form) *preferences-version*))
-              ((and sole-form-p (preferences-legacy-form-p form))
-               (values (preferences-legacy-form->plist form)
-                       (getf (rest form) :version)))
-              (t
-               (error 'preferences-error
-                      :message (format nil "Preferences at ~A are malformed or unsupported."
-                                       pathname)
-                      :pathname pathname
-                      :operation ':read
-                      :cause nil))))
+            (if (and sole-form-p (preferences--form-p form))
+                (preferences--form->plist form)
+                (error 'preferences-error
+                       :message (format nil "Preferences at ~A are malformed or unsupported."
+                                        pathname)
+                       :pathname pathname
+                       :operation ':read
+                       :cause nil)))
         (preferences-error (condition)
           (error condition))
         (error (cause)
@@ -86,17 +78,13 @@ own version so the caller can rewrite them."
 
 (-> preferences-load-values (configuration) list)
 (defun preferences-load-values (configuration)
-  "Return CONFIGURATION's persisted durable values, migrating older files.
+  "Return CONFIGURATION's persisted durable values.
 
-A legacy file is rewritten in the current format once it is read. A
-malformed file is reported through PREFERENCES-LOAD-WARNING and ignored."
+Report malformed or unsupported files through PREFERENCES-LOAD-WARNING and
+return NIL."
   (with-lock-held ((configuration-preferences-lock configuration))
     (handler-case
-        (multiple-value-bind (plist version)
-            (preferences--read configuration)
-          (when (/= version *preferences-version*)
-            (ignore-errors (preferences--write configuration plist)))
-          plist)
+        (preferences--read configuration)
       (preferences-error (condition)
         (warn 'preferences-load-warning
               :pathname (preferences-error-pathname condition)
