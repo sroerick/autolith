@@ -435,6 +435,12 @@ preference.
 terminal status bar and local session status display the title when one is
 available and otherwise show the conversation ID.
 
+A resumed conversation runs in a fresh process, so background jobs,
+asynchronous shell runs, and Lisp worker state from before the restart no
+longer exist. The first user turn after a resume carries a request-local notice
+telling the model so, which keeps it from polling or waiting on dead jobs. Only
+durable child task results stay readable through =job.get=.
+
 Inspect a saved conversation without resuming or locking it with:
 
 #+BEGIN_SRC sh

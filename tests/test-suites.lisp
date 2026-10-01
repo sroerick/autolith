@@ -104,6 +104,9 @@
 (define-test-suite interpreter-discipline
   test-interpreter-discipline)
 
+(define-test-suite resume-context
+  test-resume-context)
+
 (define-test-suite self-review
   test-self-review-reminder)
 

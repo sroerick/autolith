@@ -273,6 +273,19 @@
     :accessor conversation-turn-state
     :type (option string)
     :documentation "The transient provider routing token for one user turn.")
+   (resumed-p
+    :initform nil
+    :accessor conversation-resumed-p
+    :type boolean
+    :documentation
+    "Whether this object was loaded from durable storage and the model has
+not yet been told that work from the previous process is gone.")
+   (resume-note-turn
+    :initform nil
+    :accessor conversation-resume-note-turn
+    :type (option (integer 0))
+    :documentation
+    "The user-turn count during which the resume note is being delivered.")
    (last-total-tokens
     :initform 0
     :accessor conversation-last-total-tokens
@@ -3040,6 +3053,7 @@ later picker searches read it without scanning the log."
                  (conversation--load-active-segment identity active)
                  (conversation--load-all-segments identity pathnames))))
       (conversation--repair-incomplete-tool-calls conversation)
+      (setf (conversation-resumed-p conversation) t)
       conversation)))
 
 (-> conversation-pathname-for-id (configuration string) pathname)
