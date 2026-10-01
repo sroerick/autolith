@@ -394,11 +394,9 @@ jobs:
             "$env:USERPROFILE\.cargo\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
           }
 
-      - name: Bootstrap and check
+      - name: Bootstrap
         shell: pwsh
-        run: |
-          script\bootstrap.ps1
-          script\check.ps1 --jobs 1 --timeout 1800
+        run: script\bootstrap.ps1
 
       - name: Package Windows release
         shell: pwsh

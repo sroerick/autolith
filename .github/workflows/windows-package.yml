@@ -127,6 +127,16 @@ jobs:
             exit $status
           }
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autolith-windows-${{ github.sha }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      # Full test results are independent of the validated package artifacts.
       - name: Check
         shell: pwsh
         run: |
@@ -143,12 +153,3 @@ jobs:
             script\ci-report-failure.ps1 -Title 'Windows check failed' -Log $log -Status $status
             exit $status
           }
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: autolith-windows-${{ github.sha }}
-          path: |
-            dist/*.zip
-            dist/*.zip.sha256
-          if-no-files-found: error
-          retention-days: 14

@@ -29,10 +29,12 @@ The release service has three independent long-running processes:
 GitHub Actions is the factory for release archives. The tag workflow validates
 the tag, creates the GitHub release, and uploads Linux x86-64 and aarch64
 archives for glibc and musl, macOS x86-64 and arm64 archives, and FreeBSD,
-NetBSD, and OpenBSD x86-64 archives through =script/ci-package-release=. It
-does not run the complete repository check.
-The host updater still bootstraps and checks a selected deployment before
-activating it.
+NetBSD, and OpenBSD x86-64 archives through =script/ci-package-release=.
+Windows x86-64 archives are built through =script/package-windows-release.ps1=.
+Tagged Windows builds require successful bootstrap and archive validation.
+The complete Windows test suite runs in package CI after validated artifacts
+are uploaded, with failures reported separately from release builds.
+The host updater bootstraps and checks a selected deployment before activating it.
 
 The installer, service entrypoints, and initial bootstrap remain shell because
 they must run before a Lisp image is available or replace the current Unix
