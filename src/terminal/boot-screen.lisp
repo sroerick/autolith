@@ -36,12 +36,12 @@
     "██   ██ ██      ██  ██  ██ ██ ██    ██ ██   ██    ██       ██   "
     "██   ██ ███████ ██      ██ ██  ██████  ██   ██    ██       ██   "
     ""
-    "██      ██ ███████ ██████ "
-    "██      ██ ██      ██   ██"
-    "██      ██ ███████ ██████ "
-    "██      ██      ██ ██     "
-    "███████ ██ ███████ ██     ")
-  "The ALMIGHTY LISP mark in FIGlet's ANSI Regular font, for Micah's theme.")
+    "██      ██ ████████ ██   ██"
+    "██      ██    ██    ██   ██"
+    "██      ██    ██    ███████"
+    "██      ██    ██    ██   ██"
+    "███████ ██    ██    ██   ██")
+  "The ALMIGHTY LITH mark in FIGlet's ANSI Regular font, for Micah's theme.")
 
 (defparameter *terminal-ui-boot-almighty-panel-width* 72
   "The Almighty boot panel's width; its block mark needs more room than the rock.")
@@ -78,7 +78,7 @@
              "READ . EVAL . PRINT . LOOP"))
     (:almighty
      (values *terminal-ui-boot-almighty-rows*
-             "A L M I G H T Y  L I S P  /  LISP MACHINE"
+             "A L M I G H T Y  L I T H  /  LISP MACHINE"
              "ALMIGHTY TOOLS FOR ALMIGHTY PROGRAMMERS"))))
 
 (-> terminal-ui--boot-mascot-row-style (integer integer) terminal-style)

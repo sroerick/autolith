@@ -72,7 +72,7 @@ autolith --almighty
 forces the fullscreen viewport and presents the Almighty Lisp theme from
 [[https://almightylisp.com/][almightylisp.com]]: near-white text on the site's
 blue, yellow for everything emphasized, cyan for code and strings, and an
-ALMIGHTY LISP boot mark. Terminals that advertise true color through
+ALMIGHTY LITH boot mark. Terminals that advertise true color through
 =COLORTERM= get the exact colors; others get the nearest indexed or basic
 ones. The theme sets the terminal's default colors only while the viewport is
 active and restores them on exit. Save it for future launches with
