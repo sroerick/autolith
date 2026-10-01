@@ -57,6 +57,24 @@ let
     ];
   };
 
+  clLsp = pkgs.sbcl.buildASDFSystem {
+    pname = "cl-lsp";
+    version = "0.1.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "lambda-symbolics";
+      repo = "cl-lsp";
+      rev = "285aa75ae19c4e02de97f5891a398478242b4153";
+      hash = "sha256-5O4ggBry8GPhLF11EG5fMzsuhkt/kTlQQSsIzWlrALE=";
+    };
+    lispLibs = with pkgs.sbclPackages; [
+      bordeaux-threads
+      flexi-streams
+      quri
+      serapeum
+      yason
+    ];
+  };
+
   clRfc8628 = pkgs.sbcl.buildASDFSystem {
     pname = "cl-rfc8628";
     version = "0.1.0";
@@ -501,6 +519,7 @@ let
       clinkerTranscript
       clJobpond
       clLlmProviderApi
+      clLsp
       clRfc8628
       clSkills
       idsmall

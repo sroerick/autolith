@@ -95,6 +95,7 @@ terminal prompt          local Lisp result       finalized scrollback
 | cl-llm-provider-api | Wire clients, request execution, context resolution, structured contracts | Provider registration, subscription adapters, conversation projection, contributors |
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
+| cl-lsp | Stdio JSON-RPC, language-server lifecycle, document synchronization and diagnostics | Trusted configuration, project selection, tool operations and edit hooks |
 | sexp-store | Validated transactions, segmented logs and sidecars | Record schemas, scope, lifecycle and corruption policy |
 | clinker-transcript | Ordered projection and reconciliation | Conversation meaning and durable repair decisions |
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
@@ -197,13 +198,12 @@ provider request --> semantic events --> agent --> validated tool calls
 
 =src/lsp/configuration.lisp= validates user-owned =lsp.sexp= with the closed
 =sexp-config= grammar and selects workspace-bounded project roots.
-=src/lsp/transport.lisp= implements binary Content-Length framing, request
-correlation, ordered server callbacks, deadlines, and process/thread cleanup.
-=src/lsp/client.lisp= owns initialization, disk synchronization, UTF-16
-  positions, and version-aware push/pull diagnostics. =src/lsp/tools.lisp=
-  registers the query, diagnostics, status, and restart tools, appends bounded
-  diagnostics after successful workspace resource edits, and contributes a
-  request-context note naming enabled servers.
+=cl-lsp= implements binary Content-Length framing, request correlation, ordered
+server callbacks, deadlines, process/thread cleanup, initialization, disk
+synchronization, UTF-16 positions, and version-aware push/pull diagnostics.
+=src/lsp/tools.lisp= registers the query, diagnostics, status, and restart tools,
+appends bounded diagnostics after successful workspace resource edits, and
+contributes a request-context note naming enabled servers.
 
   Each registry owns one lazy manager. Registries create it and its tools only
   when =lsp.sexp= enables at least one server. Operations share its recursive
@@ -212,7 +212,7 @@ correlation, ordered server callbacks, deadlines, and process/thread cleanup.
   closes inherited descriptors without signaling the parent's language servers.
   Configured executables run as trusted local processes, separately from the
   shell sandbox. Server-driven workspace edits are declined; file changes use
-  revision-gated resources. File URI encoding belongs to the platform adapters.
+  revision-gated resources. =cl-lsp= encodes language-server file URIs.
 
 * Terminal
 

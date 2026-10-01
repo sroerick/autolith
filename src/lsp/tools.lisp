@@ -208,7 +208,8 @@
 (-> lsp-register-tools (tool-registry) tool-registry)
 (defun lsp-register-tools (registry)
   "Register one lazy LSP manager and its small read-only tool surface."
-  (let* ((manager (make-instance 'lsp-manager))
+  (let* ((manager (make-instance 'lsp-manager :client-name "Autolith"
+                                             :client-version *autolith-version*))
          (path (tool-string-property "Existing workspace source file; also selects the project for workspace-symbols."))
          (file-schema (tool-object-schema (json-object "path" path) '("path")))
          (empty-schema (tool-object-schema (json-object) nil)))

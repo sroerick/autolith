@@ -9,6 +9,7 @@
                #:cl-colorist
                #:cl-exec-sandbox
                #:cl-jobpond
+               #:cl-lsp
                #:cl-rfc8628
                #:clinker-transcript
                #:cl-llm-provider-api
@@ -133,8 +134,6 @@
                              (:file "tools/lisp-paren-check")
                              (:file "resource/workspace-file")
                              (:file "lsp/configuration")
-                             (:file "lsp/transport")
-                             (:file "lsp/client")
                              (:file "lsp/tools")
                              (:file "resource/agenda")
                              (:file "resource/memory")
@@ -265,8 +264,7 @@
                               (:file "directory-configuration-tests")
                              (:file "mcp-tool-tests")
                              (:file "lsp-configuration-tests")
-                             (:file "lsp-transport-tests")
-                             (:file "lsp-client-tests")
+                             (:file "lsp-integration-tests")
                              (:file "application-command-tests")
                              (:file "project-adaptation-tests")
                              (:file "conversation-identifier-tests")

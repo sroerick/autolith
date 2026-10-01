@@ -86,6 +86,43 @@
                 #:job-state
                 #:job-terminal-p
                 #:make-job-pool)
+  (:import-from #:cl-lsp
+                #:lsp-error
+                #:lsp-server-configuration
+                #:lsp-server-configuration-name
+                #:lsp-server-configuration-arguments
+                #:lsp-server-configuration-extensions
+                #:lsp-server-configuration-root-markers
+                #:lsp-server-configuration-initialization-options
+                #:lsp-server-configuration-timeout-seconds
+                #:lsp-server-configuration-disabled-p
+                #:lsp-manager
+                #:lsp-manager-clients
+                #:lsp-manager-configurations
+                #:lsp-manager-loaded-p
+                #:lsp-manager-lock
+                #:lsp-manager-client
+                #:lsp-manager-close
+                #:lsp-client
+                #:lsp-client-configuration
+                #:lsp-client-root
+                #:lsp-client-transport
+                #:lsp-client-capabilities
+                #:lsp-client-sync
+                #:lsp-client-resync
+                #:lsp-client-diagnostics
+                #:lsp-document
+                #:lsp-document-path
+                #:lsp-document-text
+                #:lsp-path-uri
+                #:lsp-transport
+                #:lsp-transport-live-p
+                #:lsp-transport-next-id
+                #:lsp-transport-pending
+                #:lsp-transport-open
+                #:lsp-transport-request
+                #:lsp-transport-close
+                #:lsp-write-message)
   (:import-from #:cl-skills
                 #:*skill-catalog-character-budget*
                 #:*skill-file-character-limit*
