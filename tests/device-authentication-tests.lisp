@@ -529,15 +529,3 @@
         (test-assert (null *device-authentication-test-saved-credentials*)
                      "an incomplete token exchange is never published")))
     nil))
-
-
-(-> run-device-authentication-tests () boolean)
-(defun run-device-authentication-tests ()
-  "Run the offline ChatGPT device authentication tests."
-  (device-authentication-test--complete-flow)
-  (device-authentication-test--injected-poll)
-  (device-authentication-test--timeout)
-  (device-authentication-test--error-echo-containment)
-  (device-authentication-test--declined)
-  (device-authentication-test--missing-account)
-  t)

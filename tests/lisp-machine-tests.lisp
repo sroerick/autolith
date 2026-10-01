@@ -1441,16 +1441,3 @@
                                           :validate t
                                           :if-does-not-exist ':ignore)))))
   nil)
-
-(-> run-lisp-machine-tests () null)
-(defun run-lisp-machine-tests ()
-  "Run direct local Lisp evaluation and responsive routing tests."
-  (test-application-lisp-evaluation)
-  (test-application-restart-debugger)
-  (test-application-debugger-recoveries)
-  (test-application-debugger-modal-recoveries)
-  (test-application-lisp-activity)
-  (test-application-lisp-input-routing)
-  (test-application-prompt-marker-reader-order)
-  (test-application-prompt-marker-lifecycle)
-  nil)

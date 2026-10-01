@@ -319,13 +319,3 @@
                         :turn-state nil)))
    "an assistant message keeps a response from counting as empty")
   nil)
-
-(-> test-grok-provider () null)
-(defun test-grok-provider ()
-  "Test the Grok subscription provider without network access."
-  (grok-provider-test--selection)
-  (grok-provider-test--item-normalization)
-  (grok-provider-test--doom-loop-recovery)
-  (grok-provider-test--request-shape)
-  (grok-provider-test--transport-headers)
-  nil)

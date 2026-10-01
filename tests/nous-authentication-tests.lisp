@@ -344,12 +344,3 @@
                                       :validate t
                                       :if-does-not-exist ':ignore)))
   nil)
-
-(-> run-nous-authentication-tests () boolean)
-(defun run-nous-authentication-tests ()
-  "Run the offline Nous OAuth credential-manager tests."
-  (nous-authentication-test--manager-loading)
-  (nous-authentication-test--refresh-validation)
-  (nous-authentication-test--serialized-refresh)
-  (nous-authentication-test--refresh-redaction)
-  t)

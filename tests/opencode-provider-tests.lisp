@@ -666,18 +666,3 @@
           (functionp (provider-registration-model-discovery registration)))
      "OpenCode registers its family, endpoints, and discovery callback"))
   nil)
-
-
-(-> test-opencode-provider () null)
-(defun test-opencode-provider ()
-  "Run the complete OpenCode provider test suite."
-  (opencode-provider-test--selection)
-  (opencode-provider-test--credential-source)
-  (opencode-provider-test--login)
-  (opencode-provider-test--authentication-bootstrap)
-  (opencode-provider-test--request-model)
-  (opencode-provider-test--session-header)
-  (opencode-provider-test--discovery)
-  (opencode-provider-test--legacy-registry-snapshot)
-  (opencode-provider-test--builtin-registration)
-  nil)

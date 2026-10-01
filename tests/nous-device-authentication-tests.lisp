@@ -342,12 +342,3 @@
           "verification_uri" "https://portal.test/device"))))
      ':request-code)
   nil))
-
-(-> run-nous-device-authentication-tests () boolean)
-(defun run-nous-device-authentication-tests ()
-  "Run the offline Nous device authentication tests."
-  (nous-device-test--complete-flow)
-  (nous-device-test--rejections)
-  (nous-device-test--secret-redaction)
-  (nous-device-test--request-code-validation)
-  t)

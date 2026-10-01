@@ -250,6 +250,11 @@ and keyword arguments in multi-line calls.
   detail.
 - Prefer table-driven cases for families of literal inputs and expected
   outputs.
+- Give each contract one primary test owner at the strongest executable boundary;
+  additional layers need a distinct transport, lifecycle, storage, or platform risk.
+- Exercise operation lookup, completion, and invocation instead of copying
+  command/tool name inventories. Retain aggregate test runners only when scripts
+  or documented entry points still call them.
 - Test expected failures as well as successful paths.
 - Run focused checks while developing, then every repository-wide check that
   exists after every change, including documentation and configuration

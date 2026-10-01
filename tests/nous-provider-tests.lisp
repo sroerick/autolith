@@ -288,10 +288,3 @@
                                       :validate t
                                       :if-does-not-exist ':ignore)))
   nil)
-
-(-> test-nous-provider () null)
-(defun test-nous-provider ()
-  "Run the built-in Nous Research provider tests."
-  (nous-provider-test--registration-and-discovery)
-  (nous-provider-test--transport)
-  nil)

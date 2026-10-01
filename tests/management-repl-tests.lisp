@@ -557,16 +557,3 @@
                                       :validate t
                                       :if-does-not-exist ':ignore)))
   nil)
-
-(-> run-management-repl-tests () null)
-(defun run-management-repl-tests ()
-  "Run focused management endpoint configuration, protocol, and lifecycle tests."
-  (test-management-repl-configuration)
-  (test-management-repl-protocol)
-  (test-management-repl-debugger-hook)
-  (test-management-repl-adversarial-protocol)
-  (test-management-repl-client-bounds)
-  (test-management-repl-unix-lifecycle)
-  (test-management-repl-start-failure-atomic)
-  (test-management-repl-tcp-lifecycle)
-  nil)

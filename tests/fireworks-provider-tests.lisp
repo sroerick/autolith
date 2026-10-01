@@ -286,13 +286,3 @@
            (typep outcome expected-type)
            (format nil "Nous Messages ~A yields ~A" stop-reason expected-type))))))
   nil)
-
-(-> test-fireworks-provider () null)
-(defun test-fireworks-provider ()
-  "Test the Fireworks API key provider without network access."
-  (fireworks-provider-test--selection)
-  (fireworks-provider-test--credential-source)
-  (fireworks-provider-test--request-shape)
-  (fireworks-provider-test--reasoning-omission)
-  (fireworks-provider-test--inherited-terminal-routing)
-  nil)

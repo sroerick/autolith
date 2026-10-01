@@ -433,15 +433,3 @@
           (eq (model-provider-registration provider) registration))
      "Gemini model selection creates the subscription provider and OAuth manager"))
   nil)
-
-(-> run-gemini-code-assist-provider-tests () null)
-(defun run-gemini-code-assist-provider-tests ()
-  "Run Gemini Code Assist wire and transport tests."
-  (gemini-code-assist-test--builtin-registration)
-  (gemini-code-assist-test--model-catalog)
-  (gemini-code-assist-test--request-conversion)
-  (gemini-code-assist-test--stream-fixture)
-  (gemini-code-assist-test--terminal-semantics)
-  (gemini-code-assist-test--credential-redaction)
-  (gemini-code-assist-test--setup-and-retry)
-  nil)

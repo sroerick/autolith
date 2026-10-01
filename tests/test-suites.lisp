@@ -478,7 +478,6 @@
 (define-test-suite inference
   test-rlm-frame-budget-activity
   test-rlm-budget-exhaustion-guidance
-  test-rlm-context-designators
   test-rlm-value-preview
   test-rlm-budget-cache-discount
   test-rlm-response-usage-normalization
@@ -538,7 +537,6 @@
 
 (when (find-class 'win32-platform nil)
   (define-test-suite windows-sandbox
-    test-windows-shell-sandbox-available
     test-windows-shell-sandbox-integration
     test-windows-shell-sandbox-async
     test-windows-shell-sandbox-network

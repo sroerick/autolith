@@ -27,20 +27,6 @@
        "framed inference forwards provider and nested RLM progress")))
   nil)
 
-(-> test-rlm-context-designators () null)
-(defun test-rlm-context-designators ()
-  "Test Autolith normalizes root inference context designators."
-  (test-assert (equal (rlm--context-designators "bare slice") '("bare slice"))
-               "a bare string context wraps into one designator")
-  (test-assert (equal (rlm--context-designators '(:label "solo" :content "x"))
-                      '((:label "solo" :content "x")))
-               "a bare plist context wraps into one designator")
-  (test-assert (equal (rlm--context-designators (list "a" "b")) '("a" "b"))
-               "designator lists pass through unchanged")
-  (test-assert (null (rlm--context-designators nil))
-               "an absent context stays empty")
-  nil)
-
 (-> test-rlm-response-usage-normalization () null)
 (defun test-rlm-response-usage-normalization ()
   "Test inference traces persist canonical provider cache usage."

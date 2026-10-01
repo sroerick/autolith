@@ -295,14 +295,3 @@
                      *anthropic-api-version*))
        "API-key validation probes the models endpoint with Anthropic headers")))
   nil)
-
-(-> test-anthropic-provider () null)
-(defun test-anthropic-provider ()
-  "Test product registration, credentials, projection, and transport integration."
-  (anthropic-provider-test--selection)
-  (anthropic-provider-test--credential-source)
-  (anthropic-provider-test--ephemeral-cache-boundary)
-  (anthropic-provider-test--inherited-reference-order)
-  (anthropic-provider-test--compaction-request)
-  (anthropic-provider-test--transport)
-  nil)

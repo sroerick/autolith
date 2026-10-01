@@ -323,15 +323,3 @@
           (equal start-call '(t "new-fork")))
      "the fork CLI forwards the selector and starts the new conversation"))
   nil)
-
-(-> test-conversation-replay () null)
-(defun test-conversation-replay ()
-  "Run read-only replay and durable conversation fork tests."
-  (test-conversation-replay-navigation)
-  (test-conversation-replay-projection)
-  (test-conversation-replay-storage)
-  (test-conversation-replay-command-line)
-  (test-conversation-fork-storage)
-  (test-conversation-fork-rejections)
-  (test-conversation-fork-command-line)
-  nil)

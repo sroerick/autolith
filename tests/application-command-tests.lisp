@@ -1191,22 +1191,6 @@
         "/mcp reload omits the capability chip when the tool-name set is unchanged")))
   nil))
 
-(-> run-application-command-tests () boolean)
-(defun run-application-command-tests ()
-  "Run application command protocol tests and return true."
-  (test-application-command-defining-form)
-  (test-application-command-semantic-calls)
-  (test-application-command-registry)
-  (test-application-command-policies)
-  (test-built-in-application-command-policies)
-  (test-built-in-application-command-calls)
-  (test-application-codex-fast-mode-command)
-  (test-application-mcp-reload-capability-change)
-  (test-terminal-authentication-streams)
-  (test-application-authentication-command)
-  t)
-
-
 (-> test-application-settings-command () null)
 (defun test-application-settings-command ()
   "Test the settings page lists, shows, changes, and refuses settings."

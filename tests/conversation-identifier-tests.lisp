@@ -412,13 +412,3 @@ match a new library version is never the correct repair."
                  "a repeated migration safely completes every remaining phase"))))
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
-
-(-> test-conversation-identifiers () null)
-(defun test-conversation-identifiers ()
-  "Test the complete human-friendly conversation identifier subsystem."
-  (test-conversation-identifier-format)
-  (test-conversation-identifier-allocation)
-  (test-conversation-identifier-migration)
-  (test-conversation-identifier-migration-validation)
-  (test-conversation-identifier-migration-resumption)
-  nil)

@@ -748,15 +748,3 @@
                  "a fresh selected-file size failure becomes an ephemeral warning")))))
       (skill-tests--delete-root root)))
   nil)
-
-
-;;;; -- Skill Test Entry Point --
-
-(-> test-skills () null)
-(defun test-skills ()
-  "Run Autolith Skill roots, rendering, selection, and context tests."
-  (skill-tests--roots-and-rendering)
-  (skill-tests--ephemeral-selection)
-  (skill-tests--concurrent-parent-child-selection)
-  (skill-tests--selection-failures-and-limits)
-  nil)

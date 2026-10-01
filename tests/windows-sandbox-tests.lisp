@@ -45,11 +45,6 @@
        (search "exit 0" (tool-result-content result))
        t))
 
-(defun test-windows-shell-sandbox-available ()
-  "Require the native Windows sandbox helper when running on Windows."
-  (test-assert (application--command-sandbox-available-p)
-               "the Windows sandbox helper is available"))
-
 (defun test-windows-shell-sandbox-integration ()
   "Exercise native Windows shell containment through shell.run."
   (when (windows-sandbox-tests--enabled-p)

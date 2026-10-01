@@ -804,14 +804,3 @@
                                         :validate t
                                         :if-does-not-exist ':ignore))))
   nil)
-
-(-> run-user-operation-context-tests () null)
-(defun run-user-operation-context-tests ()
-  "Run durable local user-operation projection tests."
-  (test-user-operation-persistence-and-context)
-  (test-user-operation-bounds-and-validation)
-  (test-user-operation-capture)
-  (test-user-operation-command-outcomes)
-  (test-user-operation-conversation-switch)
-  (test-user-operation-retention-failure)
-  nil)
