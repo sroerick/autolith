@@ -4956,12 +4956,13 @@
              (test-assert
               (eq waited-work ':waiting)
               "a held FIFO head blocks newer queued work")
-             (application-input-controller--process-event controller ':interrupt)
+             (terminal-ui-set-input ui "held follow-up")
+             (application-input-controller--process-event controller ':complete)
              (test-assert
               (task-tests--wait-until
                (lambda () (not (thread-alive-p waiter)))
                2)
-              "Ctrl-C wakes the blocked FIFO consumer")
+              "submitting the recalled draft wakes the blocked FIFO consumer")
              (join-thread waiter)
              (setf waiter nil)
               (test-assert
@@ -4969,7 +4970,7 @@
                 (equal waited-work '(:message "held follow-up"))
                 (not
                  (application-input-controller--follow-up-editing-p controller)))
-               "Ctrl-C restores the held follow-up ahead of newer work"))
+               "submission restores the held follow-up ahead of newer work"))
         (when (and waiter (thread-alive-p waiter))
           (when controller
             (application-input-controller-stop controller)
