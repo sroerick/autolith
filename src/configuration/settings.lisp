@@ -5,7 +5,7 @@
 (defparameter *autolith-version* "0.53.2"
   "The user-visible Autolith version.")
 
-(defparameter *default-model* "gpt-6-sol"
+(defparameter *default-model* "gpt-6.1-sol"
   "The default model requested from the subscription provider.")
 
 (defparameter *default-reasoning-effort* "high"

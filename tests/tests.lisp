@@ -237,8 +237,8 @@
                         :source-root (asdf:system-source-directory :autolith)
                         :working-directory (asdf:system-source-directory :autolith)
                         :durable-p nil)))
-    (test-assert (string= (config :model configuration) "gpt-6-sol")
-                 "the default model is gpt-6-sol")
+    (test-assert (string= (config :model configuration) "gpt-6.1-sol")
+                 "the default model is gpt-6.1-sol")
     (let ((*default-model* "gpt-5.6-luna"))
       (test-assert
        (string= (config :model
