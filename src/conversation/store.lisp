@@ -1400,11 +1400,11 @@ a crash may leave one that a later lease acquisition can reuse safely."
      :item-families (conversation-input-item-families conversation)
      :handoff-families (conversation-portable-handoff-families conversation))))
 
-(-> conversation-native-compaction-summary-view
-    (conversation json-object keyword)
+(-> conversation-compaction-summary-view
+    (conversation list keyword)
     conversation)
-(defun conversation-native-compaction-summary-view (conversation item family)
-  "Return a transient request view containing native compaction ITEM only."
+(defun conversation-compaction-summary-view (conversation items family)
+  "Return a transient request view containing family-compatible ITEMS."
   (let ((view
           (make-instance
            'conversation
@@ -1415,9 +1415,12 @@ a crash may leave one that a later lease acquisition can reuse safely."
            :persisted-p nil
            :created-at (conversation-created-at conversation)
            :origin-directory (conversation-origin-directory conversation)
+           :model (conversation-model conversation)
+           :reasoning-effort (conversation-reasoning-effort conversation)
            :next-sequence (conversation-next-sequence conversation)
-           :input-items (list item))))
-    (setf (gethash item (conversation-input-item-families view)) family)
+           :input-items (copy-list items))))
+    (dolist (item items)
+      (setf (gethash item (conversation-input-item-families view)) family))
     view))
 
 (defparameter *conversation-inherited-reference-boundary*

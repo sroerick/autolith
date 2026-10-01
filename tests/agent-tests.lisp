@@ -2349,6 +2349,75 @@
       (platform-delete-directory-tree *platform* root :validate t :if-does-not-exist ':ignore)))
   nil)
 
+(-> test-agent-compaction-tool-call-follow-up () null)
+(defun test-agent-compaction-tool-call-follow-up ()
+  "Test a stray compaction tool call is rejected in transient request state."
+  (let* ((configuration (test-configuration))
+         (root (test-configuration-root configuration)))
+    (unwind-protect
+         (let* ((conversation
+                  (conversation-create
+                   configuration :identifier "agent-compaction-follow-up"))
+                (call
+                  (json-object
+                   "type" "function_call"
+                   "namespace" "job"
+                   "name" "wait"
+                   "call_id" "call-compact-wait"
+                   "arguments" "{}"))
+                (summary (agent-test-message "Recovered compact summary."))
+                (provider
+                  (make-instance
+                   'scripted-provider
+                   :results
+                   (list
+                    (agent-test-result "compact-call" (list call))
+                    (agent-test-result "compact-summary" (list summary)))))
+                (agent
+                  (agent-create
+                   :configuration configuration
+                   :provider provider
+                   :conversation conversation
+                   :tool-registry (agent-test-registry)
+                   :worker nil)))
+           (conversation-append-user-message conversation "earlier context")
+           (test-assert
+            (= (agent-compact-conversation
+                agent (make-instance 'agent-observer))
+               2)
+            "a rejected compaction tool call consumes one bounded follow-up")
+           (let* ((snapshots
+                    (nreverse (scripted-provider-input-snapshots provider)))
+                  (follow-up (second snapshots))
+                  (tool-output (third follow-up)))
+             (test-assert
+              (and (= (length snapshots) 2)
+                   (= (length (first snapshots)) 1)
+                   (= (length follow-up) 3)
+                   (json-string= (json-get tool-output "type")
+                                 "function_call_output")
+                   (search "unavailable during compaction"
+                           (json-get tool-output "output")))
+              "the follow-up sees a transient mechanics result for the call"))
+           (let ((records nil))
+             (conversation-map-records
+              conversation
+              (lambda (record)
+                (push record records)))
+             (test-assert
+              (and (= (count :provider records :key #'first) 2)
+                   (= (count :summary records :key #'first) 1)
+                   (zerop (count :provider-item records :key #'first))
+                   (zerop (count :tool-result records :key #'first)))
+              "stray compaction calls never enter durable history"))
+           (test-assert
+            (equal (agent-tests--request-numbers conversation)
+                   '((1 :summary) (2 :summary)))
+            "both successful compaction requests remain visible to accounting"))
+      (platform-delete-directory-tree
+       *platform* root :validate t :if-does-not-exist ':ignore)))
+  nil)
+
 (-> test-agent-compaction () null)
 (defun test-agent-compaction ()
   "Test threshold-triggered compaction through the scripted provider."

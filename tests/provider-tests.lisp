@@ -716,8 +716,10 @@
               (and (eq (json-get compaction-request "parallel_tool_calls") false)
                    (zerop (length (json-get compaction-request "tools")))
                    (search "context checkpoint compaction"
+                           (json-get compaction-request "instructions"))
+                   (search "Do not call tools"
                            (json-get compaction-request "instructions")))
-              "portable compaction fallback is tool-free and serial"))
+              "portable compaction fallback explicitly requires tool-free text"))
             (let* ((fallback-configuration
                      (configuration-copy configuration :model "gpt-5.3-codex"
                                         :provider-validation-p nil))

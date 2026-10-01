@@ -129,6 +129,9 @@
 (defparameter *agent-maximum-provider-requests-per-turn* 512
   "Maximum provider requests issued within one ordinary agent turn.")
 
+(defparameter *agent-compaction-maximum-summary-requests* 4
+  "Maximum provider requests used to obtain one portable compaction summary.")
+
 (defparameter *agent-maximum-concurrent-tool-workers* 8
   "Maximum worker threads executing independent calls from one provider batch.")
 
@@ -1396,6 +1399,44 @@ to usage accounting instead of hiding behind the compaction record."
     (agent-observer-status observer :compaction-request-completed details))
   nil)
 
+(-> agent--compaction-follow-up-p (provider-result) boolean)
+(defun agent--compaction-follow-up-p (result)
+  "Return true when RESULT can continue toward visible compaction text."
+  (or (not (null (provider-result-tool-calls result)))
+      (eq (provider-result-turn-completion result) ':continue)))
+
+(-> agent--advance-compaction-summary-view
+    (conversation provider-result)
+    null)
+(defun agent--advance-compaction-summary-view (conversation result)
+  "Add RESULT to transient CONVERSATION and reject its unavailable tool calls."
+  (dolist (item (provider-result-output-items result))
+    (unless (json-object-p item)
+      (error 'provider-protocol-error
+             :message "Compaction produced a malformed output item."
+             :status nil
+             :code nil
+             :request-id nil
+             :response-id (provider-result-response-id result)
+             :response nil))
+    (conversation--append-input-item conversation item))
+  (dolist (call (provider-result-tool-calls result))
+    (let ((call-id (json-get call "call_id")))
+      (unless (non-empty-string-p call-id)
+        (error 'provider-protocol-error
+               :message "Compaction produced a tool call without an identifier."
+               :status nil
+               :code nil
+               :request-id nil
+               :response-id (provider-result-response-id result)
+               :response nil))
+      (conversation--append-input-item
+       conversation
+       (function-call-output-item
+        call-id
+        "Tools are unavailable during compaction. Return only the requested handoff summary as visible assistant text."))))
+  nil)
+
 (-> agent-compact-conversation
     (agent agent-observer &key (:tool-allowlist (option list))
                                (:tool-restriction-p boolean)
@@ -1443,29 +1484,43 @@ covers them."
                (when item
                  (setf native-usage usage))
                item))
+            (family (provider-family provider))
             (summary-conversation
-              (if native-item
-                  (conversation-native-compaction-summary-view
-                   conversation native-item (provider-family provider))
-                  conversation))
-            (result (provider-stream-turn
-                     provider
-                     summary-conversation
-                     :tool-namespaces #()
-                     :event-callback
-                     (lambda (event)
-                       (declare (ignore event))
-                       (agent-observer-status observer :provider-progress nil))
-                     :compaction-p t))
-           (summary (provider-result-assistant-text result)))
-      (unless (non-empty-string-p summary)
-        (error 'provider-protocol-error
-               :message "Compaction produced no summary text."
-               :status nil
-               :code nil
-               :request-id nil
-               :response-id (provider-result-response-id result)
-               :response nil))
+              (conversation-compaction-summary-view
+               conversation
+               (if native-item
+                   (list native-item)
+                   (conversation-input-items-for-family
+                    conversation family :include-ephemeral-p nil))
+               family))
+            (summary-results nil)
+            (summary nil))
+      (loop for attempt from 1 to *agent-compaction-maximum-summary-requests*
+            for result =
+              (provider-stream-turn
+               provider
+               summary-conversation
+               :tool-namespaces #()
+               :event-callback
+               (lambda (event)
+                 (declare (ignore event))
+                 (agent-observer-status observer :provider-progress nil))
+               :compaction-p t)
+            do (push result summary-results)
+               (setf summary (provider-result-assistant-text result))
+               (when (non-empty-string-p summary)
+                 (return))
+               (unless (and (< attempt *agent-compaction-maximum-summary-requests*)
+                            (agent--compaction-follow-up-p result))
+                 (error 'provider-protocol-error
+                        :message "Compaction produced no summary text."
+                        :status nil
+                        :code nil
+                        :request-id nil
+                        :response-id (provider-result-response-id result)
+                        :response nil))
+               (agent--advance-compaction-summary-view
+                summary-conversation result))
       (when native-item
         (incf issued)
         (agent--note-compaction-request
@@ -1473,13 +1528,14 @@ covers them."
          :request-number (+ request-number issued)
          :kind ':native
          :usage native-usage))
-      (incf issued)
-      (agent--note-compaction-request
-       agent observer
-       :request-number (+ request-number issued)
-       :kind ':summary
-       :usage (provider-result-usage result)
-       :response-id (provider-result-response-id result))
+      (dolist (result (nreverse summary-results))
+        (incf issued)
+        (agent--note-compaction-request
+         agent observer
+         :request-number (+ request-number issued)
+         :kind ':summary
+         :usage (provider-result-usage result)
+         :response-id (provider-result-response-id result)))
       (if native-item
           (conversation-append-native-compaction
            conversation native-item
