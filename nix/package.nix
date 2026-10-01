@@ -23,8 +23,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "luciusmagn";
       repo = "cl-colorist";
-      rev = "a4b65e63f40248c091d8ccf6023ad6fef5de7f0d";
-      hash = "sha256-UhQnhWYyX+VYhYbiLCMfw3vutdNyWn/CJj2xQPKYcAM=";
+      rev = "a70749493fbdbe79d6766f254a664119042102b9";
+      hash = "sha256-VrJkXhLkRaAcv+f7ckSgIeH8oU3Ft2XAXaAs13pPNnw=";
     };
   };
 
