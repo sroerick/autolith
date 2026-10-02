@@ -92,6 +92,7 @@ terminal prompt          local Lisp result       finalized scrollback
 
 | Library | Generic implementation | Autolith integration |
 |---------+------------------------+----------------------|
+| agentcomms | ACP v1 schema, symmetric JSON-RPC, owned request handlers and session lifecycle | Headless application ownership, durable replay, observer projection and editor approvals |
 | cl-llm-provider-api | Wire clients, request execution, context resolution, structured contracts | Provider registration, subscription adapters, conversation projection, contributors |
 | cl-rfc8628 | Scoped credential use and coordinated refresh | Credential paths, bootstrap ownership, provider exchanges, checkpoint quiescence |
 | mcparen/managed | Connection lifecycle, discovery snapshots and budgets | Configuration, authorization, tool registry and provider schema projection |
@@ -101,6 +102,19 @@ terminal prompt          local Lisp result       finalized scrollback
 | image-daemon/runtime | Service registry, relays, attachment queues and shutdown | Conversation leases, steering, handoff and input-reader coordination |
 | clinedi | Modal sessions, editor/history state and terminal transports | Completion, submission, paste and interruption policy |
 | cl-termdown | Column layout and semantic span presentation | Transcript composition, modeline and activity content |
+
+* ACP service
+
+=src/acp/session.lisp= owns leased headless applications and serializes primary
+operations. =observer.lisp= projects native streaming/tool events and editor
+permissions. =mcp.lisp= builds session-local client declarations through the native
+MCP manager and credential scopes. =runtime.lisp= supplies the agent methods,
+chronological replay, bootstrap, and disconnect cleanup.
+
+The source entry and stable launcher route ACP diagnostics to stderr and avoid
+interactive recovery. The serving lifetime holds the secret-use guard while
+client credentials are retained. Cancellation targets registered prompt/tool
+owners; durable turn finalization defers queued interrupts before lease teardown.
 
 * User state
 

@@ -27,6 +27,35 @@ Autolith's prompt window can also evuluate lisp forms directly:
 This can be frequently helpful since you can use the exact same tools
 the clanker can, and the same machinery is exposed to you.
 
+* Editor sessions over ACP
+
+Configure your ACP-compatible editor to launch:
+
+#+BEGIN_SRC sh
+autolith acp
+#+END_SRC
+
+Authenticate the selected provider with =autolith auth= before starting the
+editor session. ACP uses UTF-8 JSON-RPC on stdin/stdout; diagnostics go to stderr.
+Use =autolith --pristine acp= to start from tracked definitions.
+
+New sessions use the editor's absolute working directory and a durable Autolith
+conversation ID. Load that ID to replay messages, visible reasoning, tool calls,
+and results. Text prompts, resource links, and embedded text resources are
+supported. File and process operations use the native Autolith tools.
+
+The default =ask= mode requests command and external-tool approval in the editor.
+An approval for the session covers the exact command and working directory, or
+external tool identity and arguments. Select =auto=, =sandboxed=, or =full-access=
+through ACP session modes; use =--permissions auto|sandbox|full= on the command
+line. Changing modes clears session approvals.
+
+Client-supplied stdio and HTTP MCP servers are merged with native registrations
+for that session. Literal environment values and headers are ephemeral and
+redacted from server output. Cancel a prompt to stop its provider, tools, and
+owned jobs; close the session or disconnect to release its resources and lease.
+One primary prompt or session setup runs at a time in each ACP process.
+
 * Fullscreen terminal
 
 Autolith uses the ordinary inline terminal presentation by default. Opt into the

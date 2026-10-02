@@ -213,6 +213,22 @@ needs the few most recent calls to recognize an oscillation."
 (defgeneric agent-observer-authorize-tool (observer tool arguments)
   (:documentation "Return :ALLOW or :DENY for external TOOL and ARGUMENTS."))
 
+(-> agent-observer-call-with-tool-execution
+    (agent-observer (option string) function) t)
+(defgeneric agent-observer-call-with-tool-execution (observer identifier function)
+  (:documentation "Call tool FUNCTION within OBSERVER's execution ownership and bindings."))
+
+(defmethod agent-observer-call-with-tool-execution ((observer agent-observer) identifier function)
+  "Run a native tool without extra presentation-specific execution state."
+  (declare (ignore identifier))
+  (funcall function))
+
+(defmethod agent-observer-call-with-tool-execution
+    ((observer serialized-agent-observer) identifier function)
+  "Forward execution ownership without holding the callback serialization lock."
+  (agent-observer-call-with-tool-execution
+   (serialized-agent-observer-delegate observer) identifier function))
+
 (defmethod agent-observer-text ((observer agent-observer) (text string))
   "Ignore assistant TEXT for the default silent OBSERVER."
   (declare (ignore observer text))
@@ -1036,10 +1052,11 @@ restricted turn cannot discover tools outside its allowlist."
                 (argument-error
                  (tool-mechanics argument-error :code ':invalid-arguments))
                 (t
-                 (tool-registry-execute-call
-                  (agent-tool-registry agent)
-                  call
-                  context))))
+                 (agent-observer-call-with-tool-execution
+                  observer call-id
+                  (lambda ()
+                    (tool-registry-execute-call
+                     (agent-tool-registry agent) call context))))))
       ((or autolith-control-condition
            serious-condition)
        (failure)

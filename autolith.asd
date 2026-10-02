@@ -4,7 +4,8 @@
   :license "ISC"
   :version "0.55.0"
   :serial t
-  :depends-on (#:cl-base64
+  :depends-on (#:agentcomms
+               #:cl-base64
                #:cl+ssl
                #:cl-colorist
                #:cl-exec-sandbox
@@ -218,6 +219,10 @@
                              (:file "state/data-transfer-import")
                              (:file "application/data-transfer")
                              (:file "startup/data-transfer")
+                             (:file "acp/session")
+                             (:file "acp/observer")
+                             (:file "acp/mcp")
+                             (:file "acp/runtime")
                              (:file "startup/main")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
@@ -338,6 +343,10 @@
                              (:file "vault-edit-tests")
                              (:file "user-init-tests")
                              (:file "prompt-tests")
+                             (:file "acp-observer-tests")
+                             (:file "acp-session-tests")
+                             (:file "acp-mcp-tests")
+                             (:file "acp-launcher-tests")
                              (:file "tests")
                              (:file "test-runner")
                              (:file "fixture-tests")

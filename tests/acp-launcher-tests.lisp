@@ -1,0 +1,141 @@
+(in-package #:autolith)
+
+;;;; -- ACP Launcher --
+
+(defun acp-launcher-tests--run-parser (&rest arguments)
+  "Run the shared shell launcher parser and return its exported state."
+  (let* ((script (asdf:system-relative-pathname :autolith
+                                               "script/launcher-cli.sh"))
+         (quoted (mapcar (lambda (argument)
+                           (format nil "'~A'" argument))
+                         arguments))
+         (command (format nil
+                          "source ~A; autolith_launcher_parse source ~{~A ~}; printf '%s\\n' \"$from_source_requested\" \"$recovery_requested\" \"$update_requested\" \"$uninstall_requested\" \"$data_requested\" \"$acp_requested\" \"${remaining_arguments[*]}\""
+                          (namestring script) quoted)))
+    (uiop:run-program (list "bash" "-c" command)
+                      :output :string
+                      :error-output :string)))
+
+(-> test-acp-launcher-forwards-pristine-and-permissions () null)
+(defun test-acp-launcher-forwards-pristine-and-permissions ()
+  "Exercise forwarding of ACP pristine selection and permission arguments."
+  (with-test-fixture (':posix-shell "shared shell launcher parser")
+    (let ((lines (uiop:split-string
+                  (acp-launcher-tests--run-parser "--pristine" "acp" "--permissions" "auto")
+                  :separator '(#\Newline))))
+      (test-assert (equal (subseq lines 0 5) '("true" "false" "false" "false" "false"))
+                   "pristine selects source mode")
+      (test-assert (equal (seventh lines) "--pristine acp --permissions auto")
+                   "the launcher forwards protocol arguments verbatim")))
+  nil)
+
+(-> test-acp-launcher-terminator-preserves-acp-arguments () null)
+(defun test-acp-launcher-terminator-preserves-acp-arguments ()
+  "Exercise the application argument terminator through the shared launcher parser."
+  (with-test-fixture (':posix-shell "shared shell launcher parser")
+    (let ((lines (uiop:split-string
+                  (acp-launcher-tests--run-parser "acp" "--" "--pristine" "--permissions" "full")
+                  :separator '(#\Newline))))
+      (test-assert (equal (subseq lines 0 5) '("false" "false" "false" "false" "false"))
+                   "options after the terminator belong to the application")
+      (test-assert (equal (seventh lines) "acp -- --pristine --permissions full")
+                   "the application receives the terminated argument sequence")))
+  nil)
+
+(-> test-acp-launcher-detects-command-not-option-values () null)
+(defun test-acp-launcher-detects-command-not-option-values ()
+  "Select protocol diagnostic routing only for the ACP application command."
+  (with-test-fixture (':posix-shell "shared shell launcher parser")
+    (dolist (case '((("acp") t)
+                    (("--pristine" "acp") t)
+                    (("--permissions" "auto" "acp") t)
+                    (("acp" "--" "--pristine") t)
+                    (("--image" "acp") nil)
+                    (("--permissions" "acp") nil)
+                    (("replay" "acp") nil)))
+      (destructuring-bind (arguments expected) case
+        (let ((lines (uiop:split-string
+                      (apply #'acp-launcher-tests--run-parser arguments)
+                      :separator '(#\Newline))))
+          (test-assert (eql (not (null (string= "true" (sixth lines)))) expected)
+                       "ACP routing follows the command, not an operand")))))
+  nil)
+
+
+(-> acp-launcher-tests--call-with-roots (pathname function) t)
+(defun acp-launcher-tests--call-with-roots (root function)
+  "Run FUNCTION with isolated process configuration and the managed SBCL."
+  (test-call-with-environment
+   (list (list "XDG_CONFIG_HOME" (namestring (merge-pathnames "config/" root)))
+         (list "XDG_DATA_HOME" (namestring (merge-pathnames "data/" root)))
+         (list "XDG_STATE_HOME" (namestring (merge-pathnames "state/" root)))
+         (list "XDG_CACHE_HOME" (namestring (merge-pathnames "cache/" root)))
+         (list "AUTOLITH_SITE_CONFIG_ROOT" nil)
+         (list "AUTOLITH_RECOVERED" nil)
+         (list "AUTOLITH_SBCL" (lisp-worker-sbcl-command)))
+   function))
+
+(-> acp-launcher-tests--initialize
+    (string &key (:arguments list) (:directory pathname) (:timeout real)) hash-table)
+(defun acp-launcher-tests--initialize (program &key arguments
+                                                  (directory *default-pathname-defaults*)
+                                                  (timeout 180))
+  "Initialize PROGRAM over its actual standard I/O and return the protocol response."
+  (let ((channel (agentcomms:acp-launch-agent program
+                                             :arguments arguments
+                                             :directory directory))
+        (client (make-instance 'agentcomms:acp-client)))
+    (unwind-protect
+         (progn
+           (agentcomms:acp-client-connect client channel)
+           (agentcomms:client-initialize client :timeout timeout))
+      (when (agentcomms:acp-client-connection client)
+        (agentcomms:connection-close (agentcomms:acp-client-connection client)))
+      (agentcomms:channel-close channel))))
+
+(-> test-acp-launcher-source-stdio-roundtrip () null)
+(defun test-acp-launcher-source-stdio-roundtrip ()
+  "Initialize through the real source launcher and require a clean protocol response."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (acp-launcher-tests--call-with-roots
+     root
+     (lambda ()
+       (let ((result
+               (acp-launcher-tests--initialize
+                (lisp-worker-sbcl-command)
+                :arguments (list "--noinform" "--no-sysinit" "--no-userinit" "--script"
+                                 (namestring (asdf:system-relative-pathname
+                                              :autolith "script/launcher.lisp"))
+                                 "--from-source" "--pristine" "acp")
+                :directory root)))
+         (test-assert
+          (equal "autolith" (agentcomms:json-get
+                             (agentcomms:json-get result "agentInfo") "name"))
+          "the source launcher emits JSON-RPC without preceding diagnostics")
+         (test-assert
+          (agentcomms:acp-capability-enabled-p
+           (agentcomms:json-get result "agentCapabilities") "loadSession")
+          "the subprocess advertises durable session loading")))))
+  nil)
+
+(-> test-acp-launcher-failure-keeps-stdout-clean () null)
+(defun test-acp-launcher-failure-keeps-stdout-clean ()
+  "A failed ACP invocation exits with stderr diagnostics rather than recovery UI."
+  (with-test-configuration (configuration root)
+    (declare (ignore configuration))
+    (acp-launcher-tests--call-with-roots
+     root
+     (lambda ()
+       (multiple-value-bind (output diagnostics status)
+           (uiop:run-program
+            (list (lisp-worker-sbcl-command) "--noinform" "--no-sysinit" "--no-userinit"
+                  "--script" (namestring (asdf:system-relative-pathname
+                                          :autolith "script/launcher.lisp"))
+                  "--from-source" "--pristine" "acp" "--permissions" "invalid")
+            :directory root :input nil :output ':string :error-output ':string
+            :ignore-error-status t)
+         (test-assert (not (zerop status)) "invalid ACP options produce a failing process status")
+         (test-assert (zerop (length output)) "startup failures emit no non-protocol stdout")
+         (test-assert (plusp (length diagnostics)) "startup diagnostics are on stderr")))))
+  nil)

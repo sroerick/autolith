@@ -1209,6 +1209,27 @@ Lisp starts; on Windows it prints the folders to delete."
         (cons "update" (when tail '("--help"))))
       arguments))
 
+(-> main--acp-command () clingon:command)
+(defun main--acp-command ()
+  "Return the Agent Client Protocol server sub-command definition."
+  (make-command
+   :name "acp"
+   :description "serve the Agent Client Protocol on standard input and output"
+   :handler
+   (lambda (command)
+     (when (command-arguments command)
+       (error 'configuration-error
+              :message "ACP accepts no positional arguments."))
+     (let* ((pristine-p (not (null (getopt* command ':pristine))))
+            (configuration
+              (configuration-create
+               :immutable-p pristine-p
+               :defer-provider-validation-p t))
+            (permission-mode (or (getopt* command ':permissions) ':ask)))
+       (acp-run configuration
+                :permission-mode permission-mode
+                :pristine-p pristine-p)))))
+
 (-> main--top-level-command () clingon:command)
 (defun main--top-level-command ()
   "Return Autolith's top-level command-line definition."
@@ -1226,6 +1247,7 @@ autolith uninstall removes the installation and keeps user data."
    :sub-commands (list (main--resume-command)
                        (main--replay-command)
                        (main--fork-command)
+                       (main--acp-command)
                        (main--auth-command)
                          (main--models-command)
                        (main--update-command)

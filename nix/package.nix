@@ -878,9 +878,15 @@ pkgs.writeShellApplication {
     # Serialize first-use construction and publish each package identity as one
     # complete directory so upgrades never expose or reuse a partial image pair.
     test -f "${imageValidation}/image-validation"
+    image_output_fd=1
+    # Assigned by autolith_launcher_parse in the sourced launcher.
+    # shellcheck disable=SC2154
+    if [ "$acp_requested" = true ]; then
+      image_output_fd=2
+    fi
     ${pkgs.perl}/bin/perl "${imageLockRunner}" \
       "$image_root/.materialize.lock" \
-      "${imageMaterializer}" "$image_root" "$image_directory"
+      "${imageMaterializer}" "$image_root" "$image_directory" >&"$image_output_fd"
 
     export AUTOLITH_ACTIVE_CORE="$image_directory/active/autolith-active.core"
     export AUTOLITH_RECOVERY_CORE="$image_directory/recovery/autolith-recovery.core"

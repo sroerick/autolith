@@ -761,3 +761,27 @@
   test-check-command-selection
   test-check-result-validation
   test-check-process-lifecycle)
+
+
+(define-test-suite acp
+  test-acp-observer-streams-one-response
+  test-acp-observer-permission-validates-offered-choice
+  test-acp-observer-forwards-serialized-tool-execution
+  test-acp-session-wire-new-prompt-replay-close
+  test-acp-session-busy-admission-is-owner-safe
+  test-acp-session-cancel-blocked-provider-and-reuse
+  test-acp-session-cwd-mode-and-unsupported-content
+  test-acp-session-disconnect-releases-lease
+  test-acp-session-live-and-replayed-tool-identities
+  test-acp-session-close-timeout-retains-ownership
+  test-acp-session-delayed-cancel-during-finalization
+  test-acp-mcp-overlay-configuration
+  test-acp-mcp-overlay-discovery-call-and-cleanup
+  test-acp-mcp-overlay-duplicate-validation)
+
+(define-test-suite acp-launcher
+  test-acp-launcher-forwards-pristine-and-permissions
+  test-acp-launcher-terminator-preserves-acp-arguments
+  test-acp-launcher-detects-command-not-option-values
+  test-acp-launcher-source-stdio-roundtrip
+  test-acp-launcher-failure-keeps-stdout-clean)

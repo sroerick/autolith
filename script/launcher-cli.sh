@@ -39,6 +39,7 @@ autolith_launcher_parse()
   uninstall_requested=false
   uninstall_confirmed=false
   data_requested=false
+  acp_requested=false
   remaining_arguments=()
   for argument in "$@"; do
     if [[ $take_value == true ]]; then
@@ -84,6 +85,9 @@ autolith_launcher_parse()
         fi
         if [[ $command_seen == false && $argument == data ]]; then
           data_requested=true
+        fi
+        if [[ $command_seen == false && $argument == acp ]]; then
+          acp_requested=true
         fi
         command_seen=true
         remaining_arguments+=("$argument")

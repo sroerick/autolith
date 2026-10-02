@@ -38,7 +38,7 @@
 
 (defstruct launcher-request
   "The launcher options separated from the application arguments."
-  recovery-p from-source-p update-p uninstall-p data-p arguments)
+  recovery-p from-source-p update-p uninstall-p data-p acp-p arguments)
 
 (defun launcher-bootstrap-command-name (source-root)
   "Return the bootstrap command to show the user for SOURCE-ROOT."
@@ -111,7 +111,9 @@ of deleting them, as the Windows update path also hands off to the user."
            (when (string= argument "uninstall")
              (setf (launcher-request-uninstall-p request) t))
            (when (string= argument "data")
-             (setf (launcher-request-data-p request) t)))
+             (setf (launcher-request-data-p request) t))
+           (when (string= argument "acp")
+             (setf (launcher-request-acp-p request) t)))
          (setf command-seen-p t)
          (push argument remaining))))
     (setf (launcher-request-arguments request) (nreverse remaining))
@@ -341,6 +343,10 @@ of deleting them, as the Windows update path also hands off to the user."
                                      :wait t)))
     (or (sb-ext:process-exit-code process) 1)))
 
+(defun launcher-run-diagnostic (command)
+  "Run COMMAND with diagnostic output on standard error."
+  (launcher-run command :output *error-output*))
+
 (defun launcher-manifest-header-p (manifest prefix)
   "Return true when MANIFEST holds a line that is PREFIX alone or PREFIX and a space."
   (with-open-file (stream manifest :direction :input :if-does-not-exist nil
@@ -421,11 +427,12 @@ of deleting them, as the Windows update path also hands off to the user."
 
 (defun launcher-bootstrap (context)
   "Run the bootstrap and return 0, or 64 when no usable image results."
-  (let ((status (launcher-run (launcher-script-command
-                               context "script/runtime.lisp" "--install" "--script"
-                               (uiop:native-namestring
-                                (merge-pathnames "script/bootstrap.lisp"
-                                                 (launcher-context-source-root context)))))))
+  (let ((status (launcher-run-diagnostic
+                 (launcher-script-command
+                  context "script/runtime.lisp" "--install" "--script"
+                  (uiop:native-namestring
+                   (merge-pathnames "script/bootstrap.lisp"
+                                    (launcher-context-source-root context)))))))
     (cond
       ((not (zerop status))
        (launcher-note "~A" (launcher-style "31;1" (format nil "Autolith bootstrap failed with status ~D." status)))
@@ -516,7 +523,7 @@ of deleting them, as the Windows update path also hands off to the user."
 
 (defun launcher-publish-restart (context)
   "Publish the saved exact heap described by CONTEXT's restart envelope."
-  (launcher-run
+  (launcher-run-diagnostic
    (launcher-script-command
     context "script/restart-publisher.lisp"
     (uiop:native-namestring (launcher-context-restart-pointer context)))))
@@ -617,26 +624,35 @@ boot therefore leaves the generation identity available to recovery."
          (context (launcher-context source-root))
          (console (launcher-enable-console-styling (launcher-capture-console))))
     (unwind-protect
-         (if (launcher-request-recovery-p request)
-             (progn
-               (launcher-restore-console console)
-               (launcher-run-recovery context (launcher-request-arguments request)))
-             (progn
-               (launcher-prepare-pointers context)
-               (let ((status (launcher-run-with-restarts context request)))
-                 (launcher-restore-console console)
-                 (cond
-                   ((zerop status)
-                    0)
-                   ((launcher-request-data-p request)
-                    status)
-                   ((member status *launcher-terminal-statuses*)
-                    status)
-                   (t
-                    (launcher-run-recovery
-                     context
-                     (launcher-recovery-arguments context status
-                                                  (launcher-request-arguments request))))))))
+         (cond
+           ((and (launcher-request-acp-p request)
+                 (launcher-request-recovery-p request))
+            (launcher-note "ACP cannot start through interactive recovery.")
+            64)
+           ((launcher-request-recovery-p request)
+            (progn
+              (launcher-restore-console console)
+              (launcher-run-recovery context (launcher-request-arguments request))))
+           (t
+            (launcher-prepare-pointers context)
+            (let ((status (if (launcher-request-acp-p request)
+                              ;; ACP owns stdin/stdout.  Do not publish a restart
+                              ;; or replace a failed service with recovery UI.
+                              (launcher-run-active context request)
+                              (launcher-run-with-restarts context request))))
+              (launcher-restore-console console)
+              (cond
+                ((zerop status)
+                 0)
+                ((or (launcher-request-acp-p request)
+                     (launcher-request-data-p request)
+                     (member status *launcher-terminal-statuses*))
+                 status)
+                (t
+                 (launcher-run-recovery
+                  context
+                  (launcher-recovery-arguments context status
+                                               (launcher-request-arguments request))))))))
       (launcher-restore-console console)
       (launcher-delete-pointers context))))
 
