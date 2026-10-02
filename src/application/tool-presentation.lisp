@@ -2031,9 +2031,19 @@ re-emitting untrusted serialized JSON."
                          (subseq line (length "papercut-id: ")))))
         (and (non-empty-string-p identifier) identifier)))))
 
+(-> application--papercut-result-duplicate-p (string) boolean)
+(defun application--papercut-result-duplicate-p (output)
+  "Return true when successful tool OUTPUT says the report repeated an active papercut."
+  (some (lambda (line)
+          (uiop:string-prefix-p "already-reported:" line))
+        (application--display-lines output)))
+
 (defmethod application-tool-result-entry
     ((tool papercut-report-tool) (application application) record)
-  "Present a successful papercut report as a prominent persistent alert."
+  "Present a successful papercut report as a prominent persistent alert.
+
+A report that only repeated an active papercut is presented as such, so the
+user sees the existing report rather than a new one."
   (if (application--tool-result-success-p record)
       (let* ((output (or (getf (rest record) :output) ""))
              (identifier (application--papercut-result-identifier output))
@@ -2067,8 +2077,12 @@ re-emitting untrusted serialized JSON."
                     :gutter "│ "))))
         (application--tool-entry
          application
-         :style ':failure
-         :header "! PAPERCUT RECORDED"
+         :style (if (application--papercut-result-duplicate-p output)
+                    ':notice
+                    ':failure)
+         :header (if (application--papercut-result-duplicate-p output)
+                     "! PAPERCUT ALREADY REPORTED"
+                     "! PAPERCUT RECORDED")
          :detail (and papercut
                       (format nil "id ~A"
                               (papercut-short-identifier papercut)))

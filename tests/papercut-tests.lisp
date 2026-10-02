@@ -178,6 +178,61 @@
                      :source-conversation "second")))
              (test-assert (= (length (papercut-list configuration)) 2)
                           "papercut reports persist in the current workspace")
+             (multiple-value-bind (repeat duplicate-p)
+                 (papercut-report
+                  configuration
+                  :title "Provider retry remains opaque"
+                  :content "The provider failed twice again without any useful diagnostic."
+                  :source-conversation "third")
+               (test-assert (and duplicate-p
+                                 (string= (papercut-identifier repeat)
+                                          (papercut-identifier first))
+                                 (= (length (papercut-list configuration)) 2))
+                            "a report whose words largely repeat an active one returns it unrecorded"))
+             (multiple-value-bind (repeat duplicate-p)
+                 (papercut-report
+                  configuration
+                  :title "Recovery image cannot start!"
+                  :content "Completely different words describe the same old title here."
+                  :source-conversation "third")
+               (test-assert (and duplicate-p
+                                 (string= (papercut-identifier repeat)
+                                          (papercut-identifier second)))
+                            "a title matching an active report word for word returns it"))
+             (let ((title "Opaque provider retries")
+                   (content "Two failed provider attempts twice gave no useful diagnostic in the transcript."))
+               (multiple-value-bind (repeat duplicate-p)
+                   (papercut-report configuration :title title :content content
+                                                  :source-conversation "first")
+                 (test-assert (and duplicate-p
+                                   (string= (papercut-identifier repeat)
+                                            (papercut-identifier first)))
+                              "a rewritten repeat from the same conversation is still absorbed"))
+               (multiple-value-bind (fresh duplicate-p)
+                   (papercut-report configuration :title title :content content
+                                                  :source-conversation "elsewhere")
+                 (test-assert (not duplicate-p)
+                              "the looser session similarity does not apply across conversations")
+                 (papercut-mark-closed
+                  configuration (papercut-identifier fresh)
+                  :resolution "Only cross-conversation similarity was under test.")))
+             (let ((*papercut-clock*
+                     (let ((later (+ (get-universal-time)
+                                     (* 2 *papercut-duplicate-window-seconds*))))
+                       (lambda () later))))
+               (multiple-value-bind (aged duplicate-p)
+                   (papercut-report
+                    configuration
+                    :title "Provider retry is opaque"
+                    :content "The provider failed twice without a useful diagnostic."
+                    :source-conversation "later")
+                 (test-assert (and (not duplicate-p)
+                                   (not (string= (papercut-identifier aged)
+                                                 (papercut-identifier first))))
+                              "reports older than the duplicate window no longer absorb repeats")
+                 (papercut-mark-closed
+                  configuration (papercut-identifier aged)
+                  :resolution "Only the duplicate window was under test.")))
              (test-assert (papercut-find configuration (papercut-identifier first))
                           "papercut reports can be found by their full identifier")
              (multiple-value-bind (resolved status matches)
@@ -266,6 +321,32 @@
                                    ':durable)
                                (tool-compact-result-visible-p tool))
                           "papercut reports stay in the conversation and remain visible in compact mode")
+             (let ((repeat
+                     (papercut-tests--call
+                      registry
+                      context
+                      "papercut.report"
+                      "title" "Provider limit"
+                      "content" "The provider returned a rate limit twice.")))
+               (test-assert (and (tool-result-success-p repeat)
+                                 (search (papercut-identifier report)
+                                         (tool-result-content repeat))
+                                 (search "already-reported:" (tool-result-content repeat))
+                                 (= 1 (count "Provider limit"
+                                             (papercut-list configuration)
+                                             :test #'string=
+                                             :key #'papercut-title)))
+                            "papercut.report answers a repeat with the existing report and records nothing")
+               (let* ((record
+                        (list :tool-result
+                              :tool "papercut.report"
+                              :status ':ok
+                              :output (tool-result-content repeat)))
+                      (text (terminal--spans-text
+                             (application-tool-result-entry tool application record))))
+                 (test-assert (and (search "! PAPERCUT ALREADY REPORTED" text)
+                                   (not (search "! PAPERCUT RECORDED" text)))
+                              "repeated reports are presented as already reported")))
              (let* ((record
                       (list :tool-result
                             :tool "papercut.report"

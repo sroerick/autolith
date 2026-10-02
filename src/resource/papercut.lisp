@@ -477,7 +477,7 @@
           (let* ((state (resource-item-find-observation-state
                          conversation resource base-revision))
                  (base-observation (resource-observation-state-observation state))
-                 (papercut
+                 (result
                    (papercut--transact
                     configuration
                     (lambda (active)
@@ -505,7 +505,8 @@
                           configuration :title (getf operation :title)
                                         :content (getf operation :content)
                                         :source-conversation
-                                        (conversation-identifier conversation)))
+                                        (conversation-identifier conversation)
+                                        :active active))
                         (:assess
                          (papercut--assess-unlocked
                           configuration (papercut-resource-identifier resource)
@@ -517,23 +518,27 @@
                           (getf operation :resolution) :active active)))))))
             (ecase (getf operation :kind)
               (:report
-               (let ((item-resource
-                       (papercut-resource--make-item
-                        (papercut-identifier papercut) (papercut-workspace papercut))))
-                 (values
-                  (papercut-resource--item-observation-from-report item-resource papercut)
-                  (format nil "Reported papercut ~A." (papercut-identifier papercut))
-                  (resource-uri item-resource))))
+               (destructuring-bind (papercut duplicate-p) result
+                 (let ((item-resource
+                         (papercut-resource--make-item
+                          (papercut-identifier papercut) (papercut-workspace papercut))))
+                   (values
+                    (papercut-resource--item-observation-from-report item-resource papercut)
+                    (if duplicate-p
+                        (format nil "Papercut ~A already covers this problem; nothing new was recorded."
+                                (papercut-identifier papercut))
+                        (format nil "Reported papercut ~A." (papercut-identifier papercut)))
+                    (resource-uri item-resource)))))
               (:assess
                (values
-                (papercut-resource--item-observation-from-report resource papercut)
+                (papercut-resource--item-observation-from-report resource result)
                 (format nil "Assessed papercut ~A as ~(~A~)."
                         (papercut-resource-identifier resource) (getf operation :verdict))
                 nil))
               (:close
                (values
                 (papercut-resource--closed-observation
-                 resource papercut (getf operation :resolution))
+                 resource result (getf operation :resolution))
                 (format nil "Closed papercut ~A." (papercut-resource-identifier resource))
                 nil)))))))))
 

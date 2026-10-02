@@ -451,7 +451,7 @@
    (list
     'papercut-report-tool
     "papercut" "report"
-    "Report a concrete Autolith limitation, broken behavior, repeated friction, or blocker to the user. Use this only for a real problem that deserves prominent user attention, not routine progress or ordinary uncertainty. Include enough diagnostic context for the user to understand and reproduce the problem."
+    "Report a concrete Autolith limitation, broken behavior, repeated friction, or blocker to the user. Use this only for a real problem that deserves prominent user attention, not routine progress or ordinary uncertainty. Include enough diagnostic context for the user to understand and reproduce the problem. Report each problem once: Autolith compares the report with the active papercuts of this workspace and answers with the existing report instead of recording a repeat, and the acknowledgement stays in the conversation."
     (tool-object-schema
      (json-object
       "title" (tool-string-property

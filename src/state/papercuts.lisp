@@ -20,6 +20,24 @@
 (defparameter *papercut-short-identifier-length* 8
   "The characters shown when a papercut identifier is abbreviated.")
 
+(defparameter *papercut-duplicate-window-seconds* 86400
+  "How long an active report absorbs new reports of the same problem.")
+
+(defparameter *papercut-duplicate-similarity* 3/5
+  "The word-set similarity at which a new report repeats an active one.")
+
+(defparameter *papercut-duplicate-session-window-seconds* 3600
+  "How long a report from the same conversation is judged by the looser session similarity.")
+
+(defparameter *papercut-duplicate-session-similarity* 2/5
+  "The word-set similarity at which a report repeats one its own conversation filed recently.
+
+A conversation that keeps re-filing a problem rewrites the report each time,
+so its repeats share fewer words than reports from different sessions do.")
+
+(defparameter *papercut-clock* #'get-universal-time
+  "The function returning the universal time stamped on new reports.")
+
 (defvar *papercut-lock* (make-lock "Autolith persistent papercuts")
   "The process-local lock serializing papercut reads and appends.")
 
@@ -377,30 +395,120 @@ matching reports for :AMBIGUOUS."
            (values nil ':ambiguous matches))))
       (values nil ':missing nil)))
 
+(-> papercut--tokens (string) list)
+(defun papercut--tokens (text)
+  "Return TEXT's distinct lowercase words of three or more characters.
+
+Words keep inner dots, slashes, colons, hyphens, and underscores, so tool and
+symbol names such as lisp.source survive, while surrounding punctuation drops."
+  (let ((tokens nil)
+        (start nil))
+    (flet ((flush (end)
+             (when start
+               (let ((word (string-trim "-_./:"
+                                        (string-downcase (subseq text start end)))))
+                 (when (>= (length word) 3)
+                   (pushnew word tokens :test #'string=)))
+               (setf start nil))))
+      (loop for index from 0 below (length text)
+            for character = (char text index)
+            do (if (or (alphanumericp character)
+                       (find character "-_./:"))
+                   (unless start
+                     (setf start index))
+                   (flush index))
+            finally (flush (length text))))
+    tokens))
+
+(-> papercut--similarity (list list) rational)
+(defun papercut--similarity (left right)
+  "Return the Jaccard similarity of word lists LEFT and RIGHT, from 0 to 1."
+  (let ((union (union left right :test #'string=)))
+    (if (null union)
+        0
+        (/ (length (intersection left right :test #'string=))
+           (length union)))))
+
+(-> papercut--same-words-p (list list) boolean)
+(defun papercut--same-words-p (left right)
+  "Return true when word lists LEFT and RIGHT hold the same words."
+  (and (subsetp left right :test #'string=)
+       (subsetp right left :test #'string=)))
+
+(-> papercut--duplicate
+    (configuration list non-empty-string non-empty-string (option string) integer)
+    (option papercut))
+(defun papercut--duplicate (configuration active title content source-conversation now)
+  "Return the recent active report of this workspace that TITLE and CONTENT repeat.
+
+A report repeats another filed within *PAPERCUT-DUPLICATE-WINDOW-SECONDS* when
+their titles hold the same words, or when the words of title and body together
+overlap at *PAPERCUT-DUPLICATE-SIMILARITY* or more. A report from
+SOURCE-CONVERSATION filed within *PAPERCUT-DUPLICATE-SESSION-WINDOW-SECONDS*
+only needs *PAPERCUT-DUPLICATE-SESSION-SIMILARITY*. The closest match wins."
+  (let ((title-words (papercut--tokens title))
+        (words (union (papercut--tokens title) (papercut--tokens content)
+                      :test #'string=))
+        (best nil)
+        (best-score 0))
+    (dolist (papercut (papercut--workspace-reports configuration active) best)
+      (let ((age (abs (- now (papercut-reported-at papercut)))))
+        (when (<= age *papercut-duplicate-window-seconds*)
+          (let* ((other-title-words (papercut--tokens (papercut-title papercut)))
+                 (other-words (union other-title-words
+                                     (papercut--tokens (papercut-content papercut))
+                                     :test #'string=))
+                 (score (if (papercut--same-words-p title-words other-title-words)
+                            1
+                            (papercut--similarity words other-words)))
+                 (threshold
+                   (if (and source-conversation
+                            (equal source-conversation
+                                   (papercut-source-conversation papercut))
+                            (<= age *papercut-duplicate-session-window-seconds*))
+                       *papercut-duplicate-session-similarity*
+                       *papercut-duplicate-similarity*)))
+            (when (and (>= score threshold)
+                       (> score best-score))
+              (setf best papercut
+                    best-score score))))))))
+
 (-> papercut--report-unlocked
     (configuration &key (:title non-empty-string) (:content non-empty-string)
-                        (:source-conversation (option string)))
-    (values list papercut boolean))
+                        (:source-conversation (option string))
+                        (:active list))
+    (values list list boolean))
 (defun papercut--report-unlocked
-    (configuration &key title content source-conversation)
-  "Return a new validated report record and the report to publish."
-  (let ((papercut
-          (make-instance
-           'papercut
-           :identifier (make-identifier)
-           :reported-at (get-universal-time)
-           :workspace (papercut--workspace configuration)
-           :title title
-           :content content
-           :source-conversation source-conversation)))
-    (values (list (papercut--record papercut)) papercut t)))
+    (configuration &key title content source-conversation active)
+  "Return the records to append and (PAPERCUT DUPLICATE-P) for a report.
+
+When the report repeats an ACTIVE papercut, nothing is appended and that
+existing papercut is returned with DUPLICATE-P true."
+  (let* ((now (funcall *papercut-clock*))
+         (duplicate (papercut--duplicate configuration active title content
+                                         source-conversation now)))
+    (if duplicate
+        (values nil (list duplicate t) nil)
+        (let ((papercut
+                (make-instance
+                 'papercut
+                 :identifier (make-identifier)
+                 :reported-at now
+                 :workspace (papercut--workspace configuration)
+                 :title title
+                 :content content
+                 :source-conversation source-conversation)))
+          (values (list (papercut--record papercut)) (list papercut nil) t)))))
 
 (-> papercut-report
     (configuration &key (:title string) (:content string)
                    (:source-conversation (option string)))
-    papercut)
+    (values papercut boolean))
 (defun papercut-report (configuration &key title content source-conversation)
-  "Record one new user-visible report about a problem in the current workspace."
+  "Record one new user-visible report about a problem in the current workspace.
+
+Return the recorded papercut and NIL, or, when the report repeats an active
+papercut of the workspace, that existing papercut and T without recording."
   (let ((validated-title
           (papercut--validate-text title "title" *papercut-title-limit*))
         (validated-content
@@ -411,14 +519,16 @@ matching reports for :AMBIGUOUS."
              :message "Papercut source conversation must be a non-empty string."
              :pathname (configuration-papercut-path configuration)
              :identifier nil))
-    (with-lock-held (*papercut-lock*)
-      (papercut--transact
-       configuration
-       (lambda (active)
-         (declare (ignore active))
-         (papercut--report-unlocked
-          configuration :title validated-title :content validated-content
-                        :source-conversation source-conversation))))))
+    (destructuring-bind (papercut duplicate-p)
+        (with-lock-held (*papercut-lock*)
+          (papercut--transact
+           configuration
+           (lambda (active)
+             (papercut--report-unlocked
+              configuration :title validated-title :content validated-content
+                            :source-conversation source-conversation
+                            :active active))))
+      (values papercut duplicate-p))))
 
 (-> papercut--assess-unlocked
     (configuration non-empty-string

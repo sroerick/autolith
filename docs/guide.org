@@ -395,6 +395,13 @@ Papercuts use current-workspace resource URIs:
 The existing =papercut.report= tool and =/papercuts=, =/papercut=, and
 =/papercut-close= commands remain convenient direct interfaces.
 
+Each model report is acknowledged durably in the conversation, and a report
+that repeats an active papercut of the workspace is not recorded again: a
+title matching word for word, or a title and body whose words largely overlap
+a report from the last day, answers with that existing report instead. A
+conversation re-filing within an hour of its own report is matched more
+loosely, since rewritten repeats share fewer words.
+
 ** Exporting and importing data
 
 Use the same portable archive from the command line or an active session:
