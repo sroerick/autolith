@@ -184,8 +184,8 @@ let
     src = pkgs.fetchFromGitHub {
       owner = "lambda-symbolics";
       repo = "clinedi";
-      rev = "51a4a6933298014a0b8296885f56c002fee91587";
-      hash = "sha256-9vPj+uHYgkmuCSW95n/okHeGOB5kPrvwjKQpXNArOz0=";
+      rev = "8c9b3ef53f6ffb92980b7adba43910f4c4585cd9";
+      hash = "sha256-scyVdAzrZRhoCDYSBZe4ENj/j4wSmcraHNuIOqhPsQQ=";
     };
     systems = [ "clinedi" "clinedi/posix" ];
     lispLibs = [ clColorist ];
