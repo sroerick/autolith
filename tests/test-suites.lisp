@@ -615,6 +615,7 @@
     test-release-server))
 
 (define-test-suite application
+  test-application-transcript-actions
   test-application-command-tips
   test-application-banner-policy
   test-replay-skips-notice

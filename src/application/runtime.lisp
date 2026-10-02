@@ -1924,6 +1924,24 @@ command replaced the active conversation."
                (1- (terminal-columns
                     (terminal-ui-terminal (application-ui application)))))))
 
+(-> application--markdown-rows (termdown:markdown-renderer string) list)
+(defun application--markdown-rows (renderer line)
+  "Render LINE through RENDERER, giving a closing fence's copy label its source.
+
+cl-termdown marks the closing fence row with a :CODE-COPY span and exposes
+the fence's raw source; that span becomes a widget copying the source."
+  (let ((rows (termdown:markdown-render-line renderer line))
+        (source (termdown:markdown-renderer-closed-code-source renderer)))
+    (if (null source)
+        rows
+        (loop for row in rows
+              collect (loop for span in row
+                            collect (if (eq (terminal-span-style span) ':code-copy)
+                                        (terminal-widget ':code-copy
+                                                         (terminal-span-text span)
+                                                         (list ':copy source))
+                                        span))))))
+
 (-> application--markdown-body (application string) list)
 (defun application--markdown-body (application text)
   "Return sanitized TEXT rendered as markdown transcript spans."
@@ -1932,7 +1950,7 @@ command replaced the active conversation."
                                     (sanitize-text text))))
     (loop for line in (or (uiop:split-string trimmed :separator '(#\Newline))
                           (list ""))
-          append (loop for row in (termdown:markdown-render-line renderer line)
+          append (loop for row in (application--markdown-rows renderer line)
                        append (append row
                                       (list (terminal-span
                                              ':plain
@@ -3154,7 +3172,7 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                          while newline
                          do (setf rows
                                   (append rows
-                                          (termdown:markdown-render-line
+                                          (application--markdown-rows
                                            stream-renderer
                                            (subseq stream-pending 0 newline)))
                                   stream-pending
@@ -3173,8 +3191,8 @@ remain finalized so later conversation replay cannot duplicate streamed rows."
                  (terminal-ui-stream-update
                   ui
                   :rows (append (when (plusp (length stream-pending))
-                                  (termdown:markdown-render-line stream-renderer
-                                                        stream-pending))
+                                  (application--markdown-rows stream-renderer
+                                                              stream-pending))
                                 (list nil))
                   :tail nil)
                  (setf stream-pending ""

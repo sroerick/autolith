@@ -51,6 +51,14 @@ Pass =nil= to =preferences-set-fullscreen= to return future launches to inline m
 Use =Shift= with the mouse for terminal text selection. Fullscreen history lives
 in the application rather than the terminal emulator's native scrollback.
 
+Clicking a web address in the fullscreen transcript opens it in the default
+browser, and every fenced code block ends with a =⧉ copy= label that copies the
+block's source. Copies go to the host clipboard through wl-clipboard, xclip or
+xsel, pbcopy, or the Windows clipboard, and the terminal also receives an OSC 52
+request, so a terminal reached over SSH or a localgroup relay copies on your own
+machine. Web addresses in every mode are emitted as OSC 8 hyperlinks, which
+terminals open with their usual modifier-click.
+
   Fullscreen startup presents a brief Lisp-machine boot screen with a centered tip
   and a rock mascot that adapts to short viewports, then the session banner and
   transcript above the composer. Mouse wheel scrolling also works through a

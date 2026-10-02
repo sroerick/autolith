@@ -4,7 +4,8 @@
   :license "ISC"
   :version "0.55.0"
   :serial t
-  :depends-on (#:cl-base64
+  :depends-on (#:agentcomms
+               #:cl-base64
                #:cl+ssl
                #:cl-colorist
                #:cl-exec-sandbox
@@ -185,10 +186,12 @@
                              (:file "localgroup/terminal")
                              (:file "terminal/path-completion")
                              (:file "terminal/ui")
+                             (:file "terminal/clipboard")
                              (:file "terminal/fullscreen")
                              (:file "terminal/boot-screen")
                              (:file "application/prompt-cache")
                              (:file "application/runtime")
+                             (:file "application/clipboard")
                              (:file "conversation/replay")
                               (:file "management/repl")
                              (:file "application/change-viewer")
@@ -216,6 +219,10 @@
                              (:file "state/data-transfer-import")
                              (:file "application/data-transfer")
                              (:file "startup/data-transfer")
+                             (:file "acp/session")
+                             (:file "acp/observer")
+                             (:file "acp/mcp")
+                             (:file "acp/runtime")
                              (:file "startup/main")
                              (:file "startup/active-image"))))
   :in-order-to ((asdf:test-op (asdf:test-op #:autolith/tests))))
