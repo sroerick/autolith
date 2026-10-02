@@ -68,8 +68,8 @@
   :version "git-a70749493fbdbe79d6766f254a664119042102b9"))
 ("clinedi" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "8c9b3ef53f6ffb92980b7adba43910f4c4585cd9")
-  :version "git-8c9b3ef53f6ffb92980b7adba43910f4c4585cd9"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/clinedi.git" :ref "cae3c096422e3b39bc30d53551979a45750a74b1")
+  :version "git-cae3c096422e3b39bc30d53551979a45750a74b1"))
 ("cl-jobpond" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/luciusmagn/cl-jobpond.git" :ref "ee2e2eb0bd5080c52db55036f853c00671962178")
@@ -96,8 +96,8 @@
   :version "git-3c219ae44379a1891bbd8f374692763cae9215f8"))
 ("cl-termdown" .
  (:class qlot/source/git:source-git
-  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "f54cd93e3e39390d056752cfc17d7396073b38e7")
-  :version "git-f54cd93e3e39390d056752cfc17d7396073b38e7"))
+  :initargs (:remote-url "https://github.com/lambda-symbolics/cl-termdown.git" :ref "314723383fcf2f5c05c5f35000fb1549c44058a2")
+  :version "git-314723383fcf2f5c05c5f35000fb1549c44058a2"))
 ("cl-exec-sandbox" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/cl-exec-sandbox.git" :ref "76478d0c0e78bbd4e374953af12a2188630d794d")
@@ -154,6 +154,10 @@
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sexp-store.git" :ref "778ce8021071bb8ba4066eff9eb822499b8a48ec")
   :version "git-778ce8021071bb8ba4066eff9eb822499b8a48ec"))
+("sophisticated-clipboard" .
+ (:class qlot/source/git:source-git
+  :initargs (:remote-url "https://github.com/luciusmagn/sophisticated-clipboard.git" :ref "f4fb761c233b8599d1f9f572281bced26c114e82")
+  :version "git-f4fb761c233b8599d1f9f572281bced26c114e82"))
 ("sbcl-workers" .
  (:class qlot/source/git:source-git
   :initargs (:remote-url "https://github.com/lambda-symbolics/sbcl-workers.git" :ref "da94b8c55a4225a7a1f5e2c2758adb5d200689bc")

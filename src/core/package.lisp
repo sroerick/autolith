@@ -9,6 +9,15 @@
   (:import-from #:cl+ssl
                 #:cl+ssl-error
                 #:ssl-error-syscall)
+  (:import-from #:sophisticated-clipboard
+                #:*clipboard-backend*
+                #:backend-get
+                #:backend-set
+                #:backend-types
+                #:clipboard-backend
+                #:clipboard-backend-name
+                #:clipboard-text
+                #:sophisticated-clipboard-error)
   (:import-from #:cl-colorist
                 #:color
                 #:color-kind

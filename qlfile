@@ -15,14 +15,14 @@ ql yason 2026-01-01
 
 git fetch-gist https://github.com/lambda-symbolics/fetch-gist.git :ref 0adb33b6801d1218ce6249d2a751b05f88b98c40
 git cl-colorist https://github.com/luciusmagn/cl-colorist.git :ref a70749493fbdbe79d6766f254a664119042102b9
-git clinedi https://github.com/lambda-symbolics/clinedi.git :ref 8c9b3ef53f6ffb92980b7adba43910f4c4585cd9
+git clinedi https://github.com/lambda-symbolics/clinedi.git :ref cae3c096422e3b39bc30d53551979a45750a74b1
 git cl-jobpond https://github.com/luciusmagn/cl-jobpond.git :ref ee2e2eb0bd5080c52db55036f853c00671962178
 git clinker-transcript https://github.com/lambda-symbolics/clinker-transcript.git :ref 08acbc1caaab2beaa0ea824507d722a117ec70b0
 git cl-rfc8628 https://github.com/lambda-symbolics/cl-rfc8628.git :ref dea112d1bf2750a52c52f33344157af7b9f4f6f8
 git cl-llm-provider-api https://github.com/lambda-symbolics/cl-llm-provider-api.git :ref fd05933ce7950a1b0a2ccbc1c61228d3e633867a
 git cl-lsp https://github.com/lambda-symbolics/cl-lsp.git :ref 285aa75ae19c4e02de97f5891a398478242b4153
 git cl-skills https://github.com/lambda-symbolics/cl-skills.git :ref 3c219ae44379a1891bbd8f374692763cae9215f8
-git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref f54cd93e3e39390d056752cfc17d7396073b38e7
+git cl-termdown https://github.com/lambda-symbolics/cl-termdown.git :ref 314723383fcf2f5c05c5f35000fb1549c44058a2
 git cl-exec-sandbox https://github.com/lambda-symbolics/cl-exec-sandbox.git :ref 76478d0c0e78bbd4e374953af12a2188630d794d
 git clifff https://github.com/luciusmagn/clifff.git :ref 8bf3ebb0985108593cad105d31639cedbe9e5373
 git colorlisp https://github.com/lambda-symbolics/colorlisp.git :ref 2654ae0fa34aee42cff401693b5a80a86f0942c4
@@ -37,5 +37,6 @@ git mcparen https://github.com/lambda-symbolics/mcparen.git :ref 482f87cf0803c45
 git sbcl-generations https://github.com/lambda-symbolics/sbcl-generations.git :ref 4cfe637597a90263c6259ad2d114053618312243
 git sexp-config https://github.com/luciusmagn/sexp-config.git :ref 408fa906e2d16aa515b39c943d3affcab3811ffc
 git sexp-store https://github.com/lambda-symbolics/sexp-store.git :ref 778ce8021071bb8ba4066eff9eb822499b8a48ec
+git sophisticated-clipboard https://github.com/luciusmagn/sophisticated-clipboard.git :ref f4fb761c233b8599d1f9f572281bced26c114e82
 git sbcl-workers https://github.com/lambda-symbolics/sbcl-workers.git :ref da94b8c55a4225a7a1f5e2c2758adb5d200689bc
 git structlisp https://github.com/lambda-symbolics/structlisp.git :ref 66bbfbe947b69f3105f71f5e4293637decc91746

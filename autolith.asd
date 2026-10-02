@@ -47,6 +47,7 @@
                #:sbcl-workers
                #:sexp-config
                #:sexp-store
+               #:sophisticated-clipboard
                #:structlisp
                #:usocket
                #:yason)
